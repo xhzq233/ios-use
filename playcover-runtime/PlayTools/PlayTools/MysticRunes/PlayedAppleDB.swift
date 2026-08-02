@@ -37,11 +37,10 @@ enum IOSUsePlayChainLocation {
         }
 #endif
         let environment = ProcessInfo.processInfo.environment
-        guard let homeID = environment["IOS_USE_PLAY_HOME_ID"],
-              let generationKey =
+        guard let generationKey =
                 environment["IOS_USE_PLAY_GENERATION_KEY"],
-              let runtimeHomePath =
-                environment["IOS_USE_PLAY_RUNTIME_HOME"] else {
+              let playChainRootPath =
+                environment["IOS_USE_PLAYCHAIN_ROOT"] else {
             throw NSError(
                 domain: "IOSUsePlayChain",
                 code: 1,
@@ -52,11 +51,7 @@ enum IOSUsePlayChainLocation {
             )
         }
         let hexadecimal = CharacterSet(charactersIn: "0123456789abcdef")
-        guard homeID.count == 64,
-              homeID.unicodeScalars.allSatisfy({
-                  hexadecimal.contains($0)
-              }),
-              generationKey.count == 64,
+        guard generationKey.count == 64,
               generationKey.unicodeScalars.allSatisfy({
                   hexadecimal.contains($0)
               }) else {
@@ -65,7 +60,7 @@ enum IOSUsePlayChainLocation {
                 code: 2,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "launch identity contains an invalid Home or "
+                        "launch identity contains an invalid "
                             + "generation key"
                 ]
             )
@@ -81,31 +76,30 @@ enum IOSUsePlayChainLocation {
                 ]
             )
         }
-        let expectedRuntimeHome = URL(
+        let expectedPlayChainRoot = URL(
             fileURLWithPath: String(cString: accountHomeBytes),
             isDirectory: true
         )
             .resolvingSymlinksInPath()
             .appendingPathComponent(
-                "Library/Application Support/dev.ios-use/mac/runtime-homes",
+                "Library/Application Support/dev.ios-use/mac/playchain",
                 isDirectory: true
             )
-            .appendingPathComponent(homeID, isDirectory: true)
             .standardizedFileURL
             .resolvingSymlinksInPath()
         let playcoverRootURL = URL(
-            fileURLWithPath: runtimeHomePath,
+            fileURLWithPath: playChainRootPath,
             isDirectory: true
         )
             .standardizedFileURL
             .resolvingSymlinksInPath()
-        guard playcoverRootURL.path == expectedRuntimeHome.path else {
+        guard playcoverRootURL.path == expectedPlayChainRoot.path else {
             throw NSError(
                 domain: "IOSUsePlayChain",
                 code: 4,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "Runtime namespace is outside the fixed account root"
+                        "PlayChain namespace is outside the fixed account root"
                 ]
             )
         }
@@ -143,16 +137,8 @@ enum IOSUsePlayChainLocation {
                 ]
             )
         }
-        let playchainURL = playcoverRootURL
-            .appendingPathComponent(
-                "playchain",
-                isDirectory: true
-            )
-        let resolvedPlaychainURL =
-            playchainURL.resolvingSymlinksInPath()
         var playchainStatus = stat()
-        guard resolvedPlaychainURL.path == playchainURL.path,
-              lstat(playchainURL.path, &playchainStatus) == 0,
+        guard lstat(playcoverRootURL.path, &playchainStatus) == 0,
               playchainStatus.st_mode & S_IFMT == S_IFDIR,
               playchainStatus.st_uid == geteuid(),
               playchainStatus.st_mode & 0o077 == 0 else {
@@ -166,7 +152,7 @@ enum IOSUsePlayChainLocation {
                 ]
             )
         }
-        let databaseURL = resolvedPlaychainURL
+        let databaseURL = playcoverRootURL
             .appendingPathComponent("\(bundleID).db")
         return IOSUsePlayChainManagedLocation(
             appBundleURL: appBundleURL,

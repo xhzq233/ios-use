@@ -6,6 +6,9 @@ RELEASE_DIR="$ROOT_DIR/release"
 RELEASE_STARTED_AT="$(date +%s)"
 RELEASE_TEMP="$(mktemp -d "${TMPDIR:-/tmp}/ios-use-release-build.XXXXXX")"
 UPSTREAM_CACHE="${IOS_USE_PLAYCOVER_UPSTREAM_CACHE:-${TMPDIR:-/tmp}/ios-use-playcover-upstream-audit}"
+EXTRA_RELEASE_ASSETS=()
+FRIDA_ENGINE_DESCRIPTOR_SHA256="9e6d4844b76f71cb2fd46ef3e827b33df5fca4674be9a054395f0331f9bc6e3b"
+FRIDA_ENGINE_DESCRIPTOR_SIZE="8973197"
 
 cleanup() {
   if [[ -d "$RELEASE_TEMP" ]]; then
@@ -147,6 +150,74 @@ RUNTIME_ARCHIVE_SHA256="$(
   shasum -a 256 "$RELEASE_DIR/ios-use-playcover-runtime.tar.gz" |
     awk '{print $1}'
 )"
+
+if [[ "${IOS_USE_RELEASE_FRIDA_ENGINE:-0}" == "1" ]]; then
+  echo "[release-build] Building optional pinned Frida Engine asset..."
+  FRIDA_ENGINE_STAGE_PARENT="$RELEASE_TEMP/frida-engine-asset"
+  FRIDA_ENGINE_STAGE="$FRIDA_ENGINE_STAGE_PARENT/IOSUseFridaEngine.framework"
+  FRIDA_GUM_BUILD_ROOT="$RELEASE_TEMP/frida-gum-build"
+  mkdir -p "$FRIDA_ENGINE_STAGE_PARENT"
+  IOS_USE_FRIDA_GUM_BUILD_ROOT="$FRIDA_GUM_BUILD_ROOT" \
+    bash "$ROOT_DIR/scripts/build_playcover_frida_engine.sh" \
+      --build-gum \
+      --output "$FRIDA_ENGINE_STAGE" \
+      --replace
+  /usr/bin/codesign --verify --strict "$FRIDA_ENGINE_STAGE"
+  FRIDA_ENGINE_ASSET="ios-use-frida-engine.tar.gz"
+  FRIDA_ENGINE_MANIFEST_ASSET="IOSUSE-FRIDA-ENGINE-MANIFEST.txt"
+  (
+    cd "$FRIDA_ENGINE_STAGE_PARENT"
+    COPYFILE_DISABLE=1 tar -czf "$RELEASE_DIR/$FRIDA_ENGINE_ASSET" \
+      "$(basename "$FRIDA_ENGINE_STAGE")"
+  )
+  FRIDA_ENGINE_BUNDLE_DIGEST="$(
+    python3 - "$FRIDA_ENGINE_STAGE" <<'PY'
+import hashlib
+import pathlib
+import struct
+import sys
+
+root = pathlib.Path(sys.argv[1])
+files = []
+for path in root.rglob('*'):
+    if path.is_file():
+        files.append((path.relative_to(root).as_posix(), path.read_bytes()))
+hasher = hashlib.sha256()
+for relative, data in sorted(files):
+    encoded = relative.encode('utf-8')
+    hasher.update(struct.pack('>Q', len(encoded)))
+    hasher.update(encoded)
+    hasher.update(struct.pack('>Q', len(data)))
+    hasher.update(data)
+print(hasher.hexdigest())
+PY
+  )"
+  FRIDA_ENGINE_BUNDLE_SIZE="$(
+    python3 - "$FRIDA_ENGINE_STAGE" <<'PY'
+import pathlib
+import sys
+print(sum(path.stat().st_size for path in pathlib.Path(sys.argv[1]).rglob('*') if path.is_file()))
+PY
+  )"
+  if [[ "$FRIDA_ENGINE_BUNDLE_DIGEST" != "$FRIDA_ENGINE_DESCRIPTOR_SHA256" ||
+        "$FRIDA_ENGINE_BUNDLE_SIZE" != "$FRIDA_ENGINE_DESCRIPTOR_SIZE" ]]; then
+    echo "[release-build] ERROR: Frida Engine bundle does not match the pinned runtime descriptor" >&2
+    echo "[release-build] expected sha256=$FRIDA_ENGINE_DESCRIPTOR_SHA256 size=$FRIDA_ENGINE_DESCRIPTOR_SIZE" >&2
+    echo "[release-build] actual   sha256=$FRIDA_ENGINE_BUNDLE_DIGEST size=$FRIDA_ENGINE_BUNDLE_SIZE" >&2
+    exit 1
+  fi
+  {
+    printf 'Frida Gum source commit: %s\n' \
+      '0afeb85fcdeae1d995a55bc07f0fe57b197aecae'
+    printf 'Engine ABI: %s\n' 'ios-use-frida-engine-cabi-v2'
+    printf 'Framework bundle SHA-256: %s\n' "$FRIDA_ENGINE_BUNDLE_DIGEST"
+    printf 'Framework bundle bytes: %s\n' "$FRIDA_ENGINE_BUNDLE_SIZE"
+    printf 'Framework archive SHA-256: %s\n' \
+      "$(shasum -a 256 "$RELEASE_DIR/$FRIDA_ENGINE_ASSET" | awk '{print $1}')"
+    plutil -p "$FRIDA_ENGINE_STAGE/Info.plist"
+  } > "$RELEASE_DIR/$FRIDA_ENGINE_MANIFEST_ASSET"
+  EXTRA_RELEASE_ASSETS+=("$FRIDA_ENGINE_ASSET" "$FRIDA_ENGINE_MANIFEST_ASSET")
+fi
 
 SOURCE_ARCHIVE="ios-use-v$ACTUAL_VERSION-corresponding-source.tar.gz"
 SOURCE_PREFIX="ios-use-v$ACTUAL_VERSION/"
@@ -291,7 +362,8 @@ for asset in \
   THIRD-PARTY-LICENSES.md \
   "$BUILD_MANIFEST_ASSET" \
   "$PROVENANCE_ASSET" \
-  "$CHANGELOG_ASSET"; do
+  "$CHANGELOG_ASSET" \
+  "${EXTRA_RELEASE_ASSETS[@]}"; do
   if [ ! -s "$RELEASE_DIR/$asset" ]; then
     echo "[release-build] ERROR: missing or empty release asset: $asset" >&2
     exit 1
@@ -314,7 +386,8 @@ done
     THIRD-PARTY-LICENSES.md \
     "$BUILD_MANIFEST_ASSET" \
     "$PROVENANCE_ASSET" \
-    "$CHANGELOG_ASSET" > SHA256SUMS
+    "$CHANGELOG_ASSET" \
+    "${EXTRA_RELEASE_ASSETS[@]}" > SHA256SUMS
 )
 
 STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))

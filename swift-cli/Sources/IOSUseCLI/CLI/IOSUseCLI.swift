@@ -20,11 +20,17 @@ public struct IOSUseCLI: Sendable {
     public let paths: IOSUsePaths
     public let outputSink: CLIOutputSink?
     private let playCoverSignerInitializer: PlayCoverSignerInitializer
+    private let registerHomesForDiskUsage: Bool
 
-    public init(environment: [String: String] = ProcessInfo.processInfo.environment, outputSink: CLIOutputSink? = nil) {
+    public init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        outputSink: CLIOutputSink? = nil,
+        registerHomesForDiskUsage: Bool = false
+    ) {
         self.init(
             environment: environment,
             outputSink: outputSink,
+            registerHomesForDiskUsage: registerHomesForDiskUsage,
             playCoverSignerInitializer: {
                 try PlayCoverSigningIdentityService()
                     .initializeForConfiguration()
@@ -35,11 +41,13 @@ public struct IOSUseCLI: Sendable {
     init(
         environment: [String: String],
         outputSink: CLIOutputSink? = nil,
+        registerHomesForDiskUsage: Bool = false,
         playCoverSignerInitializer:
             @escaping PlayCoverSignerInitializer
     ) {
         self.paths = IOSUsePaths.resolve(environment: environment)
         self.outputSink = outputSink
+        self.registerHomesForDiskUsage = registerHomesForDiskUsage
         self.playCoverSignerInitializer = playCoverSignerInitializer
     }
 
@@ -48,6 +56,7 @@ public struct IOSUseCLI: Sendable {
     init(
         pathsForTesting paths: IOSUsePaths,
         outputSink: CLIOutputSink? = nil,
+        registerHomesForDiskUsage: Bool = false,
         playCoverSignerInitializer:
             @escaping PlayCoverSignerInitializer = {
                 try PlayCoverSigningIdentityService()
@@ -56,6 +65,7 @@ public struct IOSUseCLI: Sendable {
     ) {
         self.paths = paths
         self.outputSink = outputSink
+        self.registerHomesForDiskUsage = registerHomesForDiskUsage
         self.playCoverSignerInitializer = playCoverSignerInitializer
     }
 
@@ -119,12 +129,14 @@ public struct IOSUseCLI: Sendable {
                 )
                 let totalElapsedMs =
                     performanceCollector.freezeTotalElapsedMs()
-                appendPerformanceLog(
-                    command: command,
-                    ok: finalized.exitCode == 0,
-                    totalElapsedMs: totalElapsedMs,
-                    snapshot: performanceCollector.snapshot()
-                )
+                if command != "du" {
+                    appendPerformanceLog(
+                        command: command,
+                        ok: finalized.exitCode == 0,
+                        totalElapsedMs: totalElapsedMs,
+                        snapshot: performanceCollector.snapshot()
+                    )
+                }
                 return finalized
             }
         }
@@ -179,7 +191,16 @@ public struct IOSUseCLI: Sendable {
                 }
                 return CLIErrorEnvelope(message: "\(error)").render()
             }
-            return execute(invocation.command, json: invocation.json)
+            let result = execute(
+                invocation.command,
+                json: invocation.json
+            )
+            if registerHomesForDiskUsage,
+               result.exitCode == 0,
+               case .start = invocation.command {
+                IOSUseHomeDiscoveryStore.registerIfExisting(paths: paths)
+            }
+            return result
         }
     }
 
@@ -266,6 +287,16 @@ public struct IOSUseCLI: Sendable {
             return routedFailure
         }
         switch parsed {
+        case .du:
+            let snapshot = DiskUsageService.snapshot(paths: paths)
+            if json {
+                return MachineOutput.success(
+                    command: parsed.commandName,
+                    data: snapshot.machineData,
+                    warnings: snapshot.warnings
+                )
+            }
+            return CLIResult(exitCode: 0, stdout: snapshot.formatted())
         case .status(let options):
             if json {
                 let snapshot = StatusService.machineSnapshot(paths: paths)
@@ -302,6 +333,7 @@ public struct IOSUseCLI: Sendable {
                         signingIdentity:
                             explicitMacSigningIdentity,
                         captureStdio: options.log,
+                        fridaEnabled: options.frida,
                         timeout: options.timeout,
                         paths: paths
                     )
@@ -330,6 +362,8 @@ public struct IOSUseCLI: Sendable {
                     json: json
                 )
             }
+        case .debug(let options):
+            return executeDebug(options, json: json)
         case .install(let options):
             do {
                 let result = try AppManagementService.installResult(options: options, paths: paths)
@@ -533,7 +567,7 @@ public struct IOSUseCLI: Sendable {
             )
         } catch {
             switch command {
-            case .status, .config, .start, .stop:
+            case .du, .status, .config, .start, .stop:
                 return nil
             default:
                 return commandFailure(
@@ -548,7 +582,7 @@ public struct IOSUseCLI: Sendable {
             return nil
         }
         switch command {
-        case .status, .config, .start, .stop, .capture, .open, .oslog:
+        case .du, .status, .config, .start, .stop, .capture, .open, .oslog, .debug:
             return nil
         case .mediaImport:
             return nil
@@ -701,6 +735,111 @@ public struct IOSUseCLI: Sendable {
                 )
             }
             return CLIErrorEnvelope(message: evidence.renderedMessage, exitCode: 1).render()
+        }
+    }
+
+    private func executeDebug(
+        _ options: DebugOptions,
+        json: Bool
+    ) -> CLIResult {
+        do {
+            let session = try SessionService.requireDriverLock(paths: paths)
+            guard session.deviceType == PlayCoverSessionService.deviceType else {
+                throw PlayCoverBackendError.capabilityUnavailable("debug")
+            }
+            guard let sessionID = session.sessionIdentifier,
+                  !sessionID.isEmpty else {
+                throw PlayCoverDriverClientError.incompleteSessionIdentity(
+                    "sessionID"
+                )
+            }
+            let refreshAlertStatus =
+                CLIInvocationContext.current?.claimAlertRefresh() ?? true
+            let client = try PlayCoverDriverClient.runtimeClient(
+                for: session,
+                timeoutSeconds: PlayCoverRuntimeClient.debugTimeoutSeconds,
+                refreshAlertStatus: refreshAlertStatus
+            )
+            let liveOutputEnabled = outputSink != nil
+            var liveEvents: [String] = []
+            var finalWasWrittenLive = false
+            let payload = try client.debug(
+                PlayCoverRuntimeDebugArguments(
+                    script: options.script,
+                    reset: options.reset,
+                    stream: options.stream
+                ),
+                onEvent: { event in
+                    if liveOutputEnabled {
+                        FileHandle.standardError.write(
+                            Data((event + "\n").utf8)
+                        )
+                    } else {
+                        liveEvents.append(event)
+                    }
+                },
+                onFinal: { final in
+                    guard options.stream, liveOutputEnabled else {
+                        return
+                    }
+                    if json {
+                        let fields: [String: MachineValue] = [
+                            "display": .string(final.display),
+                            "agent": .string(final.agent),
+                            "events": .array(
+                                final.events.map(MachineValue.string)
+                            ),
+                        ]
+                        let result = MachineOutput.success(
+                            command: "debug",
+                            data: .object(fields)
+                        )
+                        outputSink?(result.stdout)
+                    } else if !final.display.isEmpty {
+                        outputSink?(final.display + "\n")
+                    }
+                    finalWasWrittenLive = true
+                }
+            )
+            if !liveOutputEnabled {
+                liveEvents.append(contentsOf: payload.events.dropFirst(liveEvents.count))
+            }
+            let eventText = liveEvents.joined(separator: "\n")
+            if finalWasWrittenLive {
+                return CLIResult(exitCode: 0)
+            }
+            if json {
+                var fields: [String: MachineValue] = [
+                    "display": .string(payload.display),
+                    "agent": .string(payload.agent),
+                ]
+                fields["events"] = .array(
+                    payload.events.map(MachineValue.string)
+                )
+                let result = MachineOutput.success(
+                    command: "debug",
+                    data: .object(fields)
+                )
+                return CLIResult(
+                    exitCode: result.exitCode,
+                    stdout: result.stdout,
+                    stderr: result.stderr
+                        + (eventText.isEmpty ? "" : eventText + "\n")
+                )
+            }
+            return CLIResult(
+                exitCode: 0,
+                stdout: payload.display.isEmpty
+                    ? ""
+                    : payload.display + "\n",
+                stderr: eventText.isEmpty ? "" : eventText + "\n"
+            )
+        } catch {
+            return commandFailure(
+                command: "debug",
+                error: error,
+                json: json
+            )
         }
     }
 

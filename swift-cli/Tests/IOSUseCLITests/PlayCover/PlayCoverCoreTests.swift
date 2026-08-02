@@ -44,8 +44,6 @@ final class PlayCoverCoreTests: XCTestCase {
         PlayCoverManagedAppService.afterManagedDirectoryOpenForTesting = nil
         PlayCoverManagedAppService
             .afterStagingPathResolvedForTesting = nil
-        PlayCoverManagedAppService
-            .afterPreparedSelectionPinnedForTesting = nil
         super.tearDown()
     }
 
@@ -88,7 +86,7 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertEqual(paths.playcoverRun, "/state/ios-use/mac/run")
         XCTAssertEqual(
             paths.playcoverLogs,
-            "\(paths.playcoverRuntimeHome)/logs"
+            "/state/ios-use/logs/mac"
         )
         XCTAssertEqual(
             paths.playcoverPendingLaunch,
@@ -703,7 +701,6 @@ final class PlayCoverCoreTests: XCTestCase {
             as: UTF8.self
         )
 
-        XCTAssertEqual(manifest.schemaVersion, 5)
         XCTAssertEqual(manifest.backend, "mac")
         XCTAssertEqual(
             manifest.runtimeLoadPath,
@@ -783,12 +780,11 @@ final class PlayCoverCoreTests: XCTestCase {
             ],
             sessionID: "session-one",
             runtimeSocketPath: "/state/run/s-sessionone.sock",
-            runtimeHomePath: "/state/managed-home",
-            homeID: String(repeating: "a", count: 64),
-            generationKey: String(repeating: "b", count: 64)
+            generationKey: String(repeating: "b", count: 64),
+            playChainPath: "/state/managed-home"
         )
 
-        XCTAssertEqual(result["HOME"], "/state/managed-home")
+        XCTAssertEqual(result["HOME"], "/Users/test")
         XCTAssertEqual(result["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")
         XCTAssertEqual(result["IOS_USE_PLAY_SESSION_ID"], "session-one")
         XCTAssertEqual(
@@ -817,25 +813,15 @@ final class PlayCoverCoreTests: XCTestCase {
             ],
             sessionID: "session-one",
             runtimeSocketPath: "/state/run/s-sessionone.sock",
-            runtimeHomePath: "/state",
-            homeID: String(repeating: "a", count: 64),
             generationKey: String(repeating: "b", count: 64),
+            playChainPath: "/state",
             stdioLog: log
         )
 
         XCTAssertEqual(result["IOS_USE_PLAY_STDIO_LOG"], "1")
-        XCTAssertEqual(
-            result["IOS_USE_PLAY_STDIO_LOG_PATH"],
-            log.path
-        )
-        XCTAssertEqual(
-            result["IOS_USE_PLAY_STDIO_LOG_DEVICE"],
-            "12"
-        )
-        XCTAssertEqual(
-            result["IOS_USE_PLAY_STDIO_LOG_INODE"],
-            "34"
-        )
+        XCTAssertEqual(result["IOS_USE_PLAY_STDIO_LOG_PATH"], "")
+        XCTAssertNil(result["IOS_USE_PLAY_STDIO_LOG_DEVICE"])
+        XCTAssertNil(result["IOS_USE_PLAY_STDIO_LOG_INODE"])
         XCTAssertFalse(result.values.contains("/untrusted/log"))
     }
 
@@ -869,12 +855,6 @@ final class PlayCoverCoreTests: XCTestCase {
                     failureStage: nil,
                     errorNumber: nil
                 ),
-                expected: nil
-            )
-        )
-        XCTAssertNoThrow(
-            try PlayCoverService.validateStdio(
-                nil,
                 expected: nil
             )
         )
@@ -915,12 +895,6 @@ final class PlayCoverCoreTests: XCTestCase {
             try PlayCoverService.validateStdio(
                 redirected,
                 expected: nil
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverService.validateStdio(
-                nil,
-                expected: expected
             )
         )
     }
@@ -1000,7 +974,6 @@ final class PlayCoverCoreTests: XCTestCase {
             ),
             .responseIsNotUTF8,
             .responseDecodingFailed,
-            .unsupportedSchemaVersion(4),
             .requestIDMismatch,
             .sessionIDMismatch,
             .responseIdentityMismatch("PID"),
@@ -1062,9 +1035,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
     }
 
-    func testAuthenticatedHelloSeparatesFixedGeometryFromReadiness()
-        throws
-    {
+    func testAuthenticatedHelloDoesNotWaitForUIReadiness() throws {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let inspection = try PlayCoverService.inspect(
@@ -1076,169 +1047,74 @@ final class PlayCoverCoreTests: XCTestCase {
             generationKey: String(repeating: "a", count: 64)
         )
         let pid: Int32 = 42
-        let logicalWidth = Double(IOSUsePlayDeviceLogicalWidth)
-        let logicalHeight = Double(IOSUsePlayDeviceLogicalHeight)
-        let nativeWidth = Double(IOSUsePlayDeviceNativeWidth)
-        let nativeHeight = Double(IOSUsePlayDeviceNativeHeight)
-        let scale = Double(IOSUsePlayDeviceScale)
-
-        func geometry(
-            logicalWidth: Double = Double(
-                IOSUsePlayDeviceLogicalWidth
-            ),
-            logicalHeight: Double = Double(
-                IOSUsePlayDeviceLogicalHeight
-            ),
-            nativeWidth: Double = Double(
-                IOSUsePlayDeviceNativeWidth
-            ),
-            nativeHeight: Double = Double(
-                IOSUsePlayDeviceNativeHeight
-            ),
-            scale: Double = Double(IOSUsePlayDeviceScale),
-            windowWidth: Double = Double(
-                IOSUsePlayDeviceLogicalWidth
-            ),
-            windowHeight: Double = Double(
-                IOSUsePlayDeviceLogicalHeight
-            )
-        ) -> PlayCoverRuntimeGeometry {
-            PlayCoverRuntimeGeometry(
-                logical: .init(
-                    width: logicalWidth,
-                    height: logicalHeight
-                ),
-                native: .init(
-                    width: nativeWidth,
-                    height: nativeHeight
-                ),
-                scale: scale,
-                window: .init(
-                    width: windowWidth,
-                    height: windowHeight
-                ),
-                safeArea: .init(
-                    top: 0,
-                    left: 0,
-                    bottom: 0,
-                    right: 0
-                ),
-                host: nil
-            )
-        }
-
+        let capabilities = [
+            "hello", "ping", "diagnostics", "screenshot", "dom",
+            "waitFor", "tap", "longPress", "swipe", "input",
+            "dismissAlert", "dismissAlertByLabel", "open",
+        ]
         func payload(
-            geometry: PlayCoverRuntimeGeometry,
-            stage: String = "ready"
+            generationKey: String? = nil,
+            controlStage: String = "ready",
+            uiState: String = "initializing",
+            uiStage: String = "waiting-for-window"
         ) -> PlayCoverRuntimeHelloPayload {
             PlayCoverRuntimeHelloPayload(
                 pid: pid,
                 bundleIdentifier: manifest.bundleIdentifier,
                 executablePath: manifest.executablePath,
-                capabilities: ["hello"],
-                geometry: geometry,
-                stage: stage,
-                observed: [:]
+                generationKey: generationKey
+                    ?? manifest.generationKey,
+                capabilities: capabilities,
+                controlStage: controlStage,
+                controlFailure: controlStage == "ready"
+                    ? nil
+                    : "required hook failed",
+                uiState: .init(
+                    state: uiState,
+                    stage: uiStage,
+                    failure: uiState == "failed"
+                        ? "UI failed"
+                        : nil
+                ),
+                stdio: .init(
+                    status: "disabled",
+                    path: nil,
+                    device: nil,
+                    inode: nil,
+                    failureStage: nil,
+                    errorNumber: nil
+                )
             )
         }
-
-        let fixedMismatches: [
-            (String, PlayCoverRuntimeGeometry)
-        ] = [
-            (
-                "logical",
-                geometry(logicalWidth: logicalWidth + 0.02)
-            ),
-            (
-                "native",
-                geometry(nativeWidth: nativeWidth + 0.02)
-            ),
-            (
-                "scale",
-                geometry(scale: scale + 0.02)
-            ),
-        ]
-        for (name, mismatchedGeometry) in fixedMismatches {
-            XCTAssertThrowsError(
-                try PlayCoverService.validateHello(
-                    payload(geometry: mismatchedGeometry),
-                    sessionID: "geometry-session",
-                    manifest: manifest,
-                    pid: pid,
-                    stdioLog: nil
-                ),
-                name
-            ) { error in
-                guard case .verificationFailed =
-                        error as? PlayCoverBackendError else {
-                    return XCTFail("\(name): unexpected error \(error)")
-                }
-                XCTAssertTrue(
-                    PlayCoverService.runtimeHelloFailureIsTerminal(error),
-                    name
-                )
-            }
-        }
-
         XCTAssertNoThrow(
             try PlayCoverService.validateHello(
-                payload(
-                    geometry: geometry(
-                        logicalWidth: logicalWidth + 0.005,
-                        logicalHeight: logicalHeight - 0.005,
-                        nativeWidth: nativeWidth + 0.005,
-                        nativeHeight: nativeHeight - 0.005,
-                        scale: scale + 0.005,
-                        windowWidth: logicalWidth - 0.005,
-                        windowHeight: logicalHeight + 0.005
-                    )
-                ),
-                sessionID: "geometry-session",
+                payload(),
+                sessionID: "control-session",
                 manifest: manifest,
                 pid: pid,
                 stdioLog: nil
-            ),
-            "fixed geometry uses the Runtime socket's 0.01 tolerance"
+            )
         )
-
-        let transientReadiness: [
-            (String, String, PlayCoverRuntimeGeometry)
-        ] = [
-            (
-                "waiting stage and zero window",
-                "waiting-for-window",
-                geometry(windowWidth: 0, windowHeight: 0)
-            ),
-            (
-                "unstable window",
-                "ready",
-                geometry(windowWidth: logicalWidth - 1)
-            ),
-        ]
-        for (name, stage, transientGeometry) in transientReadiness {
-            XCTAssertThrowsError(
-                try PlayCoverService.validateHello(
-                    payload(
-                        geometry: transientGeometry,
-                        stage: stage
-                    ),
-                    sessionID: "geometry-session",
-                    manifest: manifest,
-                    pid: pid,
-                    stdioLog: nil
+        XCTAssertThrowsError(
+            try PlayCoverService.validateHello(
+                payload(
+                    generationKey: String(repeating: "b", count: 64)
                 ),
-                name
-            ) { error in
-                guard case .launchFailed =
-                        error as? PlayCoverBackendError else {
-                    return XCTFail("\(name): unexpected error \(error)")
-                }
-                XCTAssertFalse(
-                    PlayCoverService.runtimeHelloFailureIsTerminal(error),
-                    name
-                )
-            }
-        }
+                sessionID: "control-session",
+                manifest: manifest,
+                pid: pid,
+                stdioLog: nil
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverService.validateHello(
+                payload(controlStage: "required-hook-failed"),
+                sessionID: "control-session",
+                manifest: manifest,
+                pid: pid,
+                stdioLog: nil
+            )
+        )
     }
 
     func testLaunchIdentityMustBeNewAndMatchPreparedGeneration()
@@ -1363,20 +1239,6 @@ final class PlayCoverCoreTests: XCTestCase {
             ),
             "an unrelated App path is not a Runtime candidate"
         )
-        XCTAssertTrue(
-            PlayCoverService.runtimeCandidateAllowsLegacyHelloFallback(
-                bundleURLPath: launchAliasPath,
-                launchAliasPath: launchAliasPath
-            )
-        )
-        XCTAssertFalse(
-            PlayCoverService.runtimeCandidateAllowsLegacyHelloFallback(
-                bundleURLPath: manifest.preparedAppPath,
-                launchAliasPath: launchAliasPath
-            ),
-            "a canonical prepared path requires identified ping"
-        )
-
         let callbackAtAlias =
             PlayCoverService.LaunchedApplicationIdentity(
                 pid: 42,
@@ -1475,254 +1337,6 @@ final class PlayCoverCoreTests: XCTestCase {
                 )
             )
         }
-    }
-
-    func testLegacyRuntimeHelloUsesRemainingDeadlineExactlyOnce()
-        throws
-    {
-        let fixture = try makeSourceApp()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let inspection = try PlayCoverService.inspect(
-            appPath: fixture.app.path
-        )
-        let manifest = try makeManifest(
-            inspection: inspection,
-            preparedAppPath: fixture.app.path,
-            generationKey: String(repeating: "e", count: 64)
-        )
-        let launchAliasPath = fixture.root
-            .appendingPathComponent("Launch.app").path
-        let identity =
-            PlayCoverService.LaunchedApplicationIdentity(
-                pid: getpid(),
-                bundleIdentifier: manifest.bundleIdentifier,
-                bundleURLPath: launchAliasPath,
-                executablePath: manifest.executablePath,
-                processStartTimeMicroseconds: 10,
-                source: .observedCandidate
-            )
-        let legacyPing = PlayCoverRuntimePingPayload(
-            pid: nil,
-            bundleIdentifier: nil,
-            executablePath: nil,
-            pong: true
-        )
-
-        var attempted = false
-        var pingTimeouts: [TimeInterval] = []
-        var helloTimeouts: [TimeInterval] = []
-        var nowIndex = 0
-        let nowValues = [100.0, 100.25]
-        XCTAssertTrue(
-            PlayCoverService.authenticateRuntimeLaunchCandidate(
-                identity,
-                runtimeSocketPath: "/unused/runtime.sock",
-                sessionID: "legacy-session",
-                manifest: manifest,
-                launchAliasPath: launchAliasPath,
-                deadline: 101,
-                legacyHelloAttempted: &attempted,
-                pingOverride: {
-                    pingTimeouts.append($0)
-                    return legacyPing
-                },
-                helloOverride: {
-                    helloTimeouts.append($0)
-                },
-                now: {
-                    let value = nowValues[
-                        min(nowIndex, nowValues.count - 1)
-                    ]
-                    nowIndex += 1
-                    return value
-                }
-            )
-        )
-        XCTAssertTrue(attempted)
-        XCTAssertEqual(pingTimeouts.count, 1)
-        XCTAssertEqual(helloTimeouts.count, 1)
-        XCTAssertEqual(nowIndex, 2)
-        let pingTimeout = try XCTUnwrap(pingTimeouts.first)
-        let helloTimeout = try XCTUnwrap(helloTimeouts.first)
-        XCTAssertEqual(pingTimeout, 0.05, accuracy: 0.000_001)
-        XCTAssertEqual(helloTimeout, 0.75, accuracy: 0.000_001)
-
-        XCTAssertFalse(
-            PlayCoverService.authenticateRuntimeLaunchCandidate(
-                identity,
-                runtimeSocketPath: "/unused/runtime.sock",
-                sessionID: "legacy-session",
-                manifest: manifest,
-                launchAliasPath: launchAliasPath,
-                deadline: 101,
-                legacyHelloAttempted: &attempted,
-                pingOverride: { _ in legacyPing },
-                helloOverride: { _ in
-                    XCTFail("legacy hello must not be queued twice")
-                },
-                now: { 100 }
-            )
-        )
-        XCTAssertEqual(helloTimeouts.count, 1)
-
-        var failedAttempted = false
-        var failedHelloCount = 0
-        func authenticateWithFailingHello() -> Bool {
-            PlayCoverService.authenticateRuntimeLaunchCandidate(
-                identity,
-                runtimeSocketPath: "/unused/runtime.sock",
-                sessionID: "legacy-session",
-                manifest: manifest,
-                launchAliasPath: launchAliasPath,
-                deadline: 101,
-                legacyHelloAttempted: &failedAttempted,
-                pingOverride: { _ in legacyPing },
-                helloOverride: { _ in
-                    failedHelloCount += 1
-                    throw NSError(
-                        domain: "PlayCoverCoreTests",
-                        code: 1
-                    )
-                },
-                now: { 100 }
-            )
-        }
-        XCTAssertFalse(authenticateWithFailingHello())
-        XCTAssertFalse(authenticateWithFailingHello())
-        XCTAssertTrue(failedAttempted)
-        XCTAssertEqual(failedHelloCount, 1)
-
-        var exhaustedAttempted = false
-        var exhaustedNowIndex = 0
-        let exhaustedNowValues = [100.0, 101.0]
-        XCTAssertFalse(
-            PlayCoverService.authenticateRuntimeLaunchCandidate(
-                identity,
-                runtimeSocketPath: "/unused/runtime.sock",
-                sessionID: "legacy-session",
-                manifest: manifest,
-                launchAliasPath: launchAliasPath,
-                deadline: 101,
-                legacyHelloAttempted: &exhaustedAttempted,
-                pingOverride: { _ in legacyPing },
-                helloOverride: { _ in
-                    XCTFail("expired fallback must not send hello")
-                },
-                now: {
-                    let value = exhaustedNowValues[
-                        min(
-                            exhaustedNowIndex,
-                            exhaustedNowValues.count - 1
-                        )
-                    ]
-                    exhaustedNowIndex += 1
-                    return value
-                }
-            )
-        )
-        XCTAssertFalse(exhaustedAttempted)
-        XCTAssertEqual(exhaustedNowIndex, 2)
-
-        var pingFailureAttempted = false
-        XCTAssertFalse(
-            PlayCoverService.authenticateRuntimeLaunchCandidate(
-                identity,
-                runtimeSocketPath: "/unused/runtime.sock",
-                sessionID: "legacy-session",
-                manifest: manifest,
-                launchAliasPath: launchAliasPath,
-                deadline: 101,
-                legacyHelloAttempted: &pingFailureAttempted,
-                pingOverride: { _ in
-                    throw NSError(
-                        domain: "PlayCoverCoreTests",
-                        code: 2
-                    )
-                },
-                helloOverride: { _ in
-                    XCTFail("failed ping must not send hello")
-                },
-                now: { 100 }
-            )
-        )
-        XCTAssertFalse(pingFailureAttempted)
-
-        let identifiedPing = PlayCoverRuntimePingPayload(
-            pid: identity.pid,
-            bundleIdentifier: manifest.bundleIdentifier,
-            executablePath: manifest.executablePath,
-            pong: true
-        )
-        var identifiedAttempted = false
-        XCTAssertTrue(
-            PlayCoverService.authenticateRuntimeLaunchCandidate(
-                identity,
-                runtimeSocketPath: "/unused/runtime.sock",
-                sessionID: "current-session",
-                manifest: manifest,
-                launchAliasPath: launchAliasPath,
-                deadline: 101,
-                legacyHelloAttempted: &identifiedAttempted,
-                pingOverride: { _ in identifiedPing },
-                helloOverride: { _ in
-                    XCTFail("identified ping must not use legacy hello")
-                },
-                now: { 100 }
-            )
-        )
-        XCTAssertFalse(identifiedAttempted)
-
-        let preparedIdentity =
-            PlayCoverService.LaunchedApplicationIdentity(
-                pid: identity.pid,
-                bundleIdentifier: manifest.bundleIdentifier,
-                bundleURLPath: manifest.preparedAppPath,
-                executablePath: manifest.executablePath,
-                processStartTimeMicroseconds: 10,
-                source: .observedCandidate
-            )
-        var preparedAttempted = false
-        XCTAssertFalse(
-            PlayCoverService.authenticateRuntimeLaunchCandidate(
-                preparedIdentity,
-                runtimeSocketPath: "/unused/runtime.sock",
-                sessionID: "legacy-session",
-                manifest: manifest,
-                launchAliasPath: launchAliasPath,
-                deadline: 101,
-                legacyHelloAttempted: &preparedAttempted,
-                pingOverride: { _ in legacyPing },
-                helloOverride: { _ in
-                    XCTFail(
-                        "canonical prepared path requires identified ping"
-                    )
-                },
-                now: { 100 }
-            )
-        )
-        XCTAssertFalse(preparedAttempted)
-
-        var expiredAttempted = false
-        XCTAssertFalse(
-            PlayCoverService.authenticateRuntimeLaunchCandidate(
-                identity,
-                runtimeSocketPath: "/unused/runtime.sock",
-                sessionID: "legacy-session",
-                manifest: manifest,
-                launchAliasPath: launchAliasPath,
-                deadline: 99,
-                legacyHelloAttempted: &expiredAttempted,
-                pingOverride: { _ in
-                    XCTFail("expired probe must not send ping")
-                    return legacyPing
-                },
-                helloOverride: { _ in
-                    XCTFail("expired probe must not send hello")
-                },
-                now: { 100 }
-            )
-        )
-        XCTAssertFalse(expiredAttempted)
     }
 
     func testSessionLaunchAliasUsesPinnedTopLevelSymlinkFarm()
@@ -2048,43 +1662,6 @@ final class PlayCoverCoreTests: XCTestCase {
         )
     }
 
-    func testConcurrentInstanceUsesDirectSpawnOnlyForRunningExactPID() {
-        let exact = PlayCoverPendingLaunchRecovery.Candidate(
-            pid: 42,
-            processBirthMicroseconds: 9
-        )
-        XCTAssertTrue(
-            PlayCoverService.shouldDirectSpawnConcurrentInstance(
-                exactExecutableCensus: .complete([exact]),
-                runningApplicationPIDs: [42]
-            )
-        )
-        XCTAssertTrue(
-            PlayCoverService.shouldDirectSpawnConcurrentInstance(
-                exactExecutableCensus: .incomplete(
-                    candidates: [exact],
-                    reason: "an unrelated process was unreadable"
-                ),
-                runningApplicationPIDs: [42]
-            ),
-            "a positively identified exact App is sufficient even when "
-                + "the negative census is incomplete"
-        )
-        XCTAssertFalse(
-            PlayCoverService.shouldDirectSpawnConcurrentInstance(
-                exactExecutableCensus: .complete([]),
-                runningApplicationPIDs: [42]
-            )
-        )
-        XCTAssertFalse(
-            PlayCoverService.shouldDirectSpawnConcurrentInstance(
-                exactExecutableCensus: .complete([exact]),
-                runningApplicationPIDs: [7]
-            ),
-            "a process-table match alone must not bypass NSWorkspace"
-        )
-    }
-
     func testColdRegistrationRetriesSameFacadeSeriallyWithinOneDeadline()
         throws {
         let fixture = try makePendingWorkspaceLaunchFixture()
@@ -2388,9 +1965,8 @@ final class PlayCoverCoreTests: XCTestCase {
                             sessionID: sessionID,
                             runtimeSocketPath:
                                 intent.runtimeSocketPath,
-                            runtimeHomePath:
-                                paths.playcoverRuntimeHome,
-                            homeID: paths.playcoverHomeID,
+                            playChainPath:
+                                paths.playcoverPlayChain,
                             pendingLaunchPaths: paths,
                             deadline:
                                 ProcessInfo.processInfo
@@ -2501,9 +2077,8 @@ final class PlayCoverCoreTests: XCTestCase {
                     launchCapability: capability,
                     sessionID: sessionID,
                     runtimeSocketPath: socketPath,
-                    runtimeHomePath: fixture.root
+                    playChainPath: fixture.root
                         .appendingPathComponent("runtime-home").path,
-                    homeID: String(repeating: "a", count: 64),
                     deadline:
                         ProcessInfo.processInfo.systemUptime + 0.05,
                     launchAlias: &alias,
@@ -2819,12 +2394,7 @@ final class PlayCoverCoreTests: XCTestCase {
             $0.hasPrefix(".staging-\(generationKey)-")
         }
         XCTAssertTrue(residues.isEmpty)
-        let reference = try XCTUnwrap(
-            PlayCoverGlobalReferenceStore.read(paths: paths)
-        )
-        XCTAssertNil(reference.preparingGenerationKey)
-        XCTAssertNil(reference.preparationID)
-        XCTAssertNil(reference.lastGenerationKey)
+        XCTAssertNil(try PlayCoverHomeStore.readLast(paths: paths))
     }
 
     func testManagedPathAcceptsEquivalentPrivateTmpAlias()
@@ -3202,7 +2772,7 @@ final class PlayCoverCoreTests: XCTestCase {
             fileURLWithPath: childPaths.playcoverGlobalObjects,
             isDirectory: true
         ).appendingPathComponent(generationKey, isDirectory: true)
-        try PlayCoverGlobalReferenceStore.updateLast(
+        try PlayCoverHomeStore.updateLast(
             generationKey: generationKey,
             paths: childPaths
         )
@@ -4344,130 +3914,6 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertTrue(second.reused)
     }
 
-    func testPreparedSelectionPinBlocksCrossHomeGCUntilHandoff()
-        throws {
-        let fixture = try makeSourceApp()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let inspection = try PlayCoverService.inspect(
-            appPath: fixture.app.path
-        )
-        let generationKey = String(repeating: "b", count: 64)
-        try installFakeManagedPipeline(
-            source: inspection,
-            generationKey: generationKey
-        )
-        let accountHome = fixture.root.appendingPathComponent(
-            "account",
-            isDirectory: true
-        ).path
-        let producer = resolvePlayCoverTestPaths(
-            environment: [
-                "IOS_USE_HOME": fixture.root
-                    .appendingPathComponent("producer").path,
-            ],
-            accountHomeDirectory: accountHome
-        )
-        let selector = resolvePlayCoverTestPaths(
-            environment: [
-                "IOS_USE_HOME": fixture.root
-                    .appendingPathComponent("selector").path,
-            ],
-            accountHomeDirectory: accountHome
-        )
-        let collector = resolvePlayCoverTestPaths(
-            environment: [
-                "IOS_USE_HOME": fixture.root
-                    .appendingPathComponent("collector").path,
-            ],
-            accountHomeDirectory: accountHome
-        )
-        let prepared =
-            try PlayCoverManagedAppService.resolveExplicitApp(
-                fixture.app.path,
-                paths: producer
-            )
-        let producerReference = URL(
-            fileURLWithPath: producer.playcoverGlobalHomes,
-            isDirectory: true
-        ).appendingPathComponent(
-            "\(producer.playcoverHomeID).json"
-        )
-        var producerReferenceObject = try XCTUnwrap(
-            try JSONSerialization.jsonObject(
-                with: Data(contentsOf: producerReference)
-            ) as? [String: Any]
-        )
-        producerReferenceObject.removeValue(
-            forKey: "lastGenerationKey"
-        )
-        try JSONSerialization.data(
-            withJSONObject: producerReferenceObject,
-            options: [.sortedKeys]
-        ).write(to: producerReference, options: .atomic)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: producerReference.path
-        )
-
-        var pruneWhilePinned:
-            PlayCoverGenerationPruner.Result?
-        PlayCoverManagedAppService
-            .afterPreparedSelectionPinnedForTesting = {
-                pruneWhilePinned =
-                    PlayCoverGenerationPruner
-                        .pruneAfterSuccessfulStart(
-                            paths: collector,
-                            currentGenerationKey:
-                                String(
-                                    repeating: "c",
-                                    count: 64
-                                )
-                        )
-            }
-        let selected =
-            try PlayCoverManagedAppService.resolveExplicitApp(
-                prepared.manifest.preparedAppPath,
-                paths: selector
-            )
-        let preparationID = try XCTUnwrap(
-            selected.selectionPreparationID
-        )
-
-        XCTAssertTrue(
-            FileManager.default.fileExists(
-                atPath: prepared.manifest.preparedAppPath
-            )
-        )
-        XCTAssertTrue(
-            try XCTUnwrap(pruneWhilePinned).warnings.contains {
-                $0.contains("protected corrupt generation")
-            }
-        )
-        try PlayCoverGlobalReferenceStore.abandonPreparation(
-            generationKey: generationKey,
-            preparationID: preparationID,
-            paths: selector
-        )
-
-        let afterHandoff =
-            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
-                paths: collector,
-                currentGenerationKey:
-                    String(repeating: "c", count: 64)
-            )
-        XCTAssertTrue(
-            afterHandoff.removedGenerationKeys.contains(
-                generationKey
-            ),
-            "\(afterHandoff)"
-        )
-        XCTAssertFalse(
-            FileManager.default.fileExists(
-                atPath: prepared.manifest.preparedAppPath
-            )
-        )
-    }
-
     func testSameContentAtDifferentSourcePathReusesGeneration() throws {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -4677,10 +4123,8 @@ final class PlayCoverCoreTests: XCTestCase {
                             sessionID: fixture.sessionID,
                             runtimeSocketPath:
                                 fixture.runtimeSocketPath,
-                            runtimeHomePath:
-                                fixture.paths.playcoverRuntimeHome,
-                            homeID:
-                                fixture.paths.playcoverHomeID,
+                            playChainPath:
+                                fixture.paths.playcoverPlayChain,
                             pendingLaunchPaths: fixture.paths,
                             deadline: deadline,
                             launchAlias: &launchAlias,

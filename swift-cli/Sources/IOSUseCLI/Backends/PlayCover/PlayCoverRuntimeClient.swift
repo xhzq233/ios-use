@@ -15,6 +15,7 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case dismissAlert
     case dismissAlertByLabel
     case open
+    case debug
 }
 
 indirect enum PlayCoverRuntimeJSONValue: Codable, Equatable, Sendable {
@@ -261,6 +262,18 @@ struct PlayCoverRuntimeOpenArguments: Codable, Equatable, Sendable {
     let url: String
 }
 
+struct PlayCoverRuntimeDebugArguments: Codable, Equatable, Sendable {
+    let script: String?
+    let reset: Bool
+    let stream: Bool
+
+    init(script: String? = nil, reset: Bool = false, stream: Bool = false) {
+        self.script = script
+        self.reset = reset
+        self.stream = stream
+    }
+}
+
 enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
     case empty(PlayCoverRuntimeEmptyArguments = .init())
     case dom(PlayCoverRuntimeDOMArguments)
@@ -274,6 +287,7 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
         PlayCoverRuntimeDismissAlertByLabelArguments
     )
     case open(PlayCoverRuntimeOpenArguments)
+    case debug(PlayCoverRuntimeDebugArguments)
 
     func encode(to encoder: Encoder) throws {
         switch self {
@@ -296,6 +310,8 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
         case .dismissAlertByLabel(let arguments):
             try arguments.encode(to: encoder)
         case .open(let arguments):
+            try arguments.encode(to: encoder)
+        case .debug(let arguments):
             try arguments.encode(to: encoder)
         }
     }
@@ -418,6 +434,12 @@ struct PlayCoverRuntimeOpenPayload: Codable, Equatable, Sendable {
     let url: String
 }
 
+struct PlayCoverRuntimeDebugPayload: Codable, Equatable, Sendable {
+    let display: String
+    let events: [String]
+    let agent: String
+}
+
 struct PlayCoverRuntimeFullFrame: Codable, Equatable, Sendable {
     let logicalRect: PlayCoverRuntimeFrame
     let pixelWidth: Int
@@ -504,6 +526,16 @@ struct PlayCoverRuntimeStdioState:
     let errorNumber: Int32?
 }
 
+struct PlayCoverRuntimeUIReadiness:
+    Codable,
+    Equatable,
+    Sendable
+{
+    let state: String
+    let stage: String
+    let failure: String?
+}
+
 struct PlayCoverRuntimeHelloPayload:
     Codable,
     Equatable,
@@ -513,11 +545,12 @@ struct PlayCoverRuntimeHelloPayload:
     let pid: Int32
     let bundleIdentifier: String
     let executablePath: String
+    let generationKey: String
     let capabilities: [String]
-    let geometry: PlayCoverRuntimeGeometry
-    let stage: String
-    let observed: [String: PlayCoverRuntimeJSONValue]
-    var stdio: PlayCoverRuntimeStdioState? = nil
+    let controlStage: String
+    let controlFailure: String?
+    let uiState: PlayCoverRuntimeUIReadiness
+    let stdio: PlayCoverRuntimeStdioState
 }
 
 struct PlayCoverRuntimeDiagnosticsPayload:
@@ -532,8 +565,9 @@ struct PlayCoverRuntimeDiagnosticsPayload:
     let capabilities: [String]
     let geometry: PlayCoverRuntimeGeometry
     let stage: String
+    let uiState: PlayCoverRuntimeUIReadiness
     let diagnostics: [String: PlayCoverRuntimeJSONValue]
-    var stdio: PlayCoverRuntimeStdioState? = nil
+    let stdio: PlayCoverRuntimeStdioState
 }
 
 struct PlayCoverRuntimePingPayload: Codable, Equatable, Sendable {
@@ -548,11 +582,6 @@ struct PlayCoverRuntimePingPayload: Codable, Equatable, Sendable {
             executablePath != nil
     }
 
-    var hasAnyIdentity: Bool {
-        pid != nil ||
-            bundleIdentifier != nil ||
-            executablePath != nil
-    }
 }
 
 struct PlayCoverRuntimeScreenshotResult:
@@ -600,6 +629,10 @@ private struct PlayCoverRuntimeOpenResult: Codable {
     let open: PlayCoverRuntimeOpenPayload
 }
 
+private struct PlayCoverRuntimeDebugResult: Codable {
+    let debug: PlayCoverRuntimeDebugPayload
+}
+
 enum PlayCoverRuntimeResponsePayload: Equatable, Sendable {
     case hello(PlayCoverRuntimeHelloPayload)
     case ping(PlayCoverRuntimePingPayload)
@@ -614,6 +647,7 @@ enum PlayCoverRuntimeResponsePayload: Equatable, Sendable {
     case dismissAlert(PlayCoverRuntimeAlertPayload)
     case dismissAlertByLabel(PlayCoverRuntimeAlertPayload)
     case open(PlayCoverRuntimeOpenPayload)
+    case debug(PlayCoverRuntimeDebugPayload)
 }
 
 typealias PlayCoverRuntimeErrorElement = PlayCoverRuntimeElementSummary
@@ -674,7 +708,6 @@ struct PlayCoverRuntimeInteractionState:
     Equatable,
     Sendable
 {
-    let schemaVersion: Int
     let refreshComplete: Bool?
     let refreshError: String?
     let blocking: Bool
@@ -682,7 +715,9 @@ struct PlayCoverRuntimeInteractionState:
 
     var warnings: [String] {
         var values: [String] = []
-        if refreshComplete == false {
+        if refreshComplete == false,
+           refreshError != "runtime_ui_not_ready",
+           refreshError != "runtime_ui_failed" {
             values.append(
                 "The Runtime could not refresh alert status"
                     + (refreshError.map { ": \($0)." } ?? ".")
@@ -709,7 +744,6 @@ struct PlayCoverRuntimeInteractionState:
 
     var machineValue: MachineValue {
         var fields: [String: MachineValue] = [
-            "schemaVersion": .integer(schemaVersion),
             "blocking": .boolean(blocking),
             "interactions": .array(
                 interactions.map(\.machineValue)
@@ -809,11 +843,9 @@ enum PlayCoverRuntimeClientError: Error, Equatable, CustomStringConvertible, Sen
     case responseFrameTooLarge(actualBytes: Int, maximumBytes: Int)
     case responseIsNotUTF8
     case responseDecodingFailed
-    case unsupportedSchemaVersion(Int)
     case requestIDMismatch
     case sessionIDMismatch
     case responseIdentityMismatch(String)
-    case alertRefreshUnsupportedByRuntime
     case malformedResponse(String)
     case remoteError(
         code: String,
@@ -869,16 +901,12 @@ enum PlayCoverRuntimeClientError: Error, Equatable, CustomStringConvertible, Sen
             return "Mac Runtime response is not valid UTF-8"
         case .responseDecodingFailed:
             return "Mac Runtime response is not valid protocol JSON"
-        case .unsupportedSchemaVersion(let version):
-            return "unsupported Mac Runtime response schemaVersion \(version)"
         case .requestIDMismatch:
             return "Mac Runtime response requestId does not match the request"
         case .sessionIDMismatch:
             return "Mac Runtime response sessionID does not match the active session"
         case .responseIdentityMismatch(let field):
             return "Mac Runtime response \(field) does not match the active session"
-        case .alertRefreshUnsupportedByRuntime:
-            return "the active Mac Runtime predates alert-status refresh; run `ios-use stop`, then start the App again with this ios-use build"
         case .malformedResponse(let reason):
             return "malformed Mac Runtime response: \(reason)"
         case .remoteError(let code, let message, _):
@@ -893,10 +921,10 @@ enum PlayCoverRuntimeClientError: Error, Equatable, CustomStringConvertible, Sen
 /// fresh AF_UNIX/SOCK_STREAM connection, authenticates the peer UID, exchanges
 /// exactly one bounded JSON frame, and closes the connection.
 final class PlayCoverRuntimeClient {
-    static let schemaVersion = 3
     static let maximumRequestBodyBytes = 64 * 1024
     static let maximumResponseBodyBytes = 16 * 1024 * 1024
     static let defaultTimeoutSeconds: TimeInterval = 5
+    static let debugTimeoutSeconds: TimeInterval = 15
     static let screenshotTimeoutSeconds: TimeInterval = 15
 
     private let socketPath: String
@@ -1084,6 +1112,127 @@ final class PlayCoverRuntimeClient {
         return payload
     }
 
+    func debug(
+        _ arguments: PlayCoverRuntimeDebugArguments
+    ) throws -> PlayCoverRuntimeDebugPayload {
+        guard case .debug(let payload) = try request(
+            .debug,
+            arguments: .debug(arguments)
+        ) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "debug response type mismatch"
+            )
+        }
+        return payload
+    }
+
+    /// Debug is the one Runtime command that may emit more than one response
+    /// frame.  Event frames are delivered before the final result and, for
+    /// `--stream`, the authenticated connection remains open for subsequent
+    /// Agent events until the peer closes it.
+    func debug(
+        _ arguments: PlayCoverRuntimeDebugArguments,
+        onEvent: ((String) -> Void)? = nil,
+        onFinal: ((PlayCoverRuntimeDebugPayload) -> Void)? = nil
+    ) throws -> PlayCoverRuntimeDebugPayload {
+        guard timeoutSeconds.isFinite, timeoutSeconds > 0 else {
+            throw PlayCoverRuntimeClientError.invalidTimeout
+        }
+        let address = try makeAddress()
+        let requestID = UUID().uuidString
+        let request = RequestEnvelope(
+            requestId: requestID,
+            sessionID: sessionID,
+            command: .debug,
+            arguments: .debug(arguments),
+            refreshAlertStatus: refreshAlertStatus ? true : nil
+        )
+        let requestBody: Data
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            requestBody = try encoder.encode(request)
+        } catch {
+            throw PlayCoverRuntimeClientError.requestEncodingFailed
+        }
+        guard !requestBody.isEmpty,
+              requestBody.count <= Self.maximumRequestBodyBytes else {
+            throw PlayCoverRuntimeClientError.requestFrameTooLarge(
+                actualBytes: requestBody.count,
+                maximumBytes: Self.maximumRequestBodyBytes
+            )
+        }
+        let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw PlayCoverRuntimeClientError.socketCreateFailed(errno: errno)
+        }
+        defer { Darwin.close(descriptor) }
+        let deadline = ProcessInfo.processInfo.systemUptime + timeoutSeconds
+        try configure(descriptor)
+        try connect(descriptor, to: address, deadline: deadline)
+        try authenticatePeer(descriptor)
+        try writeFrame(requestBody, to: descriptor, deadline: deadline)
+
+        var deliveredEvents = 0
+        var finalPayload: PlayCoverRuntimeDebugPayload?
+        while finalPayload == nil {
+            let body = try readFrame(from: descriptor, deadline: deadline)
+            if let event = try decodeDebugEvent(
+                body,
+                expectedRequestID: requestID
+            ) {
+                deliveredEvents += 1
+                onEvent?(event.display)
+                continue
+            }
+            let response: PlayCoverRuntimeDebugResult = try decodeResponse(
+                body,
+                expectedRequestID: requestID
+            )
+            finalPayload = response.debug
+        }
+        guard let payload = finalPayload else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "debug response is missing final payload"
+            )
+        }
+        if deliveredEvents < payload.events.count {
+            for event in payload.events.dropFirst(deliveredEvents) {
+                onEvent?(event)
+            }
+        }
+        onFinal?(payload)
+        guard arguments.stream else {
+            return payload
+        }
+
+        // The Runtime keeps this request's connection alive for stream mode.
+        // A clean peer close ends the subscription and still returns the
+        // already-delivered final value.
+        while true {
+            do {
+                let body = try readFrame(
+                    from: descriptor,
+                    deadline: .infinity
+                )
+                guard let event = try decodeDebugEvent(
+                    body,
+                    expectedRequestID: requestID
+                ) else {
+                    throw PlayCoverRuntimeClientError.malformedResponse(
+                        "stream contained an unexpected final response"
+                    )
+                }
+                onEvent?(event.display)
+            } catch let error as PlayCoverRuntimeClientError {
+                if case .unexpectedEOF = error {
+                    return payload
+                }
+                throw error
+            }
+        }
+    }
+
     func request(_ command: PlayCoverRuntimeCommand) throws -> PlayCoverRuntimeResponsePayload {
         try request(command, arguments: .empty())
     }
@@ -1105,11 +1254,6 @@ final class PlayCoverRuntimeClient {
                 throw PlayCoverRuntimeClientError.malformedResponse(
                     "ping acknowledgement is false"
                 )
-            }
-            guard payload.hasAnyIdentity else {
-                // Prepared generations from before identified ping remain
-                // launchable through the exact-identity hello fallback.
-                return .ping(payload)
             }
             guard payload.hasCompleteIdentity,
                   let pid = payload.pid,
@@ -1172,6 +1316,10 @@ final class PlayCoverRuntimeClient {
             let payload: PlayCoverRuntimeOpenResult =
                 try performRequest(command, arguments: arguments)
             return .open(payload.open)
+        case .debug:
+            let payload: PlayCoverRuntimeDebugResult =
+                try performRequest(command, arguments: arguments)
+            return .debug(payload.debug)
         }
     }
 
@@ -1185,7 +1333,6 @@ final class PlayCoverRuntimeClient {
         let address = try makeAddress()
         let requestID = UUID().uuidString
         let request = RequestEnvelope(
-            schemaVersion: Self.schemaVersion,
             requestId: requestID,
             sessionID: sessionID,
             command: command,
@@ -1639,6 +1786,48 @@ final class PlayCoverRuntimeClient {
         return result
     }
 
+    private func decodeDebugEvent(
+        _ body: Data,
+        expectedRequestID: String
+    ) throws -> DebugEventEnvelope? {
+        guard let object = try? JSONSerialization.jsonObject(
+            with: body,
+            options: []
+        ) as? [String: Any], object["event"] != nil else {
+            return nil
+        }
+        guard Set(object.keys) == Set([
+            "requestId",
+            "sessionID",
+            "event",
+            "kind",
+            "display",
+        ]) else {
+            throw PlayCoverRuntimeClientError.responseDecodingFailed
+        }
+        let envelope: DebugEventEnvelope
+        do {
+            envelope = try JSONDecoder().decode(
+                DebugEventEnvelope.self,
+                from: body
+            )
+        } catch {
+            throw PlayCoverRuntimeClientError.responseDecodingFailed
+        }
+        guard envelope.requestId == expectedRequestID else {
+            throw PlayCoverRuntimeClientError.requestIDMismatch
+        }
+        guard envelope.sessionID == sessionID else {
+            throw PlayCoverRuntimeClientError.sessionIDMismatch
+        }
+        guard envelope.event == "debug" else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "unsupported Runtime event frame"
+            )
+        }
+        return envelope
+    }
+
     private func ensureTimeRemaining(
         until deadline: TimeInterval,
         operation: String
@@ -1697,6 +1886,25 @@ final class PlayCoverRuntimeClient {
         guard let text = String(data: body, encoding: .utf8) else {
             throw PlayCoverRuntimeClientError.responseIsNotUTF8
         }
+        guard let object = try? JSONSerialization.jsonObject(
+            with: Data(text.utf8),
+            options: []
+        ) as? [String: Any] else {
+            throw PlayCoverRuntimeClientError.responseDecodingFailed
+        }
+        let requiredKeys = Set(["requestId", "sessionID", "ok"])
+        let allowedKeys = requiredKeys.union([
+            "payload",
+            "error",
+            "interactionState",
+            "performance",
+        ])
+        let actualKeys = Set(object.keys)
+        guard requiredKeys.isSubset(of: actualKeys),
+              actualKeys.isSubset(of: allowedKeys),
+              object["ok"] is Bool else {
+            throw PlayCoverRuntimeClientError.responseDecodingFailed
+        }
         let envelope: ResponseEnvelope<Payload>
         do {
             envelope = try JSONDecoder().decode(
@@ -1707,11 +1915,6 @@ final class PlayCoverRuntimeClient {
             throw PlayCoverRuntimeClientError.responseDecodingFailed
         }
 
-        guard envelope.schemaVersion == Self.schemaVersion else {
-            throw PlayCoverRuntimeClientError.unsupportedSchemaVersion(
-                envelope.schemaVersion
-            )
-        }
         guard envelope.requestId == expectedRequestID else {
             throw PlayCoverRuntimeClientError.requestIDMismatch
         }
@@ -1721,8 +1924,7 @@ final class PlayCoverRuntimeClient {
         try consumeResponseMetadata(
             interactionState: envelope.interactionState,
             performance: envelope.performance,
-            responseOK: envelope.ok,
-            remoteErrorCode: envelope.error?.code
+            responseOK: envelope.ok
         )
         if envelope.ok {
             guard envelope.error == nil else {
@@ -1758,8 +1960,7 @@ final class PlayCoverRuntimeClient {
     private func consumeResponseMetadata(
         interactionState: PlayCoverRuntimeInteractionState?,
         performance: PlayCoverRuntimeResponsePerformance?,
-        responseOK: Bool,
-        remoteErrorCode: String?
+        responseOK: Bool
     ) throws {
         if let performance {
             guard performance.alertRefreshElapsedMs?.isFinite
@@ -1771,10 +1972,6 @@ final class PlayCoverRuntimeClient {
                 )
             }
         } else if refreshAlertStatus {
-            if remoteErrorCode == "invalid_request" {
-                throw PlayCoverRuntimeClientError
-                    .alertRefreshUnsupportedByRuntime
-            }
             throw PlayCoverRuntimeClientError.malformedResponse(
                 "alert-refresh response is missing performance"
             )
@@ -1782,7 +1979,6 @@ final class PlayCoverRuntimeClient {
 
         if refreshAlertStatus {
             guard let interactionState,
-                  interactionState.schemaVersion == 1,
                   let alertRefreshElapsedMs =
                     performance?.alertRefreshElapsedMs
             else {
@@ -1882,7 +2078,6 @@ final class PlayCoverRuntimeClient {
 
 private extension PlayCoverRuntimeClient {
     struct RequestEnvelope: Encodable {
-        let schemaVersion: Int
         let requestId: String
         let sessionID: String
         let command: PlayCoverRuntimeCommand
@@ -1891,7 +2086,6 @@ private extension PlayCoverRuntimeClient {
     }
 
     struct ResponseEnvelope<Payload: Decodable>: Decodable {
-        let schemaVersion: Int
         let requestId: String
         let sessionID: String
         let ok: Bool
@@ -1901,6 +2095,14 @@ private extension PlayCoverRuntimeClient {
             PlayCoverRuntimeInteractionState?
         let performance:
             PlayCoverRuntimeResponsePerformance?
+    }
+
+    struct DebugEventEnvelope: Decodable {
+        let requestId: String
+        let sessionID: String
+        let event: String
+        let kind: String
+        let display: String
     }
 
     struct RemoteError: Codable {

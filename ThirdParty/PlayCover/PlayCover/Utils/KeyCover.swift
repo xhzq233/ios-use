@@ -370,7 +370,7 @@ class KeyCoverPassword {
 /// The encrypted `.keyCover` object is unlocked to the exact bundle `.db`
 /// before launch and locked again after the exact process exits. The master
 /// password is held by the user's macOS Keychain and scoped to the exact
-/// account Runtime-home PlayChain directory.
+/// account-global PlayChain directory.
 public enum PlayCoverHeadlessKeyCover {
     private enum Operation {
         case unlock

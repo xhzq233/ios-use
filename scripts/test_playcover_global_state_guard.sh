@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Source-only guard for PlayCover gates that can mutate account-global cache,
-# Runtime HOME, or socket state. IOS_USE_HOME does not isolate those roots.
+# PlayChain, or socket state. IOS_USE_HOME does not isolate those roots.
 
 playcover_global_state_config_fail() {
   local label="$1"
@@ -19,7 +19,7 @@ playcover_require_disposable_account_contract() {
   local canonical_account_home
   local expected_account_home
   local expected_global_cache
-  local expected_runtime_root
+  local expected_playchain_root
   local expected_socket_root
 
   if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -82,8 +82,9 @@ playcover_require_disposable_account_contract() {
     "could not canonicalize the effective account home"
 
   expected_account_home="$canonical_account_home"
-  expected_global_cache="$canonical_account_home/Library/Caches/dev.ios-use/mac/prepared-v1"
-  expected_runtime_root="$canonical_account_home/Library/Application Support/dev.ios-use/mac/runtime-homes"
+  expected_global_cache="$canonical_account_home/Library/Caches/dev.ios-use/mac/prepared"
+  expected_known_homes="$canonical_account_home/Library/Caches/dev.ios-use/homes"
+  expected_playchain_root="$canonical_account_home/Library/Application Support/dev.ios-use/mac/playchain"
   expected_socket_root="/private/tmp/dev.ios-use-$account_uid"
 
   if [[
@@ -104,17 +105,17 @@ playcover_require_disposable_account_contract() {
   PLAYCOVER_ACCOUNT_HOME="$expected_account_home"
   PLAYCOVER_GLOBAL_CACHE_ROOT="$expected_global_cache"
   PLAYCOVER_GLOBAL_OBJECTS_ROOT="$expected_global_cache/objects"
-  PLAYCOVER_GLOBAL_HOMES_ROOT="$expected_global_cache/homes"
+  PLAYCOVER_KNOWN_HOMES_ROOT="$expected_known_homes"
   PLAYCOVER_GLOBAL_LOCKS_ROOT="$expected_global_cache/locks"
-  PLAYCOVER_RUNTIME_ROOT="$expected_runtime_root"
+  PLAYCOVER_PLAYCHAIN_ROOT="$expected_playchain_root"
   PLAYCOVER_SOCKET_ROOT="$expected_socket_root"
   export \
     PLAYCOVER_ACCOUNT_UID \
     PLAYCOVER_ACCOUNT_HOME \
     PLAYCOVER_GLOBAL_CACHE_ROOT \
     PLAYCOVER_GLOBAL_OBJECTS_ROOT \
-    PLAYCOVER_GLOBAL_HOMES_ROOT \
+    PLAYCOVER_KNOWN_HOMES_ROOT \
     PLAYCOVER_GLOBAL_LOCKS_ROOT \
-    PLAYCOVER_RUNTIME_ROOT \
+    PLAYCOVER_PLAYCHAIN_ROOT \
     PLAYCOVER_SOCKET_ROOT
 }

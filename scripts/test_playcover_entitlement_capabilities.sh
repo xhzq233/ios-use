@@ -8,7 +8,7 @@ fail_case() {
 }
 
 PREPARED_APP=""
-RUNTIME_HOME=""
+PLAYCHAIN_ROOT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prepared-app)
@@ -17,10 +17,10 @@ while [[ $# -gt 0 ]]; do
       PREPARED_APP="$2"
       shift 2
       ;;
-    --runtime-home)
-      [[ -z "$RUNTIME_HOME" && $# -ge 2 ]] ||
+    --playchain-root)
+      [[ -z "$PLAYCHAIN_ROOT" && $# -ge 2 ]] ||
         fail_case "PCAP-CONFIG-ARGS"
-      RUNTIME_HOME="$2"
+      PLAYCHAIN_ROOT="$2"
       shift 2
       ;;
     *)
@@ -29,9 +29,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$PREPARED_APP" && -n "$RUNTIME_HOME" ]] ||
+[[ -n "$PREPARED_APP" && -n "$PLAYCHAIN_ROOT" ]] ||
   fail_case "PCAP-CONFIG-ARGS"
-[[ "$PREPARED_APP" == /* && "$RUNTIME_HOME" == /* ]] ||
+[[ "$PREPARED_APP" == /* && "$PLAYCHAIN_ROOT" == /* ]] ||
   fail_case "PCAP-CONFIG-ABSOLUTE"
 [[ "$(/usr/bin/uname -s)" == "Darwin" ]] ||
   fail_case "PCAP-CONFIG-HOST"
@@ -151,30 +151,23 @@ require_owned_regular() {
 
 require_owner_directory_700 "$PLAYCOVER_GLOBAL_CACHE_ROOT"
 PREPARED_ROOT="$PLAYCOVER_GLOBAL_OBJECTS_ROOT"
-GLOBAL_HOMES_DIR="$PLAYCOVER_GLOBAL_HOMES_ROOT"
+KNOWN_HOMES_DIR="$PLAYCOVER_KNOWN_HOMES_ROOT"
 GLOBAL_LOCKS_DIR="$PLAYCOVER_GLOBAL_LOCKS_ROOT"
-RUNTIME_ROOT="$PLAYCOVER_RUNTIME_ROOT"
 SOCKET_ROOT="$PLAYCOVER_SOCKET_ROOT"
-LOGS_DIR="$RUNTIME_HOME/logs"
-PLAYCHAIN_DIR="$RUNTIME_HOME/playchain"
+PLAYCHAIN_DIR="$PLAYCHAIN_ROOT"
+LOGS_DIR="$PLAYCHAIN_ROOT"
 
 for directory in \
   "$PREPARED_ROOT" \
-  "$GLOBAL_HOMES_DIR" \
+  "$KNOWN_HOMES_DIR" \
   "$GLOBAL_LOCKS_DIR" \
-  "$RUNTIME_ROOT" \
-  "$RUNTIME_HOME" \
   "$SOCKET_ROOT" \
-  "$LOGS_DIR" \
   "$PLAYCHAIN_DIR"; do
   require_owner_directory_700 "$directory"
 done
 
-RUNTIME_HOME_ID="${RUNTIME_HOME##*/}"
-[[
-  "${RUNTIME_HOME%/*}" == "$RUNTIME_ROOT" &&
-  "$RUNTIME_HOME_ID" =~ ^[0-9a-f]{64}$
-]] || fail_case "PCAP-CONFIG-RUNTIME-HOME"
+[[ "$PLAYCHAIN_ROOT" == "$PLAYCOVER_PLAYCHAIN_ROOT" ]] ||
+  fail_case "PCAP-CONFIG-PLAYCHAIN"
 
 require_owned_nonwritable_directory "$PREPARED_APP"
 [[ "$PREPARED_APP" == *.app ]] ||
@@ -250,7 +243,7 @@ AUDIT_TEMP_ROOT="$(
 case "$AUDIT_TEMP_ROOT/" in
   "$PLAYCOVER_ACCOUNT_HOME/"*|\
   "$PLAYCOVER_GLOBAL_CACHE_ROOT/"*|\
-  "$PLAYCOVER_RUNTIME_ROOT/"*|\
+  "$PLAYCOVER_PLAYCHAIN_ROOT/"*|\
   "$PLAYCOVER_SOCKET_ROOT/"*)
     fail_case "PCAP-TEMP"
     ;;

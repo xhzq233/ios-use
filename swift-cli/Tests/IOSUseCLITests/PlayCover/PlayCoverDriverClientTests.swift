@@ -2286,10 +2286,23 @@ final class PlayCoverDriverClientTests: XCTestCase {
                     bundleIdentifier: "com.example.runtime",
                     executablePath:
                         "/tmp/prepared/generation/com.example.runtime.app/Demo",
+                    generationKey: String(repeating: "a", count: 64),
                     capabilities: ["hello"],
-                    geometry: makeGeometry(),
-                    stage: "ready",
-                    observed: [:]
+                    controlStage: "ready",
+                    controlFailure: nil,
+                    uiState: .init(
+                        state: "ready",
+                        stage: "ready",
+                        failure: nil
+                    ),
+                    stdio: .init(
+                        status: "disabled",
+                        path: nil,
+                        device: nil,
+                        inode: nil,
+                        failureStage: nil,
+                        errorNumber: nil
+                    )
                 )
             )
         case .ping:
@@ -2310,7 +2323,20 @@ final class PlayCoverDriverClientTests: XCTestCase {
                     capabilities: ["diagnostics"],
                     geometry: makeGeometry(),
                     stage: "ready",
-                    diagnostics: [:]
+                    uiState: .init(
+                        state: "ready",
+                        stage: "ready",
+                        failure: nil
+                    ),
+                    diagnostics: [:],
+                    stdio: .init(
+                        status: "disabled",
+                        path: nil,
+                        device: nil,
+                        inode: nil,
+                        failureStage: nil,
+                        errorNumber: nil
+                    )
                 )
             )
         case .screenshot:
@@ -2377,6 +2403,14 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 preconditionFailure("missing open test payload")
             }
             return .open(open)
+        case .debug:
+            return .debug(
+                PlayCoverRuntimeDebugPayload(
+                    display: "test",
+                    events: [],
+                    agent: "test-agent"
+                )
+            )
         }
     }
 

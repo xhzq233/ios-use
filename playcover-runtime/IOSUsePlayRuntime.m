@@ -22,6 +22,7 @@
 static NSUInteger IOSUseRuntimeConfigurationAttempt;
 static BOOL IOSUseRuntimeSurfaceProbePending;
 static BOOL IOSUseRuntimeRequiredSafeAreaHookInstalled;
+static NSString *IOSUseRuntimeRequiredHookFailure;
 static NSString *IOSUseRuntimeConfigurationStage = @"loaded";
 static NSString *IOSUseRuntimeConfigurationFailure;
 static os_unfair_lock IOSUsePhotosAuthorizationLock =
@@ -234,7 +235,6 @@ IOSUsePhotosAuthorizationDiagnosticsLocked(void) {
         }];
     }
     NSDictionary<NSString *, id> *result = @{
-        @"schemaVersion": @1,
         @"hookInstalled": @(IOSUsePhotosAuthorizationHookInstalled),
         @"sequence": @(IOSUsePhotosAuthorizationSequence),
         @"stateVersion": @(
@@ -374,6 +374,7 @@ static void IOSUseConfigureRuntimeSurface(void) {
                 @"required safe-area provider hook did not install "
                  "before UIApplicationMain";
         }
+        IOSUsePlayRuntimePublishUIReadiness();
         return;
     }
     NSError *error = nil;
@@ -382,6 +383,7 @@ static void IOSUseConfigureRuntimeSurface(void) {
     if (windowReady) {
         IOSUseRuntimeConfigurationStage = @"window-configured";
         IOSUseRuntimeConfigurationFailure = nil;
+        IOSUsePlayRuntimePublishUIReadiness();
         return;
     }
     IOSUseRuntimeConfigurationStage = @"waiting-for-window";
@@ -389,14 +391,35 @@ static void IOSUseConfigureRuntimeSurface(void) {
         IOSUseRuntimeConfigurationStage = @"waiting-for-safe-area";
     } else if (error.code == 13) {
         IOSUseRuntimeConfigurationStage = @"safe-area-failed";
+    } else {
+        NSString *windowStatus = [
+            IOSUsePlayAppKitBridge readinessDiagnostics
+        ][@"status"];
+        if ([windowStatus isEqualToString:@"scene-geometry-failed"]) {
+            IOSUseRuntimeConfigurationStage = @"scene-geometry-failed";
+        } else if ([windowStatus isEqualToString:@"failed"]) {
+            IOSUseRuntimeConfigurationStage = @"window-configuration-failed";
+        }
     }
     IOSUseRuntimeConfigurationFailure =
         error.localizedDescription ?:
         @"fixed iPhone surface is not ready";
+    IOSUsePlayRuntimePublishUIReadiness();
+    if ([IOSUseRuntimeConfigurationStage hasSuffix:@"-failed"]) {
+        return;
+    }
     // Keep reconciling scene/window replacement, but do not pretend readiness.
     NSTimeInterval delay =
         IOSUseRuntimeConfigurationAttempt < 240 ? 0.25 : 1.0;
     IOSUseScheduleRuntimeSurfaceProbe(delay);
+}
+
+BOOL IOSUsePlayRuntimeRequiredHooksReady(void) {
+    return IOSUseRuntimeRequiredSafeAreaHookInstalled;
+}
+
+NSString *IOSUsePlayRuntimeRequiredHooksFailure(void) {
+    return IOSUseRuntimeRequiredHookFailure;
 }
 
 NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(
@@ -488,13 +511,23 @@ void IOSUsePlayRuntimeInitializeAfterStdio(void) {
                 safeAreaInstallError.localizedDescription ?:
                     @"required safe-area provider hook did not install "
                      "before UIApplicationMain";
+            IOSUseRuntimeRequiredHookFailure =
+                IOSUseRuntimeConfigurationFailure;
         }
+        IOSUsePlayRuntimeSetUIReadiness(
+            IOSUseRuntimeRequiredSafeAreaHookInstalled
+                ? @"initializing"
+                : @"failed",
+            IOSUseRuntimeRequiredSafeAreaHookInstalled
+                ? @"waiting-for-application-main"
+                : @"required-hook-failed",
+            IOSUseRuntimeRequiredHookFailure
+        );
         // UIKitMacHelper chooses its 0.77 iOS-on-Mac compatibility scale
         // before the first scene exists. Install the fixed identity scale
         // before UIApplicationMain creates UINSSceneViewController.
         [IOSUsePlayAppKitBridge installFixedSceneScale:NULL];
         IOSUseInstallPhotosAuthorizationHooks();
-        IOSUsePlayRuntimeStartSocket();
         NSNotificationCenter *center =
             NSNotificationCenter.defaultCenter;
         for (NSString *name in @[
@@ -514,8 +547,9 @@ void IOSUsePlayRuntimeInitializeAfterStdio(void) {
             }];
         }
         IOSUseScheduleRuntimeSurfaceProbe(0);
+        IOSUsePlayRuntimeStartCommandLoop();
         NSLog(
-            @"[ios-use-play] Runtime v3 loaded device=%s logical=%dx%d@%dx",
+            @"[ios-use-play] Runtime loaded device=%s logical=%dx%d@%dx",
             IOSUsePlayDeviceProductType(),
             IOSUsePlayDeviceLogicalWidth,
             IOSUsePlayDeviceLogicalHeight,

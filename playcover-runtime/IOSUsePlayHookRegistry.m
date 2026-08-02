@@ -1066,7 +1066,6 @@ IOSUsePlayHookRegistryDiagnostics(void) {
     }
     os_unfair_lock_unlock(&IOSUsePlayHookRegistryLock);
     return @{
-        @"schemaVersion": @1,
         @"requiredReady": @(requiredReady),
         @"entries": items,
     };

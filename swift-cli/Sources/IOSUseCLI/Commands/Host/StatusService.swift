@@ -302,22 +302,38 @@ public enum StatusService {
                 switch playCoverRuntimeHealth(info: info) {
                 case .healthy(let payload):
                     parts[0] = "healthy"
-                    parts.append("runtime: healthy")
+                    parts.append("runtime control: healthy")
                     if let socketPath = info.macRuntimeSocketPath {
                         parts.append("socket: \(socketPath)")
                     }
                     parts.append(
-                        "geometry: \(formatRuntimeNumber(payload.geometry.logical.width))"
-                            + "x\(formatRuntimeNumber(payload.geometry.logical.height))"
-                            + " @\(formatRuntimeNumber(payload.geometry.scale))x"
+                        "UI: \(payload.uiState.state)"
+                            + " (\(payload.uiState.stage))"
                     )
-                    parts.append(
-                        "safe area: \(formatRuntimeNumber(payload.geometry.safeArea.top)),"
-                            + "\(formatRuntimeNumber(payload.geometry.safeArea.left)),"
-                            + "\(formatRuntimeNumber(payload.geometry.safeArea.bottom)),"
+                    if payload.uiState.state == "ready" {
+                        parts.append(
+                            "geometry: \(formatRuntimeNumber(payload.geometry.logical.width))"
+                                + "x\(formatRuntimeNumber(payload.geometry.logical.height))"
+                                + " @\(formatRuntimeNumber(payload.geometry.scale))x"
+                        )
+                        parts.append(
+                            "safe area: \(formatRuntimeNumber(payload.geometry.safeArea.top)),"
+                                + "\(formatRuntimeNumber(payload.geometry.safeArea.left)),"
+                                + "\(formatRuntimeNumber(payload.geometry.safeArea.bottom)),"
                             + "\(formatRuntimeNumber(payload.geometry.safeArea.right))"
-                    )
-                    parts.append("runtime stage: \(payload.stage)")
+                        )
+                    } else {
+                        if payload.geometry.host?.hostPolicy == false {
+                            parts.append(
+                                "simulator-scale host policy: mismatch"
+                            )
+                        }
+                        if let captureError =
+                                payload.geometry.host?.capture.error,
+                           !captureError.isEmpty {
+                            parts.append("host capture: \(captureError)")
+                        }
+                    }
                     parts.append(
                         "capabilities: \(payload.capabilities.joined(separator: ","))"
                     )
@@ -394,11 +410,7 @@ public enum StatusService {
                     try PlayCoverDriverClient.runtimeClient(
                         for: info,
                         timeoutSeconds: 0.75,
-                        refreshAlertStatus:
-                            CLIInvocationContext
-                                .current?
-                                .claimAlertRefresh()
-                                ?? true
+                        refreshAlertStatus: false
                     )
                 payload = try client.diagnostics()
             }
@@ -422,10 +434,6 @@ public enum StatusService {
             try validatePlayCoverRuntimeStdio(
                 payload,
                 info: info
-            )
-            try PlayCoverDriverClient.validateFixedDevice(
-                payload.geometry,
-                stage: payload.stage
             )
             return .healthy(payload)
         } catch {
@@ -459,12 +467,8 @@ public enum StatusService {
         _ payload: PlayCoverRuntimeDiagnosticsPayload,
         info: SessionService.Info
     ) throws {
+        let stdio = payload.stdio
         if let expectedPath = info.macLogPath {
-            guard let stdio = payload.stdio else {
-                throw CLIParseError.invalidValue(
-                    "Mac Runtime omitted stdio initialization evidence."
-                )
-            }
             guard stdio.status == "redirected",
                   stdio.path.map(
                     PlayCoverRuntimeClient.canonicalPath
@@ -497,11 +501,6 @@ public enum StatusService {
             }
             #endif
         } else {
-            // Existing schema-v3 prepared generations predate the optional
-            // stdio field and remain valid for sessions without --log.
-            guard let stdio = payload.stdio else {
-                return
-            }
             guard stdio.status == "disabled",
                   stdio.path == nil,
                   stdio.device == nil,
@@ -522,13 +521,17 @@ public enum StatusService {
         var fields: [String: MachineValue] = [
             "status": .string("healthy"),
             "identityVerified": .boolean(true),
-            "protocolVersion": .integer(
-                PlayCoverRuntimeClient.schemaVersion
-            ),
             "pid": .integer(Int(payload.pid)),
             "bundleIdentifier": .string(payload.bundleIdentifier),
             "executablePath": .string(payload.executablePath),
             "capabilities": .array(payload.capabilities.map(MachineValue.string)),
+            "uiState": .object([
+                "state": .string(payload.uiState.state),
+                "stage": .string(payload.uiState.stage),
+                "failure": payload.uiState.failure.map(
+                    MachineValue.string
+                ) ?? .null,
+            ]),
             "logicalWidth": .double(payload.geometry.logical.width),
             "logicalHeight": .double(payload.geometry.logical.height),
             "nativeWidth": .double(payload.geometry.native.width),
@@ -557,11 +560,8 @@ public enum StatusService {
     }
 
     private static func playCoverRuntimeStdioMachineValue(
-        _ stdio: PlayCoverRuntimeStdioState?
+        _ stdio: PlayCoverRuntimeStdioState
     ) -> MachineValue {
-        guard let stdio else {
-            return .null
-        }
         return .object([
             "status": .string(stdio.status),
             "path": stdio.path.map(MachineValue.string) ?? .null,

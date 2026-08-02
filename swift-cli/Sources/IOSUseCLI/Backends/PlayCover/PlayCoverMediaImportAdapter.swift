@@ -210,7 +210,7 @@ enum PlayCoverMediaImportAdapterError:
 
 struct PlayCoverMediaImportAdapter {
     static let osascriptPath = "/usr/bin/osascript"
-    static let resultSentinel = "IOS_USE_MEDIA_IMPORT_V1"
+    static let resultSentinel = "IOS_USE_MEDIA_IMPORT_RESULT"
     static let appleScript = """
         on run argv
             set mediaPath to item 1 of argv

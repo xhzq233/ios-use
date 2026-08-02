@@ -5,6 +5,7 @@
 #import "IOSUsePlayHookRegistry.h"
 #import "IOSUsePlayRuntimeScreenshot.h"
 #import "IOSUsePlayRuntimeStdio.h"
+#import "IOSUsePlayRuntimeFrida.h"
 #import "IOSUsePlayDevice.h"
 #import "IOSUsePlaySwiftBridge.h"
 
@@ -20,6 +21,7 @@
 #import <sys/socket.h>
 #import <sys/stat.h>
 #import <sys/time.h>
+#import <poll.h>
 #import <sys/un.h>
 #import <unistd.h>
 
@@ -29,6 +31,7 @@ static const NSTimeInterval IOSUseSocketIOTimeoutSeconds = 15;
 
 static NSString *IOSUseRuntimeSessionID;
 static NSString *IOSUseRuntimeSocketPath;
+static NSString *IOSUseRuntimeGenerationKey;
 static NSString *IOSUseRuntimeSocketStatus = @"not-started";
 static NSString *IOSUseRuntimeSocketFailureStage;
 static NSNumber *IOSUseRuntimeSocketFailureErrno;
@@ -36,23 +39,47 @@ static char IOSUseRuntimeSocketSignalPath[
     sizeof(((struct sockaddr_un *)0)->sun_path)
 ];
 static volatile sig_atomic_t IOSUseRuntimeSocketOwned;
+static int IOSUseRuntimeSocketListener = -1;
+static volatile sig_atomic_t IOSUseRuntimeSocketCommandLoopStarted;
 static os_unfair_lock IOSUseRuntimeSocketStateLock =
     OS_UNFAIR_LOCK_INIT;
+static os_unfair_lock IOSUseRuntimeUIStateLock =
+    OS_UNFAIR_LOCK_INIT;
+static NSDictionary<NSString *, id> *IOSUseRuntimeUIState;
+static NSDictionary<NSString *, id> *IOSUseRuntimeUISnapshot;
+static dispatch_queue_t IOSUseRuntimeCommandQueue;
+static dispatch_queue_t IOSUseRuntimeDebugQueue;
+static dispatch_queue_t IOSUseRuntimeConnectionQueue;
+
+@interface IOSUseFridaSocketEventContext : NSObject
+@property(nonatomic, assign) int connection;
+@property(nonatomic, copy) NSString *requestID;
+@property(nonatomic, copy) NSString *sessionID;
+@property(nonatomic, strong) NSLock *writeLock;
+@end
+
+@implementation IOSUseFridaSocketEventContext
+@end
+
+static BOOL IOSUseWriteExactly(
+    int descriptor,
+    const void *buffer,
+    size_t length
+);
 
 static BOOL IOSUseIsNonemptyString(id value) {
     return [value isKindOfClass:NSString.class] &&
         [(NSString *)value length] > 0;
 }
 
-static BOOL IOSUseIsSchemaVersionThree(id value) {
-    if (![value isKindOfClass:NSNumber.class] ||
-        CFGetTypeID((__bridge CFTypeRef)value) ==
-            CFBooleanGetTypeID()) {
+static BOOL IOSUseIsLowercaseSHA256(NSString *value) {
+    if (value.length != 64) {
         return NO;
     }
-    NSNumber *number = value;
-    return number.longLongValue == 3 &&
-        number.doubleValue == 3.0;
+    NSCharacterSet *allowed = [NSCharacterSet
+        characterSetWithCharactersInString:@"0123456789abcdef"];
+    return [value rangeOfCharacterFromSet:allowed.invertedSet]
+        .location == NSNotFound;
 }
 
 static NSDictionary<NSString *, id> *IOSUseErrorObject(
@@ -119,12 +146,43 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeStdioEvidence(void) {
     };
 }
 
+void IOSUsePlayRuntimeSetUIReadiness(
+    NSString *state,
+    NSString *stage,
+    NSString *failure
+) {
+    if (![@[@"initializing", @"ready", @"failed"]
+            containsObject:state] ||
+        stage.length == 0) {
+        return;
+    }
+    NSDictionary<NSString *, id> *snapshot = @{
+        @"state": state,
+        @"stage": stage,
+        @"failure": failure ?: NSNull.null,
+    };
+    os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
+    IOSUseRuntimeUIState = snapshot;
+    os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
+}
+
+static NSDictionary<NSString *, id> *IOSUseCurrentUIReadiness(void) {
+    os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
+    NSDictionary<NSString *, id> *state =
+        [IOSUseRuntimeUIState copy];
+    os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
+    return state ?: @{
+        @"state": @"initializing",
+        @"stage": @"runtime-constructor",
+        @"failure": NSNull.null,
+    };
+}
+
 static NSDictionary<NSString *, id> *IOSUseErrorEnvelope(
     NSString *requestID,
     NSDictionary<NSString *, id> *error
 ) {
     return @{
-        @"schemaVersion": @3,
         @"requestId": requestID ?: @"",
         @"sessionID": IOSUseRuntimeSessionID ?: @"",
         @"ok": @NO,
@@ -298,7 +356,7 @@ static NSArray<NSString *> *IOSUseCapabilities(
     if (!requiredHooksReady) {
         return @[];
     }
-    return @[
+    NSMutableArray<NSString *> *capabilities = [NSMutableArray arrayWithArray:@[
         @"hello",
         @"ping",
         @"diagnostics",
@@ -312,7 +370,11 @@ static NSArray<NSString *> *IOSUseCapabilities(
         @"dismissAlert",
         @"dismissAlertByLabel",
         @"open",
-    ];
+    ]];
+    if (IOSUsePlayRuntimeFridaEnabled()) {
+        [capabilities addObject:@"debug"];
+    }
+    return capabilities;
 }
 
 /// The public `geometry.window` remains the immutable UIKit target canvas.
@@ -1164,6 +1226,140 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
     };
 }
 
+static NSDictionary<NSString *, id> *IOSUseInitialUISnapshot(void) {
+    NSDictionary<NSString *, id> *uiState =
+        IOSUseCurrentUIReadiness();
+    BOOL requiredHooksReady =
+        IOSUsePlayRuntimeRequiredHooksReady();
+    NSDictionary<NSString *, id> *geometry = @{
+        @"logical": @{
+            @"width": @(IOSUsePlayDeviceLogicalWidth),
+            @"height": @(IOSUsePlayDeviceLogicalHeight),
+        },
+        @"native": @{
+            @"width": @(IOSUsePlayDeviceNativeWidth),
+            @"height": @(IOSUsePlayDeviceNativeHeight),
+        },
+        @"scale": @(IOSUsePlayDeviceScale),
+        @"nativeScale": @(IOSUsePlayDeviceScale),
+        @"window": @{
+            @"width": @0,
+            @"height": @0,
+        },
+        @"host": NSNull.null,
+        @"safeArea": @{
+            @"top": @0,
+            @"left": @0,
+            @"bottom": @0,
+            @"right": @0,
+        },
+    };
+    return @{
+        @"identity": @{
+            @"pid": @(getpid()),
+            @"bundleIdentifier":
+                NSBundle.mainBundle.bundleIdentifier ?: @"",
+            @"executablePath":
+                NSBundle.mainBundle.executablePath ?: @"",
+            @"capabilities":
+                IOSUseCapabilities(requiredHooksReady),
+            @"geometry": geometry,
+            @"stage": uiState[@"stage"] ?: @"runtime-constructor",
+            @"stdio": IOSUseRuntimeStdioEvidence(),
+            @"uiState": uiState,
+        },
+        @"observed": @{},
+        @"runtime": @{
+            @"configurationStage":
+                uiState[@"stage"] ?: @"runtime-constructor",
+            @"configurationFailure":
+                uiState[@"failure"] ?: NSNull.null,
+        },
+        @"playChain": @{},
+    };
+}
+
+void IOSUsePlayRuntimePublishUIReadiness(void) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"UI readiness publication is main-only"
+    );
+    NSDictionary<NSString *, id> *snapshot =
+        IOSUseRuntimeSnapshot(
+            IOSUsePlayRuntimeDiagnosticsScopeReadiness,
+            nil,
+            nil
+        );
+    NSDictionary<NSString *, id> *identity = snapshot[@"identity"];
+    NSString *stage = [identity[@"stage"] isKindOfClass:NSString.class]
+        ? identity[@"stage"]
+        : @"geometry-mismatch";
+    NSString *state = @"initializing";
+    if ([stage isEqualToString:@"ready"]) {
+        state = @"ready";
+    } else if ([stage hasSuffix:@"-failed"] ||
+               [stage isEqualToString:@"device-identity-mismatch"] ||
+               [stage isEqualToString:@"playchain-location-invalid"]) {
+        state = @"failed";
+    }
+    NSDictionary<NSString *, id> *runtime = snapshot[@"runtime"];
+    id rawFailure = runtime[@"configurationFailure"];
+    NSString *failure = [rawFailure isKindOfClass:NSString.class]
+        ? rawFailure
+        : nil;
+    IOSUsePlayRuntimeSetUIReadiness(state, stage, failure);
+    NSDictionary<NSString *, id> *uiState =
+        IOSUseCurrentUIReadiness();
+    NSMutableDictionary<NSString *, id> *publishedIdentity =
+        [identity mutableCopy];
+    publishedIdentity[@"uiState"] = uiState;
+    NSMutableDictionary<NSString *, id> *published =
+        [snapshot mutableCopy];
+    published[@"identity"] = publishedIdentity;
+    os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
+    IOSUseRuntimeUISnapshot = [published copy];
+    os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
+}
+
+static NSDictionary<NSString *, id> *IOSUseCachedUISnapshot(void) {
+    os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
+    NSDictionary<NSString *, id> *snapshot =
+        [IOSUseRuntimeUISnapshot copy];
+    os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
+    return snapshot ?: IOSUseInitialUISnapshot();
+}
+
+static NSDictionary<NSString *, id> *IOSUseControlHelloPayload(void) {
+    BOOL requiredHooksReady =
+        IOSUsePlayRuntimeRequiredHooksReady();
+    NSDictionary<NSString *, id> *stdio =
+        IOSUseRuntimeStdioEvidence();
+    NSDictionary<NSString *, id> *playChain =
+        [PlayKeychain storageIdentity];
+    NSString *controlStage = @"ready";
+    if (!requiredHooksReady) {
+        controlStage = @"required-hook-failed";
+    } else if (![playChain[@"status"] isEqualToString:@"ready"]) {
+        controlStage = @"playchain-location-invalid";
+    } else if ([stdio[@"status"] isEqualToString:@"failed"]) {
+        controlStage = @"stdio-redirection-failed";
+    }
+    return @{
+        @"pid": @(getpid()),
+        @"bundleIdentifier":
+            NSBundle.mainBundle.bundleIdentifier ?: @"",
+        @"executablePath":
+            NSBundle.mainBundle.executablePath ?: @"",
+        @"generationKey": IOSUseRuntimeGenerationKey ?: @"",
+        @"capabilities": IOSUseCapabilities(requiredHooksReady),
+        @"controlStage": controlStage,
+        @"controlFailure":
+            IOSUsePlayRuntimeRequiredHooksFailure() ?: NSNull.null,
+        @"uiState": IOSUseCurrentUIReadiness(),
+        @"stdio": stdio,
+    };
+}
+
 static BOOL IOSUseRuntimeJSONBoolean(id value) {
     return [value isKindOfClass:NSNumber.class] &&
         CFGetTypeID((__bridge CFTypeRef)value) ==
@@ -1223,7 +1419,6 @@ IOSUseRuntimeInteractionStateByReplacingPhotos(
     }
     IOSUseRuntimeAppendPhotosInteraction(interactions, photos);
     return @{
-        @"schemaVersion": @1,
         @"refreshComplete": @YES,
         @"refreshError": NSNull.null,
         @"blocking":
@@ -1301,7 +1496,6 @@ IOSUseRuntimeInteractionSnapshotOnMainThread(
     IOSUseRuntimeAppendPhotosInteraction(interactions, photos);
 
     return @{
-        @"schemaVersion": @1,
         @"refreshComplete": @YES,
         @"refreshError": NSNull.null,
         @"blocking":
@@ -1437,7 +1631,6 @@ static NSDictionary<NSString *, id> *IOSUseSuccessEnvelope(
     NSDictionary<NSString *, id> *payload
 ) {
     return @{
-        @"schemaVersion": @3,
         @"requestId": requestID,
         @"sessionID": IOSUseRuntimeSessionID,
         @"ok": @YES,
@@ -1451,9 +1644,14 @@ static NSDictionary<NSString *, id> *IOSUseHandleScreenshot(
     __block NSDictionary<NSString *, id> *screenshot;
     __block NSDictionary<NSString *, id> *dom;
     __block NSDictionary<NSString *, id> *domError;
+    __block NSDictionary<NSString *, id> *readinessError;
     __block NSString *failureCode;
     __block NSString *failureMessage;
     void (^capture)(void) = ^{
+        readinessError = IOSUsePlayRuntimeUICommandError();
+        if (readinessError != nil) {
+            return;
+        }
         // One main-queue turn is deliberate: no run-loop event can occur
         // between compositor capture and its matching fresh DOM snapshot.
         screenshot = IOSUsePlayRuntimeScreenshotCommand(
@@ -1475,6 +1673,9 @@ static NSDictionary<NSString *, id> *IOSUseHandleScreenshot(
         capture();
     } else {
         dispatch_sync(dispatch_get_main_queue(), capture);
+    }
+    if (readinessError != nil) {
+        return IOSUseErrorEnvelope(requestID, readinessError);
     }
     if (screenshot == nil) {
         return IOSUseBasicErrorEnvelope(
@@ -1511,17 +1712,156 @@ static NSDictionary<NSString *, id> *IOSUseHandleScreenshot(
     );
 }
 
+static BOOL IOSUseWriteFridaEventFrame(
+    int connection,
+    NSString *requestID,
+    NSString *sessionID,
+    NSString *kind,
+    NSString *display
+) {
+    NSDictionary<NSString *, id> *frame = @{
+        @"requestId": requestID ?: @"",
+        @"sessionID": sessionID ?: @"",
+        @"event": @"debug",
+        @"kind": kind ?: @"event",
+        @"display": display ?: @"",
+    };
+    NSData *data = [NSJSONSerialization dataWithJSONObject:frame
+                                                     options:0
+                                                       error:NULL];
+    if (data == nil || data.length == 0 ||
+        data.length > IOSUseMaximumResponseFrameSize) {
+        return NO;
+    }
+    uint32_t length = htonl((uint32_t)data.length);
+    return IOSUseWriteExactly(connection, &length, sizeof(length)) &&
+        IOSUseWriteExactly(connection, data.bytes, data.length);
+}
+
+static void IOSUseFridaSocketEventCallback(
+    const char *kind,
+    const char *display,
+    void *context
+) {
+    IOSUseFridaSocketEventContext *eventContext =
+        (__bridge IOSUseFridaSocketEventContext *)context;
+    if (eventContext == nil) {
+        return;
+    }
+    @autoreleasepool {
+        NSString *eventKind = kind == NULL
+            ? @"event"
+            : [NSString stringWithUTF8String:kind] ?: @"event";
+        NSString *eventDisplay = display == NULL
+            ? @""
+            : [NSString stringWithUTF8String:display] ?: @"";
+        [eventContext.writeLock lock];
+        (void)IOSUseWriteFridaEventFrame(
+                eventContext.connection,
+                eventContext.requestID,
+                eventContext.sessionID,
+                eventKind,
+                eventDisplay
+            );
+        [eventContext.writeLock unlock];
+    }
+}
+
+static BOOL IOSUseRuntimeIsUICommand(NSString *command) {
+    static NSSet<NSString *> *commands;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        commands = [NSSet setWithArray:@[
+            @"screenshot",
+            @"dom",
+            @"waitFor",
+            @"tap",
+            @"longPress",
+            @"swipe",
+            @"input",
+            @"dismissAlert",
+            @"dismissAlertByLabel",
+            @"open",
+        ]];
+    });
+    return [commands containsObject:command];
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseRuntimeUIReadinessErrorObject(
+    NSDictionary<NSString *, id> *uiState
+) {
+    NSString *state = [uiState[@"state"] isKindOfClass:NSString.class]
+        ? uiState[@"state"]
+        : @"initializing";
+    NSString *stage = [uiState[@"stage"] isKindOfClass:NSString.class]
+        ? uiState[@"stage"]
+        : @"runtime-constructor";
+    BOOL failed = [state isEqualToString:@"failed"];
+    id rawFailure = uiState[@"failure"];
+    NSString *failure = [rawFailure isKindOfClass:NSString.class]
+        ? rawFailure
+        : nil;
+    return @{
+        @"code": failed
+            ? @"runtime_ui_failed"
+            : @"runtime_ui_not_ready",
+        @"message": failed
+            ? failure ?: @"Runtime UI initialization failed"
+            : @"Runtime UI is still initializing; retry this command",
+        @"details": @{
+            @"category": @"precondition",
+            @"phase": stage,
+            @"retryable": @((BOOL)!failed),
+            @"fatal": @(failed),
+            @"candidateCount": @0,
+            @"candidates": @[],
+            @"suggestions": failed
+                ? @[]
+                : @[@"retry the same UI command"],
+        },
+    };
+}
+
+NSDictionary<NSString *, id> *IOSUsePlayRuntimeUICommandError(void) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"UI command readiness validation is main-only"
+    );
+    NSDictionary<NSString *, id> *uiState =
+        IOSUseCurrentUIReadiness();
+    if ([uiState[@"state"] isEqualToString:@"ready"]) {
+        return nil;
+    }
+    return IOSUseRuntimeUIReadinessErrorObject(uiState);
+}
+
+static NSDictionary<NSString *, id> *IOSUseRuntimeUIReadinessError(
+    NSString *requestID,
+    NSDictionary<NSString *, id> *uiState
+) {
+    return IOSUseErrorEnvelope(
+        requestID,
+        IOSUseRuntimeUIReadinessErrorObject(uiState)
+    );
+}
+
 static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
     id object,
     int connection,
     NSDictionary<NSString *, id> * _Nullable *interactionState,
-    NSNumber * _Nullable *alertRefreshElapsedMs
+    NSNumber * _Nullable *alertRefreshElapsedMs,
+    void * _Nullable fridaEventContext,
+    BOOL * _Nullable fridaEventSubscription
 ) {
     if (interactionState != NULL) {
         *interactionState = nil;
     }
     if (alertRefreshElapsedMs != NULL) {
         *alertRefreshElapsedMs = nil;
+    }
+    if (fridaEventSubscription != NULL) {
+        *fridaEventSubscription = NO;
     }
     if (![object isKindOfClass:NSDictionary.class]) {
         return IOSUseBasicErrorEnvelope(
@@ -1538,7 +1878,6 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
         ? request[@"requestId"]
         : @"";
     NSSet<NSString *> *requiredKeys = [NSSet setWithArray:@[
-        @"schemaVersion",
         @"requestId",
         @"sessionID",
         @"command",
@@ -1553,7 +1892,6 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
          request.count != requiredKeys.count + 1) ||
         (refreshAlertStatus != nil &&
          !IOSUseRuntimeJSONBoolean(refreshAlertStatus)) ||
-        !IOSUseIsSchemaVersionThree(request[@"schemaVersion"]) ||
         requestID.length == 0 ||
         requestID.length > 256 ||
         !IOSUseIsNonemptyString(request[@"sessionID"]) ||
@@ -1562,7 +1900,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
         return IOSUseBasicErrorEnvelope(
             requestID,
             @"invalid_request",
-            @"request does not match Runtime schema version 3",
+            @"request does not match the Runtime command contract",
             @"protocol",
             @"validation",
             NO
@@ -1581,6 +1919,32 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
     }
     NSString *command = request[@"command"];
     NSDictionary<NSString *, id> *arguments = request[@"arguments"];
+    if (IOSUseRuntimeIsUICommand(command)) {
+        NSDictionary<NSString *, id> *uiState =
+            IOSUseCurrentUIReadiness();
+        if (![uiState[@"state"] isEqualToString:@"ready"]) {
+            if ([refreshAlertStatus boolValue]) {
+                if (interactionState != NULL) {
+                    *interactionState = @{
+                        @"refreshComplete": @NO,
+                        @"refreshError":
+                            [uiState[@"state"] isEqualToString:@"failed"]
+                                ? @"runtime_ui_failed"
+                                : @"runtime_ui_not_ready",
+                        @"blocking": @NO,
+                        @"interactions": @[],
+                    };
+                }
+                if (alertRefreshElapsedMs != NULL) {
+                    *alertRefreshElapsedMs = @0.0;
+                }
+            }
+            return IOSUseRuntimeUIReadinessError(
+                requestID,
+                uiState
+            );
+        }
+    }
     __block NSDictionary<NSString *, id>
         *preexecutedAutomationResult = nil;
     __block NSDictionary<NSString *, id>
@@ -1594,7 +1958,11 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
     BOOL preexecuteAutomation =
         [refreshAlertStatus boolValue] &&
         IOSUseRuntimeIsAtomicMutationCommand(command);
-    if ([refreshAlertStatus boolValue]) {
+    BOOL shouldRefreshAlertStatus =
+        [refreshAlertStatus boolValue] &&
+        ![@[@"hello", @"ping", @"diagnostics"]
+            containsObject:command];
+    if (shouldRefreshAlertStatus) {
         NSTimeInterval refreshStarted =
             NSProcessInfo.processInfo.systemUptime;
         __block NSDictionary<NSString *, id>
@@ -1615,17 +1983,23 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             NSDictionary<NSString *, id> *capturedNativeAlert = nil;
             NSDictionary<NSString *, id>
                 *capturedPhotosAuthorization = nil;
-            NSDictionary<NSString *, id> *capturedState =
-                IOSUseRuntimeInteractionSnapshotOnMainThread(
-                    &capturedPhotosStateVersion,
-                    &capturedNativeAlert,
-                    &capturedPhotosAuthorization
-                );
+            NSDictionary<NSString *, id> *capturedState = nil;
             NSDictionary<NSString *, id> *capturedGateError =
-                IOSUseRuntimeGateCommand(
+                IOSUseRuntimeIsUICommand(command)
+                    ? IOSUsePlayRuntimeUICommandError()
+                    : nil;
+            if (capturedGateError == nil) {
+                capturedState =
+                    IOSUseRuntimeInteractionSnapshotOnMainThread(
+                        &capturedPhotosStateVersion,
+                        &capturedNativeAlert,
+                        &capturedPhotosAuthorization
+                    );
+                capturedGateError = IOSUseRuntimeGateCommand(
                     command,
                     capturedState
                 );
+            }
             BOOL capturedPhotosMutationLinearized = NO;
             if (capturedGateError == nil &&
                 preexecuteAutomation) {
@@ -1718,7 +2092,6 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             [executionLock unlock];
             if (capturedState == nil) {
                 capturedState = @{
-                    @"schemaVersion": @1,
                     @"refreshComplete": @NO,
                     @"refreshError": @"main_thread_timeout",
                     @"blocking": @NO,
@@ -1833,14 +2206,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
                 NO
             );
         }
-        NSDictionary<NSString *, id> *snapshot =
-            IOSUseRuntimeSnapshot(
-                IOSUsePlayRuntimeDiagnosticsScopeReadiness,
-                nil,
-                nil
-            );
-        payload = [snapshot[@"identity"] mutableCopy];
-        payload[@"observed"] = snapshot[@"observed"];
+        payload = [IOSUseControlHelloPayload() mutableCopy];
     } else if ([command isEqualToString:@"ping"]) {
         if (arguments.count != 0) {
             return IOSUseBasicErrorEnvelope(
@@ -1870,18 +2236,43 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             );
         }
         NSDictionary<NSString *, id> *snapshot =
-            IOSUseRuntimeSnapshot(
-                IOSUsePlayRuntimeDiagnosticsScopeFull,
-                freshNativeAlertSnapshot,
-                freshPhotosAuthorizationDiagnostics
-            );
+            IOSUseCachedUISnapshot();
         payload = [snapshot[@"identity"] mutableCopy];
+        payload[@"uiState"] = IOSUseCurrentUIReadiness();
+        payload[@"stdio"] = IOSUseRuntimeStdioEvidence();
         payload[@"diagnostics"] = @{
             @"runtime": snapshot[@"runtime"],
             @"socket": IOSUsePlayRuntimeSocketIdentity(),
             @"observed": snapshot[@"observed"],
             @"playChain": snapshot[@"playChain"],
         };
+    } else if ([command isEqualToString:@"debug"]) {
+        NSDictionary<NSString *, id> *commandError = nil;
+        NSDictionary<NSString *, id> *debug =
+            IOSUsePlayRuntimeFridaDebugCommand(
+                arguments,
+                IOSUseFridaSocketEventCallback,
+                fridaEventContext,
+                [arguments[@"stream"] boolValue],
+                &commandError
+            );
+        if (debug == nil) {
+            return IOSUseErrorEnvelope(
+                requestID,
+                commandError ?: IOSUseErrorObject(
+                    @"frida_eval_failed",
+                    @"Frida Engine debug evaluation failed",
+                    @"capability",
+                    @"debug",
+                    YES
+                )
+            );
+        }
+        if (fridaEventSubscription != NULL &&
+            [arguments[@"stream"] boolValue]) {
+            *fridaEventSubscription = YES;
+        }
+        payload[@"debug"] = debug;
     } else if ([command isEqualToString:@"screenshot"]) {
         if (arguments.count != 0) {
             return IOSUseBasicErrorEnvelope(
@@ -1972,7 +2363,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
         return IOSUseBasicErrorEnvelope(
             requestID,
             @"unsupported_command",
-            @"Runtime supports hello, ping, diagnostics, screenshot, dom, waitFor, tap, longPress, swipe, input, dismissAlert, dismissAlertByLabel, and open",
+            @"Runtime supports hello, ping, diagnostics, screenshot, dom, waitFor, tap, longPress, swipe, input, dismissAlert, dismissAlertByLabel, open, and debug when the Frida capability is enabled",
             @"protocol",
             @"dispatch",
             NO
@@ -1983,7 +2374,9 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
 
 static NSDictionary<NSString *, id> *IOSUseHandleRequest(
     id object,
-    int connection
+    int connection,
+    void * _Nullable fridaEventContext,
+    BOOL * _Nullable fridaEventSubscription
 ) {
     NSDictionary<NSString *, id> *interactionState = nil;
     NSNumber *alertRefreshElapsedMs = nil;
@@ -1992,7 +2385,9 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
             object,
             connection,
             &interactionState,
-            &alertRefreshElapsedMs
+            &alertRefreshElapsedMs,
+            fridaEventContext,
+            fridaEventSubscription
         );
     return IOSUseRuntimeResponseWithMetadata(
         response,
@@ -2099,8 +2494,17 @@ static void IOSUseServeConnection(int connection) {
         : [NSJSONSerialization JSONObjectWithData:frame
                                           options:0
                                             error:&error];
-    NSDictionary<NSString *, id> *response = object == nil
-        ? IOSUseBasicErrorEnvelope(
+    IOSUseFridaSocketEventContext *fridaEventContext = [IOSUseFridaSocketEventContext new];
+    fridaEventContext.connection = connection;
+    fridaEventContext.writeLock = [NSLock new];
+    fridaEventContext.requestID = [object isKindOfClass:NSDictionary.class]
+        ? (IOSUseIsNonemptyString(object[@"requestId"]) ? object[@"requestId"] : @"")
+        : @"";
+    fridaEventContext.sessionID = IOSUseRuntimeSessionID ?: @"";
+    __block BOOL fridaEventSubscription = NO;
+    __block NSDictionary<NSString *, id> *response = nil;
+    if (object == nil) {
+        response = IOSUseBasicErrorEnvelope(
             @"",
             @"invalid_json",
             utf8 == nil
@@ -2109,9 +2513,70 @@ static void IOSUseServeConnection(int connection) {
             @"protocol",
             @"decoding",
             NO
-        )
-        : IOSUseHandleRequest(object, connection);
-    IOSUseWriteResponse(connection, response);
+        );
+    } else {
+        dispatch_queue_t commandQueue = IOSUseRuntimeCommandQueue;
+        NSString *command = [object isKindOfClass:NSDictionary.class] &&
+                [object[@"command"] isKindOfClass:NSString.class]
+            ? object[@"command"]
+            : nil;
+        BOOL isControlRequest = [
+            @[@"hello", @"ping", @"diagnostics"]
+            containsObject:command ?: @""
+        ];
+        BOOL isDebugRequest = [command isEqualToString:@"debug"];
+        void (^handleRequest)(void) = ^{
+            response = IOSUseHandleRequest(
+                object,
+                connection,
+                (__bridge void *)fridaEventContext,
+                &fridaEventSubscription
+            );
+        };
+        if (isDebugRequest && IOSUseRuntimeDebugQueue != nil) {
+            dispatch_sync(IOSUseRuntimeDebugQueue, handleRequest);
+        } else if (commandQueue != nil && !isControlRequest) {
+            dispatch_sync(commandQueue, handleRequest);
+        } else {
+            handleRequest();
+        }
+    }
+    [fridaEventContext.writeLock lock];
+    @try {
+        IOSUseWriteResponse(connection, response);
+    } @finally {
+        [fridaEventContext.writeLock unlock];
+    }
+    @try {
+        if (fridaEventSubscription && [response[@"ok"] boolValue]) {
+            for (;;) {
+                if (IOSUseSocketPeerDisconnected(connection)) {
+                    break;
+                }
+                struct pollfd state = {
+                    .fd = connection,
+                    .events = POLLIN | POLLHUP | POLLERR,
+                    .revents = 0,
+                };
+                int result;
+                do {
+                    result = poll(&state, 1, 250);
+                } while (result < 0 && errno == EINTR);
+                if (result < 0 ||
+                    (state.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0 ||
+                    IOSUseSocketPeerDisconnected(connection)) {
+                    break;
+                }
+            }
+        }
+    } @finally {
+        if (fridaEventSubscription) {
+            // Clear even when response encoding or the peer poll raises an
+            // Objective-C exception; the Engine stores this context as a raw
+            // pointer and must not outlive the connection's autorelease pool.
+            IOSUsePlayRuntimeFridaClearEventSubscription();
+        }
+    }
 }
 
 static BOOL IOSUseSecureSocketDirectory(NSString *socketPath) {
@@ -2269,12 +2734,17 @@ void IOSUsePlayRuntimeStartSocket(void) {
     dispatch_once(&onceToken, ^{
         const char *sessionValue = getenv("IOS_USE_PLAY_SESSION_ID");
         const char *socketValue = getenv("IOS_USE_PLAY_RUNTIME_SOCKET");
+        const char *generationValue =
+            getenv("IOS_USE_PLAY_GENERATION_KEY");
         NSString *sessionID = sessionValue == NULL
             ? nil
             : [NSString stringWithUTF8String:sessionValue];
         NSString *socketPath = socketValue == NULL
             ? nil
             : [NSString stringWithUTF8String:socketValue];
+        NSString *generationKey = generationValue == NULL
+            ? nil
+            : [NSString stringWithUTF8String:generationValue];
         if (sessionID.length == 0 ||
             [sessionID lengthOfBytesUsingEncoding:NSUTF8StringEncoding] >
                 128) {
@@ -2285,22 +2755,175 @@ void IOSUsePlayRuntimeStartSocket(void) {
             IOSUseRecordSocketFailure(@"socket-env", EINVAL);
             return;
         }
+        if (!IOSUseIsLowercaseSHA256(generationKey)) {
+            IOSUseRecordSocketFailure(@"generation-env", EINVAL);
+            return;
+        }
         IOSUseRuntimeSessionID = [sessionID copy];
         IOSUseRuntimeSocketPath = [socketPath copy];
+        IOSUseRuntimeGenerationKey = [generationKey copy];
         IOSUseRecordSocketState(@"starting", nil, 0);
         int listener = IOSUseCreateListener(socketPath);
         if (listener < 0) {
             return;
         }
+        IOSUseRuntimeSocketListener = listener;
         atexit(IOSUseRemoveOwnedSocket);
         IOSUseRecordSocketState(@"listening", nil, 0);
-        dispatch_queue_t acceptQueue = dispatch_queue_create(
-            "io.ios-use.play-runtime.socket.fifo",
-            DISPATCH_QUEUE_SERIAL
+    });
+}
+
+int IOSUsePlayRuntimeBootstrapStdio(void) {
+    const char *enabled = getenv("IOS_USE_PLAY_STDIO_LOG");
+    if (enabled == NULL || enabled[0] == '\0') {
+        return 0;
+    }
+    if (strcmp(enabled, "1") != 0) {
+        return EINVAL;
+    }
+    int listener = IOSUseRuntimeSocketListener;
+    if (listener < 0) {
+        return ENOTCONN;
+    }
+    struct pollfd pollDescriptor = {
+        .fd = listener,
+        .events = POLLIN,
+    };
+    int pollResult;
+    do {
+        pollResult = poll(&pollDescriptor, 1, 15000);
+    } while (pollResult < 0 && errno == EINTR);
+    if (pollResult <= 0) {
+        IOSUseRecordSocketFailure(
+            @"stdio-bootstrap-timeout",
+            pollResult == 0 ? ETIMEDOUT : errno
         );
-        dispatch_async(acceptQueue, ^{
+        return pollResult == 0 ? ETIMEDOUT : errno;
+    }
+    int connection = accept(listener, NULL, NULL);
+    if (connection < 0) {
+        IOSUseRecordSocketFailure(@"stdio-bootstrap-accept", errno);
+        return errno;
+    }
+    int result = 0;
+    @try {
+        if (!IOSUseConfigureSocket(connection, YES)) {
+            result = errno ?: EIO;
+        } else {
+            uid_t peerUser = (uid_t)-1;
+            gid_t peerGroup = (gid_t)-1;
+            if (getpeereid(connection, &peerUser, &peerGroup) != 0 ||
+                peerUser != geteuid()) {
+                result = EPERM;
+            } else {
+                uint8_t bytes[4096] = {0};
+                uint8_t control[CMSG_SPACE(sizeof(int))] = {0};
+                struct iovec vector = {
+                    .iov_base = bytes,
+                    .iov_len = sizeof(bytes),
+                };
+                struct msghdr message = {0};
+                message.msg_iov = &vector;
+                message.msg_iovlen = 1;
+                message.msg_control = control;
+                message.msg_controllen = sizeof(control);
+                ssize_t count = recvmsg(connection, &message, 0);
+                if (count <= 0 || (message.msg_flags & MSG_CTRUNC) != 0) {
+                    result = count < 0 ? errno : EPROTO;
+                } else {
+                    int receivedDescriptor = -1;
+                    for (
+                        struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+                        header != NULL;
+                        header = CMSG_NXTHDR(&message, header)
+                    ) {
+                        if (header->cmsg_level == SOL_SOCKET &&
+                            header->cmsg_type == SCM_RIGHTS &&
+                            header->cmsg_len >= CMSG_LEN(sizeof(int))) {
+                            memcpy(
+                                &receivedDescriptor,
+                                CMSG_DATA(header),
+                                sizeof(receivedDescriptor)
+                            );
+                            break;
+                        }
+                    }
+                    NSError *jsonError = nil;
+                    NSData *payload = [NSData
+                        dataWithBytes:bytes
+                               length:(NSUInteger)count];
+                    id object = [NSJSONSerialization
+                        JSONObjectWithData:payload
+                                   options:0
+                                     error:&jsonError];
+                    NSDictionary *metadata =
+                        [object isKindOfClass:NSDictionary.class]
+                            ? object
+                            : nil;
+                    NSString *sessionID = metadata[@"sessionID"];
+                    NSString *path = metadata[@"path"];
+                    NSNumber *device = metadata[@"device"];
+                    NSNumber *inode = metadata[@"inode"];
+                    if (receivedDescriptor < 0 ||
+                        ![sessionID isEqualToString:IOSUseRuntimeSessionID] ||
+                        ![path isKindOfClass:NSString.class] ||
+                        ![device isKindOfClass:NSNumber.class] ||
+                        ![inode isKindOfClass:NSNumber.class]) {
+                        if (receivedDescriptor >= 0) {
+                            close(receivedDescriptor);
+                        }
+                        result = EPROTO;
+                    } else {
+                        result =
+                            IOSUsePlayRuntimeConfigureStdioFromDescriptor(
+                                receivedDescriptor,
+                                path.fileSystemRepresentation,
+                                device.unsignedLongLongValue,
+                                inode.unsignedLongLongValue
+                            );
+                    }
+                }
+            }
+        }
+    } @catch (NSException *exception) {
+        result = EPROTO;
+    } @finally {
+        close(connection);
+    }
+    if (result != 0) {
+        IOSUseRecordSocketFailure(@"stdio-bootstrap", result);
+    }
+    return result;
+}
+
+void IOSUsePlayRuntimeStartCommandLoop(void) {
+    if (IOSUseRuntimeSocketCommandLoopStarted != 0) {
+        return;
+    }
+    IOSUseRuntimeSocketCommandLoopStarted = 1;
+    int listener = IOSUseRuntimeSocketListener;
+    if (listener < 0) {
+        return;
+    }
+    IOSUseRuntimeCommandQueue = dispatch_queue_create(
+        "io.ios-use.play-runtime.command",
+        DISPATCH_QUEUE_SERIAL
+    );
+    IOSUseRuntimeDebugQueue = dispatch_queue_create(
+        "io.ios-use.play-runtime.debug",
+        DISPATCH_QUEUE_SERIAL
+    );
+    IOSUseRuntimeConnectionQueue = dispatch_queue_create(
+        "io.ios-use.play-runtime.connection",
+        DISPATCH_QUEUE_CONCURRENT
+    );
+    dispatch_queue_t acceptQueue = dispatch_queue_create(
+        "io.ios-use.play-runtime.accept",
+        DISPATCH_QUEUE_SERIAL
+    );
+    dispatch_async(acceptQueue, ^{
             NSLog(
-                @"[ios-use-play] Runtime v3 socket listening"
+                @"[ios-use-play] Runtime socket listening"
             );
             for (;;) {
                 @autoreleasepool {
@@ -2317,21 +2940,23 @@ void IOSUsePlayRuntimeStartSocket(void) {
                         IOSUseRemoveOwnedSocket();
                         return;
                     }
-                    @try {
-                        // Serving inline is the Runtime's per-session FIFO.
-                        IOSUseServeConnection(connection);
-                    } @catch (NSException *exception) {
-                        NSLog(
-                            @"[ios-use-play] Runtime command exception %@",
-                            exception.name
-                        );
-                    } @finally {
-                        close(connection);
-                    }
+                    dispatch_async(IOSUseRuntimeConnectionQueue, ^{
+                        @autoreleasepool {
+                            @try {
+                                IOSUseServeConnection(connection);
+                            } @catch (NSException *exception) {
+                                NSLog(
+                                    @"[ios-use-play] Runtime command exception %@",
+                                    exception.name
+                                );
+                            } @finally {
+                                close(connection);
+                            }
+                        }
+                    });
                 }
             }
         });
-    });
 }
 
 NSDictionary<NSString *, id> *IOSUsePlayRuntimeSocketIdentity(void) {
@@ -2344,8 +2969,6 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeSocketIdentity(void) {
     NSMutableDictionary<NSString *, id> *identity = [@{
         @"status": status ?: @"unknown",
         @"transport": @"unix-domain-socket",
-        @"protocolSchemaVersion": @3,
-        @"fifo": @YES,
     } mutableCopy];
     if (failureStage.length > 0) {
         identity[@"failureStage"] = failureStage;

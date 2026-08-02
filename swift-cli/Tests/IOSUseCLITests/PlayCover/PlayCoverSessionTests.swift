@@ -83,7 +83,7 @@ final class PlayCoverSessionTests: XCTestCase {
         for path in [
             paths.root,
             paths.playcoverGlobalCache,
-            paths.playcoverRuntimeRoot,
+            paths.playcoverPlayChain,
             paths.playcoverSocketRoot,
             paths.playcoverRun,
         ] {
@@ -175,7 +175,7 @@ final class PlayCoverSessionTests: XCTestCase {
         for path in [
             paths.playcover,
             paths.playcoverGlobalCache,
-            paths.playcoverRuntimeRoot,
+            paths.playcoverPlayChain,
             paths.playcoverSocketRoot,
             paths.playcover + "/operation.lock",
             paths.playcoverGlobalObjects,
@@ -236,15 +236,8 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(launchCalled)
         XCTAssertEqual(resolverCalls, 1)
-        let reference = try XCTUnwrap(
-            PlayCoverGlobalReferenceStore.read(
-                paths: fixture.paths
-            )
-        )
-        XCTAssertNil(reference.preparingGenerationKey)
-        XCTAssertNil(reference.preparationID)
         XCTAssertEqual(
-            reference.lastGenerationKey,
+            try PlayCoverHomeStore.readLast(paths: fixture.paths),
             manifest.generationKey
         )
     }
@@ -337,12 +330,21 @@ final class PlayCoverSessionTests: XCTestCase {
             return Int32($0.runnerPid ?? 0)
         }
 
-        let cli = IOSUseCLI(pathsForTesting: fixture.paths)
+        let cli = IOSUseCLI(
+            pathsForTesting: fixture.paths,
+            registerHomesForDiskUsage: true
+        )
         let start = cli.run(
             arguments: ["start", "--mac", "--reuse"]
         )
 
         XCTAssertEqual(start.exitCode, 0, start.stderr)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: fixture.paths.knownHomes + "/"
+                    + fixture.paths.playcoverHomeID + ".json"
+            )
+        )
         XCTAssertTrue(start.stdout.contains("generation reused:"))
         XCTAssertTrue(start.stdout.contains(manifest.generationKey))
         XCTAssertTrue(start.stdout.contains("IOS_USE_HOME: \(fixture.root)"))
@@ -470,11 +472,10 @@ final class PlayCoverSessionTests: XCTestCase {
                     isDirectory: true
                 ).standardizedFileURL.path
             )
-            XCTAssertFalse(
+            XCTAssertTrue(
                 FileManager.default.fileExists(
                     atPath:
-                        fixture.paths.playcoverRuntimeHome
-                        + "/mac/playchain"
+                        fixture.paths.playcoverPlayChain
                 )
             )
             XCTAssertTrue(
@@ -729,7 +730,10 @@ final class PlayCoverSessionTests: XCTestCase {
             )
         }
         let status = try StatusService.status(paths: fixture.paths)
-        XCTAssertTrue(status.contains("runtime: healthy"))
+        XCTAssertTrue(
+            status.contains("runtime control: healthy"),
+            status
+        )
         XCTAssertTrue(status.contains("stdio log: \(log.path)"))
         guard case .object(let root) =
                 StatusService.machineSnapshot(
@@ -1199,7 +1203,7 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertEqual(launchAttemptCount, 2)
     }
 
-    func testGlobalHomeReferenceSymlinkFailsClosed() throws {
+    func testHomeReuseReferenceSymlinkFailsClosed() throws {
         let fixture = try SessionFixture()
         defer { fixture.remove() }
         let manifest = try makeManifest(fixture: fixture)
@@ -1225,12 +1229,12 @@ final class PlayCoverSessionTests: XCTestCase {
         )
     }
 
-    func testGlobalHomeReferenceFIFOIsRejectedWithoutBlocking() throws {
+    func testHomeReuseReferenceFIFOIsRejectedWithoutBlocking() throws {
         #if canImport(Darwin)
         let fixture = try SessionFixture()
         defer { fixture.remove() }
         try FileManager.default.createDirectory(
-            atPath: fixture.paths.playcoverGlobalHomes,
+            atPath: fixture.paths.playcover,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
@@ -2013,7 +2017,6 @@ final class PlayCoverSessionTests: XCTestCase {
             .processExecutableMismatch,
             .sessionIDMismatch,
             .responseIdentityMismatch("PID"),
-            .unsupportedSchemaVersion(99),
             .malformedResponse("invalid envelope"),
         ]
         for error in refused {
@@ -2405,51 +2408,6 @@ final class PlayCoverSessionTests: XCTestCase {
         )
     }
 
-    func testStatusAcceptsLegacyUnloggedRuntimeWithoutStdioEvidence()
-        throws
-    {
-        let fixture = try SessionFixture()
-        defer { fixture.remove() }
-        let manifest = try makeManifest(fixture: fixture)
-        try fixture.createManagedApp(manifest: manifest)
-        let sessionID = UUID().uuidString
-        try SessionService.writeDriverLock(
-            info: makeSessionInfo(
-                manifest: manifest,
-                sessionID: sessionID,
-                socketPath:
-                    try fixture.paths.macRuntimeSocketPath(
-                        sessionID: sessionID
-                    )
-            ),
-            paths: fixture.paths
-        )
-        PlayCoverSessionService.processStateOverrideForTesting = {
-            _ in .running(
-                executablePath: manifest.executablePath
-            )
-        }
-        StatusService.playCoverDiagnosticsForTesting = { _ in
-            self.makeRuntimePayload(
-                manifest: manifest,
-                stdio: nil
-            )
-        }
-
-        let text = try StatusService.status(paths: fixture.paths)
-
-        XCTAssertTrue(text.contains("runtime: healthy"))
-        guard case .object(let root) =
-                StatusService.machineSnapshot(
-                    paths: fixture.paths
-                ).data,
-              case .object(let driver)? = root["driver"],
-              case .object(let runtime)? = driver["runtime"] else {
-            return XCTFail("legacy Runtime status is incomplete")
-        }
-        XCTAssertEqual(runtime["stdio"], .null)
-    }
-
     func testStatusKeepsUnverifiableLiveProcessUnhealthy()
         throws
     {
@@ -2564,11 +2522,19 @@ final class PlayCoverSessionTests: XCTestCase {
             true
         )
         let hostMismatchText = try StatusService.status(paths: fixture.paths)
-        XCTAssertTrue(hostMismatchText.contains("runtime: unhealthy"))
+        XCTAssertTrue(
+            hostMismatchText.contains("runtime control: healthy"),
+            hostMismatchText
+        )
+        XCTAssertTrue(
+            hostMismatchText.contains("UI: initializing"),
+            hostMismatchText
+        )
         XCTAssertTrue(
             hostMismatchText.contains(
                 "simulator-scale host policy"
-            )
+            ),
+            hostMismatchText
         )
 
         StatusService.playCoverDiagnosticsForTesting = { _ in
@@ -2598,11 +2564,19 @@ final class PlayCoverSessionTests: XCTestCase {
         let captureMismatchText = try StatusService.status(
             paths: fixture.paths
         )
-        XCTAssertTrue(captureMismatchText.contains("runtime: unhealthy"))
+        XCTAssertTrue(
+            captureMismatchText.contains("runtime control: healthy"),
+            captureMismatchText
+        )
+        XCTAssertTrue(
+            captureMismatchText.contains("UI: initializing"),
+            captureMismatchText
+        )
         XCTAssertTrue(
             captureMismatchText.contains(
                 "host capture: canvas capture unavailable"
-            )
+            ),
+            captureMismatchText
         )
     }
 
@@ -3285,7 +3259,7 @@ final class PlayCoverSessionTests: XCTestCase {
             Double(IOSUsePlayDeviceLogicalWidth),
         hostPolicy: Bool = true,
         hostCaptureError: String? = nil,
-        stdio: PlayCoverRuntimeStdioState? = .init(
+        stdio: PlayCoverRuntimeStdioState = .init(
             status: "disabled",
             path: nil,
             device: nil,
@@ -3294,7 +3268,12 @@ final class PlayCoverSessionTests: XCTestCase {
             errorNumber: nil
         )
     ) -> PlayCoverRuntimeDiagnosticsPayload {
-        .init(
+        let uiReady = logicalWidth
+                == Double(IOSUsePlayDeviceLogicalWidth)
+            && hostPolicy
+            && hostCaptureError == nil
+        let uiStage = uiReady ? "ready" : "host-geometry-mismatch"
+        return .init(
             pid: 4_242,
             bundleIdentifier: manifest.bundleIdentifier,
             executablePath: manifest.executablePath,
@@ -3334,10 +3313,15 @@ final class PlayCoverSessionTests: XCTestCase {
                     hostPolicy: hostPolicy
                 )
             ),
-            stage: "ready",
+            stage: uiStage,
+            uiState: .init(
+                state: uiReady ? "ready" : "initializing",
+                stage: uiStage,
+                failure: nil
+            ),
             diagnostics: [
                 "runtime": .object([
-                    "stage": .string("ready"),
+                    "stage": .string(uiStage),
                 ]),
             ],
             stdio: stdio
@@ -3687,7 +3671,12 @@ final class PlayCoverSessionTests: XCTestCase {
         )
 
         XCTAssertEqual(result.exitCode, 1, file: file, line: line)
-        XCTAssertTrue(launchCalled, file: file, line: line)
+        XCTAssertTrue(
+            launchCalled,
+            result.stderr,
+            file: file,
+            line: line
+        )
         XCTAssertEqual(
             resolverCalls,
             1,
@@ -3703,27 +3692,12 @@ final class PlayCoverSessionTests: XCTestCase {
             file: file,
             line: line
         )
-        let reference = try XCTUnwrap(
-            PlayCoverGlobalReferenceStore.read(
-                paths: fixture.paths
-            ),
-            file: file,
-            line: line
-        )
         XCTAssertEqual(
-            reference.lastGenerationKey,
+            try PlayCoverHomeStore.readLast(paths: fixture.paths),
             preparedManifest?.generationKey,
             file: file,
             line: line
         )
-        XCTAssertNil(
-            reference.preparingGenerationKey,
-            file: file,
-            line: line
-        )
-        XCTAssertNil(reference.preparationID, file: file, line: line)
-        XCTAssertNil(reference.pending, file: file, line: line)
-        XCTAssertNil(reference.active, file: file, line: line)
         XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: fixture.paths.driverLock
@@ -3813,7 +3787,6 @@ final class PlayCoverSessionTests: XCTestCase {
             identity: signingIdentity
         )
         let object: [String: Any] = [
-            "schemaVersion": 5,
             "backend": "mac",
             "appBundleName": "App.app",
             "mainExecutableRelativePath": "Demo",
@@ -3843,6 +3816,8 @@ final class PlayCoverSessionTests: XCTestCase {
             "executableName": "Demo",
             "sourceContentHash": effectiveSourceContentHash,
             "runtimeBuildHash": runtimeBuildHash,
+            "fridaEnabled": false,
+            "fridaEngineSHA256": NSNull(),
             "prepareRevision":
                 PlayCoverService.prepareImplementationRevision,
             "accountNamespacePolicyHash": namespacePolicyHash,
@@ -3857,15 +3832,6 @@ final class PlayCoverSessionTests: XCTestCase {
             "runtimeFrameworkName":
                 PlayCoverService.runtimeFrameworkName,
             "signingOrder": ["Demo"],
-            "entitlementDiff": [
-                "original": [:],
-                "playCoverBaseline": [:],
-                "final": [:],
-                "addedByPlayCover": [],
-                "addedByIOSUse": [],
-                "changedFromOriginal": [],
-                "removedFromOriginal": [],
-            ],
             "completedAt": "2026-07-25T00:00:00Z",
         ]
         return try JSONDecoder().decode(
@@ -4102,23 +4068,21 @@ private struct SessionFixture {
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
+        try FileManager.default.createDirectory(
+            atPath: paths.logs,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
         _ = chmod(paths.playcoverRun, 0o700)
     }
 
     func createManagedApp(
         manifest: PlayCoverPrepareManifest
     ) throws {
-        // Production registers the Home before staging an account-global
-        // generation. Keep this low-level fixture in the same durable order.
-        let preparationID =
-            try PlayCoverGlobalReferenceStore.beginPreparation(
-                generationKey: manifest.generationKey,
-                paths: paths
-            )
-        try PlayCoverGlobalReferenceStore.abandonPreparation(
-            generationKey: manifest.generationKey,
-            preparationID: preparationID,
-            paths: paths
+        try FileManager.default.createDirectory(
+            atPath: paths.playcoverGlobalLocks,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
         )
         try FileManager.default.createDirectory(
             atPath: manifest.preparedAppPath,
@@ -4193,13 +4157,7 @@ private struct SessionFixture {
     }
 
     var homeReferenceURL: URL {
-        URL(
-            fileURLWithPath: paths.playcoverGlobalHomes,
-            isDirectory: true
-        ).appendingPathComponent(
-            "\(paths.playcoverHomeID).json",
-            isDirectory: false
-        )
+        URL(fileURLWithPath: paths.playcoverLastGeneration)
     }
 
     func remove() {

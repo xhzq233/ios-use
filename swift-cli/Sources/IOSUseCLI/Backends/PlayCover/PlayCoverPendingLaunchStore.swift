@@ -17,7 +17,6 @@ struct PlayCoverPendingLaunchStoreError:
 }
 
 enum PlayCoverPendingLaunchStore {
-    static let schemaVersion = 1
     static let maximumBytes = 64 * 1_024
 
     enum Phase: String, Codable, Equatable, Sendable {
@@ -33,7 +32,6 @@ enum PlayCoverPendingLaunchStore {
     enum OwnerSource: String, Codable, Equatable, Sendable {
         case workspaceCallback
         case authenticatedRuntime
-        case directSpawn
     }
 
     enum CallbackOutcome: String, Codable, Equatable, Sendable {
@@ -78,7 +76,6 @@ enum PlayCoverPendingLaunchStore {
     }
 
     struct Record: Codable, Equatable, Sendable {
-        let schemaVersion: Int
         let phase: Phase
         let sessionID: String
         let runtimeSocketPath: String
@@ -106,7 +103,6 @@ enum PlayCoverPendingLaunchStore {
             cleanupProof: CleanupProof?? = nil
         ) -> Record {
             Record(
-                schemaVersion: schemaVersion,
                 phase: phase ?? self.phase,
                 sessionID: sessionID,
                 runtimeSocketPath: runtimeSocketPath,
@@ -139,7 +135,6 @@ enum PlayCoverPendingLaunchStore {
         paths: IOSUsePaths
     ) throws -> Record {
         let record = Record(
-            schemaVersion: schemaVersion,
             phase: .intent,
             sessionID: intent.sessionID,
             runtimeSocketPath: intent.runtimeSocketPath,
@@ -933,7 +928,6 @@ enum PlayCoverPendingLaunchStore {
             )
         }
         let allowed = Set([
-            "schemaVersion",
             "phase",
             "sessionID",
             "runtimeSocketPath",
@@ -999,8 +993,7 @@ enum PlayCoverPendingLaunchStore {
         _ record: Record,
         paths: IOSUsePaths
     ) throws {
-        guard record.schemaVersion == schemaVersion,
-              UUID(uuidString: record.sessionID) != nil,
+        guard UUID(uuidString: record.sessionID) != nil,
               isBundleIdentifier(record.bundleIdentifier),
               isLowercaseSHA256(record.generationKey),
               record.runtimeSocketPath.hasPrefix("/"),

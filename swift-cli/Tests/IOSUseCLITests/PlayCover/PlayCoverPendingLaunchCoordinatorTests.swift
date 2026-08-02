@@ -33,8 +33,6 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         PlayCoverService.failedLaunchSignalOverrideForTesting = nil
         PlayCoverService.keyCoverLockOverrideForTesting = nil
         PlayCoverService.launchAliasRootOverrideForTesting = nil
-        PlayCoverPendingLaunchCoordinator
-            .cleanupPinStepObserverForTesting = nil
         SessionService.simulatorDriverTerminatorForTesting = nil
         SessionService.realDriverTerminatorForTesting = nil
         DeviceService.listDevicesOverrideForTesting = nil
@@ -90,97 +88,6 @@ final class PlayCoverPendingLaunchCoordinatorTests:
                 atPath: fixture.intent.aliasPath
             )
         )
-    }
-
-    func testConfirmedCleanupKeepsJournalAcrossEveryPinRetirementCut()
-        throws {
-        for interruptedStep in [
-            PlayCoverPendingLaunchCoordinator.CleanupPinStep
-                .pendingCleared,
-            .activeCleared,
-        ] {
-            let fixture = try makeFixture()
-            defer {
-                try? FileManager.default.removeItem(
-                    at: fixture.root
-                )
-            }
-            configureManifestValidation(fixture)
-            PlayCoverService.keyCoverLockOverrideForTesting = {
-                _, _ in
-            }
-            _ = try PlayCoverPendingLaunchStore.createIntent(
-                fixture.intent,
-                paths: fixture.paths
-            )
-            _ = try PlayCoverPendingLaunchStore
-                .markConfirmedStopped(
-                    sessionID: fixture.intent.sessionID,
-                    cleanupProof: .neverSubmitted,
-                    paths: fixture.paths
-                )
-            try PlayCoverGlobalReferenceStore.setPending(
-                sessionID: fixture.intent.sessionID,
-                generationKey: fixture.intent.generationKey,
-                paths: fixture.paths
-            )
-            try PlayCoverGlobalReferenceStore.markActive(
-                sessionID: fixture.intent.sessionID,
-                generationKey: fixture.intent.generationKey,
-                paths: fixture.paths
-            )
-            PlayCoverPendingLaunchCoordinator
-                .cleanupPinStepObserverForTesting = { step in
-                    if step == interruptedStep {
-                        throw CLIParseError.invalidValue(
-                            "simulated cleanup crash cut"
-                        )
-                    }
-                }
-
-            XCTAssertThrowsError(
-                try PlayCoverPendingLaunchCoordinator
-                    .recoverBeforeStart(paths: fixture.paths)
-            )
-            XCTAssertEqual(
-                try PlayCoverPendingLaunchStore.load(
-                    paths: fixture.paths
-                )?.phase,
-                .confirmedStopped
-            )
-            let interruptedReference =
-                try XCTUnwrap(
-                    PlayCoverGlobalReferenceStore.read(
-                        paths: fixture.paths
-                    )
-                )
-            XCTAssertNil(interruptedReference.pending)
-            XCTAssertEqual(
-                interruptedReference.active?.sessionID,
-                interruptedStep == .pendingCleared
-                    ? fixture.intent.sessionID
-                    : nil
-            )
-
-            PlayCoverPendingLaunchCoordinator
-                .cleanupPinStepObserverForTesting = nil
-            try PlayCoverPendingLaunchCoordinator
-                .recoverBeforeStart(paths: fixture.paths)
-
-            XCTAssertNil(
-                try PlayCoverPendingLaunchStore.load(
-                    paths: fixture.paths
-                )
-            )
-            let recoveredReference =
-                try XCTUnwrap(
-                    PlayCoverGlobalReferenceStore.read(
-                        paths: fixture.paths
-                    )
-                )
-            XCTAssertNil(recoveredReference.pending)
-            XCTAssertNil(recoveredReference.active)
-        }
     }
 
     func testStatusDoesNotAuthenticateArmedCandidatesOrMutateJournal()
@@ -1045,11 +952,6 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             fixture.intent,
             paths: fixture.paths
         )
-        try PlayCoverGlobalReferenceStore.setPending(
-            sessionID: fixture.intent.sessionID,
-            generationKey: fixture.intent.generationKey,
-            paths: fixture.paths
-        )
         _ = try PlayCoverPendingLaunchStore.markAliasReady(
             sessionID: fixture.intent.sessionID,
             device: 1,
@@ -1108,7 +1010,6 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             identity: signingIdentity
         )
         let object: [String: Any] = [
-            "schemaVersion": 5,
             "backend": "mac",
             "appBundleName": "App.app",
             "mainExecutableRelativePath": "Fixture",
@@ -1146,9 +1047,9 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             "bundleIdentifier": "com.example.fixture",
             "executableName": "Fixture",
             "sourceContentHash": String(repeating: "1", count: 64),
-            "sourceHashAfterPreparation":
-                String(repeating: "1", count: 64),
             "runtimeBuildHash": String(repeating: "2", count: 64),
+            "fridaEnabled": false,
+            "fridaEngineSHA256": NSNull(),
             "prepareRevision":
                 PlayCoverService.prepareImplementationRevision,
             "accountNamespacePolicyHash":
@@ -1166,15 +1067,6 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             "runtimeFrameworkName":
                 PlayCoverService.runtimeFrameworkName,
             "signingOrder": ["Fixture"],
-            "entitlementDiff": [
-                "original": [:],
-                "playCoverBaseline": [:],
-                "final": [:],
-                "addedByPlayCover": [],
-                "addedByIOSUse": [],
-                "changedFromOriginal": [],
-                "removedFromOriginal": [],
-            ],
             "completedAt": "2026-07-28T00:00:00Z",
         ]
         let manifest = try JSONDecoder().decode(
@@ -1186,9 +1078,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
                 isDirectory: true
             )
         )
-        // The real prepare flow durably registers the Home before any object
-        // is staged or published.
-        try PlayCoverGlobalReferenceStore.updateLast(
+        try PlayCoverHomeStore.updateLast(
             generationKey: generationKey,
             paths: paths
         )

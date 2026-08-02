@@ -23,6 +23,19 @@ Run the release build script with the intended tag:
 IOS_USE_RELEASE_VERSION=v1.2.0 bash scripts/release_build.sh
 ```
 
+The ordinary release is Engine-free. To publish the optional, separately
+verified Frida Catalyst asset as well, opt in explicitly:
+
+```bash
+IOS_USE_RELEASE_VERSION=v1.2.0 \
+IOS_USE_RELEASE_FRIDA_ENGINE=1 \
+bash scripts/release_build.sh
+```
+
+That mode adds `ios-use-frida-engine.tar.gz` and
+`IOSUSE-FRIDA-ENGINE-MANIFEST.txt`; it does not change the normal installer or
+Runtime archive.
+
 This script:
 
 1. Refuses a dirty source tree and audits pinned PlayCover, PlayTools, `inject`,
@@ -50,6 +63,8 @@ Expected assets:
 - `release/driver.ipa`
 - `release/driver-sim.ipa`
 - `release/ios-use-playcover-runtime.tar.gz`
+- optionally `release/ios-use-frida-engine.tar.gz` and
+  `release/IOSUSE-FRIDA-ENGINE-MANIFEST.txt` when the explicit opt-in is set
 - `release/ios-use-v1.2.0-corresponding-source.tar.gz`
 - `release/LICENSE`, `release/*-LICENSE-*` (including Yams MIT), and
   `release/THIRD-PARTY-LICENSES.md`

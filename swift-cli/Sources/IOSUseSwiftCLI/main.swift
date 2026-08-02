@@ -1,9 +1,12 @@
 import Foundation
 import IOSUseCLI
 
-let result = IOSUseCLI(outputSink: { text in
-    FileHandle.standardOutput.write(Data(text.utf8))
-}).run(arguments: Array(CommandLine.arguments.dropFirst()))
+let result = IOSUseCLI(
+    outputSink: { text in
+        FileHandle.standardOutput.write(Data(text.utf8))
+    },
+    registerHomesForDiskUsage: true
+).run(arguments: Array(CommandLine.arguments.dropFirst()))
 
 if !result.stdout.isEmpty {
     FileHandle.standardOutput.write(Data(result.stdout.utf8))

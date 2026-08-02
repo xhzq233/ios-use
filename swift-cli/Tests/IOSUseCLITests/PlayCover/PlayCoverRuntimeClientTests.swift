@@ -5,7 +5,7 @@ import XCTest
 @testable import IOSUseCLI
 
 final class PlayCoverRuntimeClientTests: XCTestCase {
-    private let sessionID = "session-v3"
+    private let sessionID = "runtime-session"
     private let bundleIdentifier = "com.example.runtime"
 
     func testTapEncodingOmitsAbsentSemanticRatio() throws {
@@ -45,7 +45,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         )
     }
 
-    func testEveryCommandUsesExactV3SingleSessionEnvelopeAndTypedPayload()
+    func testEveryCommandUsesExactSingleSessionEnvelopeAndTypedPayload()
         throws
     {
         let cases: [(
@@ -226,14 +226,12 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 XCTAssertEqual(
                     Set(request.keys),
                     Set([
-                        "schemaVersion",
                         "requestId",
                         "sessionID",
                         "command",
                         "arguments",
                     ])
                 )
-                XCTAssertEqual(request["schemaVersion"] as? Int, 3)
                 XCTAssertEqual(
                     request["sessionID"] as? String,
                     self.sessionID
@@ -298,7 +296,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             )
             return .body(
                 try JSONSerialization.data(withJSONObject: [
-                    "schemaVersion": 3,
                     "requestId": requestID,
                     "sessionID": self.sessionID,
                     "ok": true,
@@ -306,7 +303,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                         "dom": self.domPayload(generation: 71),
                     ],
                     "interactionState": [
-                        "schemaVersion": 1,
                         "refreshComplete": true,
                         "blocking": true,
                         "interactions": [[
@@ -384,7 +380,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             )
             return .body(
                 try JSONSerialization.data(withJSONObject: [
-                    "schemaVersion": 3,
                     "requestId": requestID,
                     "sessionID": self.sessionID,
                     "ok": false,
@@ -406,7 +401,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                         ],
                     ],
                     "interactionState": [
-                        "schemaVersion": 1,
                         "refreshComplete": true,
                         "blocking": true,
                         "interactions": [[
@@ -478,70 +472,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         XCTAssertTrue(
             snapshot.warnings[0].contains("Computer Use")
         )
-    }
-
-    func testOldRuntimeRefreshRejectionRequestsSessionRestart()
-        throws
-    {
-        let fixture = try RuntimeClientFixture()
-        defer { fixture.remove() }
-        let server = try FakeUnixRuntimeServer(
-            socketPath: fixture.socketPath
-        ) { request in
-            XCTAssertEqual(
-                request["refreshAlertStatus"] as? Bool,
-                true
-            )
-            let requestID = try XCTUnwrap(
-                request["requestId"] as? String
-            )
-            return .body(
-                try JSONSerialization.data(withJSONObject: [
-                    "schemaVersion": 3,
-                    "requestId": requestID,
-                    "sessionID": self.sessionID,
-                    "ok": false,
-                    "error": [
-                        "code": "invalid_request",
-                        "message":
-                            "request does not match Runtime schema version 3",
-                        "details": [
-                            "category": "protocol",
-                            "phase": "validation",
-                            "retryable": false,
-                            "fatal": false,
-                            "candidateCount": 0,
-                            "candidates": [],
-                            "suggestions": [],
-                        ],
-                    ],
-                ])
-            )
-        }
-
-        XCTAssertThrowsError(
-            try makeClient(
-                socketPath: fixture.socketPath,
-                refreshAlertStatus: true
-            ).dom(
-                .init(
-                    raw: false,
-                    fresh: true,
-                    waitQuiescence: false
-                )
-            )
-        ) {
-            XCTAssertEqual(
-                $0 as? PlayCoverRuntimeClientError,
-                .alertRefreshUnsupportedByRuntime
-            )
-            XCTAssertTrue(
-                String(describing: $0).contains(
-                    "ios-use stop"
-                )
-            )
-        }
-        try server.wait()
     }
 
     func testDecodesCommandSpecificScreenshotAndDOMPayload() throws {
@@ -685,7 +615,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     payload["executablePath"] = "/bin/false"
                 }
                 var envelope: [String: Any] = [
-                    "schemaVersion": 3,
                     "requestId": mutation == .request
                         ? UUID().uuidString
                         : requestID,
@@ -838,9 +767,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         }
     }
 
-    func testPingAcceptsLegacyPayloadButRejectsPartialIdentity()
-        throws
-    {
+    func testPingRejectsIncompleteIdentity() throws {
         for includedIdentityKey in [
             nil,
             "pid",
@@ -866,25 +793,13 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 ))
             }
 
-            if includedIdentityKey == nil {
-                let ping = try makeClient(
-                    socketPath: fixture.socketPath
-                ).ping()
-                XCTAssertFalse(ping.hasAnyIdentity)
-                XCTAssertFalse(ping.hasCompleteIdentity)
-            } else {
-                XCTAssertThrowsError(
-                    try makeClient(
-                        socketPath: fixture.socketPath
-                    ).ping()
-                ) {
-                    XCTAssertEqual(
-                        $0 as? PlayCoverRuntimeClientError,
-                        .malformedResponse(
-                            "ping identity is incomplete"
-                        )
-                    )
-                }
+            XCTAssertThrowsError(
+                try makeClient(socketPath: fixture.socketPath).ping()
+            ) {
+                XCTAssertEqual(
+                    $0 as? PlayCoverRuntimeClientError,
+                    .malformedResponse("ping identity is incomplete")
+                )
             }
             try server.wait()
         }
@@ -901,7 +816,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             )
             return .body(
                 try JSONSerialization.data(withJSONObject: [
-                    "schemaVersion": 3,
                     "requestId": requestID,
                     "sessionID": self.sessionID,
                     "ok": false,
@@ -1012,7 +926,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         let server = try FakeUnixRuntimeServer(
             socketPath: fixture.socketPath
         ) { _ in
-            .body(Data(#"{"schemaVersion":3"#.utf8))
+            .body(Data(#"{"requestId":"broken""#.utf8))
         }
 
         XCTAssertThrowsError(
@@ -1022,6 +936,104 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 $0 as? PlayCoverRuntimeClientError,
                 .responseDecodingFailed
             )
+        }
+        try server.wait()
+    }
+
+    func testHelloRequiresTheCurrentControlPayload() throws {
+        for missingKey in [
+            "generationKey",
+            "controlStage",
+            "uiState",
+            "stdio",
+        ] {
+            let fixture = try RuntimeClientFixture()
+            defer { fixture.remove() }
+            let server = try FakeUnixRuntimeServer(
+                socketPath: fixture.socketPath
+            ) { request in
+                let requestID = try XCTUnwrap(
+                    request["requestId"] as? String
+                )
+                var payload = self.helloPayload()
+                payload.removeValue(forKey: missingKey)
+                return .body(try self.successResponse(
+                    requestID: requestID,
+                    payload: payload
+                ))
+            }
+
+            XCTAssertThrowsError(
+                try makeClient(socketPath: fixture.socketPath).hello(),
+                missingKey
+            ) {
+                XCTAssertEqual(
+                    $0 as? PlayCoverRuntimeClientError,
+                    .responseDecodingFailed
+                )
+            }
+            try server.wait()
+        }
+    }
+
+    func testRuntimeUINotReadyRemainsATypeableRetryableError()
+        throws
+    {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            let requestID = try XCTUnwrap(
+                request["requestId"] as? String
+            )
+            return .body(
+                try JSONSerialization.data(withJSONObject: [
+                    "requestId": requestID,
+                    "sessionID": self.sessionID,
+                    "ok": false,
+                    "error": [
+                        "code": "runtime_ui_not_ready",
+                        "message": "Runtime UI is still initializing",
+                        "details": [
+                            "category": "precondition",
+                            "phase": "waiting-for-window",
+                            "retryable": true,
+                            "fatal": false,
+                            "candidateCount": 0,
+                            "candidates": [],
+                            "suggestions": ["retry the same UI command"],
+                        ],
+                    ],
+                    "interactionState": [
+                        "refreshComplete": false,
+                        "refreshError": "runtime_ui_not_ready",
+                        "blocking": false,
+                        "interactions": [],
+                    ],
+                    "performance": [
+                        "alertRefreshElapsedMs": 0.0,
+                    ],
+                ])
+            )
+        }
+
+        XCTAssertThrowsError(
+            try makeClient(
+                socketPath: fixture.socketPath,
+                refreshAlertStatus: true
+            ).dom(
+                .init(raw: false, fresh: true, waitQuiescence: false)
+            )
+        ) {
+            guard case .remoteError(let code, _, let details) =
+                    $0 as? PlayCoverRuntimeClientError else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertEqual(code, "runtime_ui_not_ready")
+            XCTAssertEqual(details?.phase, "waiting-for-window")
+            XCTAssertEqual(details?.retryable, true)
+            XCTAssertEqual(details?.fatal, false)
         }
         try server.wait()
     }
@@ -1249,15 +1261,44 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     "url": "demo://route",
                 ],
             ]
+        case .debug:
+            return [
+                "debug": [
+                    "display": "test",
+                    "events": [],
+                    "agent": "test-agent",
+                ],
+            ]
         }
     }
 
     private func helloPayload() -> [String: Any] {
-        var payload = basePayload()
-        payload["observed"] = [
-            "screenScale": Int(IOSUsePlayDeviceScale),
+        [
+            "pid": Int(getpid()),
+            "bundleIdentifier": bundleIdentifier,
+            "executablePath":
+                PlayCoverRuntimeClient.executablePath(for: getpid())
+                ?? ProcessInfo.processInfo.arguments[0],
+            "generationKey": String(repeating: "a", count: 64),
+            "capabilities":
+                PlayCoverRuntimeCommand.allCasesForTesting
+                    .map(\.rawValue),
+            "controlStage": "ready",
+            "controlFailure": NSNull(),
+            "uiState": [
+                "state": "initializing",
+                "stage": "waiting-for-window",
+                "failure": NSNull(),
+            ],
+            "stdio": [
+                "status": "disabled",
+                "path": NSNull(),
+                "device": NSNull(),
+                "inode": NSNull(),
+                "failureStage": NSNull(),
+                "errorNumber": NSNull(),
+            ],
         ]
-        return payload
     }
 
     private func basePayload() -> [String: Any] {
@@ -1292,6 +1333,19 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 ],
             ],
             "stage": "ready",
+            "uiState": [
+                "state": "ready",
+                "stage": "ready",
+                "failure": NSNull(),
+            ],
+            "stdio": [
+                "status": "disabled",
+                "path": NSNull(),
+                "device": NSNull(),
+                "inode": NSNull(),
+                "failureStage": NSNull(),
+                "errorNumber": NSNull(),
+            ],
         ]
     }
 
@@ -1417,7 +1471,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         payload: [String: Any]
     ) throws -> Data {
         try JSONSerialization.data(withJSONObject: [
-            "schemaVersion": 3,
             "requestId": requestID,
             "sessionID": sessionID,
             "ok": true,
@@ -1441,6 +1494,7 @@ private extension PlayCoverRuntimeCommand {
         .dismissAlert,
         .dismissAlertByLabel,
         .open,
+        .debug,
     ]
 }
 

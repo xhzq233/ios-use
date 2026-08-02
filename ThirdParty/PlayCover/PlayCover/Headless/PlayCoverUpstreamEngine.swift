@@ -552,6 +552,16 @@ public struct PlayCoverUpstreamEntitlementDiff: Codable, Equatable, Sendable {
 }
 
 public struct PlayCoverUpstreamPrepareOptions: Sendable {
+    public struct EmbeddedFramework: Sendable, Equatable {
+        public let source: URL
+        public let relativePath: String
+
+        public init(source: URL, relativePath: String) {
+            self.source = source
+            self.relativePath = relativePath
+        }
+    }
+
     public let sourceApp: URL
     public let stagingApp: URL
     public let managedStagingApp: URL?
@@ -565,6 +575,7 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
     public let codesignIdentity: String
     public let expectedRuntimeBuildHash: String?
     public let expectedRuntimeEvidence: PlayCoverUpstreamRuntimeEvidence?
+    public let embeddedFrameworks: [EmbeddedFramework]
 
     public init(
         sourceApp: URL,
@@ -579,7 +590,8 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         playSignActive: Bool = false,
         codesignIdentity: String,
         expectedRuntimeBuildHash: String? = nil,
-        expectedRuntimeEvidence: PlayCoverUpstreamRuntimeEvidence? = nil
+        expectedRuntimeEvidence: PlayCoverUpstreamRuntimeEvidence? = nil,
+        embeddedFrameworks: [EmbeddedFramework] = []
     ) {
         self.sourceApp = sourceApp
         self.stagingApp = stagingApp
@@ -594,6 +606,7 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         self.codesignIdentity = codesignIdentity
         self.expectedRuntimeBuildHash = expectedRuntimeBuildHash
         self.expectedRuntimeEvidence = expectedRuntimeEvidence
+        self.embeddedFrameworks = embeddedFrameworks
     }
 }
 
@@ -643,23 +656,20 @@ public struct PlayCoverUpstreamPrepareResult: Equatable, Sendable {
 
 /// Path-independent evidence for a transformed App before Home-specific
 /// entitlement composition and final signing.
-public struct PlayCoverUpstreamSubstrateEvidence:
-    Codable, Equatable, Sendable
+private struct PlayCoverUpstreamSubstrateEvidence:
+    Equatable, Sendable
 {
-    public let schemaVersion: Int
-    public let sourceContentHash: String
-    public let runtimeBuildHash: String?
-    public let embeddedRuntimeFrameworkRelativePath: String
-    public let runtimeLoadPath: String
+    let sourceContentHash: String
+    let runtimeBuildHash: String?
+    let embeddedRuntimeFrameworkRelativePath: String
+    let runtimeLoadPath: String
 
-    public init(
-        schemaVersion: Int = 1,
+    init(
         sourceContentHash: String,
         runtimeBuildHash: String?,
         embeddedRuntimeFrameworkRelativePath: String,
         runtimeLoadPath: String
     ) {
-        self.schemaVersion = schemaVersion
         self.sourceContentHash = sourceContentHash
         self.runtimeBuildHash = runtimeBuildHash
         self.embeddedRuntimeFrameworkRelativePath =
@@ -668,10 +678,10 @@ public struct PlayCoverUpstreamSubstrateEvidence:
     }
 }
 
-public struct PlayCoverUpstreamValidatedSubstrate: Equatable, Sendable {
-    public let appURL: URL
-    public let sourceBefore: PlayCoverUpstreamAppInspection
-    public let evidence: PlayCoverUpstreamSubstrateEvidence
+private struct PlayCoverUpstreamValidatedSubstrate: Equatable, Sendable {
+    let appURL: URL
+    let sourceBefore: PlayCoverUpstreamAppInspection
+    let evidence: PlayCoverUpstreamSubstrateEvidence
 
     fileprivate init(
         appURL: URL,
@@ -921,25 +931,7 @@ public enum PlayCoverUpstreamEngine {
         return try finalizeSubstrate(substrate, options: options)
     }
 
-    public static func prepareSubstrate(
-        _ options: PlayCoverUpstreamPrepareOptions
-    ) throws -> PlayCoverUpstreamValidatedSubstrate {
-        let source = try inspect(appURL: options.sourceApp)
-        return try prepareSubstrate(options, sourceInspection: source)
-    }
-
-    public static func prepareSubstrate(
-        _ options: PlayCoverUpstreamPrepareOptions,
-        sourceInspection source: PlayCoverUpstreamAppInspection
-    ) throws -> PlayCoverUpstreamValidatedSubstrate {
-        try prepareSubstrate(
-            options,
-            sourceInspection: source,
-            afterSourceCloneForTesting: nil
-        )
-    }
-
-    static func prepareSubstrate(
+    private static func prepareSubstrate(
         _ options: PlayCoverUpstreamPrepareOptions,
         sourceInspection source: PlayCoverUpstreamAppInspection,
         afterSourceCloneForTesting: ((URL) throws -> Void)?
@@ -1039,6 +1031,31 @@ public enum PlayCoverUpstreamEngine {
         )
         let embeddedRuntimeRelativePath =
             "Frameworks/\(embeddedRuntime.lastPathComponent)"
+        for framework in options.embeddedFrameworks {
+            let relativePath = framework.relativePath
+            guard relativePath.hasPrefix("Frameworks/"),
+                  relativePath.split(separator: "/").count == 2,
+                  relativePath != embeddedRuntimeRelativePath,
+                  !relativePath.contains(".."),
+                  URL(fileURLWithPath: relativePath)
+                    .lastPathComponent.hasSuffix(".framework") else {
+                throw PlayCoverUpstreamError.invalidApp(
+                    "embedded framework relative path is invalid: "
+                        + relativePath
+                )
+            }
+            let destination = options.stagingApp
+                .appendingPathComponent(relativePath)
+            guard !FileManager.default.fileExists(atPath: destination.path) else {
+                throw PlayCoverUpstreamError.invalidApp(
+                    "source already contains \(relativePath)"
+                )
+            }
+            try FileManager.default.copyItem(
+                at: framework.source,
+                to: destination
+            )
+        }
         for relative in inspectedRelativePaths {
             guard let sourceMacho = sourceByPath[relative] else {
                 throw PlayCoverUpstreamError.verificationFailed(
@@ -1111,7 +1128,7 @@ public enum PlayCoverUpstreamEngine {
         return substrate
     }
 
-    public static func validateSubstrate(
+    private static func validateSubstrate(
         appURL: URL,
         evidence: PlayCoverUpstreamSubstrateEvidence,
         sourceInspection source: PlayCoverUpstreamAppInspection,
@@ -1199,7 +1216,7 @@ public enum PlayCoverUpstreamEngine {
         )
     }
 
-    public static func finalizeSubstrate(
+    private static func finalizeSubstrate(
         _ substrate: PlayCoverUpstreamValidatedSubstrate,
         options: PlayCoverUpstreamPrepareOptions
     ) throws -> PlayCoverUpstreamPrepareResult {
@@ -1253,7 +1270,7 @@ public enum PlayCoverUpstreamEngine {
             source: substrate.sourceBefore,
             additionalNestedBundles: [
                 substrate.evidence.embeddedRuntimeFrameworkRelativePath,
-            ],
+            ] + options.embeddedFrameworks.map(\.relativePath),
             finalEntitlements: composition.finalPlist,
             codesignIdentity: options.codesignIdentity
         )
@@ -1316,8 +1333,7 @@ public enum PlayCoverUpstreamEngine {
             options.expectedRuntimeBuildHash
                 ?? options.expectedRuntimeEvidence?.buildHash
         let expectedRuntimeName = options.runtimeFramework.lastPathComponent
-        guard evidence.schemaVersion == 1,
-              inspectedSourcePath == optionsSourcePath,
+        guard inspectedSourcePath == optionsSourcePath,
               evidence.sourceContentHash == source.sourceContentHash,
               evidence.runtimeBuildHash == expectedRuntimeBuildHash,
               evidence.embeddedRuntimeFrameworkRelativePath

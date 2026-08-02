@@ -1,6 +1,7 @@
 #import "IOSUsePlayRuntimeAutomation.h"
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayRuntimeDOM.h"
+#import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlayDevice.h"
 #import "IOSUsePlaySwiftBridge.h"
 #import "PTFakeMetaTouch.h"
@@ -4592,6 +4593,14 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeAutomationCommand(
         NSDictionary<NSString *, id> **localError
     ) {
         NSDictionary<NSString *, id> *localResult = nil;
+        NSDictionary<NSString *, id> *readinessError =
+            IOSUsePlayRuntimeUICommandError();
+        if (readinessError != nil) {
+            if (localError != NULL) {
+                *localError = readinessError;
+            }
+            return nil;
+        }
         @try {
             if ([command isEqualToString:@"tap"] ||
                 [command isEqualToString:@"longPress"] ||

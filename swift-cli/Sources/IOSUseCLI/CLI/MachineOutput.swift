@@ -526,6 +526,12 @@ enum MachineOutput {
                 phase = IOSUseErrorPhase.validation
                 retryable = false
                 fatal = false
+            case .bundleAlreadyRunning:
+                category = IOSUseErrorCategory.session
+                code = "mac_bundle_already_running"
+                phase = "mac_preflight"
+                retryable = true
+                fatal = false
             }
             return MachineError(
                 message: backendError.description,

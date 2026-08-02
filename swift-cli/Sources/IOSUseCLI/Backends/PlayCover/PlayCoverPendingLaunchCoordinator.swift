@@ -2,14 +2,6 @@ import Foundation
 import PlayCoverUpstream
 
 enum PlayCoverPendingLaunchCoordinator {
-    enum CleanupPinStep: Equatable {
-        case pendingCleared
-        case activeCleared
-    }
-
-    static var cleanupPinStepObserverForTesting:
-        ((CleanupPinStep) throws -> Void)?
-
     struct RecoveryResult: Equatable, Sendable {
         let sessionID: String
         let pid: Int32?
@@ -75,29 +67,9 @@ enum PlayCoverPendingLaunchCoordinator {
     static func recoverBeforeStart(
         paths: IOSUsePaths
     ) throws {
-        // Production calls recovery while holding the per-Home operation
-        // lock. A preparation pin that survived to this point therefore
-        // belongs to a crashed invocation and must not protect cache content
-        // forever.
-        try PlayCoverGlobalReferenceStore
-            .clearStalePreparationBeforeStart(paths: paths)
         guard let record = try PlayCoverPendingLaunchStore.load(
             paths: paths
         ) else {
-            // The journal is published before the global pending pin. A pin
-            // without a journal can therefore only be residue from an
-            // interrupted pre-submit pin write or from cleanup after the
-            // journal was retired. Clear only the exact value observed; an
-            // active pin remains as the deletion barrier for a committed
-            // session.
-            if let pending = try PlayCoverGlobalReferenceStore
-                .read(paths: paths)?.pending {
-                try PlayCoverGlobalReferenceStore.clearPending(
-                    sessionID: pending.sessionID,
-                    generationKey: pending.generationKey,
-                    paths: paths
-                )
-            }
             return
         }
         if let driver = try SessionService
@@ -314,8 +286,6 @@ enum PlayCoverPendingLaunchCoordinator {
             source = .workspaceCallback
         case .authenticatedRuntime:
             source = .authenticatedRuntime
-        case .directSpawn:
-            source = .directSpawn
         }
         return PlayCoverService.LaunchedApplicationIdentity(
             pid: owner.pid,
@@ -456,35 +426,6 @@ enum PlayCoverPendingLaunchCoordinator {
                 pendingLaunch: record,
                 manifest: manifest
             )
-            try PlayCoverGlobalReferenceStore.clearPending(
-                sessionID: record.sessionID,
-                generationKey: record.generationKey,
-                paths: paths
-            )
-            try cleanupPinStepObserverForTesting?(
-                .pendingCleared
-            )
-            #if DEBUG && canImport(Darwin)
-            PlayCoverLaunchCrashCut.hit(
-                .afterCleanupPendingPinCleared
-            )
-            #endif
-            try PlayCoverGlobalReferenceStore.clearActive(
-                sessionID: record.sessionID,
-                generationKey: record.generationKey,
-                paths: paths
-            )
-            try cleanupPinStepObserverForTesting?(
-                .activeCleared
-            )
-            #if DEBUG && canImport(Darwin)
-            PlayCoverLaunchCrashCut.hit(
-                .afterCleanupActivePinCleared
-            )
-            #endif
-            // Keep the confirmed-stopped journal as the retry authority until
-            // every exact global pin has been retired. `last` continues to
-            // protect the immutable generation.
             try PlayCoverPendingLaunchStore.removeConfirmed(
                 sessionID: record.sessionID,
                 paths: paths
@@ -580,29 +521,11 @@ enum PlayCoverPendingLaunchCoordinator {
             // every observed candidate must still pass stable PID/birth/path
             // checks plus the Runtime socket's peer and identified response
             // authentication.
-            let foreignPins =
-                try PlayCoverGlobalReferenceStore
-                    .foreignSessionPins(
-                        paths: paths,
-                        generationKey: record.generationKey
-                    )
-            let foreignSessions = try foreignPins.map {
-                PlayCoverPendingLaunchRecovery.ForeignSession(
-                    sessionID: $0.sessionID,
-                    runtimeSocketPath:
-                        try IOSUsePaths.macRuntimeSocketPath(
-                            sessionID: $0.sessionID,
-                            homeID: $0.homeID,
-                            socketRoot:
-                                paths.playcoverSocketRoot
-                        )
-                )
-            }
             switch PlayCoverPendingLaunchRecovery
                 .authenticateCandidateOwner(
                     evidence: evidence,
                     census: observation.census,
-                    foreignSessions: foreignSessions
+                    foreignSessions: []
                 ) {
             case .success(let owner):
                 authenticatedOwner = owner
@@ -643,8 +566,6 @@ enum PlayCoverPendingLaunchCoordinator {
                     source = .workspaceCallback
                 case .authenticatedRuntime:
                     source = .authenticatedRuntime
-                case .directSpawn:
-                    source = .directSpawn
                 }
                 return PlayCoverPendingLaunchRecovery.Owner(
                     pid: owner.pid,
@@ -665,8 +586,6 @@ enum PlayCoverPendingLaunchCoordinator {
             source = .workspaceCallback
         case .authenticatedRuntime:
             source = .authenticatedRuntime
-        case .directSpawn:
-            source = .directSpawn
         }
         return PlayCoverPendingLaunchStore.Owner(
             pid: owner.pid,

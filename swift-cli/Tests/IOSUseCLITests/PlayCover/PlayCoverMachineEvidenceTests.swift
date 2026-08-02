@@ -179,11 +179,24 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
                 host: nil
             ),
             stage: "ready",
+            uiState: .init(
+                state: "ready",
+                stage: "ready",
+                failure: nil
+            ),
             diagnostics: [
                 "window": .object([
                     "class": .string("_NSAlertPanel"),
                 ]),
-            ]
+            ],
+            stdio: .init(
+                status: "disabled",
+                path: nil,
+                device: nil,
+                inode: nil,
+                failureStage: nil,
+                errorNumber: nil
+            )
         )
 
         guard case .object(let root) =

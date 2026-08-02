@@ -19,7 +19,7 @@ RUN_DIR=""
 SESSION_HOME=""
 CANONICAL_SESSION_HOME=""
 SESSION_HOME_ID=""
-SESSION_RUNTIME_HOME=""
+SESSION_LOG_DIR=""
 ARCHIVED_SESSION_HOME=""
 MANIFEST=""
 CLEAN_CYCLE_INDEX=""
@@ -222,7 +222,7 @@ validate_pass_attestation() {
     --arg probeSourceSHA256 "$PROBE_SOURCE_SHA256" \
     --arg generationKey "$PROTOCOL_GENERATION_KEY" \
     --arg socketRoot "$PLAYCOVER_SOCKET_ROOT" \
-    --arg runtimeHome "$SESSION_RUNTIME_HOME" \
+    --arg logDirectory "$SESSION_LOG_DIR" \
     --argjson expectedCleanCycles "$CLEAN_CYCLE_COUNT" '
       def is_sha256:
         type == "string" and test("^[0-9a-f]{64}$");
@@ -329,8 +329,11 @@ validate_pass_attestation() {
         $readiness |
         all(
           .responseBytes > 0 and
-          .readinessAppKitFieldCount == 27 and
-          .statusOnlyAppKitFieldCount == 0 and
+          .controlHelloFieldCount == 9 and
+          (.uiState == "initializing" or .uiState == "ready") and
+          (.uiStage | type) == "string" and
+          (.uiStage | length) > 0 and
+          .forbiddenUIFieldCount == 0 and
           .fullStatusDiagnosticsVerified == true and
           .runtimeListenerSurvived == true and
           .postProbeSessionHealthy == true
@@ -416,7 +419,7 @@ validate_pass_attestation() {
         (.runtimeSocketPath | endswith(".sock")) and
         (.stdioLogPath | type) == "string" and
         (.stdioLogPath |
-          startswith($runtimeHome + "/logs/stdio-")) and
+          startswith($logDirectory + "/stdio-")) and
         (.stdioLogPath |
           test("stdio-[0-9a-f-]{36}\\.log$")) and
         (
@@ -910,7 +913,7 @@ SESSION_HOME_ID="$(
 if [[ ! "$SESSION_HOME_ID" =~ ^[0-9a-f]{64}$ ]]; then
   config_fail "could not derive the logical Home identity"
 fi
-SESSION_RUNTIME_HOME="$PLAYCOVER_RUNTIME_ROOT/$SESSION_HOME_ID"
+SESSION_LOG_DIR="$SESSION_HOME/logs/mac"
 printf '%s\n' "$SESSION_HOME" >"$RUN_DIR/session-home-origin"
 
 record_command() {
@@ -1122,7 +1125,7 @@ assert_stdio_log() {
     printf '%s' "$session_identifier" |
       /usr/bin/tr '[:upper:]' '[:lower:]'
   )"
-  expected_path="$SESSION_RUNTIME_HOME/logs/stdio-$lower_session_identifier.log"
+  expected_path="$SESSION_LOG_DIR/stdio-$lower_session_identifier.log"
   if [[
     "$log_path" != "$expected_path" ||
     ! -f "$log_path" ||
@@ -1380,8 +1383,11 @@ if ! jq -e '
     .mode == "hello-readiness" and
     .runtimeListenerSurvived == true and
     .responseBytes > 0 and
-    .readinessAppKitFieldCount == 27 and
-    .statusOnlyAppKitFieldCount == 0
+    .controlHelloFieldCount == 9 and
+    (.uiState == "initializing" or .uiState == "ready") and
+    (.uiStage | type) == "string" and
+    (.uiStage | length) > 0 and
+    .forbiddenUIFieldCount == 0
   ' "$readiness_probe_stdout" >/dev/null; then
   fail_gate "hello_readiness did not expose the minimal Runtime payload"
 fi
@@ -1398,8 +1404,10 @@ jq -c '
     {
       kind: "hello-readiness-shape",
       responseBytes,
-      readinessAppKitFieldCount,
-      statusOnlyAppKitFieldCount,
+      controlHelloFieldCount,
+      uiState,
+      uiStage,
+      forbiddenUIFieldCount,
       fullStatusDiagnosticsVerified: true,
       runtimeListenerSurvived,
       postProbeSessionHealthy: true

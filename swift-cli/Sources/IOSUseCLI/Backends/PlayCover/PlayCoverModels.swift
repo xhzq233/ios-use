@@ -180,6 +180,9 @@ struct PlayCoverPreparationPlan: Equatable, Sendable {
     let runtimeEvidence: PlayCoverUpstreamRuntimeEvidence
     let signingIdentity: PlayCoverSigningIdentityEvidence
     let generationIdentity: PlayCoverGenerationIdentity
+    let fridaEnabled: Bool
+    let fridaEngineFrameworkPath: String?
+    let fridaEngineSHA256: String?
 
     var runtimeBuildHash: String {
         generationIdentity.runtimeBuildHash
@@ -196,6 +199,22 @@ struct PlayCoverPreparationPlan: Equatable, Sendable {
     var generationKey: String {
         generationIdentity.generationKey
     }
+
+    func withFridaEngine(
+        _ engine: PlayCoverFridaEngineService.Resolved
+    ) -> PlayCoverPreparationPlan {
+        PlayCoverPreparationPlan(
+            source: source,
+            runtimeFrameworkPath: runtimeFrameworkPath,
+            runtimeEvidence: runtimeEvidence,
+            signingIdentity: signingIdentity,
+            generationIdentity: generationIdentity,
+            fridaEnabled: fridaEnabled,
+            fridaEngineFrameworkPath: engine.path,
+            fridaEngineSHA256: engine.sha256
+        )
+    }
+
 }
 
 public struct PlayCoverEntitlementDiff: Codable, Equatable, Sendable {
@@ -231,7 +250,6 @@ public struct PlayCoverEntitlementDiff: Codable, Equatable, Sendable {
 }
 
 public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
-    public let schemaVersion: Int
     public let backend: String
     public let appBundleName: String
     public let mainExecutableRelativePath: String
@@ -251,6 +269,14 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
     public let sourceHashAfterPreparation: String
     public let runtimeBuildHash: String
     public let prepareRevision: String
+    /// Immutable capability bit persisted with the prepared generation. A
+    /// Frida-enabled generation embeds the optional Engine and can be reused
+    /// offline; the base generation never acquires it implicitly.
+    public let fridaEnabled: Bool
+    /// SHA-256 of the verified immutable Engine framework tree.  It is nil for
+    /// base generations and is persisted so the capability is auditable
+    /// without reopening the external Engine cache.
+    public let fridaEngineSHA256: String?
     public let accountNamespacePolicyHash: String
     public let generationKey: String
     public let signingIdentity: PlayCoverSigningIdentityEvidence
@@ -268,7 +294,6 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
     public let completedAt: String
 
     public init(
-        schemaVersion: Int = 5,
         backend: String = "mac",
         sourceAppPath: String,
         preparedAppPath: String,
@@ -279,6 +304,8 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
         sourceHashAfterPreparation: String,
         runtimeBuildHash: String,
         prepareRevision: String,
+        fridaEnabled: Bool = false,
+        fridaEngineSHA256: String? = nil,
         accountNamespacePolicyHash: String,
         generationKey: String,
         signingIdentity: PlayCoverSigningIdentityEvidence,
@@ -302,7 +329,6 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
         rootEntitlementsSHA256: String = "",
         codeObjects: [PlayCoverInventoryEntry]? = nil
     ) {
-        self.schemaVersion = schemaVersion
         self.backend = backend
         let mainRelative =
             mainExecutableRelativePath ?? executableName
@@ -348,6 +374,8 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
         self.sourceHashAfterPreparation = sourceHashAfterPreparation
         self.runtimeBuildHash = runtimeBuildHash
         self.prepareRevision = prepareRevision
+        self.fridaEnabled = fridaEnabled
+        self.fridaEngineSHA256 = fridaEngineSHA256
         self.accountNamespacePolicyHash =
             accountNamespacePolicyHash
         self.generationKey = generationKey
@@ -365,8 +393,9 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
         self.completedAt = completedAt
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case schemaVersion
+    static let persistedKeys = Set(CodingKeys.allCases.map(\.rawValue))
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case backend
         case appBundleName
         case mainExecutableRelativePath
@@ -381,6 +410,8 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
         case sourceContentHash
         case runtimeBuildHash
         case prepareRevision
+        case fridaEnabled
+        case fridaEngineSHA256
         case accountNamespacePolicyHash
         case generationKey
         case signingIdentity
@@ -393,7 +424,6 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(schemaVersion, forKey: .schemaVersion)
         try container.encode(backend, forKey: .backend)
         try container.encode(appBundleName, forKey: .appBundleName)
         try container.encode(
@@ -435,6 +465,11 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
             forKey: .runtimeBuildHash
         )
         try container.encode(prepareRevision, forKey: .prepareRevision)
+        try container.encode(fridaEnabled, forKey: .fridaEnabled)
+        try container.encode(
+            fridaEngineSHA256,
+            forKey: .fridaEngineSHA256
+        )
         try container.encode(
             accountNamespacePolicyHash,
             forKey: .accountNamespacePolicyHash
@@ -457,10 +492,6 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(
             keyedBy: CodingKeys.self
-        )
-        schemaVersion = try container.decode(
-            Int.self,
-            forKey: .schemaVersion
         )
         backend = try container.decode(String.self, forKey: .backend)
         appBundleName = try container.decode(
@@ -516,6 +547,28 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
             String.self,
             forKey: .prepareRevision
         )
+        fridaEnabled = try container.decode(
+            Bool.self,
+            forKey: .fridaEnabled
+        )
+        guard container.contains(.fridaEngineSHA256) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.fridaEngineSHA256,
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription:
+                        "current manifest requires fridaEngineSHA256, including an explicit null"
+                )
+            )
+        }
+        fridaEngineSHA256 = try container.decodeNil(
+            forKey: .fridaEngineSHA256
+        )
+            ? nil
+            : try container.decode(
+                String.self,
+                forKey: .fridaEngineSHA256
+            )
         accountNamespacePolicyHash = try container.decode(
             String.self,
             forKey: .accountNamespacePolicyHash
@@ -565,7 +618,6 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
             isDirectory: true
         )
         return PlayCoverPrepareManifest(
-            schemaVersion: schemaVersion,
             backend: backend,
             sourceAppPath: "",
             preparedAppPath: app.path,
@@ -578,6 +630,8 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
             sourceHashAfterPreparation: sourceContentHash,
             runtimeBuildHash: runtimeBuildHash,
             prepareRevision: prepareRevision,
+            fridaEnabled: fridaEnabled,
+            fridaEngineSHA256: fridaEngineSHA256,
             accountNamespacePolicyHash:
                 accountNamespacePolicyHash,
             generationKey: generationKey,
@@ -627,11 +681,17 @@ struct PlayCoverValidatedPreparedManifest: Equatable, Sendable {
 }
 
 struct PlayCoverCompletedGeneration: Codable, Equatable, Sendable {
-    let schemaVersion: Int
     let generationKey: String
     let manifestSHA256: String
     let executableSHA256: String
     let runtimeSHA256: String
+
+    static let persistedKeys = Set([
+        "generationKey",
+        "manifestSHA256",
+        "executableSHA256",
+        "runtimeSHA256",
+    ])
 }
 
 public struct PlayCoverVerification: Codable, Equatable, Sendable {
@@ -651,19 +711,15 @@ public struct PlayCoverVerification: Codable, Equatable, Sendable {
 }
 
 public struct PlayCoverHello: Codable, Equatable, Sendable {
-    public let schemaVersion: Int
     public let sessionID: String
     public let pid: Int32
     public let bundleIdentifier: String
     public let executablePath: String
-    public let logicalWidth: Double
-    public let logicalHeight: Double
-    public let nativeWidth: Double
-    public let nativeHeight: Double
-    public let scale: Double
-    public let windowWidth: Double
-    public let windowHeight: Double
-    public let stage: String
+    public let generationKey: String
+    public let controlStage: String
+    public let uiState: String
+    public let uiStage: String
+    public let uiFailure: String?
     public let capabilities: [String]
 }
 
@@ -698,6 +754,7 @@ public enum PlayCoverBackendError:
     case launchTimedOut(String)
     case terminateFailed(String)
     case capabilityUnavailable(String)
+    case bundleAlreadyRunning(bundleIdentifier: String, pid: Int32)
 
     public var description: String {
         switch self {
@@ -737,6 +794,9 @@ public enum PlayCoverBackendError:
             return "Mac terminate failed: \(message)"
         case .capabilityUnavailable(let command):
             return "Mac active session does not support `\(command)`"
+        case .bundleAlreadyRunning(let bundleIdentifier, let pid):
+            return "Mac bundle is already running: \(bundleIdentifier) "
+                + "(pid \(pid))"
         }
     }
 }

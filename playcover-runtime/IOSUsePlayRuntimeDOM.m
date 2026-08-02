@@ -1,4 +1,5 @@
 #import "IOSUsePlayRuntimeDOM.h"
+#import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlayAppKitBridge.h"
 
 #import <UIKit/UIKit.h>
@@ -216,6 +217,8 @@ static CGRect IOSUseDOMObjectRect(id object);
 @property(nonatomic, strong) dispatch_semaphore_t completion;
 @property(nonatomic, strong, nullable) IOSUseDOMSnapshot *snapshot;
 @property(nonatomic, copy, nullable) NSString *failureMessage;
+@property(nonatomic, copy, nullable)
+    NSDictionary<NSString *, id> *commandError;
 @end
 
 @implementation IOSUseDOMSnapshotRequest
@@ -3563,6 +3566,14 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMFreshSnapshot(
         return nil;
     }
     if (NSThread.isMainThread) {
+        NSDictionary<NSString *, id> *readinessError =
+            IOSUsePlayRuntimeUICommandError();
+        if (readinessError != nil) {
+            if (commandError != NULL) {
+                *commandError = readinessError;
+            }
+            return nil;
+        }
         NSString *failureMessage = nil;
         IOSUseDOMSnapshot *snapshot = nil;
         @try {
@@ -3613,6 +3624,8 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMFreshSnapshot(
 
                 __block IOSUseDOMSnapshot *snapshot = nil;
                 __block NSString *failureMessage = nil;
+                __block NSDictionary<NSString *, id>
+                    *executionError = nil;
                 dispatch_semaphore_t mainCompletion =
                     dispatch_semaphore_create(0);
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -3628,9 +3641,13 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMFreshSnapshot(
                             }
                         }
                         if (shouldCollect) {
-                            snapshot = IOSUseDOMBuildSnapshotOnMain(
-                                &failureMessage
-                            );
+                            executionError =
+                                IOSUsePlayRuntimeUICommandError();
+                            if (executionError == nil) {
+                                snapshot = IOSUseDOMBuildSnapshotOnMain(
+                                    &failureMessage
+                                );
+                            }
                         }
                     } @catch (NSException *exception) {
                         failureMessage =
@@ -3651,6 +3668,7 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMFreshSnapshot(
                     if (!request.cancelled) {
                         request.snapshot = snapshot;
                         request.failureMessage = failureMessage;
+                        request.commandError = executionError;
                     }
                 }
             } @catch (NSException *exception) {
@@ -3725,14 +3743,16 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMFreshSnapshot(
 
     IOSUseDOMSnapshot *snapshot = nil;
     NSString *failureMessage = nil;
+    NSDictionary<NSString *, id> *executionError = nil;
     BOOL deadlineExpired = NO;
     @synchronized (request) {
         snapshot = request.snapshot;
         failureMessage = request.failureMessage;
+        executionError = request.commandError;
         deadlineExpired = request.deadlineExpired;
     }
     if (snapshot == nil && commandError != NULL) {
-        *commandError = IOSUseDOMError(
+        *commandError = executionError ?: IOSUseDOMError(
             deadlineExpired
                 ? @"snapshot_queue_timeout"
                 : @"snapshot_failed",
@@ -4191,8 +4211,8 @@ IOSUseDOMSnapshotFingerprint(IOSUseDOMSnapshot *snapshot) {
                 ]
                 : @[],
             @"state": @[
-                @(!source.disabled),
-                @(!source.invisible),
+                @((BOOL)!source.disabled),
+                @((BOOL)!source.invisible),
                 @(source.selected),
                 @(source.focused),
                 @(element.opaque),

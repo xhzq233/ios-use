@@ -8,15 +8,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#if !defined(IOS_USE_PLAY_RUNTIME_STDIO_STANDALONE)
 static const char *const IOSUsePlayStdioEnabled =
     "IOS_USE_PLAY_STDIO_LOG";
-static const char *const IOSUsePlayStdioPath =
-    "IOS_USE_PLAY_STDIO_LOG_PATH";
-static const char *const IOSUsePlayStdioDevice =
-    "IOS_USE_PLAY_STDIO_LOG_DEVICE";
-static const char *const IOSUsePlayStdioInode =
-    "IOS_USE_PLAY_STDIO_LOG_INODE";
-
+#endif
 static IOSUsePlayRuntimeStdioState IOSUsePlayStdioState = {
     .status = IOSUsePlayRuntimeStdioDisabled,
 };
@@ -81,28 +76,6 @@ static void IOSUsePlayStdioRecordFailure(
     }
 }
 
-static int IOSUsePlayStdioParseIdentity(
-    const char *value,
-    uint64_t *result
-) {
-    if (value == NULL || value[0] == '\0' || result == NULL) {
-        return EINVAL;
-    }
-    for (const char *cursor = value; *cursor != '\0'; cursor++) {
-        if (*cursor < '0' || *cursor > '9') {
-            return EINVAL;
-        }
-    }
-    errno = 0;
-    char *end = NULL;
-    unsigned long long parsed = strtoull(value, &end, 10);
-    if (errno != 0 || end == value || *end != '\0') {
-        return errno == 0 ? EINVAL : errno;
-    }
-    *result = (uint64_t)parsed;
-    return 0;
-}
-
 static int IOSUsePlayStdioDup2(
     int source,
     int destination
@@ -125,188 +98,61 @@ void IOSUsePlayRuntimeCopyStdioState(
     }
 }
 
-static void IOSUsePlayRuntimeConfigureStdio(void) {
-    const char *enabled = getenv(IOSUsePlayStdioEnabled);
-    if (enabled == NULL || enabled[0] == '\0') {
-        return;
+int IOSUsePlayRuntimeConfigureStdioFromDescriptor(
+    int descriptor,
+    const char *path,
+    uint64_t expectedDevice,
+    uint64_t expectedInode
+) {
+    if (descriptor < 0) {
+        IOSUsePlayStdioRecordFailure("missing-log-descriptor", EBADF);
+        return EBADF;
     }
-    if (strcmp(enabled, "1") != 0) {
+    struct stat status;
+    if (fstat(descriptor, &status) != 0) {
+        int errorNumber = errno;
+        close(descriptor);
+        IOSUsePlayStdioRecordFailure("stat-log-descriptor", errorNumber);
+        return errorNumber;
+    }
+    int descriptorFlags = fcntl(descriptor, F_GETFL);
+    int accessMode = descriptorFlags < 0
+        ? O_RDONLY
+        : descriptorFlags & O_ACCMODE;
+    if ((status.st_mode & S_IFMT) != S_IFREG
+        || status.st_uid != geteuid()
+        || status.st_nlink != 1
+        || (status.st_mode & 07777) != 0600
+        || descriptorFlags < 0
+        || accessMode == O_RDONLY
+        || expectedDevice == 0
+        || expectedInode == 0
+        || (uint64_t)status.st_dev != expectedDevice
+        || (uint64_t)status.st_ino != expectedInode) {
+        close(descriptor);
         IOSUsePlayStdioRecordFailure(
-            "invalid-enable-flag",
-            EINVAL
+            "validate-log-descriptor",
+            EPERM
         );
-        return;
+        return EPERM;
     }
-    const char *path = getenv(IOSUsePlayStdioPath);
     if (path == NULL || path[0] != '/') {
-        IOSUsePlayStdioRecordFailure(
-            "missing-absolute-log-path",
-            EINVAL
-        );
-        return;
+        close(descriptor);
+        IOSUsePlayStdioRecordFailure("invalid-log-path-metadata", EINVAL);
+        return EINVAL;
     }
     size_t pathLength = strnlen(path, PATH_MAX);
     if (pathLength == 0 || pathLength >= PATH_MAX) {
+        close(descriptor);
         IOSUsePlayStdioRecordFailure(
             "invalid-log-path-length",
             ENAMETOOLONG
         );
-        return;
+        return ENAMETOOLONG;
     }
     memcpy(IOSUsePlayStdioState.path, path, pathLength + 1);
-    int parseError = IOSUsePlayStdioParseIdentity(
-        getenv(IOSUsePlayStdioDevice),
-        &IOSUsePlayStdioState.device
-    );
-    if (parseError != 0) {
-        IOSUsePlayStdioRecordFailure(
-            "invalid-log-device-identity",
-            parseError
-        );
-        return;
-    }
-    parseError = IOSUsePlayStdioParseIdentity(
-        getenv(IOSUsePlayStdioInode),
-        &IOSUsePlayStdioState.inode
-    );
-    if (parseError != 0 || IOSUsePlayStdioState.inode == 0) {
-        IOSUsePlayStdioRecordFailure(
-            "invalid-log-inode-identity",
-            parseError == 0 ? EINVAL : parseError
-        );
-        return;
-    }
-
-    char parentPath[PATH_MAX];
-    memcpy(parentPath, path, pathLength + 1);
-    char *separator = strrchr(parentPath, '/');
-    if (separator == NULL || separator == parentPath
-        || separator[1] == '\0') {
-        IOSUsePlayStdioRecordFailure(
-            "invalid-log-path-shape",
-            EINVAL
-        );
-        return;
-    }
-    *separator = '\0';
-    const char *filename = separator + 1;
-    int directory = openat(
-        AT_FDCWD,
-        parentPath,
-        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
-    );
-    if (directory < 0) {
-        IOSUsePlayStdioRecordFailure(
-            "open-log-directory",
-            errno
-        );
-        return;
-    }
-    struct stat directoryStatus;
-    if (fstat(directory, &directoryStatus) != 0) {
-        int errorNumber = errno;
-        close(directory);
-        IOSUsePlayStdioRecordFailure(
-            "stat-log-directory",
-            errorNumber
-        );
-        return;
-    }
-    if ((directoryStatus.st_mode & S_IFMT) != S_IFDIR
-        || directoryStatus.st_uid != geteuid()
-        || (directoryStatus.st_mode & 07777) != 0700) {
-        close(directory);
-        IOSUsePlayStdioRecordFailure(
-            "validate-log-directory",
-            EPERM
-        );
-        return;
-    }
-
-    // PlayTools interposes open(2). Anchored openat(2) keeps this trust
-    // boundary on the kernel primitive. O_NONBLOCK prevents a substituted
-    // FIFO from blocking before fstat can reject it.
-    int descriptor = openat(
-        directory,
-        filename,
-        O_WRONLY | O_APPEND | O_NONBLOCK
-            | O_NOFOLLOW | O_CLOEXEC
-    );
-    if (descriptor < 0) {
-        int errorNumber = errno;
-        close(directory);
-        IOSUsePlayStdioRecordFailure(
-            "open-exact-log-file",
-            errorNumber
-        );
-        return;
-    }
-    struct stat status;
-    struct stat namedStatus;
-    if (fstat(descriptor, &status) != 0) {
-        int errorNumber = errno;
-        close(descriptor);
-        close(directory);
-        IOSUsePlayStdioRecordFailure(
-            "stat-exact-log-file",
-            errorNumber
-        );
-        return;
-    }
-    if (fstatat(
-            directory,
-            filename,
-            &namedStatus,
-            AT_SYMLINK_NOFOLLOW
-        ) != 0) {
-        int errorNumber = errno;
-        close(descriptor);
-        close(directory);
-        IOSUsePlayStdioRecordFailure(
-            "stat-named-log-file",
-            errorNumber
-        );
-        return;
-    }
-    if (status.st_dev != namedStatus.st_dev
-        || status.st_ino != namedStatus.st_ino
-        || status.st_mode != namedStatus.st_mode
-        || status.st_uid != namedStatus.st_uid
-        || status.st_nlink != namedStatus.st_nlink
-        || (status.st_mode & S_IFMT) != S_IFREG
-        || status.st_uid != geteuid()
-        || status.st_nlink != 1
-        || (status.st_mode & 07777) != 0600
-        || (uint64_t)status.st_dev
-            != IOSUsePlayStdioState.device
-        || (uint64_t)status.st_ino
-            != IOSUsePlayStdioState.inode) {
-        close(descriptor);
-        close(directory);
-        IOSUsePlayStdioRecordFailure(
-            "validate-exact-log-file",
-            EPERM
-        );
-        return;
-    }
-    int descriptorFlags = fcntl(descriptor, F_GETFL);
-    if (descriptorFlags < 0
-        || fcntl(
-            descriptor,
-            F_SETFL,
-            descriptorFlags & ~O_NONBLOCK
-        ) != 0) {
-        int errorNumber = errno;
-        close(descriptor);
-        close(directory);
-        IOSUsePlayStdioRecordFailure(
-            "clear-log-nonblocking",
-            errorNumber
-        );
-        return;
-    }
-    close(directory);
-
+    IOSUsePlayStdioState.device = (uint64_t)status.st_dev;
+    IOSUsePlayStdioState.inode = (uint64_t)status.st_ino;
     (void)fflush(stdout);
     (void)fflush(stderr);
     int duplicateError = IOSUsePlayStdioDup2(
@@ -325,7 +171,7 @@ static void IOSUsePlayRuntimeConfigureStdio(void) {
             "redirect-stdio",
             duplicateError
         );
-        return;
+        return duplicateError;
     }
     if (descriptor > STDERR_FILENO) {
         close(descriptor);
@@ -341,6 +187,7 @@ static void IOSUsePlayRuntimeConfigureStdio(void) {
         ready,
         sizeof(ready) - 1
     );
+    return 0;
 }
 
 // Keep one explicit Runtime constructor so link order cannot place the
@@ -349,8 +196,13 @@ static void IOSUsePlayRuntimeConfigureStdio(void) {
 // outside this capture contract.
 __attribute__((constructor))
 static void IOSUsePlayRuntimeInitializeEntry(void) {
-    IOSUsePlayRuntimeConfigureStdio();
 #if !defined(IOS_USE_PLAY_RUNTIME_STDIO_STANDALONE)
+    extern void IOSUsePlayRuntimeStartSocket(void);
+    extern int IOSUsePlayRuntimeBootstrapStdio(void);
+    IOSUsePlayRuntimeStartSocket();
+    if (getenv(IOSUsePlayStdioEnabled) != NULL) {
+        (void)IOSUsePlayRuntimeBootstrapStdio();
+    }
     IOSUsePlayRuntimeInitializeAfterStdio();
 #endif
 }

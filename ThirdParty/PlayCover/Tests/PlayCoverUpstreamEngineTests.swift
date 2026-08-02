@@ -1825,7 +1825,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
     }
 
-    func testMaterializedSubstrateFinalizesForTargetManagedHome() throws {
+    func testPrepareFinalizesOnlyForTargetManagedHome() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent(
@@ -1841,7 +1841,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         let runtimeHash = try PlayCoverUpstreamEngine.runtimeBuildHash(
             frameworkURL: runtime
         )
-        let homes = ["producer", "consumer"].map {
+        let homes = ["unrelated", "target"].map {
             root.appendingPathComponent($0, isDirectory: true)
         }
         for home in homes {
@@ -1883,26 +1883,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             )
         }
 
-        let producerOptions = options(for: homes[0])
-        let producer = try PlayCoverUpstreamEngine.prepareSubstrate(
-            producerOptions,
-            sourceInspection: sourceInspection
-        )
         let consumerOptions = options(for: homes[1])
-        try FileManager.default.copyItem(
-            at: producer.appURL,
-            to: consumerOptions.stagingApp
-        )
-        let persistedEvidence = try JSONDecoder().decode(
-            PlayCoverUpstreamSubstrateEvidence.self,
-            from: JSONEncoder().encode(producer.evidence)
-        )
-        let consumer = try PlayCoverUpstreamEngine.validateSubstrate(
-            appURL: consumerOptions.stagingApp,
-            evidence: persistedEvidence,
-            sourceInspection: sourceInspection,
-            options: consumerOptions
-        )
         let poisonedContainer = root.appendingPathComponent(
             "poisoned-container",
             isDirectory: true
@@ -1919,9 +1900,9 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         try PlayTools.configureManagedContainer(
             poisonedContainer
         )
-        let result = try PlayCoverUpstreamEngine.finalizeSubstrate(
-            consumer,
-            options: consumerOptions
+        let result = try PlayCoverUpstreamEngine.prepare(
+            consumerOptions,
+            sourceInspection: sourceInspection
         )
         XCTAssertEqual(
             try Data(contentsOf: poisonSentinel),

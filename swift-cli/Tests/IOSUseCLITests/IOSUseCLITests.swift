@@ -3350,16 +3350,37 @@ final class IOSUseCLITests: XCTestCase {
             .appendingPathComponent("fixture.png")
         let bytes = Data([0x89, 0x50, 0x4e, 0x47])
         try bytes.write(to: source)
+        let accountRoot = "\(root)/account"
+        let socketRoot = "\(root)/socket"
+        try FileManager.default.createDirectory(
+            atPath: accountRoot,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.createDirectory(
+            atPath: socketRoot,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
         let paths = IOSUsePaths.resolve(
-            environment: ["IOS_USE_HOME": root]
+            environment: ["IOS_USE_HOME": root],
+            accountHomeDirectoryOverrideForTesting: accountRoot,
+            socketRootOverrideForTesting: socketRoot
         )
         let sessionID = "media-session"
         let generationKey = "generation"
         let appPath =
-            "\(paths.playcoverGlobalObjects)/\(generationKey)/Media.app"
+            "\(paths.playcoverGlobalObjects)/\(generationKey)/App.app"
         try FileManager.default.createDirectory(
             atPath: appPath,
             withIntermediateDirectories: true
+        )
+        let executablePath = "\(appPath)/Media"
+        XCTAssertTrue(
+            FileManager.default.createFile(
+                atPath: executablePath,
+                contents: Data()
+            )
         )
         try FileManager.default.createDirectory(
             atPath: paths.playcoverRun,
@@ -3378,8 +3399,7 @@ final class IOSUseCLITests: XCTestCase {
                 sessionIdentifier: sessionID,
                 bundleId: "com.example.media",
                 macAppPath: appPath,
-                macExecutablePath:
-                    "\(appPath)/Media",
+                macExecutablePath: executablePath,
                 macGenerationKey: generationKey,
                 macRuntimeSocketPath:
                     try paths.macRuntimeSocketPath(
@@ -3406,9 +3426,9 @@ final class IOSUseCLITests: XCTestCase {
             })
         }
 
-        let result = IOSUseCLI(
-            environment: ["IOS_USE_HOME": root]
-        ).run(arguments: ["media", "import", source.path])
+        let result = IOSUseCLI(pathsForTesting: paths).run(
+            arguments: ["media", "import", source.path]
+        )
 
         XCTAssertEqual(result.exitCode, 0, result.stderr)
         XCTAssertEqual(

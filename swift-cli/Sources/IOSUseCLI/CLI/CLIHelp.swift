@@ -21,8 +21,8 @@ enum CLIHelp {
           -V, --version    Show version
 
         Commands:
-          status, config, start, stop, dom, waitFor, screenshot, capture, tap, longpress, input, swipe
-          activateApp, terminateApp, home, open, dismissAlert, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
+          du, status, config, start, stop, dom, waitFor, screenshot, capture, tap, longpress, input, swipe
+          activateApp, terminateApp, home, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
     }
@@ -56,6 +56,18 @@ enum CLIHelp {
         guard let command = arguments.first else { return rootText }
         let rest = Array(arguments.dropFirst())
         switch command {
+        case "du":
+            return """
+            Usage: ios-use du [--json]
+
+            Show how much disk space ios-use data occupies and when each item
+            was last modified. This command is read-only and works without an
+            active backend session.
+
+            Options:
+              --json       Print the common machine-readable envelope
+
+            """
         case "status":
             return """
             Usage: ios-use status [--verbose] [--json]
@@ -94,8 +106,8 @@ enum CLIHelp {
         case "start":
             return """
             Usage: ios-use start [udid] [--verbose]
-                   ios-use start --mac --app <source-or-prepared.app> [--log] [--timeout <duration>]
-                   ios-use start --mac --reuse [--log] [--timeout <duration>]
+                   ios-use start --mac --app <source-or-prepared.app> [--frida] [--log] [--timeout <duration>]
+                   ios-use start --mac --reuse [--frida] [--log] [--timeout <duration>]
 
             Start a configured XCTest driver or an iOS App on this Mac and
             record it as the active backend in driver.lock.
@@ -117,8 +129,25 @@ enum CLIHelp {
               --app <source-or-prepared.app>
                                            Prepare if needed, then launch this App
               --reuse                      Launch the most recent successful generation
+              --frida                      Select or assert a Frida-enabled generation
               --log                        Capture target-App stdout/stderr to a retained session log
               --timeout <duration>          Wait up to 60 seconds for direct Runtime socket hello; default 15s
+
+            """
+        case "debug":
+            return """
+            Usage: ios-use debug [--stream] '<js>'
+                   ios-use debug [--stream] -
+                   ios-use debug --reset
+
+            Evaluate JavaScript through the authenticated Runtime socket of the
+            active Frida-enabled Mac App. Events are written to stderr and the
+            final display value is written to stdout. The script is never
+            persisted by ios-use.
+
+            Options:
+              --stream       Keep the event subscription semantics for this eval
+              --reset        Clear the active Eval Agent globals and hooks
 
             """
         case "stop":

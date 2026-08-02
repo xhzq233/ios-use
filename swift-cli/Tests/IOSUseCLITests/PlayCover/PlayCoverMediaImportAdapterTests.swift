@@ -13,7 +13,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
             result: .init(
                 exitStatus: 0,
                 standardOutput: Data(
-                    "IOS_USE_MEDIA_IMPORT_V1\n1\nasset/local/id\n".utf8
+                    "IOS_USE_MEDIA_IMPORT_RESULT\n1\nasset/local/id\n".utf8
                 ),
                 standardError: Data()
             )
@@ -212,7 +212,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
             )
         ] = [
             (
-                "IOS_USE_MEDIA_IMPORT_V1\n0\n",
+                "IOS_USE_MEDIA_IMPORT_RESULT\n0\n",
                 "mac_media_import_zero_assets",
                 {
                     if case .noImportedAssets = $0 { return true }
@@ -220,7 +220,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
                 }
             ),
             (
-                "IOS_USE_MEDIA_IMPORT_V1\n2\nasset-1\nasset-2\n",
+                "IOS_USE_MEDIA_IMPORT_RESULT\n2\nasset-1\nasset-2\n",
                 "mac_media_import_multiple_assets",
                 {
                     if case .multipleImportedAssets(2) = $0 {
@@ -230,7 +230,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
                 }
             ),
             (
-                "IOS_USE_MEDIA_IMPORT_V1\n1\n\n",
+                "IOS_USE_MEDIA_IMPORT_RESULT\n1\n\n",
                 "mac_media_import_empty_asset_identifier",
                 {
                     if case .emptyAssetLocalIdentifier = $0 {
@@ -575,7 +575,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
         .init(
             exitStatus: 0,
             standardOutput: Data(
-                "IOS_USE_MEDIA_IMPORT_V1\n1\nasset-id\n".utf8
+                "IOS_USE_MEDIA_IMPORT_RESULT\n1\nasset-id\n".utf8
             ),
             standardError: Data()
         )

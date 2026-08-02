@@ -184,6 +184,7 @@ public enum SessionService {
     public static func startPlayCover(
         appPath: String?,
         captureStdio: Bool = false,
+        fridaEnabled: Bool = false,
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
@@ -202,6 +203,7 @@ public enum SessionService {
             appPath: appPath,
             signingIdentity: signingIdentity,
             captureStdio: captureStdio,
+            fridaEnabled: fridaEnabled,
             timeout: timeout,
             paths: paths
         )
@@ -214,6 +216,7 @@ public enum SessionService {
         appPath: String?,
         signingIdentity: PlayCoverSigningIdentityEvidence?,
         captureStdio: Bool = false,
+        fridaEnabled: Bool = false,
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
@@ -228,6 +231,7 @@ public enum SessionService {
                 appPath: appPath,
                 signingIdentity: signingIdentity,
                 captureStdio: captureStdio,
+                fridaEnabled: fridaEnabled,
                 timeout: timeout,
                 paths: paths
             )
@@ -238,6 +242,7 @@ public enum SessionService {
         appPath: String?,
         signingIdentity: PlayCoverSigningIdentityEvidence?,
         captureStdio: Bool,
+        fridaEnabled: Bool,
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
@@ -251,6 +256,7 @@ public enum SessionService {
                 explicitAppPath: appPath,
                 signingIdentity: signingIdentity,
                 captureStdio: captureStdio,
+                fridaEnabled: fridaEnabled,
                 timeout: timeout,
                 paths: paths
             )
@@ -275,26 +281,12 @@ public enum SessionService {
                 )
             }
             let cacheDisposition = result.reused ? "reused" : "prepared"
-            let pruning =
-                PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
-                    paths: paths,
-                    currentGenerationKey: result.generationKey,
-                    currentGenerationToken:
-                        result.currentGenerationToken
-                )
             var output = """
             Mac session started for \(result.bundleIdentifier) (pid \(result.pid))
             Mac generation \(cacheDisposition): \(result.generationKey)
             IOS_USE_HOME: \(paths.root)
 
             """
-            if !pruning.removedGenerationKeys.isEmpty {
-                output += "Mac cache pruned: "
-                    + "\(pruning.removedGenerationKeys.count) generation(s)\n"
-            }
-            for warning in pruning.warnings {
-                output += "Warning: \(warning)\n"
-            }
             if let logPath = result.logPath {
                 output += "Mac log: \(logPath)\n"
             }
@@ -429,14 +421,6 @@ public enum SessionService {
         }
         if current.deviceType == PlayCoverSessionService.deviceType {
             let pid = try PlayCoverSessionService.terminate(
-                session: current,
-                paths: paths
-            )
-            // Exact termination/cleanup is complete and `last` still pins the
-            // generation. Retire the active deletion barrier before removing
-            // driver.lock so a crash cannot leave an unauthenticated orphan
-            // active pin that blocks global GC forever.
-            try PlayCoverSessionService.retireActiveGenerationPin(
                 session: current,
                 paths: paths
             )

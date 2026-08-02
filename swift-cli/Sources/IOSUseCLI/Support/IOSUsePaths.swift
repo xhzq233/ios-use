@@ -21,12 +21,15 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let playcoverPendingLaunch: String
     public let playcoverPendingLaunchLock: String
     public let playcoverHomeID: String
+    public let accountCacheRoot: String
+    public let knownHomes: String
     public let playcoverGlobalCache: String
     public let playcoverGlobalObjects: String
-    public let playcoverGlobalHomes: String
     public let playcoverGlobalLocks: String
-    public let playcoverRuntimeRoot: String
-    public let playcoverRuntimeHome: String
+    public let playcoverLastGeneration: String
+    public let playcoverFridaEngineRoot: String
+    public let playcoverFridaEngineObjects: String
+    public let playcoverFridaEngineLocks: String
     public let playcoverSocketRoot: String
     public let playcoverPlayChain: String
     public let playcoverRuntime: String
@@ -127,11 +130,11 @@ public struct IOSUsePaths: Equatable, Sendable {
         let homeID = SHA256.hash(
             data: Data(canonicalConfiguredRoot.utf8)
         ).map { String(format: "%02x", $0) }.joined()
-        let globalCache =
-            "\(accountHome)/Library/Caches/dev.ios-use/mac/prepared-v1"
-        let runtimeRoot =
-            "\(accountHome)/Library/Application Support/dev.ios-use/mac/runtime-homes"
-        let runtimeHome = "\(runtimeRoot)/\(homeID)"
+        let accountCacheRoot =
+            "\(accountHome)/Library/Caches/dev.ios-use"
+        let globalCache = "\(accountCacheRoot)/mac/prepared"
+        let playChain =
+            "\(accountHome)/Library/Application Support/dev.ios-use/mac/playchain"
         #if canImport(Darwin)
         let socketRoot = canonicalExistingPrefix(
             socketRootOverrideForTesting
@@ -153,20 +156,27 @@ public struct IOSUsePaths: Equatable, Sendable {
             artifacts: "\(configured.root)/artifacts",
             playcover: "\(configured.root)/mac",
             playcoverRun: "\(configured.root)/mac/run",
-            playcoverLogs: "\(runtimeHome)/logs",
+            playcoverLogs: "\(configured.root)/logs/mac",
             playcoverPendingLaunch:
                 "\(configured.root)/mac/pending-launch.json",
             playcoverPendingLaunchLock:
                 "\(configured.root)/mac/pending-launch.lock",
             playcoverHomeID: homeID,
+            accountCacheRoot: accountCacheRoot,
+            knownHomes: "\(accountCacheRoot)/homes",
             playcoverGlobalCache: globalCache,
             playcoverGlobalObjects: "\(globalCache)/objects",
-            playcoverGlobalHomes: "\(globalCache)/homes",
             playcoverGlobalLocks: "\(globalCache)/locks",
-            playcoverRuntimeRoot: runtimeRoot,
-            playcoverRuntimeHome: runtimeHome,
+            playcoverLastGeneration:
+                "\(configured.root)/mac/last-generation.json",
+            playcoverFridaEngineRoot:
+                "\(accountCacheRoot)/mac/frida-engine",
+            playcoverFridaEngineObjects:
+                "\(accountCacheRoot)/mac/frida-engine/objects",
+            playcoverFridaEngineLocks:
+                "\(accountCacheRoot)/mac/frida-engine/locks",
             playcoverSocketRoot: socketRoot,
-            playcoverPlayChain: "\(runtimeHome)/playchain",
+            playcoverPlayChain: playChain,
             playcoverRuntime: "\(configured.root)/mac/IOSUsePlayRuntime.framework"
         )
     }

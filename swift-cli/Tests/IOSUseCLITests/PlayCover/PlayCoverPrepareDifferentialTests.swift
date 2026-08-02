@@ -305,7 +305,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         try makePrivateDirectory(socketRoot)
         try makePrivateDirectory(
             URL(
-                fileURLWithPath: paths.playcoverRuntimeRoot,
+                fileURLWithPath: paths.playcoverPlayChain,
                 isDirectory: true
             )
         )
@@ -824,13 +824,17 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "swift-cli/Package.resolved",
                 "swift-cli/Package.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverBundleStartLock.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverCodeSignatureInspector.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverLaunchCrashCut.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverManagedAppService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverGlobalReferenceStore.swift",
+                    + "PlayCoverFridaEngineService.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverHomeStore.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverModels.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
@@ -2204,26 +2208,26 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             "(allow file* file-read* (subpath "
                 + "\"<MANAGED_HOME>/Library/Group Containers/\"))",
         ] + sandboxDenials
-        let globalRuntimeHome =
+        let globalPlayChainRoot =
             "<MANAGED_HOME>/account-home/Library/Application Support/"
-                + "dev.ios-use/mac/runtime-homes"
+                + "dev.ios-use/mac/playchain"
         let iosUseSandbox = commonSandboxPrefix + [
             "(allow file* file-read* file-write* file-write-data "
                 + "file-read-metadata file-ioctl (subpath "
-                + "\"\(globalRuntimeHome)/Library/Containers/"
+                + "\"\(globalPlayChainRoot)/Library/Containers/"
                 + "io.playcover.PlayCover\"))",
             "(allow file* file-read* file-read-metadata file-ioctl "
-                + "(subpath \"\(globalRuntimeHome)/Library/Frameworks/"
+                + "(subpath \"\(globalPlayChainRoot)/Library/Frameworks/"
                 + "PlayTools.framework\"))",
             "(allow file* file-read* (subpath "
-                + "\"\(globalRuntimeHome)/Library/Group Containers/\"))",
+                + "\"\(globalPlayChainRoot)/Library/Group Containers/\"))",
         ] + sandboxDenials + [
             "(allow file-read* file-write* file-read-metadata "
                 + "(subpath \"<MANAGED_HOME>/socket-root\"))",
             "(allow network-bind (subpath "
                 + "\"<MANAGED_HOME>/socket-root\"))",
             "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"\(globalRuntimeHome)\"))",
+                + "(subpath \"\(globalPlayChainRoot)\"))",
         ]
         func exactExpectation(
             _ value: String?
@@ -2270,8 +2274,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                         + "f4fe3f102713c62d"
                 ),
                 .exact(
-                    "675ee0d77851d368f78a8b3b90e9f9cf7ba5111dc23022de"
-                        + "821915ec41a53a94"
+                    "e1573881aa75dcf600e3f9ddd5c4e9c9408e6485c7dd77bb"
+                        + "e9db717b18dd90be"
                 ),
                 "The root signature carries the same separately reviewed "
                     + "entitlement dictionaries as the main executable.",
@@ -2296,7 +2300,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "Fixture",
                 "inventory.size",
                 .exact("89552"),
-                .exact("90880"),
+                .exact("90848"),
                 "The exact signed main executable sizes are also recorded by "
                     + "the inventory comparator.",
                 pinnedSign,
@@ -2553,7 +2557,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "Fixture",
                 arm64 + "size",
                 .exact("89552"),
-                .exact("90880"),
+                .exact("90848"),
                 "The pinned PlayTools path and --deep entitlement signature "
                     + "produce a different signed thin-slice size.",
                 "PlayTools.installInIPA + \(pinnedSign)",
@@ -2585,10 +2589,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     "cmd=0x00000019;size=72;semantic=segment=__LINKEDIT;"
                         + "vmaddr=4295032832;vmsize=32768;fileoff=65536;"
-                        + "filesize=25344;maxprot=1;initprot=1;sections=0;"
+                        + "filesize=25312;maxprot=1;initprot=1;sections=0;"
                         + "flags=0;sha256="
-                        + "c47da53d1240665a50ac9a746a1f89aebe1f875c40bf4229"
-                        + "03cde666bd54f15c"
+                        + "56aadbea09d843ee87f2ab2fb8e97387c5986740ebeb4a8d2bb1775fea89471b"
                 ),
                 "Different signature payload sizes change only the __LINKEDIT "
                     + "segment extent.",
@@ -2607,9 +2610,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 ),
                 .exact(
                     "cmd=0x0000001d;size=16;semantic=dataoff=65840;"
-                        + "datasize=25040;sha256="
-                        + "576bd0eb93e8ae9430b7ab2d7c434b83a96eaeeed79bbb12"
-                        + "4b345073f37dc570"
+                        + "datasize=25008;sha256="
+                        + "013fb4efaca27880ea82a045d2155c808bf30692e019970e68"
+                        + "e87f3e58e39849"
                 ),
                 "Pinned --deep and ios-use inside-out signing encode different "
                     + "entitlement payload sizes in LC_CODE_SIGNATURE.",
@@ -2685,7 +2688,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.length",
                 pinned: "5699",
-                iosUse: "7033",
+                iosUse: "7001",
                 reason: "The distinct canonical entitlement payloads have "
                     + "different complete SuperBlob lengths."
             ),
@@ -2719,8 +2722,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "5cb3f66a171f4f454b0a4515f8d1ce394b7f3df51b883ce2"
                         + "aff5686b8d989fc9",
                 iosUse:
-                    "86ef94adb54571e041bfa1b15f7c9da2b9181bb44b3eb74a9"
-                        + "9b662d01e365b46",
+                    "588a7c0e01edbc1e845d5ada0c7c55943a2a736982c918f1a"
+                        + "984c33a36fa9c34",
                 reason: "The exact slot offsets and envelope layout follow "
                     + "the two different entitlement blob sizes."
             ),
@@ -2748,8 +2751,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "e6ed70da9fefcad19e7cab7a219617f619f6cade27226a616"
                         + "c898fbcfc2d4043",
                 iosUse:
-                    "a0a77822e1e588a029a3c40048b070c4637a113ccdd326766"
-                        + "0aa04e8b2240236",
+                    "28a5a6e5692e775a1c0e3f9879d84288ce5054145c8a70786"
+                        + "a8b1d0e464a1edd",
                 reason: "Code slot zero contains the deliberately different "
                     + "injected load command and signature extent."
             ),
@@ -2758,7 +2761,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=5,occurrence=0].length",
                 pinned: "2716",
-                iosUse: "3409",
+                iosUse: "3393",
                 reason: "The compared canonical XML entitlement dictionaries "
                     + "serialize to these exact blob lengths."
             ),
@@ -2771,8 +2774,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "f6633b77ab162a8adaa081ae937781380007c0acafcb73627d"
                         + "c3e04470d78be9",
                 iosUse:
-                    "d0437ecd8055e3cfb9ba1e050f84212342e53845c61584b07"
-                        + "d5e058fe4e10367",
+                    "5de5fa657f88c75483b01910aa7a8a01089d1ed70dc2a3a828"
+                        + "27a8a186e29c73",
                 reason: "After zeroing only the run-specific managed-home "
                     + "path bytes, the full XML entitlement blobs must match "
                     + "these exact encodings."
@@ -2782,7 +2785,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=7,occurrence=0].offset",
                 pinned: "3661",
-                iosUse: "4354",
+                iosUse: "4338",
                 reason: "The DER slot starts immediately after the different "
                     + "XML entitlement blob."
             ),
@@ -2791,7 +2794,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=7,occurrence=0].length",
                 pinned: "2030",
-                iosUse: "2671",
+                iosUse: "2655",
                 reason: "The decoded and parity-checked DER entitlement "
                     + "dictionaries have these exact encoded lengths."
             ),
@@ -2804,8 +2807,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "c487c4f47fdb26709f4e026d74255b2ba82ef289f71540b3"
                         + "b85719fe9bc9438b",
                 iosUse:
-                    "99a8d9157b15d758d566b09c5b3c22401238340ce2373ee82"
-                        + "5adfab4888ebb61",
+                    "009f4290be6f578e4db89c47ddd71d8641c519cd8aba182650"
+                        + "e7015571bd958b",
                 reason: "After zeroing only the run-specific managed-home "
                     + "path bytes, the full DER entitlement blobs must match "
                     + "these exact encodings."
@@ -2815,7 +2818,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=65536,occurrence=0].offset",
                 pinned: "5691",
-                iosUse: "7025",
+                iosUse: "6993",
                 reason: "The empty ad-hoc CMS wrapper follows the exact XML "
                     + "and DER entitlement slot extents."
             ),
@@ -2827,8 +2830,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "0fefbbc83136bf80b28853dd1c249300f56c34cad6e06600"
                         + "f4fe3f102713c62d",
                 iosUse:
-                    "675ee0d77851d368f78a8b3b90e9f9cf7ba5111dc23022de"
-                        + "821915ec41a53a94",
+                    "e1573881aa75dcf600e3f9ddd5c4e9c9408e6485c7dd77bb"
+                        + "e9db717b18dd90be",
                 reason: "DER decoding matches each side's separately allowed "
                     + "canonical XML entitlement dictionary."
             ),
@@ -2854,8 +2857,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                         + "f4fe3f102713c62d"
                 ),
                 .exact(
-                    "675ee0d77851d368f78a8b3b90e9f9cf7ba5111dc23022de"
-                        + "821915ec41a53a94"
+                    "e1573881aa75dcf600e3f9ddd5c4e9c9408e6485c7dd77bb"
+                        + "e9db717b18dd90be"
                 ),
                 "The account-global Runtime namespace and Runtime socket "
                     + "rules intentionally change the signed main "

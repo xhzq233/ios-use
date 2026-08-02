@@ -73,6 +73,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     ) -> Bool {
         _ = application
         _ = launchOptions
+        if let delay = Bundle.main.object(
+            forInfoDictionaryKey: "IOSUseFixtureMainThreadDelaySeconds"
+        ) as? NSNumber,
+           delay.doubleValue > 0 {
+            Thread.sleep(
+                forTimeInterval: min(delay.doubleValue, 120)
+            )
+        }
         writeFixtureStdioMarker(
             descriptor: STDOUT_FILENO,
             stream: "stdout"

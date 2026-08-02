@@ -215,7 +215,6 @@ func run() throws {
             )
         }
         let object: [String: Any] = [
-            "schemaVersion": 3,
             "requestId": requestID,
             "sessionID": CommandLine.arguments[3],
             "command": helloReadiness ? "hello" : "ping",
@@ -342,7 +341,6 @@ func run() throws {
     if identifiedPing {
         guard let object = try JSONSerialization.jsonObject(with: body)
                 as? [String: Any],
-              (object["schemaVersion"] as? NSNumber)?.intValue == 3,
               object["requestId"] as? String
                 == authenticatedRequestID,
               object["sessionID"] as? String
@@ -385,14 +383,13 @@ func run() throws {
     if helloReadiness {
         guard let object = try JSONSerialization.jsonObject(with: body)
                 as? [String: Any],
-              (object["schemaVersion"] as? NSNumber)?.intValue == 3,
               object["requestId"] as? String
                 == authenticatedRequestID,
               object["sessionID"] as? String
                 == CommandLine.arguments[3],
               (object["ok"] as? NSNumber)?.boolValue == true,
               let payload = object["payload"] as? [String: Any],
-              payload["stage"] as? String == "ready",
+              payload["controlStage"] as? String == "ready",
               let pidNumber = payload["pid"] as? NSNumber,
               pidNumber.int64Value > 0,
               pidNumber.int64Value <= Int64(Int32.max),
@@ -402,10 +399,18 @@ func run() throws {
               let executablePath =
                 payload["executablePath"] as? String,
               !executablePath.isEmpty,
-              let observed = payload["observed"] as? [String: Any],
-              let appKit = observed["appKit"] as? [String: Any] else {
+              let generationKey = payload["generationKey"] as? String,
+              generationKey.range(
+                  of: "^[0-9a-f]{64}$",
+                  options: .regularExpression
+              ) != nil,
+              let uiState = payload["uiState"] as? [String: Any],
+              let uiStateName = uiState["state"] as? String,
+              ["initializing", "ready"].contains(uiStateName),
+              let uiStage = uiState["stage"] as? String,
+              !uiStage.isEmpty else {
             throw ProbeFailure.invalidResponse(
-                "hello readiness envelope is incomplete"
+                "control hello envelope is incomplete"
             )
         }
         let pid = Int32(pidNumber.int64Value)
@@ -415,84 +420,28 @@ func run() throws {
                 "hello Runtime PID has no stable process birth token"
             )
         }
-        let requiredAppKitKeys: Set<String> = [
-            "status",
-            "failure",
-            "frame",
-            "hostFrame",
-            "hostContentBounds",
-            "canvasRect",
-            "backingPixelCanvasRect",
-            "canvasBounds",
-            "renderViewBounds",
-            "sceneRenderViewFrame",
-            "sceneRenderViewBounds",
-            "inputRenderViewFrame",
-            "inputRenderViewBounds",
-            "displayScale",
-            "inverseDisplayScale",
-            "halfPixelTolerance",
-            "canvasCapture",
-            "sceneGeometry",
-            "backingScaleFactor",
-            "opaque",
-            "publicTitleBar",
-            "title",
-            "titleExpected",
-            "titleVisible",
-            "resizable",
-            "hostPolicy",
-            "sceneScale",
+        let expectedPayloadKeys: Set<String> = [
+            "pid",
+            "bundleIdentifier",
+            "executablePath",
+            "generationKey",
+            "capabilities",
+            "controlStage",
+            "controlFailure",
+            "uiState",
+            "stdio",
         ]
-        let statusOnlyAppKitKeys: Set<String> = [
-            "attempts",
-            "contentLayoutRect",
-            "contentViewFrame",
-            "contentViewBounds",
-            "screenFrame",
-            "screenVisibleFrame",
-            "screenDisplayID",
-            "screenIsMain",
-            "cgVisibleFrame",
-            "expectedCGWindowBoundsFromAppKit",
-            "applicationActive",
-            "applicationActivationPolicy",
-            "windowKey",
-            "windowCanBecomeKey",
-            "scenes",
-            "contentViewTree",
-            "windowClass",
-            "windowNumber",
-            "cgWindowBounds",
-            "minSize",
-            "maxSize",
-            "contentMinSize",
-            "contentMaxSize",
-            "sceneMinimumSize",
-            "sceneMaximumSize",
-            "allWindows",
-            "nativeAlert",
-            "bootstrapNativeAlert",
-            "borderless",
-            "resizeEdges",
-            "styleMask",
-            "hasShadow",
-            "movable",
-            "ignoresMouseEvents",
-            "acceptsMouseMovedEvents",
-            "lastTextInputTransientDismissal",
-            "identityTransform",
-            "mouseMonitorReady",
-            "lastMouseDelivery",
-            "lastMouseDownDelivery",
-            "lastMouseUpDelivery",
-            "mouseDeliveryCount",
+        let forbiddenUIKeys: Set<String> = [
+            "geometry",
+            "observed",
+            "diagnostics",
+            "stage",
         ]
-        let actualKeys = Set(appKit.keys)
-        guard requiredAppKitKeys.isSubset(of: actualKeys),
-              actualKeys.isDisjoint(with: statusOnlyAppKitKeys) else {
+        let actualKeys = Set(payload.keys)
+        guard actualKeys == expectedPayloadKeys,
+              actualKeys.isDisjoint(with: forbiddenUIKeys) else {
             throw ProbeFailure.invalidResponse(
-                "hello contains missing readiness or status-only AppKit fields"
+                "control hello contains UI snapshot fields"
             )
         }
         let output: [String: Any] = [
@@ -504,9 +453,11 @@ func run() throws {
             "runtimeBundleIdentifier": bundleIdentifier,
             "runtimeExecutablePath": executablePath,
             "processBirthMicroseconds": processBirthMicroseconds,
-            "readinessAppKitFieldCount": actualKeys.count,
-            "statusOnlyAppKitFieldCount":
-                actualKeys.intersection(statusOnlyAppKitKeys).count,
+            "controlHelloFieldCount": actualKeys.count,
+            "uiState": uiStateName,
+            "uiStage": uiStage,
+            "forbiddenUIFieldCount":
+                actualKeys.intersection(forbiddenUIKeys).count,
         ]
         let encoded = try JSONSerialization.data(
             withJSONObject: output,
@@ -523,7 +474,6 @@ func run() throws {
     }
     guard let object = try JSONSerialization.jsonObject(with: body)
             as? [String: Any],
-          (object["schemaVersion"] as? NSNumber)?.intValue == 3,
           (object["ok"] as? NSNumber)?.boolValue == false,
           let error = object["error"] as? [String: Any],
           error["code"] as? String == expectedCode,

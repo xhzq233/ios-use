@@ -23,4 +23,14 @@ void IOSUsePlayRuntimeCopyStdioState(
     IOSUsePlayRuntimeStdioState *state
 );
 
+/// Redirect stdout/stderr from an already-open, host-owned descriptor.
+/// Runtime never opens a path supplied by the host; path/device/inode are
+/// diagnostics metadata and the descriptor's fstat identity is authoritative.
+int IOSUsePlayRuntimeConfigureStdioFromDescriptor(
+    int descriptor,
+    const char *path,
+    uint64_t expectedDevice,
+    uint64_t expectedInode
+);
+
 #endif

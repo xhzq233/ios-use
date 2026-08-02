@@ -19,6 +19,9 @@ public enum CLIParser {
 
         let parsed: ParsedCommand
         switch command {
+        case "du":
+            try parser.requireEnd()
+            parsed = .du
         case "status":
             parsed = .status(try parseStatus(&parser))
         case "config":
@@ -72,13 +75,15 @@ public enum CLIParser {
             parsed = .driver(try parseDismissAlert(&parser))
         case "oslog":
             parsed = .oslog(try parseOSLog(&parser))
+        case "debug":
+            parsed = .debug(try parseDebug(&parser))
         default:
             throw CLIParseError.unknownCommand(command)
         }
         if json {
             switch parsed {
-            case .start, .stop, .status, .install, .apps, .open,
-                    .appLifecycle, .driver, .mediaImport:
+            case .du, .start, .stop, .status, .install, .apps, .open,
+                    .appLifecycle, .driver, .mediaImport, .debug:
                 break
             case .config(let options) where options.playCover:
                 break
@@ -187,6 +192,11 @@ public enum CLIParser {
                 options.reuse = true
             case "--log":
                 options.log = true
+            case "--frida":
+                guard !options.frida else {
+                    throw CLIParseError.invalidValue("--frida may only be provided once")
+                }
+                options.frida = true
             case "--timeout":
                 options.timeout = try parsePositiveDurationSecondsStrict(
                     try parser.value(for: arg),
@@ -218,15 +228,81 @@ public enum CLIParser {
                     "--mac requires exactly one of --app <app> or --reuse"
                 )
             }
+            if options.frida, options.appPath == nil, !options.reuse {
+                throw CLIParseError.invalidValue(
+                    "--frida requires --app or --reuse"
+                )
+            }
         } else if options.appPath != nil
                     || options.reuse
                     || options.log
+                    || options.frida
                     || timeoutWasProvided {
             throw CLIParseError.invalidValue(
                 "--app, --reuse, --log, and --timeout require --mac"
             )
         }
         return options
+    }
+
+    private static func parseDebug(
+        _ parser: inout ArgumentParser
+    ) throws -> DebugOptions {
+        var stream = false
+        var reset = false
+        var script: String?
+        while let arg = parser.consume() {
+            switch arg {
+            case "--stream":
+                guard !stream else {
+                    throw CLIParseError.invalidValue(
+                        "--stream may only be provided once"
+                    )
+                }
+                stream = true
+            case "--reset":
+                guard !reset else {
+                    throw CLIParseError.invalidValue(
+                        "--reset may only be provided once"
+                    )
+                }
+                reset = true
+            case "-":
+                guard script == nil else {
+                    throw CLIParseError.unexpectedArgument(arg)
+                }
+                script = "-"
+            default:
+                if arg.hasPrefix("-") {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                guard script == nil else {
+                    throw CLIParseError.unexpectedArgument(arg)
+                }
+                script = arg
+            }
+        }
+        if reset {
+            guard script == nil, !stream else {
+                throw CLIParseError.invalidValue(
+                    "--reset cannot be combined with a script or --stream"
+                )
+            }
+        } else {
+            guard let script else {
+                throw CLIParseError.missingRequiredArgument("script")
+            }
+            if script == "-" {
+                let input = String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                guard !input.isEmpty else {
+                    throw CLIParseError.invalidValue(
+                        "debug stdin is empty"
+                    )
+                }
+                return DebugOptions(script: input, stream: stream)
+            }
+        }
+        return DebugOptions(script: script, stream: stream, reset: reset)
     }
 
     private static func parseInstall(_ parser: inout ArgumentParser) throws -> AppInstallOptions {

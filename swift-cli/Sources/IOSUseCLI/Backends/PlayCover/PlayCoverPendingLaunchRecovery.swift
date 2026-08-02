@@ -58,7 +58,6 @@ enum PlayCoverPendingLaunchRecovery {
     enum OwnerSource: String, Equatable, Sendable {
         case workspaceCallback
         case authenticatedRuntime
-        case directSpawn
     }
 
     struct Owner: Equatable, Sendable {
@@ -854,9 +853,7 @@ enum PlayCoverPendingLaunchRecovery {
         )
         let ping = try client.ping()
         // Recovery has only process-table/executable evidence for a
-        // candidate. Unlike the live launch path, it cannot rely on the
-        // callback's exact facade bundle URL to authorize the legacy bare
-        // pong -> hello fallback. Require identified ping here.
+        // candidate, so it requires the Runtime's complete identity.
         return ping.hasCompleteIdentity
     }
 

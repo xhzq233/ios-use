@@ -157,32 +157,6 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
         XCTAssertEqual(record.terminalCallback?.outcome, .failure)
     }
 
-    func testDirectSpawnOwnerRoundTripsThroughDurableJournal()
-        throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        try advanceToSubmissionArmed(fixture)
-        let owner = PlayCoverPendingLaunchStore.Owner(
-            pid: 701,
-            processBirthMicroseconds: 702,
-            source: .directSpawn
-        )
-
-        _ = try PlayCoverPendingLaunchStore.markOwned(
-            sessionID: fixture.sessionID,
-            owner: owner,
-            callbackSucceeded: false,
-            paths: fixture.paths
-        )
-
-        let reloaded = try XCTUnwrap(
-            PlayCoverPendingLaunchStore.load(paths: fixture.paths)
-        )
-        XCTAssertEqual(reloaded.phase, .owned)
-        XCTAssertEqual(reloaded.owner, owner)
-        XCTAssertNil(reloaded.terminalCallback)
-    }
-
     func testDurableDriverLockRetiresMatchingPendingJournal()
         throws {
         let fixture = try makeFixture()
@@ -197,11 +171,6 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
             sessionID: fixture.sessionID,
             owner: owner,
             callbackSucceeded: false,
-            paths: fixture.paths
-        )
-        try PlayCoverGlobalReferenceStore.setPending(
-            sessionID: fixture.sessionID,
-            generationKey: fixture.generationKey,
             paths: fixture.paths
         )
         let result = PlayCoverSessionService.LaunchResult(

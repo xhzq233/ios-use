@@ -11,7 +11,7 @@ RUN_DIR="$EVIDENCE_ROOT/playcover-fixture-v${MATRIX_VERSION}/$RUN_ID"
 SESSION_HOME=""
 CANONICAL_SESSION_HOME=""
 SESSION_HOME_ID=""
-SESSION_RUNTIME_HOME=""
+SESSION_LOG_DIR=""
 ARCHIVED_SESSION_HOME="$RUN_DIR/session-home"
 MANIFEST="$RUN_DIR/manifest.tsv"
 FIXTURE_APP="${IOS_USE_PLAYCOVER_FIXTURE_APP:-}"
@@ -177,7 +177,7 @@ if [[ ! "$SESSION_HOME_ID" =~ ^[0-9a-f]{64}$ ]]; then
     >&2
   exit 78
 fi
-SESSION_RUNTIME_HOME="$PLAYCOVER_RUNTIME_ROOT/$SESSION_HOME_ID"
+SESSION_LOG_DIR="$SESSION_HOME/logs/mac"
 printf '%s\n' "$SESSION_HOME" >"$RUN_DIR/session-home-origin"
 
 archive_session_home() {
@@ -2436,7 +2436,7 @@ lower_session_identifier="$(
   printf '%s' "$session_identifier" |
     /usr/bin/tr '[:upper:]' '[:lower:]'
 )"
-expected_stdio_log_path="$SESSION_RUNTIME_HOME/logs/stdio-$lower_session_identifier.log"
+expected_stdio_log_path="$SESSION_LOG_DIR/stdio-$lower_session_identifier.log"
 if [[
   "$stdio_log_path" != "$expected_stdio_log_path" ||
   ! -f "$stdio_log_path" ||
