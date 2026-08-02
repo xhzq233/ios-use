@@ -320,12 +320,16 @@ discarded and the immutable winner is fully verified.
 ios-use does not garbage-collect generations, Engine objects, logs, artifacts,
 or historical Home records. Lifecycle commands access only the current Home and
 never enumerate the Home discovery index. `ios-use du` is the explicit,
-read-only account report: it lists each managed prepared App, Engine object,
-PlayChain database, known Home, and Home-local log/artifact/state item with
-allocated size and latest descendant modification time. It follows no symlink,
-does no source hashing, signing verification, Runtime connection, recovery, or
-deletion, and does not write its own `cli.log` entry. A Home is added to the
-small discovery index only after a successful executable `start`.
+read-only account report. Its default output groups rebuildable cache,
+persistent App data, logical Home data, and metadata/residue so the cleanup
+impact is visible before a user removes anything. Each group shows allocated
+size and latest descendant modification time; prepared Apps also show their
+version, capability, Home references, and session records. `--json` retains the
+raw paths and any incomplete-statistics warnings. The command follows no
+symlink, has a bounded traversal, and does no source hashing, signing
+verification, Runtime connection, recovery, or deletion. It does not write its
+own `cli.log` entry. A Home is added to the small discovery index only after a
+successful executable `start`.
 
 Each logical Home keeps only its own Runtime log files under:
 

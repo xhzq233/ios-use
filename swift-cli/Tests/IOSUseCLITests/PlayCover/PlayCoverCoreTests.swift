@@ -110,6 +110,23 @@ final class PlayCoverCoreTests: XCTestCase {
             paths.knownHomes.hasPrefix(paths.accountCacheRoot + "/"),
             paths.knownHomes
         )
+        XCTAssertTrue(
+            paths.accountApplicationSupportRoot.hasSuffix(
+                "/Library/Application Support/dev.ios-use"
+            ),
+            paths.accountApplicationSupportRoot
+        )
+        XCTAssertEqual(
+            paths.playcoverSigningBinding,
+            paths.accountApplicationSupportRoot
+                + "/mac-stable-signing-binding-v1.json"
+        )
+        XCTAssertTrue(
+            paths.playcoverLaunchFacades.hasSuffix(
+                "/Applications/ios-use"
+            ),
+            paths.playcoverLaunchFacades
+        )
         XCTAssertEqual(
             paths.playcoverRuntime,
             "/state/ios-use/mac/IOSUsePlayRuntime.framework"
@@ -151,6 +168,22 @@ final class PlayCoverCoreTests: XCTestCase {
                 "attacker-controlled-home"
             )
         )
+        for path in [
+            paths.accountApplicationSupportRoot,
+            paths.playcoverSigningBinding,
+            paths.playcoverLaunchFacades,
+        ] {
+            XCTAssertTrue(
+                path.hasPrefix(
+                    URL(
+                        fileURLWithPath: expectedAccountHome,
+                        isDirectory: true
+                    ).resolvingSymlinksInPath().path + "/"
+                ),
+                path
+            )
+            XCTAssertFalse(path.contains("attacker-controlled-home"))
+        }
     }
 
     func testSessionSocketIsBoundedIndependentlyOfLogicalHome() throws {

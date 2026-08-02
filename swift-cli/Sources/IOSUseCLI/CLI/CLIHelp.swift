@@ -60,9 +60,11 @@ enum CLIHelp {
             return """
             Usage: ios-use du [--json]
 
-            Show how much disk space ios-use data occupies and when each item
-            was last modified. This command is read-only and works without an
-            active backend session.
+            Show ios-use-owned disk space grouped as rebuildable cache,
+            persistent App data, IOS_USE_HOME data, and metadata/residue.
+            The report includes cleanup impact, size, and last modification;
+            --json includes raw paths, references, and warnings. This command
+            is read-only and works without an active backend session.
 
             Options:
               --json       Print the common machine-readable envelope

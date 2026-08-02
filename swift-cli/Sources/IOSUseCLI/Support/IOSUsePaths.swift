@@ -22,6 +22,7 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let playcoverPendingLaunchLock: String
     public let playcoverHomeID: String
     public let accountCacheRoot: String
+    public let accountApplicationSupportRoot: String
     public let knownHomes: String
     public let playcoverGlobalCache: String
     public let playcoverGlobalObjects: String
@@ -32,6 +33,8 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let playcoverFridaEngineLocks: String
     public let playcoverSocketRoot: String
     public let playcoverPlayChain: String
+    public let playcoverSigningBinding: String
+    public let playcoverLaunchFacades: String
     public let playcoverRuntime: String
 
     public func macRuntimeSocketPath(
@@ -165,6 +168,8 @@ public struct IOSUsePaths: Equatable, Sendable {
                 "\(configured.root)/mac/pending-launch.lock",
             playcoverHomeID: homeID,
             accountCacheRoot: accountCacheRoot,
+            accountApplicationSupportRoot:
+                accountApplicationSupportRoot,
             knownHomes: "\(accountApplicationSupportRoot)/homes",
             playcoverGlobalCache: globalCache,
             playcoverGlobalObjects: "\(globalCache)/objects",
@@ -179,6 +184,10 @@ public struct IOSUsePaths: Equatable, Sendable {
                 "\(accountCacheRoot)/mac/frida-engine/locks",
             playcoverSocketRoot: socketRoot,
             playcoverPlayChain: playChain,
+            playcoverSigningBinding:
+                "\(accountApplicationSupportRoot)/mac-stable-signing-binding-v1.json",
+            playcoverLaunchFacades:
+                "\(accountHome)/Applications/ios-use",
             playcoverRuntime: "\(configured.root)/mac/IOSUsePlayRuntime.framework"
         )
     }
