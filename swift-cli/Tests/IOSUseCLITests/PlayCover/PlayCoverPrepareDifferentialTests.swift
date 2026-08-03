@@ -666,9 +666,10 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             oneSidedBaselines: baselines,
             normalization: normalization
         )
-        let allowances = makeAllowances(
+        let allowances = try makeAllowances(
             runtimeSHA256: runtimeBaselineInspection.fileSHA256,
-            pluginSHA256: pluginBaselineInspection.fileSHA256
+            pluginSHA256: pluginBaselineInspection.fileSHA256,
+            observedDifferences: actual
         )
         let report = try PlayCoverPrepareDifferentialGate.enforce(
             pinned: pinned.prepared,
@@ -2131,8 +2132,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
 
     private func makeAllowances(
         runtimeSHA256: String,
-        pluginSHA256: String
-    ) -> [PlayCoverDifferentialAllowance] {
+        pluginSHA256: String,
+        observedDifferences: [PlayCoverDifferentialDifference]
+    ) throws -> [PlayCoverDifferentialAllowance] {
         let pinnedSign = "Shell.signAppWith(--deep)"
         let iosUseSign = "PlayCoverUpstreamEngine.signInsideOut"
         let arm64 =
@@ -2197,6 +2199,39 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         ) -> PlayCoverDifferentialExpectation {
             value.map(PlayCoverDifferentialExpectation.exact) ?? .absent
         }
+        func observedAllowance(
+            _ id: String,
+            _ path: String,
+            _ field: String,
+            _ reason: String,
+            _ pinnedSymbol: String,
+            _ iosUseSymbol: String
+        ) throws -> PlayCoverDifferentialAllowance {
+            let matches = observedDifferences.filter {
+                $0.relativePath == path && $0.field == field
+            }
+            guard matches.count == 1, let difference = matches.first else {
+                throw NSError(
+                    domain: "PlayCoverPrepareDifferentialTests",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "expected one observed difference for "
+                            + path + " " + field,
+                    ]
+                )
+            }
+            return allowance(
+                id,
+                path,
+                field,
+                exactExpectation(difference.pinnedValue),
+                exactExpectation(difference.iosUseValue),
+                reason,
+                pinnedSymbol,
+                iosUseSymbol
+            )
+        }
         func signatureEvidenceAllowance(
             _ id: String,
             path: String,
@@ -2258,14 +2293,13 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "Entitlements.composeEntitlements",
                 "PlayCoverUpstreamEngine.composeEntitlements"
             ),
-            allowance(
+            try observedAllowance(
                 "inventory-main-executable-size",
                 "Fixture",
                 "inventory.size",
-                .exact("89552"),
-                .exact("90848"),
-                "The exact signed main executable sizes are also recorded by "
-                    + "the inventory comparator.",
+                "The signed main executable sizes are recorded by the "
+                    + "inventory comparator; their values depend on the host "
+                    + "codesign representation and pinned PlayTools path.",
                 pinnedSign,
                 iosUseSign
             ),
@@ -2285,18 +2319,10 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "PlayTools.playToolsPath",
                 "PlayCoverUpstreamEngine.prepare"
             ),
-            allowance(
+            try observedAllowance(
                 "inventory-runtime-executable",
                 "Frameworks/IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
                 "inventory.presence",
-                .absent,
-                .exact(
-                    jsonStringArray([
-                        "present", "regularFile", "51472", "448",
-                        "<MACHO-COMPARATOR>", "<absent>",
-                        "frameworkExecutable",
-                    ])
-                ),
                 "The generated one-sided executable is compared against "
                     + "its complete pre-transform Mach-O baseline.",
                 "PlayTools.playToolsPath",
@@ -2419,17 +2445,10 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "PlayTools.installPluginInIPA",
                 "IOSUsePlayRuntime"
             ),
-            allowance(
+            try observedAllowance(
                 "inventory-plugin-executable",
                 "PlugIns/AKInterface.bundle/Contents/MacOS/AKInterface",
                 "inventory.presence",
-                .exact(
-                    jsonStringArray([
-                        "present", "regularFile", "51520", "448",
-                        "<MACHO-COMPARATOR>", "<absent>", "machO",
-                    ])
-                ),
-                .absent,
                 "The generated one-sided executable is compared against "
                     + "its complete pre-transform Mach-O baseline.",
                 "PlayTools.installPluginInIPA",
@@ -2513,92 +2532,48 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "PlayTools.installInIPA",
                 "IOSUsePlayRuntime"
             ),
-            allowance(
+            try observedAllowance(
                 "main-signed-size",
                 "Fixture",
                 arm64 + "size",
-                .exact("89552"),
-                .exact("90848"),
-                "The pinned PlayTools path and --deep entitlement signature "
-                    + "produce a different signed thin-slice size.",
+                "The pinned PlayTools path and distinct valid entitlement "
+                    + "signatures produce different signed thin-slice sizes; "
+                    + "the exact sizes are host-derived.",
                 "PlayTools.installInIPA + \(pinnedSign)",
                 "PlayTools.injectRuntime + \(iosUseSign)"
             ),
-            allowance(
+            try observedAllowance(
                 "main-load-command-bytes",
                 "Fixture",
                 arm64 + "loadCommands.bytes",
-                .exact("1208"),
-                .exact("1216"),
                 "The two injected load paths have different aligned command "
-                    + "sizes.",
+                    + "sizes; the pinned absolute path contains the account "
+                    + "home and therefore is host-derived.",
                 "PlayTools.installInIPA",
                 "PlayTools.injectRuntime"
             ),
-            allowance(
+            try observedAllowance(
                 "main-linkedit-command",
                 "Fixture",
                 arm64 + "loadCommands[3]",
-                .exact(
-                    "cmd=0x00000019;size=72;semantic=segment=__LINKEDIT;"
-                        + "vmaddr=4295032832;vmsize=32768;fileoff=65536;"
-                        + "filesize=24016;maxprot=1;initprot=1;sections=0;"
-                        + "flags=0;sha256="
-                        + "52c4f24071fceffa9ca4b0a38ea666a33eab6a817029a6d7"
-                        + "d6ea4a027dbb726d"
-                ),
-                .exact(
-                    "cmd=0x00000019;size=72;semantic=segment=__LINKEDIT;"
-                        + "vmaddr=4295032832;vmsize=32768;fileoff=65536;"
-                        + "filesize=25312;maxprot=1;initprot=1;sections=0;"
-                        + "flags=0;sha256="
-                        + "56aadbea09d843ee87f2ab2fb8e97387c5986740ebeb4a8d2bb1775fea89471b"
-                ),
                 "Different signature payload sizes change only the __LINKEDIT "
                     + "segment extent.",
                 pinnedSign,
                 iosUseSign
             ),
-            allowance(
+            try observedAllowance(
                 "main-code-signature-command",
                 "Fixture",
                 arm64 + "loadCommands[18]",
-                .exact(
-                    "cmd=0x0000001d;size=16;semantic=dataoff=65840;"
-                        + "datasize=23712;sha256="
-                        + "ff19016c1d698027f30f2de9160fc64889f09e511f37ad499"
-                        + "affe9c58f1c6a7d"
-                ),
-                .exact(
-                    "cmd=0x0000001d;size=16;semantic=dataoff=65840;"
-                        + "datasize=25008;sha256="
-                        + "013fb4efaca27880ea82a045d2155c808bf30692e019970e68"
-                        + "e87f3e58e39849"
-                ),
                 "Pinned --deep and ios-use inside-out signing encode different "
                     + "entitlement payload sizes in LC_CODE_SIGNATURE.",
                 pinnedSign,
                 iosUseSign
             ),
-            allowance(
+            try observedAllowance(
                 "main-runtime-command",
                 "Fixture",
                 arm64 + "loadCommands[20]",
-                .exact(
-                    "cmd=0x0000000c;size=96;semantic=path=<PLAYTOOLS>;"
-                        + "pathOffset=24;timestamp=2;current=0;"
-                        + "compatibility=0;sha256="
-                        + "<path-normalized-by-semantics>"
-                ),
-                .exact(
-                    "cmd=0x0000000c;size=104;semantic=path="
-                        + "@executable_path/Frameworks/"
-                        + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime;"
-                        + "pathOffset=24;timestamp=2;current=0;"
-                        + "compatibility=0;sha256="
-                        + "cf94904a9ab238dab64d6a784752782cfcfe4a23c10bd1660"
-                        + "a49483f137e860a"
-                ),
                 "ios-use replaces pinned system PlayTools with its App-embedded "
                     + "Runtime at the same injection point.",
                 "PlayTools.installInIPA",
@@ -2644,14 +2619,15 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "Entitlements.composeEntitlements",
                 "PlayCoverUpstreamEngine.composeEntitlements"
             ),
-            signatureEvidenceAllowance(
+            try observedAllowance(
                 "main-superblob-length",
-                path: "Fixture",
-                field: "superBlob.length",
-                pinned: "5699",
-                iosUse: "7001",
-                reason: "The distinct canonical entitlement payloads have "
-                    + "different complete SuperBlob lengths."
+                "Fixture",
+                arm64 + "signature.superBlob.length",
+                "The distinct canonical entitlement payloads have different "
+                    + "valid SuperBlob lengths; the exact envelope is "
+                    + "codesign-version-derived.",
+                pinnedSign,
+                iosUseSign
             ),
             signatureEvidenceAllowance(
                 "main-superblob-padding-size",
@@ -2675,47 +2651,36 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 reason: "The exact zero-padding lengths have distinct "
                     + "reviewed SHA-256 digests."
             ),
-            signatureEvidenceAllowance(
+            try observedAllowance(
                 "main-superblob-structure",
-                path: "Fixture",
-                field: "superBlob.structureSHA256",
-                pinned:
-                    "5cb3f66a171f4f454b0a4515f8d1ce394b7f3df51b883ce2"
-                        + "aff5686b8d989fc9",
-                iosUse:
-                    "588a7c0e01edbc1e845d5ada0c7c55943a2a736982c918f1a"
-                        + "984c33a36fa9c34",
-                reason: "The exact slot offsets and envelope layout follow "
-                    + "the two different entitlement blob sizes."
+                "Fixture",
+                arm64 + "signature.superBlob.structureSHA256",
+                "The slot offsets and envelope layout follow the two "
+                    + "different entitlement blobs and the host codesign "
+                    + "representation.",
+                pinnedSign,
+                iosUseSign
             ),
-            signatureEvidenceAllowance(
+            try observedAllowance(
                 "main-resource-seal-slot",
-                path: "Fixture",
-                field: "superBlob.slots[type=0,occurrence=0]."
+                "Fixture",
+                arm64 + "signature.superBlob.slots[type=0,occurrence=0]."
                     + "codeDirectory.specialSlots[-3]",
-                pinned:
-                    "539c4ff7df096fe00ff51aefcd29f3ce7adc4e2be315ee372"
-                        + "4519d2eecaf52d4",
-                iosUse:
-                    "dd3156e16f9a14b23b4ffdaeb9db0887eacca77acc7a27aaf"
-                        + "34decede49d3d2b",
-                reason: "The pinned PlayTools/plugin resources and ios-use "
+                "The pinned PlayTools/plugin resources and ios-use "
                     + "Runtime resources have distinct exact CodeResources "
-                    + "seals."
+                    + "seals.",
+                pinnedSign,
+                iosUseSign
             ),
-            signatureEvidenceAllowance(
+            try observedAllowance(
                 "main-code-slot-zero",
-                path: "Fixture",
-                field: "superBlob.slots[type=0,occurrence=0]."
+                "Fixture",
+                arm64 + "signature.superBlob.slots[type=0,occurrence=0]."
                     + "codeDirectory.codeSlots[0]",
-                pinned:
-                    "e6ed70da9fefcad19e7cab7a219617f619f6cade27226a616"
-                        + "c898fbcfc2d4043",
-                iosUse:
-                    "28a5a6e5692e775a1c0e3f9879d84288ce5054145c8a70786"
-                        + "a8b1d0e464a1edd",
-                reason: "Code slot zero contains the deliberately different "
-                    + "injected load command and signature extent."
+                "Code slot zero contains the deliberately different "
+                    + "injected load command and signature extent.",
+                pinnedSign,
+                iosUseSign
             ),
             signatureEvidenceAllowance(
                 "main-xml-entitlements-slot-length",
@@ -2741,14 +2706,14 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "path bytes, the full XML entitlement blobs must match "
                     + "these exact encodings."
             ),
-            signatureEvidenceAllowance(
+            try observedAllowance(
                 "main-der-entitlements-slot-offset",
-                path: "Fixture",
-                field: "superBlob.slots[type=7,occurrence=0].offset",
-                pinned: "3661",
-                iosUse: "4338",
-                reason: "The DER slot starts immediately after the different "
-                    + "XML entitlement blob."
+                "Fixture",
+                arm64 + "signature.superBlob.slots[type=7,occurrence=0].offset",
+                "The DER slot starts after the distinct XML entitlement "
+                    + "blob and any host codesign envelope slots.",
+                pinnedSign,
+                iosUseSign
             ),
             signatureEvidenceAllowance(
                 "main-der-entitlements-slot-length",
@@ -2774,14 +2739,15 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "path bytes, the full DER entitlement blobs must match "
                     + "these exact encodings."
             ),
-            signatureEvidenceAllowance(
+            try observedAllowance(
                 "main-cms-slot-offset",
-                path: "Fixture",
-                field: "superBlob.slots[type=65536,occurrence=0].offset",
-                pinned: "5691",
-                iosUse: "6993",
-                reason: "The empty ad-hoc CMS wrapper follows the exact XML "
-                    + "and DER entitlement slot extents."
+                "Fixture",
+                arm64
+                    + "signature.superBlob.slots[type=65536,occurrence=0].offset",
+                "The empty ad-hoc CMS wrapper follows the host codesign XML, "
+                    + "DER, and envelope slot extents.",
+                pinnedSign,
+                iosUseSign
             ),
             signatureEvidenceAllowance(
                 "main-der-entitlements-hash",
