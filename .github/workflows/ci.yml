@@ -36,6 +36,11 @@ on:
       - "release-notes/**"
   workflow_dispatch:
     inputs:
+      run_playcover_non_live:
+        description: "Run the account-mutating non-live integration gate on its dedicated self-hosted runner."
+        required: false
+        default: false
+        type: boolean
       run_playcover_live:
         description: "Run the core pending-launch and Runtime crash/stress gate on its dedicated self-hosted runner."
         required: false
@@ -114,6 +119,7 @@ jobs:
 
   playcover-non-live:
     name: PlayCover non-live build and installed-layout gate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_playcover_non_live }}
     # Installed execution performs a real launch. This label must resolve to a
     # host with the stable signer initialized and a launch-capable GUI session.
     runs-on: [self-hosted, macOS, arm64, playcover-live]

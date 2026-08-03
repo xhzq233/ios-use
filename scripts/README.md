@@ -154,14 +154,14 @@ bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa --case WF
 ```
 
 GitHub CI uses `.github/workflows/ci.yml` for script syntax/packaging metadata,
-Swift CLI, driver unit, and the PlayCover non-live integration gate in parallel.
-Changes to release workflow paths and release notes trigger that CI. The
-non-live job is bound to the provisioned
+Swift CLI, and driver unit checks on every matching pull request. Changes to
+release workflow paths and release notes trigger that CI. The PlayCover
+non-live integration job is explicit-dispatch-only and bound to the provisioned
 `[self-hosted, macOS, arm64, playcover-live]` runner because its installed
 execution performs a real launch; that host must already have the stable signer
 initialized by `./ios-use config --mac`, a launch-capable GUI session, and the
-two disposable-account secrets described above. The release installed-layout
-execution receives the same two secret-backed values.
+two disposable-account secrets described above. The release workflow uses the
+same provisioned runner and secret-backed values for installed execution.
 
 The core PlayCover live gate is an explicit dispatch-only job on that same
 runner. It uses only the committed public fixture, needs no operator App,

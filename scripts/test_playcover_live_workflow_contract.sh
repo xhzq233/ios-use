@@ -96,6 +96,11 @@ validate_workflow() {
     return 1
   require_exact_line \
     "$file" \
+    '        description: "Run the account-mutating non-live integration gate on its dedicated self-hosted runner."' \
+    "the non-live workflow-dispatch description" ||
+    return 1
+  require_exact_line \
+    "$file" \
     '        description: "Run the core pending-launch and Runtime crash/stress gate on its dedicated self-hosted runner."' \
     "the core live workflow-dispatch description" ||
     return 1
@@ -129,6 +134,11 @@ validate_workflow() {
     "$file" \
     '            tee "$RUNNER_TEMP/ios-use-playcover-live-run-$GITHUB_RUN_ID/run.log"' \
     "the pipefail-protected core live run log" ||
+    return 1
+  require_exact_line \
+    "$file" \
+    "    if: \${{ github.event_name == 'workflow_dispatch' && inputs.run_playcover_non_live }}" \
+    "the explicit-dispatch-only non-live job condition" ||
     return 1
   require_exact_line \
     "$file" \
@@ -184,6 +194,11 @@ validate_workflow() {
 
 validate_release_workflow() {
   local file="$1"
+  require_exact_line \
+    "$file" \
+    '    runs-on: [self-hosted, macOS, arm64, playcover-live]' \
+    "the provisioned release runner binding" ||
+    return 1
   if [[ "$(
     count_pattern \
       "$file" \

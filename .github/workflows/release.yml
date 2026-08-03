@@ -24,7 +24,9 @@ permissions:
 jobs:
   release:
     name: Build and upload release assets
-    runs-on: macos-26
+    # Installed execution requires a preconfigured stable signer, disposable
+    # account contract, and launch-capable GUI session.
+    runs-on: [self-hosted, macOS, arm64, playcover-live]
     steps:
       - name: Resolve release tag
         id: resolve_tag

@@ -81,8 +81,9 @@ git diff --check
 `./ios-use --version` must print the same version as the tag you will publish.
 The tag workflow builds the fixture and runs the exact files under `release/`
 through checksum/build-manifest/source-manifest validation, `install.sh`, and
-installed `start/status/stop` before any upload. The normal non-live CI gate
-also exercises the same installed path with freshly built local assets.
+installed `start/status/stop` before any upload. The manually dispatched
+non-live integration gate also exercises the same installed path with freshly
+built local assets.
 
 ## 4. Commit And Tag
 
@@ -148,11 +149,12 @@ To watch it:
   provenance, build manifest, changelog, and checksums in addition to the CLI
   and driver IPAs.
 
-The core PlayCover live gate is a separate `workflow_dispatch` entry because
-its public-fixture pending-launch and Runtime crash/stress checks require the
-provisioned Apple-silicon runner. That host must already have the stable signer
+The non-live integration and core PlayCover live gates are explicit
+`workflow_dispatch` entries because they mutate account-global state on the
+provisioned Apple-silicon runner. The release workflow uses that same runner for
+its installed-layout gate. That host must already have the stable signer
 initialized and an unlocked, launch-capable GUI session. A release still
-requires the core gate to pass for the exact release commit. The job needs no
+requires the core gate to pass for the exact release commit. The jobs need no
 operator App, private scenario/evidence directory, or external-App
 attestation; CI uploads its runner-temporary `run.log`. The two-display fixture
 and generic external-App workflows remain optional additive diagnostics. A
