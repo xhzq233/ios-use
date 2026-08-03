@@ -66,7 +66,7 @@ loader, screen, touch, swizzle, or PlayChain implementations.
 
 The only packaging changes are project membership, Catalyst compilation flags,
 and public headers required to link the Runtime. The release package keeps the
-framework read-only under `<prefix>/share/ios-use/playcover/`; each prepared App
+framework read-only under `<prefix>/share/ios-use/mac/`; each prepared App
 receives a copy during the pinned PlayCover prepare flow. The Runtime is never
 rebuilt from or written to `IOS_USE_HOME` by installation.
 

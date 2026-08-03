@@ -382,10 +382,10 @@ not artifacts built inside a user's mutable state directory. The Engine build
 normalizes compiler-visible source paths so local source, cache, and temporary
 build-root paths are not embedded. Frida-generated source maps may still vary,
 so each release records the actual framework digest and size. A release contains
-one PlayCover-resources archive, SHA-256 manifest, applicable licenses, upstream
+one Mac-backend-resources archive, SHA-256 manifest, applicable licenses, upstream
 provenance, and an exact corresponding-source archive. `scripts/install.sh`
 verifies the manifest before placing both frameworks under
-`<prefix>/share/ios-use/playcover/`, re-verifies their signatures, and never
+`<prefix>/share/ios-use/mac/`, re-verifies their signatures, and never
 copies executable Runtime content into `IOS_USE_HOME`. The frameworks are
 read-only preparation inputs: prepare signs only managed App copies.
 Installed-layout acceptance hashes both complete source frameworks before and

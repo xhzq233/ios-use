@@ -1731,7 +1731,7 @@ final class PlayCoverCoreTests: XCTestCase {
                 "/state/ios-use/mac/IOSUsePlayRuntime.framework",
                 "/opt/ios-use/bin/.ios-use/playcover/"
                     + "IOSUsePlayRuntime.framework",
-                "/opt/ios-use/share/ios-use/playcover/"
+                "/opt/ios-use/share/ios-use/mac/"
                     + "IOSUsePlayRuntime.framework",
             ]
         )
@@ -1751,7 +1751,7 @@ final class PlayCoverCoreTests: XCTestCase {
             [
                 "/work/.ios-use/playcover/"
                     + "IOSUsePlayRuntime.framework",
-                "/share/ios-use/playcover/"
+                "/share/ios-use/mac/"
                     + "IOSUsePlayRuntime.framework",
             ]
         )

@@ -480,7 +480,7 @@ enum PlayCoverManagedAppService {
                 .deletingLastPathComponent()
                 .appendingPathComponent("share", isDirectory: true)
                 .appendingPathComponent("ios-use", isDirectory: true)
-                .appendingPathComponent("playcover", isDirectory: true)
+                .appendingPathComponent("mac", isDirectory: true)
                 .appendingPathComponent(
                     PlayCoverService.runtimeFrameworkName
                 ).path,

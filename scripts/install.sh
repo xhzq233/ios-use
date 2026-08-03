@@ -35,7 +35,7 @@ Usage: install.sh [--version <tag>] [--build-from-source] [--print-path]
 
 Options:
   --version <tag>      Release tag to install (e.g. v1.2.0). Defaults to latest.
-  --build-from-source  Compile the Swift CLI and PlayCover Runtime from the
+  --build-from-source  Compile the Swift CLI and Mac Runtime from the
                        selected source ref instead of downloading their
                        prebuilt GitHub Release assets.
   --print-path         Print the installed binary path after installation.
@@ -88,7 +88,7 @@ DRIVER_VERSION="${IOS_USE_DRIVER_VERSION:-$INSTALL_VERSION}"
 case "$(uname -m)" in
   arm64|aarch64) ;;
   x86_64)
-    echo "ios-use releases with the PlayCover Runtime require Apple Silicon; Intel macOS is unsupported." >&2
+    echo "ios-use releases with the Mac Runtime require Apple Silicon; Intel macOS is unsupported." >&2
     exit 1
     ;;
   *)
@@ -122,7 +122,7 @@ refresh_paths() {
   DIST_DIR="$ROOT_DIR/dist"
   OUTFILE="$DIST_DIR/ios-use"
   CHECKSUM_FILE="$DIST_DIR/SHA256SUMS"
-  PLAYCOVER_RESOURCES_ARCHIVE="$DIST_DIR/ios-use-playcover-resources.tar.gz"
+  PLAYCOVER_RESOURCES_ARCHIVE="$DIST_DIR/ios-use-mac-resources.tar.gz"
 }
 
 release_asset_url() {
@@ -190,7 +190,7 @@ build_or_download_cli() {
   download_release_checksums
   download_checked_release_asset "$(mac_cli_asset_name)" "$OUTFILE"
   download_checked_release_asset \
-    "ios-use-playcover-resources.tar.gz" \
+    "ios-use-mac-resources.tar.gz" \
     "$PLAYCOVER_RESOURCES_ARCHIVE"
 }
 
@@ -299,7 +299,7 @@ cleanup_legacy_flow_artifacts() {
 
 playcover_resources_destination_for_prefix() {
   local prefix="$1"
-  printf '%s\n' "$prefix/share/ios-use/playcover"
+  printf '%s\n' "$prefix/share/ios-use/mac"
 }
 
 install_playcover_resources() {
@@ -330,7 +330,7 @@ install_playcover_resources() {
       case "$archived_path" in
         IOSUsePlayRuntime.framework|IOSUsePlayRuntime.framework/*|IOSUseFridaEngine.framework|IOSUseFridaEngine.framework/*) ;;
         *)
-          echo "PlayCover resources archive contains an unexpected path: $archived_path" >&2
+          echo "Mac backend resources archive contains an unexpected path: $archived_path" >&2
           exit 1
           ;;
       esac
@@ -339,20 +339,20 @@ install_playcover_resources() {
   fi
 
   if [[ ! -x "$runtime/IOSUsePlayRuntime" ]]; then
-    echo "PlayCover resources do not contain IOSUsePlayRuntime.framework." >&2
+    echo "Mac backend resources do not contain IOSUsePlayRuntime.framework." >&2
     exit 1
   fi
   if [[ ! -f "$runtime/Info.plist" ]] &&
      [[ ! -f "$runtime/Versions/A/Resources/Info.plist" ]]; then
-    echo "PlayCover Runtime archive does not contain an Info.plist." >&2
+    echo "Mac Runtime archive does not contain an Info.plist." >&2
     exit 1
   fi
   if [[ ! -x "$engine/IOSUseFridaEngine" || ! -f "$engine/Info.plist" ]]; then
-    echo "PlayCover resources do not contain IOSUseFridaEngine.framework." >&2
+    echo "Mac backend resources do not contain IOSUseFridaEngine.framework." >&2
     exit 1
   fi
   if ! codesign --verify --strict "$runtime" >/dev/null 2>&1; then
-    echo "PlayCover Runtime signature verification failed." >&2
+    echo "Mac Runtime signature verification failed." >&2
     exit 1
   fi
   if ! codesign --verify --strict "$engine" >/dev/null 2>&1; then
@@ -368,7 +368,7 @@ install_playcover_resources() {
   mv "$engine" "$destination/IOSUseFridaEngine.framework"
   if ! codesign --verify --strict \
       "$destination/IOSUsePlayRuntime.framework" >/dev/null 2>&1; then
-    echo "Installed PlayCover Runtime signature verification failed." >&2
+    echo "Installed Mac Runtime signature verification failed." >&2
     exit 1
   fi
   if ! codesign --verify --strict \
@@ -376,7 +376,7 @@ install_playcover_resources() {
     echo "Installed Frida Engine signature verification failed." >&2
     exit 1
   fi
-  echo "Installed PlayCover resources to $destination"
+  echo "Installed Mac backend resources to $destination"
 }
 
 install_binary() {
@@ -492,4 +492,4 @@ case ":$PATH:" in
 esac
 
 echo "Verify with: $TARGET_PATH --version"
-echo "PlayCover resources: $(playcover_resources_destination_for_prefix "$INSTALL_PREFIX")"
+echo "Mac backend resources: $(playcover_resources_destination_for_prefix "$INSTALL_PREFIX")"

@@ -20,7 +20,7 @@ FAKE_BIN="$TMP_ROOT/fake-bin"
 FAKE_HOME="$TMP_ROOT/home"
 FAKE_RUNTIME_DIR="$TMP_ROOT/runtime/IOSUsePlayRuntime.framework"
 FAKE_ENGINE_DIR="$TMP_ROOT/runtime/IOSUseFridaEngine.framework"
-FAKE_RESOURCES_ARCHIVE="$TMP_ROOT/ios-use-playcover-resources.tar.gz"
+FAKE_RESOURCES_ARCHIVE="$TMP_ROOT/ios-use-mac-resources.tar.gz"
 FAKE_CHECKSUMS="$TMP_ROOT/SHA256SUMS"
 mkdir -p \
   "$FAKE_SOURCE/ios-use-skill" \
@@ -80,7 +80,7 @@ printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$FAKE_ENGINE_DIR/Info.pl
   printf '#!/bin/sh\necho 1.0.3\n' | shasum -a 256 | awk '{print $1 "  ios-use-darwin-arm64"}'
   printf 'remote-driver\n' | shasum -a 256 | awk '{print $1 "  driver.ipa"}'
   printf 'remote-driver-sim\n' | shasum -a 256 | awk '{print $1 "  driver-sim.ipa"}'
-  shasum -a 256 "$FAKE_RESOURCES_ARCHIVE" | awk '{print $1 "  ios-use-playcover-resources.tar.gz"}'
+  shasum -a 256 "$FAKE_RESOURCES_ARCHIVE" | awk '{print $1 "  ios-use-mac-resources.tar.gz"}'
 } > "$FAKE_CHECKSUMS"
 
 cat > "$FAKE_BIN/curl" <<'SCRIPT'
@@ -127,7 +127,7 @@ case "$url" in
     } | write_output
     chmod +x "$out"
     ;;
-  *ios-use-playcover-resources.tar.gz)
+  *ios-use-mac-resources.tar.gz)
     cat "$IOS_USE_INSTALL_TEST_RESOURCES_ARCHIVE" | write_output
     ;;
   *SHA256SUMS)
@@ -222,6 +222,12 @@ run_install_verbose() {
     bash "$ROOT_DIR/scripts/install.sh" "$@"
 }
 
+HELP_OUTPUT="$(bash "$ROOT_DIR/scripts/install.sh" --help)"
+if grep -qi 'playcover' <<<"$HELP_OUTPUT"; then
+  echo "[install-test] ERROR: installer help exposes an implementation project name" >&2
+  exit 1
+fi
+
 BUILD_HOME="$FAKE_HOME/build-from-source"
 mkdir -p "$BUILD_HOME"
 mkdir -p "$BUILD_HOME/.ios-use/flows"
@@ -249,11 +255,11 @@ if [[ ! -x "$BUILD_HOME/.ios-use/altsign-cli/altsign-cli" ]]; then
   echo "[install-test] ERROR: install did not download altsign-cli" >&2
   exit 1
 fi
-if [[ ! -x "$BUILD_HOME/share/ios-use/playcover/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" ]]; then
-  echo "[install-test] ERROR: build-from-source install did not install the PlayCover runtime under its prefix share layout" >&2
+if [[ ! -x "$BUILD_HOME/share/ios-use/mac/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" ]]; then
+  echo "[install-test] ERROR: build-from-source install did not install the Mac Runtime under its prefix share layout" >&2
   exit 1
 fi
-if [[ ! -x "$BUILD_HOME/share/ios-use/playcover/IOSUseFridaEngine.framework/IOSUseFridaEngine" ]]; then
+if [[ ! -x "$BUILD_HOME/share/ios-use/mac/IOSUseFridaEngine.framework/IOSUseFridaEngine" ]]; then
   echo "[install-test] ERROR: build-from-source install did not install the Frida Engine resource" >&2
   exit 1
 fi
@@ -289,11 +295,11 @@ if ! grep -q 'remote skill fixture' "$DOWNLOAD_HOME/.ios-use/skill/SKILL.md"; th
   echo "[install-test] ERROR: release download install did not use bootstrapped remote skill" >&2
   exit 1
 fi
-if [[ ! -x "$DOWNLOAD_HOME/share/ios-use/playcover/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" ]]; then
-  echo "[install-test] ERROR: release install did not install the prebuilt PlayCover Runtime" >&2
+if [[ ! -x "$DOWNLOAD_HOME/share/ios-use/mac/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" ]]; then
+  echo "[install-test] ERROR: release install did not install the prebuilt Mac Runtime" >&2
   exit 1
 fi
-if [[ ! -x "$DOWNLOAD_HOME/share/ios-use/playcover/IOSUseFridaEngine.framework/IOSUseFridaEngine" ]]; then
+if [[ ! -x "$DOWNLOAD_HOME/share/ios-use/mac/IOSUseFridaEngine.framework/IOSUseFridaEngine" ]]; then
   echo "[install-test] ERROR: release install did not install the prebuilt Frida Engine" >&2
   exit 1
 fi
@@ -311,6 +317,14 @@ if ! grep -q 'ios-use start <udid>' <<<"$VERBOSE_OUTPUT"; then
 fi
 if grep -qi 'auto-creates session\|No session start needed' <<<"$VERBOSE_OUTPUT"; then
   echo "[install-test] ERROR: install next steps still mention old auto session semantics" >&2
+  exit 1
+fi
+if grep -qi 'playcover' <<<"$VERBOSE_OUTPUT"; then
+  echo "[install-test] ERROR: installer output exposes an implementation project name" >&2
+  exit 1
+fi
+if ! grep -Fq "$VERBOSE_HOME/share/ios-use/mac" <<<"$VERBOSE_OUTPUT"; then
+  echo "[install-test] ERROR: installer output does not report the stable Mac resource path" >&2
   exit 1
 fi
 

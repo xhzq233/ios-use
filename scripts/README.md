@@ -175,8 +175,8 @@ replay lives in `.github/workflows/simulator.yml` and is manual-only.
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/install.sh` | On Apple Silicon, verify checksums and install the release CLI, driver IPAs, and prebuilt PlayCover Runtime plus Frida Engine under `<prefix>/share/ios-use/playcover/`; both frameworks are signature-verified immutable preparation inputs. Also installs the skill and altsign helper. `--build-from-source` additionally requires full Xcode, Swift, xcodegen, and the pinned Frida build toolchain. Intel macOS is unsupported. |
-| `scripts/release_build.sh` | From a clean Git tree, audit all pins/licenses, force fresh Runtime and pinned Frida Engine builds, compare tracked inputs with the exact corresponding-source archive, and stage read-only PlayCover resources, build-manifest, license, provenance, CLI, and driver assets under `release/`; validates `IOS_USE_RELEASE_VERSION` when provided. See [docs/how-to-release.md](../docs/how-to-release.md). |
+| `scripts/install.sh` | On Apple Silicon, verify checksums and install the release CLI, driver IPAs, and prebuilt Mac Runtime plus Frida Engine under `<prefix>/share/ios-use/mac/`; both frameworks are signature-verified immutable preparation inputs. Also installs the skill and altsign helper. `--build-from-source` additionally requires full Xcode, Swift, xcodegen, and the pinned Frida build toolchain. Intel macOS is unsupported. |
+| `scripts/release_build.sh` | From a clean Git tree, audit all pins/licenses, force fresh Runtime and pinned Frida Engine builds, compare tracked inputs with the exact corresponding-source archive, and stage read-only Mac backend resources, build-manifest, license, provenance, CLI, and driver assets under `release/`; validates `IOS_USE_RELEASE_VERSION` when provided. See [docs/how-to-release.md](../docs/how-to-release.md). |
 | `scripts/benchmark.js --bench ios-use --udid <udid> --driver-ipa <path>` | Measure ios-use on a real device and write JSON only. Screenshot cases pass `--no-ocr` to isolate pixel capture. The script never builds, signs, installs, or runs `config`; the device must already be prepared with a driver whose configured `driverVersion` matches the IPA version. |
 | `scripts/benchmark.js --bench wda --udid <udid> --wda-bundle-id <id>` | Measure Appium/WebDriverAgent on a real device and write JSON only. This is a separate WDA run, not an implicit ios-use comparison. |
 
@@ -209,9 +209,9 @@ The GitHub release workflow builds and uploads:
 | `ios-use-darwin-arm64` | Prebuilt Apple Silicon macOS CLI binary. The Runtime and complete release install are Apple-Silicon-only; Intel macOS is unsupported. |
 | `driver.ipa` | Real-device XCTest driver IPA. |
 | `driver-sim.ipa` | Simulator XCTest driver IPA. |
-| `ios-use-playcover-resources.tar.gz` | Read-only, prebuilt Runtime and pinned arm64 Mac Catalyst Frida Engine installed under `<prefix>/share/ios-use/playcover/`. The Engine is copied only for `start --mac --frida`. |
+| `ios-use-mac-resources.tar.gz` | Read-only, prebuilt Runtime and pinned arm64 Mac Catalyst Frida Engine installed under `<prefix>/share/ios-use/mac/`. The Engine is copied only for `start --mac --frida`. |
 | `ios-use-vX.Y.Z-corresponding-source.tar.gz` | Complete corresponding source for the release, including vendored upstreams, the full pinned Yams Git tree, build recipes, source commit, and Runtime-input digest. |
-| `PLAYCOVER-BUILD-MANIFEST-vX.Y.Z.txt` | Exact source commit, Yams/Frida evidence, Runtime-input digest, PlayCover resources archive digest, and corresponding-source digest. |
-| `LICENSE`, `*-LICENSE-*`, `THIRD-PARTY-LICENSES.md`, `PLAYCOVER-PROVENANCE-vX.Y.Z.md` | ios-use and upstream license/provenance materials, including the Yams MIT license, for the Runtime distribution. |
+| `MAC-BACKEND-BUILD-MANIFEST-vX.Y.Z.txt` | Exact source commit, Yams/Frida evidence, Runtime-input digest, Mac backend resources archive digest, and corresponding-source digest. |
+| `LICENSE`, `*-LICENSE-*`, `THIRD-PARTY-LICENSES.md`, `MAC-BACKEND-PROVENANCE-vX.Y.Z.md` | ios-use and upstream license/provenance materials, including the Yams MIT license, for the Runtime distribution. |
 | `CHANGELOG-vX.Y.Z.md` | Focused changes and upgrade notes for that release. |
 | `SHA256SUMS` | Checksums for all uploaded content assets. |

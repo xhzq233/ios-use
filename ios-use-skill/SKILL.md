@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Operate iOS devices, Simulators, and the experimental PlayCover-derived Mac backend with ios-use for setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, and troubleshooting. Re-read after context compaction or resuming iOS work. Build shell workflows from stable semantic DOM labels."
+description: "Operate iOS devices, Simulators, and the experimental Mac backend with ios-use for setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, and troubleshooting. Re-read after context compaction or resuming iOS work. Build shell workflows from stable semantic DOM labels."
 ---
 
 # ios-use Operational Playbook
@@ -24,7 +24,7 @@ ios-use config --udid <udid>
 ios-use start <udid>
 ```
 
-For the source-built experimental Mac backend, configure its PlayCover-derived signing
+For the experimental Mac backend, configure its dedicated signing
 identity once, then pass either an unmodified iPhoneOS App or an already
 prepared App:
 
@@ -55,7 +55,7 @@ Run ordinary `ios-use stop` before switching backends.
 - Treat the device selected by `start` as the target for all UI commands. To switch
   devices, run `ios-use stop`, then `ios-use start <new-udid>`.
 - Treat the Mac backend selected by `start --mac` the same way: subsequent
-  session-bound commands route to the active PlayCover-derived Runtime and cannot fall
+  session-bound commands route to the active Mac Runtime and cannot fall
   back to XCTest.
 - Use `ios-use help <command>` for the complete option contract instead of guessing
   whether an individual command accepts `--udid`.

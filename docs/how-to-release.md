@@ -59,12 +59,12 @@ Expected assets:
 - `release/ios-use-darwin-arm64`
 - `release/driver.ipa`
 - `release/driver-sim.ipa`
-- `release/ios-use-playcover-resources.tar.gz`
+- `release/ios-use-mac-resources.tar.gz`
 - `release/ios-use-v1.2.0-corresponding-source.tar.gz`
 - `release/LICENSE`, `release/*-LICENSE-*` (including Yams MIT), and
   `release/THIRD-PARTY-LICENSES.md`
-- `release/PLAYCOVER-BUILD-MANIFEST-v1.2.0.txt`
-- `release/PLAYCOVER-PROVENANCE-v1.2.0.md`
+- `release/MAC-BACKEND-BUILD-MANIFEST-v1.2.0.txt`
+- `release/MAC-BACKEND-PROVENANCE-v1.2.0.md`
 - `release/CHANGELOG-v1.2.0.md`
 - `release/SHA256SUMS`
 
@@ -120,9 +120,9 @@ The release workflow runs on tag pushes that match `v*` and uploads:
 - `ios-use-darwin-arm64`
 - `driver.ipa`
 - `driver-sim.ipa`
-- `ios-use-playcover-resources.tar.gz`
+- `ios-use-mac-resources.tar.gz`
 - `ios-use-vX.Y.Z-corresponding-source.tar.gz`
-- license, PlayCover provenance, and versioned Runtime/source digest assets
+- license, upstream provenance, and versioned Runtime/source digest assets
 - `CHANGELOG-vX.Y.Z.md`
 - `SHA256SUMS`
 
@@ -144,7 +144,7 @@ To watch it:
 - `release/` contains all expected assets.
 - `git diff --check` passes.
 - The tag is pushed to origin.
-- The GitHub Release has the PlayCover resources archive, corresponding source, license,
+- The GitHub Release has the Mac backend resources archive, corresponding source, license,
   provenance, build manifest, changelog, and checksums in addition to the CLI
   and driver IPAs.
 

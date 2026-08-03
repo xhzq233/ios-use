@@ -78,7 +78,7 @@ RUNTIME_INPUTS_AFTER="$RELEASE_TEMP/runtime-inputs.after"
 runtime_source_manifest "$ROOT_DIR" "$RUNTIME_INPUTS_BEFORE"
 RUNTIME_SOURCE_SHA256="$(shasum -a 256 "$RUNTIME_INPUTS_BEFORE" | awk '{print $1}')"
 
-echo "[release-build] Building PlayCover Runtime from a fresh derived-data directory..."
+echo "[release-build] Building Mac Runtime from a fresh derived-data directory..."
 bash "$ROOT_DIR/scripts/build_playcover_runtime.sh" --replace
 
 echo "[release-build] Building Swift CLI..."
@@ -116,12 +116,12 @@ cp "$ROOT_DIR/driver/build/driver.ipa" "$RELEASE_DIR/driver.ipa"
 cp "$ROOT_DIR/driver/build/driver-sim.ipa" "$RELEASE_DIR/driver-sim.ipa"
 RUNTIME_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
 if [ ! -x "$RUNTIME_SOURCE/IOSUsePlayRuntime" ]; then
-  echo "[release-build] ERROR: missing prebuilt PlayCover Runtime: $RUNTIME_SOURCE" >&2
+  echo "[release-build] ERROR: missing prebuilt Mac Runtime: $RUNTIME_SOURCE" >&2
   exit 1
 fi
 if [ ! -f "$RUNTIME_SOURCE/Info.plist" ] &&
    [ ! -f "$RUNTIME_SOURCE/Versions/A/Resources/Info.plist" ]; then
-  echo "[release-build] ERROR: PlayCover Runtime is missing Info.plist" >&2
+  echo "[release-build] ERROR: Mac Runtime is missing Info.plist" >&2
   exit 1
 fi
 /usr/bin/codesign --verify --strict "$RUNTIME_SOURCE"
@@ -176,7 +176,7 @@ import sys
 print(sum(path.stat().st_size for path in pathlib.Path(sys.argv[1]).rglob('*') if path.is_file()))
 PY
 )"
-PLAYCOVER_RESOURCES_ASSET="ios-use-playcover-resources.tar.gz"
+PLAYCOVER_RESOURCES_ASSET="ios-use-mac-resources.tar.gz"
 (
   cd "$PLAYCOVER_RESOURCES_STAGE"
   COPYFILE_DISABLE=1 tar -czf "$RELEASE_DIR/$PLAYCOVER_RESOURCES_ASSET" \
@@ -253,7 +253,7 @@ fi
 printf '%s\n' \
   "ios-use source commit: $SOURCE_COMMIT" \
   "Yams source commit: $YAMS_COMMIT" \
-  "PlayCover Runtime input manifest SHA-256: $RUNTIME_SOURCE_SHA256" \
+  "Mac Runtime input manifest SHA-256: $RUNTIME_SOURCE_SHA256" \
   > "$SOURCE_STAGE/CORRESPONDING-SOURCE-MANIFEST.txt"
 
 (
@@ -285,12 +285,12 @@ cp "$ROOT_DIR/playcover-runtime/PlayTools/LICENSE" "$RELEASE_DIR/PLAYTOOLS-LICEN
 cp "$ROOT_DIR/ThirdParty/inject/LICENSE" "$RELEASE_DIR/INJECT-LICENSE-GPL-3.0"
 cp "$ROOT_DIR/ThirdParty/Yams/LICENSE" "$RELEASE_DIR/YAMS-LICENSE-MIT"
 cp "$ROOT_DIR/ThirdParty/LICENSES.md" "$RELEASE_DIR/THIRD-PARTY-LICENSES.md"
-BUILD_MANIFEST_ASSET="PLAYCOVER-BUILD-MANIFEST-v$ACTUAL_VERSION.txt"
+BUILD_MANIFEST_ASSET="MAC-BACKEND-BUILD-MANIFEST-v$ACTUAL_VERSION.txt"
 {
   printf 'ios-use source commit: %s\n' "$SOURCE_COMMIT"
   printf 'Yams source commit: %s\n' "$YAMS_COMMIT"
-  printf 'PlayCover Runtime input manifest SHA-256: %s\n' "$RUNTIME_SOURCE_SHA256"
-  printf 'PlayCover resources archive SHA-256: %s\n' "$PLAYCOVER_RESOURCES_ARCHIVE_SHA256"
+  printf 'Mac Runtime input manifest SHA-256: %s\n' "$RUNTIME_SOURCE_SHA256"
+  printf 'Mac backend resources archive SHA-256: %s\n' "$PLAYCOVER_RESOURCES_ARCHIVE_SHA256"
   printf 'Frida Gum source commit: %s\n' \
     '0afeb85fcdeae1d995a55bc07f0fe57b197aecae'
   printf 'Frida Engine ABI: %s\n' 'ios-use-frida-engine-cabi-v2'
@@ -298,10 +298,10 @@ BUILD_MANIFEST_ASSET="PLAYCOVER-BUILD-MANIFEST-v$ACTUAL_VERSION.txt"
   printf 'Frida Engine framework bytes: %s\n' "$FRIDA_ENGINE_BUNDLE_SIZE"
   printf 'Corresponding-source archive SHA-256: %s\n' "$SOURCE_ARCHIVE_SHA256"
 } > "$RELEASE_DIR/$BUILD_MANIFEST_ASSET"
-PROVENANCE_ASSET="PLAYCOVER-PROVENANCE-v$ACTUAL_VERSION.md"
+PROVENANCE_ASSET="MAC-BACKEND-PROVENANCE-v$ACTUAL_VERSION.md"
 {
-  printf '# PlayCover release provenance\n\n'
-  printf 'This release packages `IOSUsePlayRuntime.framework` and the optional-at-runtime `IOSUseFridaEngine.framework` as read-only resources under `share/ios-use/playcover/`.\n\n'
+  printf '# Mac backend release provenance\n\n'
+  printf 'This release packages `IOSUsePlayRuntime.framework` and the optional-at-runtime `IOSUseFridaEngine.framework` as read-only resources under `share/ios-use/mac/`.\n\n'
   printf 'The complete corresponding source for this exact release is `%s`; it includes the complete pinned Yams tree.\n\n' "$SOURCE_ARCHIVE"
   printf 'Fresh Runtime/source/archive digests are recorded in `%s`.\n\n' "$BUILD_MANIFEST_ASSET"
   for provenance in \

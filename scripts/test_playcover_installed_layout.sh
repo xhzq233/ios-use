@@ -92,8 +92,8 @@ INSTALL_HOME="$TEMP_ROOT/i"
 PREFIX="$TEMP_ROOT/p"
 CUSTOM_HOME="$TEMP_ROOT/h"
 INSTALLED_BINARY="$PREFIX/bin/ios-use"
-INSTALLED_RUNTIME="$PREFIX/share/ios-use/playcover/IOSUsePlayRuntime.framework"
-INSTALLED_ENGINE="$PREFIX/share/ios-use/playcover/IOSUseFridaEngine.framework"
+INSTALLED_RUNTIME="$PREFIX/share/ios-use/mac/IOSUsePlayRuntime.framework"
+INSTALLED_ENGINE="$PREFIX/share/ios-use/mac/IOSUseFridaEngine.framework"
 LOG_FILE="$TEMP_ROOT/start.log"
 STATUS_FILE="$TEMP_ROOT/status.json"
 SOURCE_ASSET="source.tar.gz"
@@ -199,7 +199,7 @@ if [[ -z "$RELEASE_ASSET_DIR" ]]; then
   (
     cd "$(dirname "$RUNTIME_SOURCE")"
     COPYFILE_DISABLE=1 tar -czf \
-      "$ASSET_DIR/ios-use-playcover-resources.tar.gz" \
+      "$ASSET_DIR/ios-use-mac-resources.tar.gz" \
       "$(basename "$RUNTIME_SOURCE")" \
       "$(basename "$ENGINE_SOURCE")"
   )
@@ -209,7 +209,7 @@ if [[ -z "$RELEASE_ASSET_DIR" ]]; then
       ios-use-darwin-arm64 \
       driver.ipa \
       driver-sim.ipa \
-      ios-use-playcover-resources.tar.gz > SHA256SUMS
+      ios-use-mac-resources.tar.gz > SHA256SUMS
   )
 else
   ASSET_DIR="$RELEASE_ASSET_DIR"
@@ -217,7 +217,7 @@ else
     ios-use-darwin-arm64
     driver.ipa
     driver-sim.ipa
-    ios-use-playcover-resources.tar.gz
+    ios-use-mac-resources.tar.gz
     LICENSE
     PLAYCOVER-LICENSE-GPL-3.0
     PLAYTOOLS-LICENSE-AGPL-3.0
@@ -253,8 +253,8 @@ else
 
   shopt -s nullglob
   source_assets=("$ASSET_DIR"/ios-use-v*-corresponding-source.tar.gz)
-  build_manifests=("$ASSET_DIR"/PLAYCOVER-BUILD-MANIFEST-v*.txt)
-  provenance_assets=("$ASSET_DIR"/PLAYCOVER-PROVENANCE-v*.md)
+  build_manifests=("$ASSET_DIR"/MAC-BACKEND-BUILD-MANIFEST-v*.txt)
+  provenance_assets=("$ASSET_DIR"/MAC-BACKEND-PROVENANCE-v*.md)
   changelog_assets=("$ASSET_DIR"/CHANGELOG-v*.md)
   shopt -u nullglob
   if [[ "${#source_assets[@]}" -ne 1 ||
@@ -274,15 +274,15 @@ else
     "$ASSET_DIR/ios-use-darwin-arm64" --version |
       tr -d '[:space:]'
   )"
-  if [[ "$build_manifest_basename" != "PLAYCOVER-BUILD-MANIFEST-$INSTALL_VERSION_FOR_TEST.txt" ||
-        "$provenance_basename" != "PLAYCOVER-PROVENANCE-$INSTALL_VERSION_FOR_TEST.md" ||
+  if [[ "$build_manifest_basename" != "MAC-BACKEND-BUILD-MANIFEST-$INSTALL_VERSION_FOR_TEST.txt" ||
+        "$provenance_basename" != "MAC-BACKEND-PROVENANCE-$INSTALL_VERSION_FOR_TEST.md" ||
         "$changelog_basename" != "CHANGELOG-$INSTALL_VERSION_FOR_TEST.md" ||
         "$release_binary_version" != "${INSTALL_VERSION_FOR_TEST#v}" ]]; then
     echo "[installed-layout] ERROR: release binary and versioned asset names disagree" >&2
     exit 1
   fi
 
-  tar -xzf "$ASSET_DIR/ios-use-playcover-resources.tar.gz" -C "$EXPECTED_PARENT"
+  tar -xzf "$ASSET_DIR/ios-use-mac-resources.tar.gz" -C "$EXPECTED_PARENT"
   EXPECTED_RUNTIME="$EXPECTED_PARENT/IOSUsePlayRuntime.framework"
   EXPECTED_ENGINE="$EXPECTED_PARENT/IOSUseFridaEngine.framework"
   tar -xzf "$ASSET_DIR/$SOURCE_ASSET" -C "$SOURCE_PARENT"
@@ -315,7 +315,7 @@ else
     exit 1
   fi
   expected_runtime_archive_sha="$(
-    awk -F': ' '$1 == "PlayCover resources archive SHA-256" { print $2 }' \
+    awk -F': ' '$1 == "Mac backend resources archive SHA-256" { print $2 }' \
       "$BUILD_MANIFEST"
   )"
   expected_source_archive_sha="$(
@@ -323,7 +323,7 @@ else
       "$BUILD_MANIFEST"
   )"
   expected_runtime_source_sha="$(
-    awk -F': ' '$1 == "PlayCover Runtime input manifest SHA-256" { print $2 }' \
+    awk -F': ' '$1 == "Mac Runtime input manifest SHA-256" { print $2 }' \
       "$BUILD_MANIFEST"
   )"
   archived_runtime_source_sha="$(
@@ -332,7 +332,7 @@ else
       "$TEMP_ROOT/runtime-source.archived"
   )"
   if [[ "$expected_runtime_archive_sha" != "$(
-          shasum -a 256 "$ASSET_DIR/ios-use-playcover-resources.tar.gz" |
+          shasum -a 256 "$ASSET_DIR/ios-use-mac-resources.tar.gz" |
             awk '{print $1}'
         )" ||
         "$expected_source_archive_sha" != "$(
@@ -340,7 +340,7 @@ else
             awk '{print $1}'
         )" ||
         "$expected_runtime_source_sha" != "$(
-          awk -F': ' '$1 == "PlayCover Runtime input manifest SHA-256" { print $2 }' \
+          awk -F': ' '$1 == "Mac Runtime input manifest SHA-256" { print $2 }' \
             "${source_roots[0]}/CORRESPONDING-SOURCE-MANIFEST.txt"
         )" ||
         "$expected_runtime_source_sha" != "$archived_runtime_source_sha" ]]; then
@@ -374,7 +374,7 @@ asset=""
 case "$url" in
   *codeload.github.com*) asset="$IOS_USE_RELEASE_TEST_SOURCE_ASSET" ;;
   */ios-use-darwin-arm64) asset="ios-use-darwin-arm64" ;;
-  */ios-use-playcover-resources.tar.gz) asset="ios-use-playcover-resources.tar.gz" ;;
+  */ios-use-mac-resources.tar.gz) asset="ios-use-mac-resources.tar.gz" ;;
   */driver.ipa) asset="driver.ipa" ;;
   */driver-sim.ipa) asset="driver-sim.ipa" ;;
   */SHA256SUMS) asset="SHA256SUMS" ;;

@@ -78,9 +78,9 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 ```
 
 The installer verifies `SHA256SUMS`, downloads the prebuilt Apple Silicon macOS
-CLI, driver IPAs, and PlayCover Runtime from the latest GitHub Release, then
-installs `ios-use` into a user-writable bin directory. The Runtime is an
-immutable resource at `<prefix>/share/ios-use/playcover/`, next to the
+CLI, driver IPAs, and Mac backend resources from the latest GitHub Release, then
+installs `ios-use` into a user-writable bin directory. The Mac Runtime is an
+immutable resource at `<prefix>/share/ios-use/mac/`, next to the
 installed binary prefix rather than in mutable `IOS_USE_HOME`; this remains the
 fallback for both the default and custom `IOS_USE_HOME` values. The installed
 bundle is treated as a read-only source resource: preparation signs only its
@@ -92,8 +92,8 @@ specific version:
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.3.4
 ```
 
-Intel Macs are unsupported because the injected PlayCover Runtime and converted
-iPhone App are arm64-only. On Apple Silicon, a source build requires full Xcode,
+Intel Macs are unsupported because the Mac Runtime and converted iPhone Apps
+are arm64-only. On Apple Silicon, a source build requires full Xcode,
 Swift, and `xcodegen`:
 
 ```bash
@@ -137,7 +137,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | --- | --- |
 | `status` / `config --list` | Show connected real devices and configured device/Simulator state. |
 | `config` | Install or update the on-device driver; use `config --mac` once before the first local Mac-backend start. |
-| `start` / `stop` | Select or release the current automation target; use `start --mac --app <App.app>` or `start --mac --reuse` for the PlayCover-derived Mac backend. |
+| `start` / `stop` | Select or release the current automation target; use `start --mac --app <App.app>` or `start --mac --reuse` for the Mac backend. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID; activation is UI-ready by default. |
 | `dom` | Print the current UI tree; add `--ocr` for a fresh DOM plus screenshot and accurate OCR. |
 | `tap` / `longpress` | Act on a label or coordinate. |
@@ -204,10 +204,10 @@ Time options accept `s` and `ms` suffixes. Bare `waitFor`, `capture`, and log
 timeouts are seconds; bare long-press and post-mutation `--dom` durations are
 milliseconds.
 
-### Experimental Mac Backend (PlayCover-derived)
+### Experimental Mac Backend
 
 The Mac backend runs a managed copy of an unencrypted
-arm64 iPhone App on Apple silicon without the PlayCover GUI. Its device
+arm64 iPhone App directly on Apple silicon. Its device
 contract is compiled into the Runtime and host from one header:
 `iPhone16,2`, 430 x 932 logical points, 3x scale, and 1290 x 2796 native
 pixels.
@@ -229,16 +229,17 @@ also builds the default injected runtime. Before the first Mac-backend start for
 your macOS account, run `config --mac`; macOS asks once for authentication
 to trust the dedicated signing identity. If you cancel, safely retry the same
 command: it resumes that identity instead of creating another one. The identity
-persists across `IOS_USE_HOME` values, while prepared Apps remain in the home
-where they were created. Both `start --mac --app` and
+and immutable prepared Apps are shared by the macOS account, while each
+`IOS_USE_HOME` keeps its own session and most-recent-generation reference. Both
+`start --mac --app` and
 `start --mac --reuse` only check the existing identity and tell you to run
 `config --mac` if setup is missing or trust must be completed.
 
 `start --mac --app` accepts either an unmodified iPhoneOS App or a managed
-prepared App. A source App is cloned under the current `IOS_USE_HOME`, converted
-with pinned PlayCover sources, injected, signed inside-out, fully verified, and
-launched. A later `start --mac --reuse` explicitly reuses the most recent
-generation from that same home after a bounded integrity check. After rebuilding
+prepared App. A source App is cloned into the account-wide immutable generation
+cache, converted by the pinned preparation pipeline, injected, signed inside-out,
+fully verified, and launched. A later `start --mac --reuse` explicitly reuses the
+generation referenced by that same home after a bounded integrity check. After rebuilding
 the source App, pass `--app` again so the new iPhoneOS Mach-O content selects or
 prepares its generation; `--reuse` deliberately does not inspect the source
 build. The isolated live Runtime stress gate proves that launch `hello` carries
@@ -265,7 +266,7 @@ surfaces, including Metal, and always produce a strict 1290 x 2796 frame. The
 Runtime never draws synthetic time, battery, Dynamic Island, status glyphs, or
 Home Indicator. The path does not use ScreenCaptureKit or request Screen
 Recording permission.
-See [docs/playcover-backend.md](docs/playcover-backend.md).
+See the [Mac backend implementation notes](docs/playcover-backend.md).
 
 ## Performance Snapshot
 

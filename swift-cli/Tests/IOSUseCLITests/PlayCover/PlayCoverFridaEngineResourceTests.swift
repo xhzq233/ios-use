@@ -15,7 +15,7 @@ final class PlayCoverFridaEngineResourceTests: XCTestCase {
 
         XCTAssertEqual(paths, [
             "/opt/ios-use/bin/.ios-use/playcover/IOSUseFridaEngine.framework",
-            "/opt/ios-use/share/ios-use/playcover/IOSUseFridaEngine.framework",
+            "/opt/ios-use/share/ios-use/mac/IOSUseFridaEngine.framework",
         ])
     }
 
