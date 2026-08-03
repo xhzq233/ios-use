@@ -15,7 +15,8 @@ case "$TEST_SCOPE" in
     ;;
   mac)
     echo "[swift-cli] Running Mac-backend Swift CLI unit tests..."
-    swift test --package-path "$ROOT_DIR/swift-cli" --filter PlayCover
+    env NSUnbufferedIO=YES \
+      swift test --package-path "$ROOT_DIR/swift-cli" --filter PlayCover
     exit 0
     ;;
   *)
