@@ -89,7 +89,7 @@ bytes. To install a
 specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.3.4
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.0.0
 ```
 
 Intel Macs are unsupported because the Mac Runtime and converted iPhone Apps
