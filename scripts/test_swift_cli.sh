@@ -3,11 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo "[swift-cli] Running non-Mac-backend Swift CLI unit tests..."
-swift test --package-path "$ROOT_DIR/swift-cli" --skip PlayCover
+ISOLATED_TESTS='OSLogServiceTests|PlayCover'
 
-echo "[swift-cli] Running Mac-backend unit tests in an isolated XCTest process..."
-swift test --package-path "$ROOT_DIR/swift-cli" --filter PlayCover
+echo "[swift-cli] Running general Swift CLI unit tests..."
+swift test --package-path "$ROOT_DIR/swift-cli" --skip "$ISOLATED_TESTS"
+
+echo "[swift-cli] Running OSLog and Mac-backend tests in a clean XCTest process..."
+swift test --package-path "$ROOT_DIR/swift-cli" --filter "$ISOLATED_TESTS"
 
 echo "[swift-cli] Checking driver version stamping..."
 if grep -Eq 'date -u \+%Y%m%d%H%M%S|rev-parse --short=12' "$ROOT_DIR/scripts/build_driver.sh"; then
