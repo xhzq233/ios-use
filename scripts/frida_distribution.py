@@ -139,8 +139,8 @@ COMPONENTS = (
     Component(
         "pcre2",
         "PCRE2",
-        "subprojects/glib/subprojects/pcre2",
-        "frida-gum/subprojects/glib/subprojects/pcre2",
+        "subprojects/pcre2",
+        "frida-gum/subprojects/pcre2",
         "https://github.com/frida/pcre2.git",
         "b47486922fdc3486499b310dc9cf903449700474",
         "BSD-3-Clause",

@@ -19,7 +19,7 @@ trees in `ios-use-v<version>-corresponding-source.tar.gz`.
 | JSON-GLib | `1f40dc373415b728efa8315af7f975bd5a4e2490` | LGPL-2.1-or-later | `frida-gum/subprojects/json-glib` |
 | TinyCC | `722c253d8dece3bc9a46b6f510c6682329d838b7` | LGPL-2.1-or-later | `frida-gum/subprojects/tinycc` |
 | SQLite | `9337327a50008f2d2236112ccb6f44059b1bafbd` | Public domain | `frida-gum/subprojects/sqlite` |
-| PCRE2 | `b47486922fdc3486499b310dc9cf903449700474` | BSD-3-Clause | `frida-gum/subprojects/glib/subprojects/pcre2` |
+| PCRE2 | `b47486922fdc3486499b310dc9cf903449700474` | BSD-3-Clause | `frida-gum/subprojects/pcre2` |
 
 The Engine dynamically links only Apple system frameworks and libraries such
 as Foundation, CoreFoundation, Security, SystemConfiguration, libSystem,
