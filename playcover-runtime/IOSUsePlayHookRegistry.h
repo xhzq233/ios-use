@@ -118,6 +118,14 @@ FOUNDATION_EXPORT BOOL IOSUsePlayHookRegistryEntryReady(
 FOUNDATION_EXPORT NSDictionary<NSString *, id> *
 IOSUsePlayHookRegistryDiagnostics(void);
 
+/// Distinguishes a permanent required-hook failure from the normal interval
+/// before every required declaration and first eligible invocation exists.
+/// A missing declaration becomes permanent only after configuration failed.
+FOUNDATION_EXPORT BOOL IOSUsePlayHookRegistryHasRequiredFailure(
+    NSDictionary<NSString *, id> *diagnostics,
+    BOOL configurationFailed
+);
+
 #if defined(IOS_USE_PLAY_HOOK_REGISTRY_TESTING)
 FOUNDATION_EXPORT void IOSUsePlayHookRegistryResetForTesting(void);
 FOUNDATION_EXPORT void

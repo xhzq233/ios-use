@@ -246,10 +246,10 @@ public enum SessionService {
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
-        try PlayCoverPendingLaunchCoordinator.recoverBeforeStart(
+        try prepareForDriverStart(paths: paths)
+        try PlayCoverSessionService.requireNoPendingLaunch(
             paths: paths
         )
-        try prepareForDriverStart(paths: paths)
         var launch: PlayCoverSessionService.LaunchResult?
         do {
             let result = try PlayCoverSessionService.launch(
@@ -315,7 +315,7 @@ public enum SessionService {
                 }
                 do {
                     if launch.usesPendingLaunchJournal {
-                        try PlayCoverPendingLaunchCoordinator
+                        try PlayCoverSessionService
                             .rollbackAfterDriverCommitFailure(
                                 result: launch,
                                 paths: paths
@@ -394,12 +394,9 @@ public enum SessionService {
 
     private static func stopLocked(paths: IOSUsePaths) throws -> String {
         guard let current = try readDriverLockInfo(paths: paths) else {
-            if let recovered = try PlayCoverPendingLaunchCoordinator
+            if let pid = try PlayCoverSessionService
                 .stopPendingWithoutDriverLock(paths: paths) {
-                let pidText = recovered.pid.map {
-                    " (pid \($0))"
-                } ?? ""
-                return "Mac pending launch stopped\(pidText)\n"
+                return "Mac pending launch stopped (pid \(pid))\n"
                     + "Mac session stopped\n"
             }
             _ = try requireDriverLock(paths: paths)
@@ -407,19 +404,12 @@ public enum SessionService {
                 "requireDriverLock must throw when driver.lock is absent"
             )
         }
-        if let recovered =
-                try PlayCoverPendingLaunchCoordinator
-                    .reconcilePendingWithDriverLock(
-                        current,
-                        paths: paths
-                    ) {
-            let pidText = recovered.pid.map {
-                " (pid \($0))"
-            } ?? ""
-            return "Mac pending launch stopped\(pidText)\n"
-                + "Mac session stopped\n"
-        }
         if current.deviceType == PlayCoverSessionService.deviceType {
+            try PlayCoverSessionService
+                .retirePendingLaunchMatchingDriverLock(
+                    current,
+                    paths: paths
+                )
             let pid = try PlayCoverSessionService.terminate(
                 session: current,
                 paths: paths
@@ -435,6 +425,7 @@ public enum SessionService {
             return "Mac App stopped (pid \(pid))\n"
                 + "Mac session stopped\n"
         }
+        try PlayCoverSessionService.requireNoPendingLaunch(paths: paths)
         var output = try DriverLifecycleService.terminateDriver(
             for: current,
             paths: paths,

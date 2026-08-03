@@ -19,13 +19,15 @@ FAKE_TARBALL="$TMP_ROOT/source.tar.gz"
 FAKE_BIN="$TMP_ROOT/fake-bin"
 FAKE_HOME="$TMP_ROOT/home"
 FAKE_RUNTIME_DIR="$TMP_ROOT/runtime/IOSUsePlayRuntime.framework"
-FAKE_RUNTIME_ARCHIVE="$TMP_ROOT/ios-use-playcover-runtime.tar.gz"
+FAKE_ENGINE_DIR="$TMP_ROOT/runtime/IOSUseFridaEngine.framework"
+FAKE_RESOURCES_ARCHIVE="$TMP_ROOT/ios-use-playcover-resources.tar.gz"
 FAKE_CHECKSUMS="$TMP_ROOT/SHA256SUMS"
 mkdir -p \
   "$FAKE_SOURCE/ios-use-skill" \
   "$FAKE_SOURCE/swift-cli" \
   "$FAKE_SOURCE/scripts" \
   "$FAKE_RUNTIME_DIR" \
+  "$FAKE_ENGINE_DIR" \
   "$FAKE_BIN" \
   "$FAKE_HOME"
 
@@ -49,17 +51,36 @@ chmod +x "$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework/IOSUsePlayRun
 printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework/Info.plist"
 SCRIPT
 chmod +x "$FAKE_SOURCE/scripts/build_swift_cli.sh"
+cat > "$FAKE_SOURCE/scripts/build_playcover_frida_engine.sh" <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+output=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$output"
+printf '#!/bin/sh\necho engine\n' > "$output/IOSUseFridaEngine"
+chmod +x "$output/IOSUseFridaEngine"
+printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$output/Info.plist"
+SCRIPT
+chmod +x "$FAKE_SOURCE/scripts/build_playcover_frida_engine.sh"
 (cd "$FAKE_SOURCE_PARENT" && tar -czf "$FAKE_TARBALL" ios-use-fake)
 
 printf '#!/bin/sh\necho runtime\n' > "$FAKE_RUNTIME_DIR/IOSUsePlayRuntime"
 chmod +x "$FAKE_RUNTIME_DIR/IOSUsePlayRuntime"
 printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$FAKE_RUNTIME_DIR/Info.plist"
-(cd "$(dirname "$FAKE_RUNTIME_DIR")" && tar -czf "$FAKE_RUNTIME_ARCHIVE" IOSUsePlayRuntime.framework)
+printf '#!/bin/sh\necho engine\n' > "$FAKE_ENGINE_DIR/IOSUseFridaEngine"
+chmod +x "$FAKE_ENGINE_DIR/IOSUseFridaEngine"
+printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$FAKE_ENGINE_DIR/Info.plist"
+(cd "$(dirname "$FAKE_RUNTIME_DIR")" && tar -czf "$FAKE_RESOURCES_ARCHIVE" IOSUsePlayRuntime.framework IOSUseFridaEngine.framework)
 {
   printf '#!/bin/sh\necho 1.0.3\n' | shasum -a 256 | awk '{print $1 "  ios-use-darwin-arm64"}'
   printf 'remote-driver\n' | shasum -a 256 | awk '{print $1 "  driver.ipa"}'
   printf 'remote-driver-sim\n' | shasum -a 256 | awk '{print $1 "  driver-sim.ipa"}'
-  shasum -a 256 "$FAKE_RUNTIME_ARCHIVE" | awk '{print $1 "  ios-use-playcover-runtime.tar.gz"}'
+  shasum -a 256 "$FAKE_RESOURCES_ARCHIVE" | awk '{print $1 "  ios-use-playcover-resources.tar.gz"}'
 } > "$FAKE_CHECKSUMS"
 
 cat > "$FAKE_BIN/curl" <<'SCRIPT'
@@ -106,8 +127,8 @@ case "$url" in
     } | write_output
     chmod +x "$out"
     ;;
-  *ios-use-playcover-runtime.tar.gz)
-    cat "$IOS_USE_INSTALL_TEST_RUNTIME_ARCHIVE" | write_output
+  *ios-use-playcover-resources.tar.gz)
+    cat "$IOS_USE_INSTALL_TEST_RESOURCES_ARCHIVE" | write_output
     ;;
   *SHA256SUMS)
     cat "$IOS_USE_INSTALL_TEST_CHECKSUMS" | write_output
@@ -181,7 +202,7 @@ run_install() {
     IOS_USE_GITHUB_REPO="example/ios-use" \
     IOS_USE_VERSION="v1.0.3" \
     IOS_USE_INSTALL_TEST_TARBALL="$FAKE_TARBALL" \
-    IOS_USE_INSTALL_TEST_RUNTIME_ARCHIVE="$FAKE_RUNTIME_ARCHIVE" \
+    IOS_USE_INSTALL_TEST_RESOURCES_ARCHIVE="$FAKE_RESOURCES_ARCHIVE" \
     IOS_USE_INSTALL_TEST_CHECKSUMS="${IOS_USE_INSTALL_TEST_CHECKSUM_OVERRIDE:-$FAKE_CHECKSUMS}" \
     PATH="$FAKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
     bash "$ROOT_DIR/scripts/install.sh" "$@" --print-path
@@ -195,7 +216,7 @@ run_install_verbose() {
     IOS_USE_GITHUB_REPO="example/ios-use" \
     IOS_USE_VERSION="v1.0.3" \
     IOS_USE_INSTALL_TEST_TARBALL="$FAKE_TARBALL" \
-    IOS_USE_INSTALL_TEST_RUNTIME_ARCHIVE="$FAKE_RUNTIME_ARCHIVE" \
+    IOS_USE_INSTALL_TEST_RESOURCES_ARCHIVE="$FAKE_RESOURCES_ARCHIVE" \
     IOS_USE_INSTALL_TEST_CHECKSUMS="${IOS_USE_INSTALL_TEST_CHECKSUM_OVERRIDE:-$FAKE_CHECKSUMS}" \
     PATH="$FAKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
     bash "$ROOT_DIR/scripts/install.sh" "$@"
@@ -232,8 +253,16 @@ if [[ ! -x "$BUILD_HOME/share/ios-use/playcover/IOSUsePlayRuntime.framework/IOSU
   echo "[install-test] ERROR: build-from-source install did not install the PlayCover runtime under its prefix share layout" >&2
   exit 1
 fi
+if [[ ! -x "$BUILD_HOME/share/ios-use/playcover/IOSUseFridaEngine.framework/IOSUseFridaEngine" ]]; then
+  echo "[install-test] ERROR: build-from-source install did not install the Frida Engine resource" >&2
+  exit 1
+fi
 if [[ -e "$BUILD_HOME/.ios-use/playcover/IOSUsePlayRuntime.framework" ]]; then
   echo "[install-test] ERROR: build-from-source install left the Runtime in mutable IOS_USE_HOME state" >&2
+  exit 1
+fi
+if [[ -e "$BUILD_HOME/.ios-use/playcover/IOSUseFridaEngine.framework" ]]; then
+  echo "[install-test] ERROR: build-from-source install left the Engine in mutable IOS_USE_HOME state" >&2
   exit 1
 fi
 if [[ -e "$BUILD_HOME/.ios-use/flows/proxy_configca.yaml" ]]; then
@@ -262,6 +291,10 @@ if ! grep -q 'remote skill fixture' "$DOWNLOAD_HOME/.ios-use/skill/SKILL.md"; th
 fi
 if [[ ! -x "$DOWNLOAD_HOME/share/ios-use/playcover/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" ]]; then
   echo "[install-test] ERROR: release install did not install the prebuilt PlayCover Runtime" >&2
+  exit 1
+fi
+if [[ ! -x "$DOWNLOAD_HOME/share/ios-use/playcover/IOSUseFridaEngine.framework/IOSUseFridaEngine" ]]; then
+  echo "[install-test] ERROR: release install did not install the prebuilt Frida Engine" >&2
   exit 1
 fi
 if [[ -e "$DOWNLOAD_HOME/.ios-use/playcover/IOSUsePlayRuntime.framework" ]]; then

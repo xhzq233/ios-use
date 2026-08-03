@@ -14,7 +14,6 @@ enum DiskUsageService {
         let modifiedAt: Date?
         let exists: Bool
         let complete: Bool
-        let cleanupImpact: String
         let details: [String: String]
     }
 
@@ -68,8 +67,7 @@ enum DiskUsageService {
                 )
                 if storageClass == "home-data" {
                     lines.append(contentsOf: Self.formatHomes(
-                        matching,
-                        allItems: items
+                        matching
                     ))
                     continue
                 }
@@ -93,7 +91,7 @@ enum DiskUsageService {
             }
             if !warnings.isEmpty {
                 lines.append("")
-                lines.append("Warnings — totals may be incomplete")
+                lines.append("Warnings — review incomplete or unusual data")
                 lines.append(contentsOf: warnings.map { "  \($0)" })
             }
             return lines.joined(separator: "\n") + "\n"
@@ -122,7 +120,7 @@ enum DiskUsageService {
         ) -> String {
             switch storageClass {
             case "rebuildable-cache":
-                return "Removing it saves space; a later command may prepare, build, or download it again."
+                return "Removing it saves space; a later command may prepare or build it again."
             case "app-data":
                 return "Removing it resets persistent data for the named Mac App."
             case "home-data":
@@ -157,19 +155,32 @@ enum DiskUsageService {
             if let capability = item.details["capability"] {
                 values.append(capability)
             }
-            if let references = item.details["homeReferences"] {
-                values.append(
-                    "\(references) Home ref\(references == "1" ? "" : "s")"
-                )
-            }
-            if let sessions = item.details["sessionReferences"],
-               sessions != "0" {
-                values.append(
-                    "\(sessions) session record\(sessions == "1" ? "" : "s")"
-                )
-            }
             if let role = item.details["role"] {
                 values.append(role)
+            }
+            if item.category == "prepared" {
+                let homeReferences = Int(
+                    item.details["homeReferences"] ?? "0"
+                ) ?? 0
+                let sessionReferences = Int(
+                    item.details["sessionReferences"] ?? "0"
+                ) ?? 0
+                if homeReferences == 0 && sessionReferences == 0 {
+                    values.append("unreferenced")
+                } else {
+                    if homeReferences > 0 {
+                        values.append(
+                            "\(homeReferences) Home ref"
+                                + (homeReferences == 1 ? "" : "s")
+                        )
+                    }
+                    if sessionReferences > 0 {
+                        values.append(
+                            "\(sessionReferences) live session"
+                                + (sessionReferences == 1 ? "" : "s")
+                        )
+                    }
+                }
             }
             return values.isEmpty
                 ? ""
@@ -177,18 +188,8 @@ enum DiskUsageService {
         }
 
         private static func formatHomes(
-            _ homeItems: [Item],
-            allItems: [Item]
+            _ homeItems: [Item]
         ) -> [String] {
-            let preparedNames: [String: String] = Dictionary(
-                uniqueKeysWithValues: allItems.compactMap { item in
-                    guard item.category == "prepared",
-                          let generation = item.details["generation"] else {
-                        return nil
-                    }
-                    return (generation, item.name)
-                }
-            )
             let grouped = Dictionary(grouping: homeItems) {
                 $0.details["homeRoot"] ?? $0.path
             }
@@ -241,18 +242,6 @@ enum DiskUsageService {
                     result.append(
                         "    contains: " + contents.joined(separator: ", ")
                     )
-                }
-                if let generation = group.compactMap({
-                    $0.details["generation"]
-                }).first {
-                    let target = preparedNames[generation]
-                        ?? "missing prepared generation \(generation.prefix(12))…"
-                    result.append("    reuses: \(target)")
-                }
-                if group.contains(where: {
-                    $0.details["sessionGeneration"] != nil
-                }) {
-                    result.append("    Mac session record present")
                 }
                 if let descriptor = group.compactMap({
                     $0.details["discoveryRecord"]
@@ -361,10 +350,7 @@ enum DiskUsageService {
             switch item.category {
             case "launch-facade": return "Launch facades"
             case "runtime-socket": return "Runtime sockets"
-            case "lock":
-                return item.name == "Frida Engine lock"
-                    ? "Frida Engine locks"
-                    : "Prepare locks"
+            case "lock": return "Prepare locks"
             default: return item.name
             }
         }
@@ -382,7 +368,6 @@ enum DiskUsageService {
                 } ?? .null,
                 "exists": .boolean(item.exists),
                 "complete": .boolean(item.complete),
-                "cleanupImpact": .string(item.cleanupImpact),
                 "details": .object(
                     item.details.mapValues(MachineValue.string)
                 ),
@@ -429,6 +414,16 @@ enum DiskUsageService {
         let sessionGeneration: String?
     }
 
+    private struct HomeReferences {
+        let generation: String?
+        let sessionGeneration: String?
+    }
+
+    private enum HomeReferenceSource {
+        case lastGeneration
+        case activeSession
+    }
+
     static func snapshot(
         paths: IOSUsePaths,
         traversalEntryLimit: Int = 200_000
@@ -438,11 +433,18 @@ enum DiskUsageService {
         var budget = WalkBudget(remaining: max(1, traversalEntryLimit))
 
         let homes = collectHomes(paths: paths, warnings: &warnings)
-        let generationReferences = Dictionary(grouping: homes.compactMap {
-            home -> (String, Bool)? in
-            guard let generation = home.generation else { return nil }
-            return (generation, home.sessionGeneration == generation)
-        }, by: { $0.0 })
+        let homeGenerationReferences = Dictionary(
+            grouping: homes.compactMap { home -> String? in
+                home.generation
+            },
+            by: { $0 }
+        )
+        let sessionGenerationReferences = Dictionary(
+            grouping: homes.compactMap { home -> String? in
+                home.sessionGeneration
+            },
+            by: { $0 }
+        )
 
         appendChildren(
             of: paths.playcoverGlobalObjects,
@@ -450,12 +452,13 @@ enum DiskUsageService {
             category: "prepared",
             itemBuilder: { url, usage, warnings in
                 let generation = url.lastPathComponent
-                let references = generationReferences[generation] ?? []
                 return preparedItem(
                     url,
                     usage,
-                    homeReferences: references.count,
-                    sessionReferences: references.filter(\.1).count,
+                    homeReferences:
+                        homeGenerationReferences[generation]?.count ?? 0,
+                    sessionReferences:
+                        sessionGenerationReferences[generation]?.count ?? 0,
                     warnings: &warnings
                 )
             },
@@ -474,31 +477,7 @@ enum DiskUsageService {
                     scope: "mac",
                     category: "lock",
                     storageClass: "metadata-residue",
-                    name: "prepare lock",
-                    cleanupImpact:
-                        "May belong to a running prepare or launch."
-                )
-            },
-            items: &items,
-            warnings: &warnings,
-            budget: &budget
-        )
-        appendChildren(
-            of: paths.playcoverFridaEngineObjects,
-            scope: "mac",
-            category: "frida-engine",
-            itemBuilder: { url, usage, _ in
-                usageItem(
-                    url: url,
-                    usage: usage,
-                    scope: "mac",
-                    category: "frida-engine",
-                    storageClass: "rebuildable-cache",
-                    name: "Frida Engine "
-                        + PlayCoverFridaEngineService.descriptorVersion,
-                    cleanupImpact:
-                        "A later Frida-enabled prepare must reacquire this Engine.",
-                    details: ["digest": url.lastPathComponent]
+                    name: "prepare lock"
                 )
             },
             items: &items,
@@ -507,11 +486,11 @@ enum DiskUsageService {
         )
         for (path, name) in [
             (
-                "\(paths.playcoverFridaEngineRoot)/source",
+                paths.playcoverFridaSourceCache,
                 "Frida source cache"
             ),
             (
-                "\(paths.playcoverFridaEngineRoot)/build",
+                paths.playcoverFridaBuildCache,
                 "Frida build cache"
             ),
         ] {
@@ -521,8 +500,6 @@ enum DiskUsageService {
                 category: "frida-development",
                 storageClass: "rebuildable-cache",
                 name: name,
-                cleanupImpact:
-                    "A later local Frida build must recreate it.",
                 details: [:],
                 includeMissing: false,
                 items: &items,
@@ -530,26 +507,6 @@ enum DiskUsageService {
                 budget: &budget
             )
         }
-        appendChildren(
-            of: paths.playcoverFridaEngineLocks,
-            scope: "mac",
-            category: "lock",
-            itemBuilder: { url, usage, _ in
-                usageItem(
-                    url: url,
-                    usage: usage,
-                    scope: "mac",
-                    category: "lock",
-                    storageClass: "metadata-residue",
-                    name: "Frida Engine lock",
-                    cleanupImpact:
-                        "May belong to a running Engine acquisition."
-                )
-            },
-            items: &items,
-            warnings: &warnings,
-            budget: &budget
-        )
         appendChildren(
             of: paths.playcoverPlayChain,
             scope: "mac",
@@ -563,8 +520,6 @@ enum DiskUsageService {
                     category: "playchain",
                     storageClass: "app-data",
                     name: identity.bundle,
-                    cleanupImpact:
-                        "Resets persistent data for this Mac App bundle.",
                     details: [
                         "bundle": identity.bundle,
                         "fileRole": identity.role,
@@ -581,8 +536,6 @@ enum DiskUsageService {
             category: "home-discovery",
             storageClass: "metadata-residue",
             name: "Home discovery records",
-            cleanupImpact:
-                "Removing records only makes those Homes undiscoverable to `ios-use du`.",
             details: ["role": "discovery metadata"],
             includeMissing: false,
             items: &items,
@@ -595,8 +548,6 @@ enum DiskUsageService {
             category: "signing-identity",
             storageClass: "metadata-residue",
             name: "Mac signing identity binding",
-            cleanupImpact:
-                "Removing it requires `ios-use config --mac` and may make existing prepared Apps unusable.",
             details: ["role": "do not remove during normal cleanup"],
             includeMissing: false,
             items: &items,
@@ -614,9 +565,7 @@ enum DiskUsageService {
                     scope: "mac",
                     category: "launch-facade",
                     storageClass: "metadata-residue",
-                    name: url.lastPathComponent,
-                    cleanupImpact:
-                        "May belong to a running Mac App session."
+                    name: url.lastPathComponent
                 )
             },
             items: &items,
@@ -634,9 +583,7 @@ enum DiskUsageService {
                     scope: "mac",
                     category: "runtime-socket",
                     storageClass: "metadata-residue",
-                    name: url.lastPathComponent,
-                    cleanupImpact:
-                        "May belong to a running Mac Runtime session."
+                    name: url.lastPathComponent
                 )
             },
             items: &items,
@@ -726,8 +673,6 @@ enum DiskUsageService {
             modifiedAt: usage.modifiedAt,
             exists: usage.exists,
             complete: usage.complete,
-            cleanupImpact:
-                "A later start must prepare this App again.",
             details: details
         )
     }
@@ -739,7 +684,6 @@ enum DiskUsageService {
         category: String,
         storageClass: String,
         name: String,
-        cleanupImpact: String,
         details: [String: String] = [:]
     ) -> Item {
         Item(
@@ -752,7 +696,6 @@ enum DiskUsageService {
             modifiedAt: usage.modifiedAt,
             exists: usage.exists,
             complete: usage.complete,
-            cleanupImpact: cleanupImpact,
             details: details
         )
     }
@@ -796,19 +739,17 @@ enum DiskUsageService {
             }
         }
         return candidates.map { root, value in
-            HomeInfo(
+            let references = readHomeReferences(
+                root: root,
+                warnings: &warnings
+            )
+            return HomeInfo(
                 id: value.id,
                 root: root,
                 current: value.current,
                 discoveryRecord: value.discoveryRecord,
-                generation: readGenerationReference(
-                    root: root,
-                    warnings: &warnings
-                ),
-                sessionGeneration: readSessionGeneration(
-                    root: root,
-                    warnings: &warnings
-                )
+                generation: references.generation,
+                sessionGeneration: references.sessionGeneration
             )
         }.sorted {
             if $0.current != $1.current { return $0.current }
@@ -842,8 +783,6 @@ enum DiskUsageService {
                     modifiedAt: nil,
                     exists: false,
                     complete: true,
-                    cleanupImpact:
-                        "The Home is already missing; only its discovery metadata may remain.",
                     details: details
                 )
             )
@@ -870,7 +809,6 @@ enum DiskUsageService {
                 category: "empty",
                 storageClass: "home-data",
                 name: home.current ? "current Home" : "known Home",
-                cleanupImpact: "Removes this empty logical Home.",
                 details: homeDetails(home),
                 includeMissing: true,
                 items: &items,
@@ -893,7 +831,6 @@ enum DiskUsageService {
                 category: category,
                 storageClass: "home-data",
                 name: name,
-                cleanupImpact: homeCleanupImpact(category: category),
                 details: homeDetails(home),
                 includeMissing: false,
                 items: &items,
@@ -925,6 +862,14 @@ enum DiskUsageService {
         switch name {
         case "logs", "cli.log": return "logs"
         case "artifacts": return "artifacts"
+        case "cache": return "cache"
+        case "evidence": return "evidence"
+        case "flows": return "flows"
+        case "rollback": return "rollback"
+        case "simulators": return "simulators"
+        case "test-homes": return "test-homes"
+        case "skill": return "skill"
+        case ".DS_Store": return "metadata"
         case "state": return "state"
         case "mac": return "mac"
         case "config.json": return "config"
@@ -936,6 +881,11 @@ enum DiskUsageService {
             if name.hasPrefix("driver-signed-") && name.hasSuffix(".ipa") {
                 return "driver-assets"
             }
+            if (name.hasPrefix("wda-signed-") ||
+                name.hasPrefix("wda-resigned-")) &&
+                name.hasSuffix(".ipa") {
+                return "driver-assets"
+            }
             if name.hasPrefix("driver-sim-install-") {
                 return "simulator-driver"
             }
@@ -943,7 +893,7 @@ enum DiskUsageService {
                 || name.hasPrefix("signed-preflight-") {
                 return "incomplete-work"
             }
-            return nil
+            return "other"
         }
     }
 
@@ -959,21 +909,6 @@ enum DiskUsageService {
             return (String(name.dropLast(suffix.count)), role)
         }
         return (name, "data")
-    }
-
-    private static func homeCleanupImpact(category: String) -> String {
-        switch category {
-        case "logs": return "Deletes diagnostic logs."
-        case "artifacts": return "Deletes user-created screenshots and artifacts."
-        case "config": return "Removes configured device and signing metadata."
-        case "state", "mac":
-            return "Removes session and Mac reuse state; stop active commands first."
-        case "proxy": return "Removes proxy state and local CA material."
-        case "driver-assets", "simulator-driver", "signing-tool":
-            return "A later setup must reinstall or rebuild this tool or driver."
-        case "runtime": return "Removes generated local Runtime credentials."
-        default: return "Removes incomplete work left by an interrupted command."
-        }
     }
 
     private static func appendChildren(
@@ -1014,7 +949,6 @@ enum DiskUsageService {
         category: String,
         storageClass: String,
         name: String,
-        cleanupImpact: String,
         details: [String: String],
         includeMissing: Bool,
         items: inout [Item],
@@ -1038,7 +972,6 @@ enum DiskUsageService {
                 modifiedAt: usage.modifiedAt,
                 exists: usage.exists,
                 complete: usage.complete,
-                cleanupImpact: cleanupImpact,
                 details: details
             )
         )
@@ -1195,67 +1128,87 @@ enum DiskUsageService {
         )
     }
 
-    private static func readGenerationReference(
+    private static func readHomeReferences(
         root: String,
         warnings: inout [String]
-    ) -> String? {
-        let path = URL(fileURLWithPath: root, isDirectory: true)
-            .appendingPathComponent("mac", isDirectory: true)
-            .appendingPathComponent("last-generation.json").path
-        guard let data = ownerOnlyRegularFileData(
-            at: path,
-            maximumBytes: 32 * 1_024,
-            label: "Mac last-generation reference",
-            warnings: &warnings
-        ) else {
-            return nil
-        }
-        guard let value = try? JSONSerialization.jsonObject(with: data)
-                as? [String: Any],
-              Set(value.keys) == Set(["generationKey"]),
-              let generation = value["generationKey"] as? String,
-              isLowercaseSHA256(generation) else {
-            warnings.append("invalid Mac generation reference: \(path)")
-            return nil
-        }
-        return generation
+    ) -> HomeReferences {
+        let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+        return HomeReferences(
+            generation: readHomeGeneration(
+                at: rootURL
+                    .appendingPathComponent("mac", isDirectory: true)
+                    .appendingPathComponent("last-generation.json").path,
+                maximumBytes: 32 * 1_024,
+                label: "Mac last-generation reference",
+                source: .lastGeneration,
+                warnings: &warnings
+            ),
+            sessionGeneration: readHomeGeneration(
+                at: rootURL
+                    .appendingPathComponent("state", isDirectory: true)
+                    .appendingPathComponent("driver.lock").path,
+                maximumBytes: DriverSessionStore.maximumDriverLockBytes,
+                label: "driver.lock",
+                source: .activeSession,
+                warnings: &warnings
+            )
+        )
     }
 
-    private static func readSessionGeneration(
-        root: String,
+    private static func readHomeGeneration(
+        at path: String,
+        maximumBytes: Int,
+        label: String,
+        source: HomeReferenceSource,
         warnings: inout [String]
     ) -> String? {
-        let path = URL(fileURLWithPath: root, isDirectory: true)
-            .appendingPathComponent("state", isDirectory: true)
-            .appendingPathComponent("driver.lock").path
-        guard let data = ownerOnlyRegularFileData(
+        let requireOwnerOnlyPermissions: Bool
+        switch source {
+        case .lastGeneration:
+            requireOwnerOnlyPermissions = true
+        case .activeSession:
+            requireOwnerOnlyPermissions = false
+        }
+        guard let data = ownedRegularFileData(
             at: path,
-            maximumBytes: DriverSessionStore.maximumDriverLockBytes,
-            label: "driver.lock",
+            maximumBytes: maximumBytes,
+            label: label,
+            requireOwnerOnlyPermissions: requireOwnerOnlyPermissions,
             warnings: &warnings
         ) else {
             return nil
         }
         guard let value = try? JSONSerialization.jsonObject(with: data)
                 as? [String: Any] else {
-            warnings.append("invalid driver.lock JSON: \(path)")
+            warnings.append("invalid \(label) JSON: \(path)")
             return nil
         }
-        guard value["deviceType"] as? String == "mac" else {
-            return nil
+        let generation: String?
+        switch source {
+        case .lastGeneration:
+            guard Set(value.keys) == Set(["generationKey"]) else {
+                warnings.append("invalid Mac generation reference: \(path)")
+                return nil
+            }
+            generation = value["generationKey"] as? String
+        case .activeSession:
+            guard value["deviceType"] as? String == "mac" else {
+                return nil
+            }
+            generation = value["macGenerationKey"] as? String
         }
-        guard let generation = value["macGenerationKey"] as? String,
-              isLowercaseSHA256(generation) else {
-            warnings.append("invalid Mac generation in driver.lock: \(path)")
+        guard let generation, isLowercaseSHA256(generation) else {
+            warnings.append("invalid Mac generation in \(label): \(path)")
             return nil
         }
         return generation
     }
 
-    private static func ownerOnlyRegularFileData(
+    private static func ownedRegularFileData(
         at path: String,
         maximumBytes: Int,
         label: String,
+        requireOwnerOnlyPermissions: Bool,
         warnings: inout [String]
     ) -> Data? {
         #if canImport(Darwin)
@@ -1271,10 +1224,16 @@ enum DiskUsageService {
         }
         defer { Darwin.close(descriptor) }
         var status = stat()
-        guard fstat(descriptor, &status) == 0,
-              status.st_mode & S_IFMT == S_IFREG,
+        guard fstat(descriptor, &status) == 0 else {
+            warnings.append("cannot inspect \(label): \(path)")
+            return nil
+        }
+        let permissionsAreSafe = requireOwnerOnlyPermissions
+            ? status.st_mode & 0o077 == 0
+            : status.st_mode & 0o022 == 0
+        guard status.st_mode & S_IFMT == S_IFREG,
               status.st_uid == geteuid(),
-              status.st_mode & 0o077 == 0,
+              permissionsAreSafe,
               status.st_nlink == 1,
               status.st_size >= 0,
               status.st_size <= maximumBytes else {

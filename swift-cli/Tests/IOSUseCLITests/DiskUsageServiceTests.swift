@@ -42,9 +42,6 @@ final class DiskUsageServiceTests: XCTestCase {
                 && $0.modifiedAt != nil
         })
         XCTAssertTrue(snapshot.items.contains {
-            $0.scope == "mac" && $0.category == "frida-engine"
-        })
-        XCTAssertTrue(snapshot.items.contains {
             $0.scope == "mac" && $0.category == "playchain"
         })
         XCTAssertTrue(snapshot.items.contains {
@@ -98,12 +95,39 @@ final class DiskUsageServiceTests: XCTestCase {
         XCTAssertEqual(envelope["command"] as? String, "du")
         let data = try XCTUnwrap(envelope["data"] as? [String: Any])
         XCTAssertNotNil(data["totalBytes"] as? Int)
-        XCTAssertFalse(try XCTUnwrap(data["items"] as? [[String: Any]]).isEmpty)
+        let items = try XCTUnwrap(data["items"] as? [[String: Any]])
+        XCTAssertFalse(items.isEmpty)
+        XCTAssertTrue(items.allSatisfy { $0["cleanupImpact"] == nil })
         XCTAssertEqual(data["measurement"] as? String, "allocated-bytes")
         XCTAssertNil(data["warnings"])
         XCTAssertFalse(
             try XCTUnwrap(envelope["warnings"] as? [String]).isEmpty
         )
+    }
+
+    func testNormalRealDeviceDriverLockIsNotAnUnsafeMacWarning() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let lock = URL(fileURLWithPath: fixture.paths.driverLock)
+        try FileManager.default.createDirectory(
+            at: lock.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try JSONSerialization.data(withJSONObject: [
+            "deviceType": "real",
+            "runnerPid": 42,
+            "sessionIdentifier": UUID().uuidString,
+        ]).write(to: lock)
+        XCTAssertEqual(chmod(lock.path, 0o644), 0)
+
+        let snapshot = DiskUsageService.snapshot(paths: fixture.paths)
+
+        XCTAssertFalse(snapshot.warnings.contains {
+            $0.contains("driver.lock")
+        }, snapshot.warnings.joined(separator: "\n"))
+        XCTAssertFalse(snapshot.items.contains {
+            $0.details["sessionReferences"] == "1"
+        })
     }
 
     func testNonStartCommandDoesNotRegisterHome()
@@ -278,8 +302,9 @@ final class DiskUsageServiceTests: XCTestCase {
         ] {
             XCTAssertTrue(human.contains(heading), human)
         }
-        XCTAssertTrue(human.contains("reuses: Fixture"), human)
-        XCTAssertTrue(human.contains("Mac session record present"), human)
+        XCTAssertTrue(human.contains("2 Home refs"), human)
+        XCTAssertTrue(human.contains("1 live session"), human)
+        XCTAssertFalse(human.contains("session record"), human)
         XCTAssertTrue(human.contains("2 PlayChain files"), human)
         XCTAssertFalse(human.contains("fixture.db-wal"), human)
         XCTAssertTrue(human.contains("Launch facades (1 entry"), human)
@@ -297,6 +322,22 @@ final class DiskUsageServiceTests: XCTestCase {
             1,
             human
         )
+    }
+
+    func testActiveSessionReferenceDoesNotDependOnLastGeneration() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.writeMacCacheData()
+        try fixture.writeMacSessionRecord(paths: fixture.paths)
+
+        let snapshot = DiskUsageService.snapshot(paths: fixture.paths)
+        let prepared = try XCTUnwrap(snapshot.items.first {
+            $0.category == "prepared"
+                && $0.details["generation"] == Fixture.generation
+        })
+
+        XCTAssertEqual(prepared.details["homeReferences"], "0")
+        XCTAssertEqual(prepared.details["sessionReferences"], "1")
     }
 
     func testAppDataFormattingAcceptsMultipleGenerationsForOneBundle()
@@ -321,7 +362,7 @@ final class DiskUsageServiceTests: XCTestCase {
         XCTAssertTrue(human.contains("1 PlayChain file"), human)
     }
 
-    func testUnknownHomeChildrenAreNotCountedOrTraversed() throws {
+    func testUnknownHomeChildrenAreCountedAsOther() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         try fixture.writeCurrentHomeData()
@@ -336,12 +377,13 @@ final class DiskUsageServiceTests: XCTestCase {
 
         let snapshot = DiskUsageService.snapshot(paths: fixture.paths)
 
-        XCTAssertFalse(snapshot.items.contains {
-            $0.path.hasPrefix(unknown.path)
+        XCTAssertTrue(snapshot.items.contains {
+            $0.path == unknown.path
+                && $0.category == "other"
+                && $0.bytes >= 2 * 1_024 * 1_024
         })
-        XCTAssertTrue(snapshot.warnings.contains {
-            $0.contains("ignored unrecognized item in Home")
-                && $0.contains(unknown.path)
+        XCTAssertFalse(snapshot.warnings.contains {
+            $0.contains(unknown.path)
         })
     }
 
@@ -471,17 +513,6 @@ private extension DiskUsageServiceTests {
                 "fridaEnabled": false,
             ]).write(to: generationURL.appendingPathComponent("manifest.json"))
 
-            let engine = URL(
-                fileURLWithPath: paths.playcoverFridaEngineObjects,
-                isDirectory: true
-            ).appendingPathComponent("engine", isDirectory: true)
-            try FileManager.default.createDirectory(
-                at: engine,
-                withIntermediateDirectories: true
-            )
-            try Data("engine".utf8).write(
-                to: engine.appendingPathComponent("binary")
-            )
             let playchain = URL(
                 fileURLWithPath: paths.playcoverPlayChain,
                 isDirectory: true
@@ -532,16 +563,19 @@ private extension DiskUsageServiceTests {
             )
             try Data("binding".utf8).write(to: binding)
 
-            for component in ["source", "build"] {
+            for rootPath in [
+                paths.playcoverFridaSourceCache,
+                paths.playcoverFridaBuildCache,
+            ] {
                 let root = URL(
-                    fileURLWithPath: paths.playcoverFridaEngineRoot,
+                    fileURLWithPath: rootPath,
                     isDirectory: true
-                ).appendingPathComponent(component, isDirectory: true)
+                )
                 try FileManager.default.createDirectory(
                     at: root,
                     withIntermediateDirectories: true
                 )
-                try Data(component.utf8).write(
+                try Data(root.lastPathComponent.utf8).write(
                     to: root.appendingPathComponent("cache.bin")
                 )
             }

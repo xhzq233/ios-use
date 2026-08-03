@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GLOBAL_STATE_GUARD="$ROOT_DIR/scripts/test_playcover_global_state_guard.sh"
 FIXTURE_APP="$ROOT_DIR/playcover-fixtures/.build/DerivedData/Build/Products/Release-iphoneos/IOSUsePlayFixture.app"
 RUNTIME_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
+ENGINE_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUseFridaEngine.framework"
 RELEASE_ASSET_DIR=""
 
 usage() {
@@ -12,7 +13,7 @@ usage() {
 Usage: scripts/test_playcover_installed_layout.sh [--release-dir <directory>]
 
 Without --release-dir, constructs checksummed assets from the current freshly
-built CLI and Runtime. With --release-dir, consumes the exact assets created by
+built CLI and PlayCover resources. With --release-dir, consumes the exact assets created by
 scripts/release_build.sh and validates their checksum/build/source manifests
 before exercising install and the installed start/status/stop path. Both modes
 require the documented disposable-account ACK and expected passwd Home.
@@ -64,7 +65,12 @@ if [[ -z "$RELEASE_ASSET_DIR" ]]; then
     echo "[installed-layout] ERROR: current signed Runtime is missing; the owning gate must rebuild it first" >&2
     exit 1
   fi
+  if [[ ! -x "$ENGINE_SOURCE/IOSUseFridaEngine" ]]; then
+    echo "[installed-layout] ERROR: current pinned Frida Engine is missing; build it before this release gate" >&2
+    exit 1
+  fi
   /usr/bin/codesign --verify --strict "$RUNTIME_SOURCE"
+  /usr/bin/codesign --verify --strict "$ENGINE_SOURCE"
 else
   if [[ ! -d "$RELEASE_ASSET_DIR" ]]; then
     echo "[installed-layout] ERROR: release asset directory does not exist: $RELEASE_ASSET_DIR" >&2
@@ -87,11 +93,13 @@ PREFIX="$TEMP_ROOT/p"
 CUSTOM_HOME="$TEMP_ROOT/h"
 INSTALLED_BINARY="$PREFIX/bin/ios-use"
 INSTALLED_RUNTIME="$PREFIX/share/ios-use/playcover/IOSUsePlayRuntime.framework"
+INSTALLED_ENGINE="$PREFIX/share/ios-use/playcover/IOSUseFridaEngine.framework"
 LOG_FILE="$TEMP_ROOT/start.log"
 STATUS_FILE="$TEMP_ROOT/status.json"
 SOURCE_ASSET="source.tar.gz"
 INSTALL_VERSION_FOR_TEST="v0.0.0-test"
 EXPECTED_RUNTIME="$RUNTIME_SOURCE"
+EXPECTED_ENGINE="$ENGINE_SOURCE"
 START_ATTEMPTED=0
 SESSION_STOPPED=0
 
@@ -191,8 +199,9 @@ if [[ -z "$RELEASE_ASSET_DIR" ]]; then
   (
     cd "$(dirname "$RUNTIME_SOURCE")"
     COPYFILE_DISABLE=1 tar -czf \
-      "$ASSET_DIR/ios-use-playcover-runtime.tar.gz" \
-      "$(basename "$RUNTIME_SOURCE")"
+      "$ASSET_DIR/ios-use-playcover-resources.tar.gz" \
+      "$(basename "$RUNTIME_SOURCE")" \
+      "$(basename "$ENGINE_SOURCE")"
   )
   (
     cd "$ASSET_DIR"
@@ -200,7 +209,7 @@ if [[ -z "$RELEASE_ASSET_DIR" ]]; then
       ios-use-darwin-arm64 \
       driver.ipa \
       driver-sim.ipa \
-      ios-use-playcover-runtime.tar.gz > SHA256SUMS
+      ios-use-playcover-resources.tar.gz > SHA256SUMS
   )
 else
   ASSET_DIR="$RELEASE_ASSET_DIR"
@@ -208,7 +217,7 @@ else
     ios-use-darwin-arm64
     driver.ipa
     driver-sim.ipa
-    ios-use-playcover-runtime.tar.gz
+    ios-use-playcover-resources.tar.gz
     LICENSE
     PLAYCOVER-LICENSE-GPL-3.0
     PLAYTOOLS-LICENSE-AGPL-3.0
@@ -273,8 +282,9 @@ else
     exit 1
   fi
 
-  tar -xzf "$ASSET_DIR/ios-use-playcover-runtime.tar.gz" -C "$EXPECTED_PARENT"
+  tar -xzf "$ASSET_DIR/ios-use-playcover-resources.tar.gz" -C "$EXPECTED_PARENT"
   EXPECTED_RUNTIME="$EXPECTED_PARENT/IOSUsePlayRuntime.framework"
+  EXPECTED_ENGINE="$EXPECTED_PARENT/IOSUseFridaEngine.framework"
   tar -xzf "$ASSET_DIR/$SOURCE_ASSET" -C "$SOURCE_PARENT"
   source_roots=("$SOURCE_PARENT"/ios-use-v*)
   if [[ "${#source_roots[@]}" -ne 1 ||
@@ -305,7 +315,7 @@ else
     exit 1
   fi
   expected_runtime_archive_sha="$(
-    awk -F': ' '$1 == "PlayCover Runtime archive SHA-256" { print $2 }' \
+    awk -F': ' '$1 == "PlayCover resources archive SHA-256" { print $2 }' \
       "$BUILD_MANIFEST"
   )"
   expected_source_archive_sha="$(
@@ -322,7 +332,7 @@ else
       "$TEMP_ROOT/runtime-source.archived"
   )"
   if [[ "$expected_runtime_archive_sha" != "$(
-          shasum -a 256 "$ASSET_DIR/ios-use-playcover-runtime.tar.gz" |
+          shasum -a 256 "$ASSET_DIR/ios-use-playcover-resources.tar.gz" |
             awk '{print $1}'
         )" ||
         "$expected_source_archive_sha" != "$(
@@ -364,7 +374,7 @@ asset=""
 case "$url" in
   *codeload.github.com*) asset="$IOS_USE_RELEASE_TEST_SOURCE_ASSET" ;;
   */ios-use-darwin-arm64) asset="ios-use-darwin-arm64" ;;
-  */ios-use-playcover-runtime.tar.gz) asset="ios-use-playcover-runtime.tar.gz" ;;
+  */ios-use-playcover-resources.tar.gz) asset="ios-use-playcover-resources.tar.gz" ;;
   */driver.ipa) asset="driver.ipa" ;;
   */driver-sim.ipa) asset="driver-sim.ipa" ;;
   */SHA256SUMS) asset="SHA256SUMS" ;;
@@ -407,7 +417,8 @@ if [[ "$(printf '%s\n' "$INSTALL_OUTPUT" | tail -n 1)" != "$INSTALLED_BINARY" ]]
   exit 1
 fi
 if [[ ! -x "$INSTALLED_BINARY" ||
-      ! -x "$INSTALLED_RUNTIME/IOSUsePlayRuntime" ]]; then
+      ! -x "$INSTALLED_RUNTIME/IOSUsePlayRuntime" ||
+      ! -x "$INSTALLED_ENGINE/IOSUseFridaEngine" ]]; then
   echo "[installed-layout] ERROR: release assets were not installed into the prefix layout" >&2
   exit 1
 fi
@@ -424,9 +435,18 @@ if ! cmp -s "$TEMP_ROOT/runtime.expected" "$TEMP_ROOT/runtime.installed.before";
   exit 1
 fi
 /usr/bin/codesign --verify --strict "$INSTALLED_RUNTIME"
+runtime_content_manifest "$EXPECTED_ENGINE" "$TEMP_ROOT/engine.expected"
+runtime_content_manifest "$INSTALLED_ENGINE" "$TEMP_ROOT/engine.installed.before"
+if ! cmp -s "$TEMP_ROOT/engine.expected" "$TEMP_ROOT/engine.installed.before"; then
+  echo "[installed-layout] ERROR: installed Engine differs from the release archive" >&2
+  exit 1
+fi
+/usr/bin/codesign --verify --strict "$INSTALLED_ENGINE"
 
 if [[ -e "$CUSTOM_HOME/mac/IOSUsePlayRuntime.framework" ]] ||
-   [[ -e "$PREFIX/bin/.ios-use/playcover/IOSUsePlayRuntime.framework" ]]; then
+   [[ -e "$CUSTOM_HOME/mac/IOSUseFridaEngine.framework" ]] ||
+   [[ -e "$PREFIX/bin/.ios-use/playcover/IOSUsePlayRuntime.framework" ]] ||
+   [[ -e "$PREFIX/bin/.ios-use/playcover/IOSUseFridaEngine.framework" ]]; then
   echo "[installed-layout] ERROR: installer exposed a mutable Runtime layout" >&2
   exit 1
 fi
@@ -475,6 +495,11 @@ if ! cmp -s "$TEMP_ROOT/runtime.installed.before" "$TEMP_ROOT/runtime.installed.
   diff -u --label "installed Runtime before execution" \
     --label "installed Runtime after execution" \
     "$TEMP_ROOT/runtime.installed.before" "$TEMP_ROOT/runtime.installed.after" >&2 || true
+  exit 1
+fi
+runtime_content_manifest "$INSTALLED_ENGINE" "$TEMP_ROOT/engine.installed.after"
+if ! cmp -s "$TEMP_ROOT/engine.installed.before" "$TEMP_ROOT/engine.installed.after"; then
+  echo "[installed-layout] ERROR: normal start mutated the installed Engine resource" >&2
   exit 1
 fi
 

@@ -128,7 +128,6 @@ struct PlayCoverFastVerifiedGenerationToken: Equatable, Sendable {
 
 public enum PlayCoverService {
     private static let upstreamStandardOutputLock = NSLock()
-    static let workspaceColdRegistrationMaximumAttempts = 3
 
     enum FastVerifyEvent: Equatable {
         case afterGenerationOpen
@@ -176,9 +175,9 @@ public enum PlayCoverService {
     }
 
     static func fridaPrepareRevision(
-        engineSHA256: String?
+        engineSHA256: String
     ) -> String {
-        var revision = prepareImplementationRevision
+        prepareImplementationRevision
             + "+frida-engine-"
             + PlayCoverFridaEngineService.descriptorVersion
             + "-"
@@ -187,10 +186,10 @@ public enum PlayCoverService {
             + PlayCoverFridaEngineService.descriptorEngineABI
             + "+agent-"
             + PlayCoverFridaEngineService.descriptorAgentSHA256
-        if let engineSHA256 {
-            revision += "+engine-" + engineSHA256
-        }
-        return revision
+            + "+source-"
+            + PlayCoverFridaEngineService.descriptorSourceClosureSHA256
+            + "+engine-"
+            + engineSHA256
     }
 
     static var failedLaunchTerminatorOverrideForTesting:
@@ -296,14 +295,20 @@ public enum PlayCoverService {
             frameworkPath: runtimePath
         )
         let runtimeHash = runtimeEvidence.buildHash
-        let revision = fridaEnabled
-            ? fridaPrepareRevision(
-                engineSHA256:
-                    fridaEngine?.sha256
-                        ?? PlayCoverFridaEngineService
-                            .descriptorFrameworkSHA256
-              )
-            : prepareImplementationRevision
+        let selectedFridaEngine: PlayCoverFridaEngineService.Resolved?
+        if fridaEnabled {
+            guard let fridaEngine else {
+                throw PlayCoverBackendError.capabilityUnavailable(
+                    "frida-engine (preparation requires the installed resource)"
+                )
+            }
+            selectedFridaEngine = fridaEngine
+        } else {
+            selectedFridaEngine = nil
+        }
+        let revision = selectedFridaEngine.map {
+            fridaPrepareRevision(engineSHA256: $0.sha256)
+        } ?? prepareImplementationRevision
         let namespacePolicyHash =
             accountNamespacePolicyHash(paths: paths)
         let signingIdentity = try suppliedSigningIdentity
@@ -350,12 +355,8 @@ public enum PlayCoverService {
                 generationKey: generationKey
             ),
             fridaEnabled: fridaEnabled,
-            fridaEngineFrameworkPath: fridaEngine?.path,
-            fridaEngineSHA256: fridaEnabled
-                ? fridaEngine?.sha256
-                    ?? PlayCoverFridaEngineService
-                        .descriptorFrameworkSHA256
-                : nil
+            fridaEngineFrameworkPath: selectedFridaEngine?.path,
+            fridaEngineSHA256: selectedFridaEngine?.sha256
         )
     }
 
@@ -372,18 +373,16 @@ public enum PlayCoverService {
         fridaEnabled: Bool = false
     ) throws -> PlayCoverPrepareManifest {
         let source = try inspectPreparationSource(appPath: sourceAppPath)
-        let basePlan = try makePreparationPlan(
+        let fridaEngine = fridaEnabled
+            ? try PlayCoverFridaEngineService.ensureAvailable()
+            : nil
+        let plan = try makePreparationPlan(
             source: source,
             runtimeFrameworkPath: runtimeFrameworkPath,
             paths: paths,
             fridaEnabled: fridaEnabled,
-            fridaEngine: nil
+            fridaEngine: fridaEngine
         )
-        let plan = fridaEnabled
-            ? basePlan.withFridaEngine(
-                try PlayCoverFridaEngineService.ensureAvailable(paths: paths)
-              )
-            : basePlan
         if let expectedGenerationKey,
            expectedGenerationKey != plan.generationKey {
             throw PlayCoverBackendError.prepareFailed(
@@ -745,13 +744,20 @@ public enum PlayCoverService {
         )
         let runtimePath = canonicalPath(plan.runtimeFrameworkPath)
         let runtimeEvidence = plan.runtimeEvidence
-        guard plan.prepareRevision == (
-                plan.fridaEnabled
-                    ? fridaPrepareRevision(
-                        engineSHA256: plan.fridaEngineSHA256
-                    )
-                    : prepareImplementationRevision
-              ),
+        let expectedPrepareRevision: String
+        if plan.fridaEnabled {
+            guard let engineSHA256 = plan.fridaEngineSHA256 else {
+                throw PlayCoverBackendError.capabilityUnavailable(
+                    "frida-engine (preparation plan has no Engine digest)"
+                )
+            }
+            expectedPrepareRevision = fridaPrepareRevision(
+                engineSHA256: engineSHA256
+            )
+        } else {
+            expectedPrepareRevision = prepareImplementationRevision
+        }
+        guard plan.prepareRevision == expectedPrepareRevision,
               (!plan.fridaEnabled
                 ? plan.fridaEngineFrameworkPath == nil
                     && plan.fridaEngineSHA256 == nil
@@ -1508,9 +1514,6 @@ public enum PlayCoverService {
                         pid: identity.pid,
                         stdioLog: stdioLog
                     )
-                    #if DEBUG && canImport(Darwin)
-                    PlayCoverLaunchCrashCut.hit(.afterReadyGate)
-                    #endif
                     return PlayCoverLaunchIdentity(
                         sessionID: sessionID,
                         pid: identity.pid,
@@ -1543,45 +1546,17 @@ public enum PlayCoverService {
                     + (lastError.map { "; last error: \($0)" } ?? "")
             )
         } catch {
-            var shouldRetryDurableOwnership = false
             if let ownedLaunchError =
                     error as? PendingOwnedLaunchError {
                 launched = ownedLaunchError.identity
-                shouldRetryDurableOwnership =
-                    ownedLaunchError.shouldRetryDurableOwnership
             }
-            var cleanupProof:
-                PlayCoverPendingLaunchStore.CleanupProof?
             if let launched {
                 do {
                     try terminateFailedLaunch(
                         identity: launched,
                         manifest: manifest
                     )
-                    cleanupProof = .stoppedExactOwner
                 } catch let rollbackError {
-                    var rollbackDescription =
-                        String(describing: rollbackError)
-                    if shouldRetryDurableOwnership,
-                       let pendingLaunchPaths,
-                       let durableOwner =
-                            pendingLaunchOwner(launched) {
-                        do {
-                            _ = try PlayCoverPendingLaunchStore
-                                .markOwned(
-                                    sessionID: sessionID,
-                                    owner: durableOwner,
-                                    callbackSucceeded:
-                                        launched.source
-                                            == .workspaceCallback,
-                                    paths: pendingLaunchPaths
-                                )
-                        } catch {
-                            rollbackDescription +=
-                                "; durable ownership retry failed: "
-                                + String(describing: error)
-                        }
-                    }
                     throw PlayCoverUnterminatedLaunchError(
                         sessionID: sessionID,
                         pid: launched.pid,
@@ -1593,45 +1568,42 @@ public enum PlayCoverService {
                         generationKey: manifest.generationKey,
                         runtimeSocketPath: runtimeSocketPath,
                         originalError: String(describing: error),
-                        rollbackError: rollbackDescription
+                        rollbackError:
+                            String(describing: rollbackError)
                     )
                 }
-            } else if !launchSubmitted {
-                cleanupProof = .neverSubmitted
             }
             var errorToThrow = error
-            if let pendingLaunchPaths,
-               let cleanupProof,
-               pendingIntentCreated {
+            let canCleanCurrentAttempt =
+                launched != nil || !launchSubmitted
+            if canCleanCurrentAttempt {
                 do {
-                    try completePendingLaunchCleanup(
-                        sessionID: sessionID,
-                        proof: cleanupProof,
-                        owner: launched,
-                        manifest: manifest,
-                        paths: pendingLaunchPaths
-                    )
-                } catch let cleanupError {
-                    errorToThrow = PlayCoverSessionCleanupError(
-                        operation: .launch,
-                        cleanupError: cleanupError,
-                        originalError: error,
-                        logPath: nil
-                    )
-                }
-            } else if pendingLaunchPaths == nil,
-                      cleanupProof != nil {
-                do {
-                        if keyCoverUnlocked {
-                            try lockKeyCover(
-                                for: manifest,
-                                playChainPath: playChainPath
-                            )
+                    if keyCoverUnlocked {
+                        try lockKeyCover(
+                            for: manifest,
+                            playChainPath: playChainPath
+                        )
                     }
                     if let launchAlias {
                         try removeSessionLaunchAlias(
                             launchAlias,
                             manifest: manifest
+                        )
+                    }
+                    if let pendingLaunchPaths,
+                       pendingIntentCreated,
+                       let record = try PlayCoverPendingLaunchStore
+                        .load(paths: pendingLaunchPaths) {
+                        guard record.sessionID == sessionID else {
+                            throw PlayCoverPendingLaunchStoreError(
+                                message: "failed launch journal belongs "
+                                    + "to another session"
+                            )
+                        }
+                        try PlayCoverPendingLaunchStore.remove(
+                            sessionID: sessionID,
+                            expectedPhase: record.phase,
+                            paths: pendingLaunchPaths
                         )
                     }
                 } catch let cleanupError {
@@ -2117,7 +2089,7 @@ public enum PlayCoverService {
                     + "prepared generation"
             )
         }
-        guard ["initializing", "ready", "failed"]
+        guard ["initializing", "ready", "backgrounded", "failed"]
                 .contains(payload.uiState.state),
               !payload.uiState.stage.isEmpty else {
             throw PlayCoverBackendError.verificationFailed(
@@ -2247,7 +2219,8 @@ public enum PlayCoverService {
              .launchTimedOut,
              .terminateFailed,
              .capabilityUnavailable,
-             .bundleAlreadyRunning:
+             .bundleAlreadyRunning,
+             .pendingLaunchUnresolved:
             return true
         }
     }
@@ -3512,7 +3485,6 @@ public enum PlayCoverService {
         _ owner: PlayCoverPendingLaunchStore.Owner,
         identity: LaunchedApplicationIdentity,
         sessionID: String,
-        callbackSucceeded: Bool,
         paths: IOSUsePaths
     ) throws {
         do {
@@ -3520,151 +3492,31 @@ public enum PlayCoverService {
         } catch {
             throw PendingOwnedLaunchError(
                 identity: identity,
-                underlying: error,
-                shouldRetryDurableOwnership: false
+                underlying: error
             )
         }
-        #if DEBUG && canImport(Darwin)
-        PlayCoverLaunchCrashCut.hit(.beforeOwnerDurable)
-        switch identity.source {
-        case .workspaceCallback:
-            PlayCoverLaunchCrashCut.hit(
-                .beforeCallbackOwnerDurable
-            )
-        case .authenticatedRuntime:
-            PlayCoverLaunchCrashCut.hit(
-                .beforeRuntimeOwnerDurable
-            )
-        case .observedCandidate:
-            break
-        }
-        #endif
         do {
             _ = try PlayCoverPendingLaunchStore.markOwned(
                 sessionID: sessionID,
                 owner: owner,
-                callbackSucceeded: callbackSucceeded,
                 paths: paths
             )
         } catch {
             throw PendingOwnedLaunchError(
                 identity: identity,
-                underlying: error,
-                shouldRetryDurableOwnership: true
+                underlying: error
             )
         }
         #if DEBUG && canImport(Darwin)
         PlayCoverLaunchCrashCut.hit(.afterOwnerDurable)
-        switch identity.source {
-        case .workspaceCallback:
-            PlayCoverLaunchCrashCut.hit(
-                .afterCallbackOwnerDurable
-            )
-        case .authenticatedRuntime:
-            PlayCoverLaunchCrashCut.hit(
-                .afterRuntimeOwnerDurable
-            )
-        case .observedCandidate:
-            break
-        }
         #endif
         do {
             try revalidatePendingLaunchIdentity(identity)
         } catch {
             throw PendingOwnedLaunchError(
                 identity: identity,
-                underlying: error,
-                shouldRetryDurableOwnership: false
+                underlying: error
             )
-        }
-    }
-
-    private static func boundedPendingLaunchError(
-        _ error: Error
-    ) -> String {
-        let description = String(describing: error)
-        if description.utf8.count <= 4_096 {
-            return description
-        }
-        return String(
-            decoding: description.utf8.prefix(4_000),
-            as: UTF8.self
-        )
-    }
-
-    static func isLaunchServicesColdRegistrationRace(
-        _ error: Error
-    ) -> Bool {
-        var current = error as NSError
-        var visited = Set<ObjectIdentifier>()
-        while true {
-            guard visited.insert(
-                ObjectIdentifier(current)
-            ).inserted else {
-                return false
-            }
-            guard let underlying =
-                    current.userInfo[NSUnderlyingErrorKey]
-                        as? NSError else {
-                return current.domain == NSOSStatusErrorDomain
-                    && current.code == -10_670
-            }
-            current = underlying
-        }
-    }
-
-    static func permitsWorkspaceColdRegistrationRetry(
-        error: Error,
-        attemptNumber: Int,
-        hasDurablePendingLaunch: Bool,
-        hasRuntimeCandidates: Bool,
-        hasPostSubmissionIntegrityError: Bool,
-        isBeforeDeadline: Bool,
-        exactExecutableCensus:
-            @autoclosure () -> PlayCoverPendingLaunchRecovery.Census
-    ) -> Bool {
-        guard attemptNumber > 0,
-              attemptNumber
-                < workspaceColdRegistrationMaximumAttempts,
-              hasDurablePendingLaunch,
-              !hasRuntimeCandidates,
-              !hasPostSubmissionIntegrityError,
-              isBeforeDeadline,
-              isLaunchServicesColdRegistrationRace(error) else {
-            return false
-        }
-        return exactExecutableCensus().provesEmpty
-    }
-
-    private static func persistTerminalCallbackFailure(
-        _ error: Error,
-        sessionID: String,
-        paths: IOSUsePaths?
-    ) -> Error {
-        guard let paths else {
-            return error
-        }
-        do {
-            #if DEBUG && canImport(Darwin)
-            PlayCoverLaunchCrashCut.hit(
-                .beforeTerminalCallbackDurable
-            )
-            #endif
-            _ = try PlayCoverPendingLaunchStore
-                .markTerminalCallbackFailure(
-                    sessionID: sessionID,
-                    errorDescription:
-                        boundedPendingLaunchError(error),
-                    paths: paths
-                )
-            #if DEBUG && canImport(Darwin)
-            PlayCoverLaunchCrashCut.hit(
-                .afterTerminalCallbackDurable
-            )
-            #endif
-            return error
-        } catch {
-            return error
         }
     }
 
@@ -3755,19 +3607,12 @@ public enum PlayCoverService {
         }
     }
 
-    private struct WorkspaceLaunchAttempt {
-        let number: Int
-        let box: LaunchBox
-        let semaphore: DispatchSemaphore
-    }
-
     private struct PendingOwnedLaunchError:
         Error,
         CustomStringConvertible
     {
         let identity: LaunchedApplicationIdentity
         let underlying: Error
-        let shouldRetryDurableOwnership: Bool
 
         var description: String {
             "the exact Mac process was identified, but "
@@ -4222,15 +4067,13 @@ public enum PlayCoverService {
         let entries = try launchAliasEntries(manifest: manifest)
         return try createSessionLaunchAlias(
             entries: entries,
-            sessionID: sessionID,
-            pendingLaunchPaths: nil
+            sessionID: sessionID
         )
     }
 
     private static func createSessionLaunchAlias(
         entries: [LaunchAliasEntry],
-        sessionID: String,
-        pendingLaunchPaths: IOSUsePaths?
+        sessionID: String
     ) throws -> SessionLaunchAlias {
         let alias = sessionLaunchAlias(sessionID: sessionID)
         try ensureLaunchAliasRoot(alias.rootURL)
@@ -4259,16 +4102,7 @@ public enum PlayCoverService {
             try syncSessionLaunchAlias(
                 alias,
                 expectedEntries: entries
-            ) { capability in
-                if let pendingLaunchPaths {
-                    try recordPendingLaunchAlias(
-                        capability,
-                        entries: entries,
-                        sessionID: sessionID,
-                        paths: pendingLaunchPaths
-                    )
-                }
-            }
+            )
             return alias
         } catch {
             if createdAliasDirectory {
@@ -4331,180 +4165,6 @@ public enum PlayCoverService {
         try removeSessionLaunchAliasCapability(
             capability,
             expectedEntries: expectedEntries
-        )
-    }
-
-    static func removeSessionLaunchAlias(
-        pendingLaunch record:
-            PlayCoverPendingLaunchStore.Record,
-        manifest: PlayCoverPrepareManifest
-    ) throws {
-        guard record.phase == .confirmedStopped,
-              record.appPath == manifest.preparedAppPath,
-              record.bundleIdentifier
-                == manifest.bundleIdentifier,
-              record.executablePath == manifest.executablePath,
-              record.generationKey == manifest.generationKey else {
-            throw PlayCoverBackendError.cacheTampered(
-                "pending launch does not match the prepared "
-                    + "generation being cleaned"
-            )
-        }
-        let alias = sessionLaunchAlias(
-            sessionID: record.sessionID
-        )
-        guard alias.bundleURL.path == record.aliasPath else {
-            throw PlayCoverBackendError.cacheTampered(
-                "pending launch facade path changed"
-            )
-        }
-        var rootStatus = stat()
-        if lstat(alias.rootURL.path, &rootStatus) != 0 {
-            if errno == ENOENT {
-                return
-            }
-            throw PlayCoverBackendError.cacheTampered(
-                "cannot inspect the launch alias root: errno \(errno)"
-            )
-        }
-        try validateLaunchAliasRootStatus(rootStatus)
-        var aliasStatus = stat()
-        if lstat(alias.bundleURL.path, &aliasStatus) != 0 {
-            if errno == ENOENT {
-                return
-            }
-            throw PlayCoverBackendError.cacheTampered(
-                "cannot inspect the session launch alias: errno \(errno)"
-            )
-        }
-        guard let recordedDevice = record.aliasDevice,
-              let recordedInode = record.aliasInode,
-              let recordedInventory =
-                record.aliasInventory else {
-            // `intent` is durable before facade creation, including before
-            // all symlinks exist. Since submission was never armed, a
-            // current subset of immutable manifest entries can be removed
-            // without inventing historical vnode evidence.
-            let expectedEntries = try launchAliasEntries(
-                manifest: manifest
-            )
-            let capability =
-                try openSessionLaunchAliasCapability(
-                    alias: alias
-                )
-            defer { capability.close() }
-            try validateSessionLaunchAliasAuthority(capability)
-            let actualNames = try PlayCoverManagedAppService
-                .anchoredDirectoryNames(
-                    descriptor: capability.aliasDescriptor,
-                    label: "unsubmitted session launch alias"
-                )
-            guard Set(actualNames).isSubset(
-                of: Set(expectedEntries.map(\.name))
-            ) else {
-                throw PlayCoverBackendError.cacheTampered(
-                    "unsubmitted launch facade contains an "
-                        + "unexpected entry"
-                )
-            }
-            try validateSessionLaunchAliasEntries(
-                actualNames,
-                capability: capability,
-                expectedEntries: expectedEntries
-            )
-            return try removeSessionLaunchAliasNames(
-                actualNames,
-                capability: capability
-            )
-        }
-        let manifestEntries = try launchAliasEntries(
-            manifest: manifest
-        ).sorted { $0.name < $1.name }
-        let recordedEntries = recordedInventory.map {
-            LaunchAliasEntry(
-                name: $0.name,
-                destination: $0.destination
-            )
-        }
-        guard manifestEntries.map(\.name)
-                == recordedEntries.map(\.name),
-              manifestEntries.map(\.destination)
-                == recordedEntries.map(\.destination) else {
-            throw PlayCoverBackendError.cacheTampered(
-                "pending launch facade inventory no longer "
-                    + "matches the immutable generation"
-            )
-        }
-        let capability = try openSessionLaunchAliasCapability(
-            alias: alias
-        )
-        defer { capability.close() }
-        guard UInt64(capability.aliasStatus.st_dev)
-                == recordedDevice,
-              UInt64(capability.aliasStatus.st_ino)
-                == recordedInode else {
-            throw PlayCoverBackendError.cacheTampered(
-                "pending launch facade directory identity changed"
-            )
-        }
-        try validateSessionLaunchAliasAuthority(capability)
-        let actualNames = try PlayCoverManagedAppService
-            .anchoredDirectoryNames(
-                descriptor: capability.aliasDescriptor,
-                label: "pending session launch alias"
-            )
-        let recordedNames = Set(recordedEntries.map(\.name))
-        guard Set(actualNames).isSubset(of: recordedNames) else {
-            throw PlayCoverBackendError.cacheTampered(
-                "pending launch facade contains an unexpected entry"
-            )
-        }
-        try validateSessionLaunchAliasEntries(
-            actualNames,
-            capability: capability,
-            expectedEntries: recordedEntries
-        )
-        try removeSessionLaunchAliasNames(
-            actualNames,
-            capability: capability
-        )
-    }
-
-    private static func completePendingLaunchCleanup(
-        sessionID: String,
-        proof: PlayCoverPendingLaunchStore.CleanupProof,
-        owner: LaunchedApplicationIdentity?,
-        manifest: PlayCoverPrepareManifest,
-        paths: IOSUsePaths
-    ) throws {
-        if proof == .stoppedExactOwner,
-           let owner,
-           let durableOwner = pendingLaunchOwner(owner) {
-            _ = try PlayCoverPendingLaunchStore.markOwned(
-                sessionID: sessionID,
-                owner: durableOwner,
-                callbackSucceeded:
-                    owner.source == .workspaceCallback,
-                paths: paths
-            )
-        }
-        let confirmed = try PlayCoverPendingLaunchStore
-            .markConfirmedStopped(
-                sessionID: sessionID,
-                cleanupProof: proof,
-                paths: paths
-            )
-        try lockKeyCover(
-            for: manifest,
-            playChainPath: paths.playcoverPlayChain
-        )
-        try removeSessionLaunchAlias(
-            pendingLaunch: confirmed,
-            manifest: manifest
-        )
-        try PlayCoverPendingLaunchStore.removeConfirmed(
-            sessionID: sessionID,
-            paths: paths
         )
     }
 
@@ -4607,26 +4267,6 @@ public enum PlayCoverService {
             )
         }
         try afterSync?(capability)
-    }
-
-    private static func recordPendingLaunchAlias(
-        _ capability: SessionLaunchAliasCapability,
-        entries: [LaunchAliasEntry],
-        sessionID: String,
-        paths: IOSUsePaths
-    ) throws {
-        _ = try PlayCoverPendingLaunchStore.markAliasReady(
-            sessionID: sessionID,
-            device: UInt64(capability.aliasStatus.st_dev),
-            inode: UInt64(capability.aliasStatus.st_ino),
-            inventory: entries.map {
-                PlayCoverPendingLaunchStore.AliasEntry(
-                    name: $0.name,
-                    destination: $0.destination
-                )
-            }.sorted { $0.name < $1.name },
-            paths: paths
-        )
     }
 
     private static func removeSessionLaunchAliasCapability(
@@ -5017,8 +4657,7 @@ public enum PlayCoverService {
         }
         let alias = try createSessionLaunchAlias(
             entries: launchEntries,
-            sessionID: sessionID,
-            pendingLaunchPaths: pendingLaunchPaths
+            sessionID: sessionID
         )
         launchAlias = alias
         let aliasCapability = try openSessionLaunchAliasCapability(
@@ -5029,25 +4668,6 @@ public enum PlayCoverService {
         )
         defer { aliasCapability.close() }
         defer { launchCapability.close() }
-
-        func armSubmission() throws {
-            // Replaying this transition under the journal lock proves that
-            // the same session is still armed on the same boot before a
-            // bounded launch mechanism is invoked.
-            if let pendingLaunchPaths {
-                _ = try PlayCoverPendingLaunchStore
-                    .markSubmissionArmed(
-                        sessionID: sessionID,
-                        bootSessionUUID:
-                            PlayCoverPendingLaunchRecovery
-                                .currentBootSessionUUID(),
-                        paths: pendingLaunchPaths
-                    )
-                #if DEBUG && canImport(Darwin)
-                PlayCoverLaunchCrashCut.hit(.afterSubmissionArmed)
-                #endif
-            }
-        }
 
         func completion(
             box: LaunchBox,
@@ -5101,7 +4721,6 @@ public enum PlayCoverService {
                                     owner,
                                     identity: identity,
                                     sessionID: sessionID,
-                                    callbackSucceeded: true,
                                     paths: pendingLaunchPaths
                                 )
                             } catch {
@@ -5123,9 +4742,10 @@ public enum PlayCoverService {
             }
         }
 
-        func submitWorkspaceAttempt(
-            number: Int
-        ) throws -> WorkspaceLaunchAttempt {
+        func submitWorkspaceLaunch() throws -> (
+            box: LaunchBox,
+            semaphore: DispatchSemaphore
+        ) {
             try validateFastVerifiedLaunchCapability(
                 launchCapability
             )
@@ -5133,19 +4753,14 @@ public enum PlayCoverService {
                 aliasCapability,
                 expectedEntries: launchEntries
             )
-            // A retry keeps the original durable submissionArmed phase.
-            try armSubmission()
-            let attempt = WorkspaceLaunchAttempt(
-                number: number,
-                box: LaunchBox(),
-                semaphore: DispatchSemaphore(value: 0)
-            )
+            let box = LaunchBox()
+            let semaphore = DispatchSemaphore(value: 0)
             let handler = completion(
-                box: attempt.box,
-                semaphore: attempt.semaphore
+                box: box,
+                semaphore: semaphore
             )
             workspaceSubmissionObserverForTesting?(
-                number,
+                1,
                 deadline,
                 alias.bundleURL,
                 configuration.environment
@@ -5184,22 +4799,20 @@ public enum PlayCoverService {
                 // can be handed to the caller for rollback.
                 postSubmissionIntegrityError = error
             }
-            return attempt
+            return (box, semaphore)
         }
 
-        let initialAttempt = try submitWorkspaceAttempt(number: 1)
+        let submission = try submitWorkspaceLaunch()
 
         // NSWorkspace accepts a path, not an fd. The retained capabilities
         // sample and hold the verified generation/facade identities around
         // every bounded submission; they still cannot prove exactly when
         // LaunchServices consumes an asynchronous request.
-        var activeAttempt = initialAttempt
         // The caller supplies the one monotonic `start --timeout` deadline
         // shared by launch discovery and the subsequent ready Runtime hello.
         // Large Apps may exceed LaunchServices' historical ten-second window,
         // but discovery must not restart the public timeout.
         var callbackError: Error?
-        var handledFailureAttempt = 0
         func authenticatesCurrentLaunch(
             _ identity: LaunchedApplicationIdentity
         ) -> Bool {
@@ -5217,7 +4830,7 @@ public enum PlayCoverService {
             // exact-owner durability. Consume it before the bounded candidate
             // ping; a callback failure must still allow Runtime rescue.
             if case .success(let identity)? =
-                    activeAttempt.box.get(),
+                    submission.box.get(),
                mayClaimLaunchIdentity(
                    identity,
                    callbackIdentity: identity,
@@ -5296,7 +4909,6 @@ public enum PlayCoverService {
                         owner,
                         identity: identity,
                         sessionID: sessionID,
-                        callbackSucceeded: false,
                         paths: pendingLaunchPaths
                     )
                 }
@@ -5306,7 +4918,7 @@ public enum PlayCoverService {
             // Check the callback after polling. LaunchServices can report a
             // generic error after RunningBoard has already created the exact
             // process; returning the owned candidate avoids orphaning it.
-            if let value = activeAttempt.box.get() {
+            if let value = submission.box.get() {
                 switch value {
                 case .success(let identity):
                     if mayClaimLaunchIdentity(
@@ -5322,49 +4934,11 @@ public enum PlayCoverService {
                             error as? PendingOwnedLaunchError {
                         throw ownershipError
                     }
-                    guard handledFailureAttempt
-                            != activeAttempt.number else {
-                        break
-                    }
-                    if permitsWorkspaceColdRegistrationRetry(
-                        error: error,
-                        attemptNumber: activeAttempt.number,
-                        hasDurablePendingLaunch:
-                            pendingLaunchPaths != nil,
-                        hasRuntimeCandidates: !candidates.isEmpty,
-                        hasPostSubmissionIntegrityError:
-                            postSubmissionIntegrityError != nil,
-                        isBeforeDeadline:
-                            ProcessInfo.processInfo.systemUptime
-                                < deadline,
-                        exactExecutableCensus:
-                            PlayCoverPendingLaunchRecovery
-                                .exactExecutableCensus(
-                                    executablePath:
-                                        manifest.executablePath
-                                )
-                    ),
-                       ProcessInfo.processInfo.systemUptime < deadline {
-                        handledFailureAttempt =
-                            activeAttempt.number
-                        activeAttempt =
-                            try submitWorkspaceAttempt(
-                                number:
-                                    activeAttempt.number + 1
-                            )
-                        continue
-                    }
                     // A newly-created exact process may not be visible to
                     // NSRunningApplication in the same poll that observes the
                     // callback failure. Keep polling to the bounded deadline
                     // so it can be claimed and rolled back by the caller.
-                    handledFailureAttempt = activeAttempt.number
-                    callbackError =
-                        persistTerminalCallbackFailure(
-                            error,
-                            sessionID: sessionID,
-                            paths: pendingLaunchPaths
-                        )
+                    callbackError = error
                 }
             }
 
@@ -5384,7 +4958,7 @@ public enum PlayCoverService {
                     0,
                     deadline - ProcessInfo.processInfo.systemUptime
                 )
-                _ = activeAttempt.semaphore.wait(
+                _ = submission.semaphore.wait(
                     timeout: .now() + min(0.05, remaining)
                 )
             }

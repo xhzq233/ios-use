@@ -10,10 +10,6 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
         let root: URL
         let paths: IOSUsePaths
         let sessionID: String
-        let generationKey: String
-        let appPath: String
-        let executablePath: String
-        let inventory: [PlayCoverPendingLaunchStore.AliasEntry]
         let intent: PlayCoverPendingLaunchStore.Intent
     }
 
@@ -22,7 +18,18 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
         super.tearDown()
     }
 
-    func testDurableJournalFollowsTheCompleteLifecycle() throws {
+    func testJournalHasOnlyThreePhases() throws {
+        XCTAssertEqual(
+            [
+                PlayCoverPendingLaunchStore.Phase.intent,
+                .owned,
+                .driverLockCommitted,
+            ].map(\.rawValue),
+            ["intent", "owned", "driverLockCommitted"]
+        )
+    }
+
+    func testIntentOwnedCommittedAndStrictRemoval() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
@@ -31,68 +38,38 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
             paths: fixture.paths
         )
         XCTAssertEqual(record.phase, .intent)
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.createIntent(
-                fixture.intent,
-                paths: fixture.paths
-            )
-        )
+        XCTAssertNil(record.owner)
         assertPrivateRegularFile(
             fixture.paths.playcoverPendingLaunch
         )
         assertPrivateRegularFile(
             fixture.paths.playcoverPendingLaunchLock
         )
-
-        record = try PlayCoverPendingLaunchStore.markAliasReady(
-            sessionID: fixture.sessionID,
-            device: 42,
-            inode: 84,
-            inventory: fixture.inventory,
-            paths: fixture.paths
-        )
-        XCTAssertEqual(record.phase, .aliasReady)
-
-        let bootSessionID = UUID().uuidString
-        record = try PlayCoverPendingLaunchStore
-            .markSubmissionArmed(
-                sessionID: fixture.sessionID,
-                bootSessionUUID: bootSessionID,
+        XCTAssertThrowsError(
+            try PlayCoverPendingLaunchStore.createIntent(
+                fixture.intent,
                 paths: fixture.paths
             )
-        XCTAssertEqual(record.phase, .submissionArmed)
-        XCTAssertEqual(
-            record.submissionBootSessionUUID,
-            bootSessionID.lowercased()
         )
 
-        let callbackOwner = PlayCoverPendingLaunchStore.Owner(
+        let owner = PlayCoverPendingLaunchStore.Owner(
             pid: 123,
             processBirthMicroseconds: 456,
-            source: .workspaceCallback
-        )
-        record = try PlayCoverPendingLaunchStore.markOwned(
-            sessionID: fixture.sessionID,
-            owner: callbackOwner,
-            callbackSucceeded: true,
-            paths: fixture.paths
-        )
-        XCTAssertEqual(record.phase, .owned)
-        XCTAssertEqual(record.terminalCallback?.outcome, .success)
-
-        let authenticatedOwner = PlayCoverPendingLaunchStore.Owner(
-            pid: callbackOwner.pid,
-            processBirthMicroseconds:
-                callbackOwner.processBirthMicroseconds,
             source: .authenticatedRuntime
         )
         record = try PlayCoverPendingLaunchStore.markOwned(
             sessionID: fixture.sessionID,
-            owner: authenticatedOwner,
-            callbackSucceeded: false,
+            owner: owner,
             paths: fixture.paths
         )
-        XCTAssertEqual(record.owner, callbackOwner)
+        XCTAssertEqual(record.phase, .owned)
+        XCTAssertEqual(record.owner, owner)
+        XCTAssertEqual(
+            try PlayCoverPendingLaunchStore.load(
+                paths: fixture.paths
+            ),
+            record
+        )
 
         record = try PlayCoverPendingLaunchStore
             .markDriverLockCommitted(
@@ -100,18 +77,16 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
                 paths: fixture.paths
             )
         XCTAssertEqual(record.phase, .driverLockCommitted)
-
-        record = try PlayCoverPendingLaunchStore
-            .markConfirmedStopped(
+        XCTAssertThrowsError(
+            try PlayCoverPendingLaunchStore.remove(
                 sessionID: fixture.sessionID,
-                cleanupProof: .stoppedExactOwner,
+                expectedPhase: .owned,
                 paths: fixture.paths
             )
-        XCTAssertEqual(record.phase, .confirmedStopped)
-        XCTAssertEqual(record.cleanupProof, .stoppedExactOwner)
-
-        try PlayCoverPendingLaunchStore.removeConfirmed(
+        )
+        try PlayCoverPendingLaunchStore.remove(
             sessionID: fixture.sessionID,
+            expectedPhase: .driverLockCommitted,
             paths: fixture.paths
         )
         XCTAssertNil(
@@ -119,501 +94,143 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
                 paths: fixture.paths
             )
         )
-        XCTAssertTrue(
-            FileManager.default.fileExists(
-                atPath: fixture.paths.playcoverPendingLaunchLock
-            )
-        )
     }
 
-    func testTerminalFailureCanBeFollowedByAuthenticatedOwner()
-        throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        try advanceToSubmissionArmed(fixture)
-
-        var record = try PlayCoverPendingLaunchStore
-            .markTerminalCallbackFailure(
-                sessionID: fixture.sessionID,
-                errorDescription: "LaunchServices rejected callback",
-                paths: fixture.paths
-            )
-        XCTAssertEqual(record.phase, .terminalCallback)
-        XCTAssertEqual(record.terminalCallback?.outcome, .failure)
-
-        let owner = PlayCoverPendingLaunchStore.Owner(
-            pid: 991,
-            processBirthMicroseconds: 992,
-            source: .authenticatedRuntime
-        )
-        record = try PlayCoverPendingLaunchStore.markOwned(
-            sessionID: fixture.sessionID,
-            owner: owner,
-            callbackSucceeded: false,
-            paths: fixture.paths
-        )
-        XCTAssertEqual(record.phase, .owned)
-        XCTAssertEqual(record.owner, owner)
-        XCTAssertEqual(record.terminalCallback?.outcome, .failure)
-    }
-
-    func testDurableDriverLockRetiresMatchingPendingJournal()
-        throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        try advanceToSubmissionArmed(fixture)
-        let owner = PlayCoverPendingLaunchStore.Owner(
-            pid: 601,
-            processBirthMicroseconds: 602,
-            source: .authenticatedRuntime
-        )
-        _ = try PlayCoverPendingLaunchStore.markOwned(
-            sessionID: fixture.sessionID,
-            owner: owner,
-            callbackSucceeded: false,
-            paths: fixture.paths
-        )
-        let result = PlayCoverSessionService.LaunchResult(
-            sessionID: fixture.sessionID,
-            appPath: fixture.appPath,
-            bundleIdentifier: "com.example.fixture",
-            executablePath: fixture.executablePath,
-            generationKey: fixture.generationKey,
-            productType: "iPhone16,2",
-            pid: owner.pid,
-            runtimeSocketPath:
-                fixture.intent.runtimeSocketPath,
-            usesPendingLaunchJournal: true,
-            reused: true
-        )
-
-        try PlayCoverSessionService
-            .retirePendingLaunchJournalAfterDriverCommit(
-                result: result,
-                paths: fixture.paths
-            )
-
-        XCTAssertNil(
-            try PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            )
-        )
-    }
-
-    func testInvalidBootAndCleanupTransitionsDoNotMutateJournal()
-        throws {
+    func testOwnedReplayMustMatchExactOwner() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         _ = try PlayCoverPendingLaunchStore.createIntent(
             fixture.intent,
             paths: fixture.paths
         )
-
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.markSubmissionArmed(
-                sessionID: fixture.sessionID,
-                bootSessionUUID: "not-a-uuid",
-                paths: fixture.paths
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.markConfirmedStopped(
-                sessionID: fixture.sessionID,
-                cleanupProof: .stoppedExactOwner,
-                paths: fixture.paths
-            )
-        )
-        XCTAssertEqual(
-            try PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            )?.phase,
-            .intent
-        )
-
-        let confirmed = try PlayCoverPendingLaunchStore
-            .markConfirmedStopped(
-                sessionID: fixture.sessionID,
-                cleanupProof: .neverSubmitted,
-                paths: fixture.paths
-            )
-        XCTAssertEqual(confirmed.phase, .confirmedStopped)
-        XCTAssertEqual(confirmed.cleanupProof, .neverSubmitted)
-    }
-
-    func testConflictingOwnerAndCallbackEvidenceFailsClosed()
-        throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        try advanceToSubmissionArmed(fixture)
-
         let owner = PlayCoverPendingLaunchStore.Owner(
-            pid: 7,
-            processBirthMicroseconds: 8,
-            source: .authenticatedRuntime
+            pid: 71,
+            processBirthMicroseconds: 91,
+            source: .workspaceCallback
         )
         _ = try PlayCoverPendingLaunchStore.markOwned(
             sessionID: fixture.sessionID,
             owner: owner,
-            callbackSucceeded: false,
             paths: fixture.paths
+        )
+        XCTAssertNoThrow(
+            try PlayCoverPendingLaunchStore.markOwned(
+                sessionID: fixture.sessionID,
+                owner: owner,
+                paths: fixture.paths
+            )
         )
         XCTAssertThrowsError(
             try PlayCoverPendingLaunchStore.markOwned(
                 sessionID: fixture.sessionID,
-                owner: PlayCoverPendingLaunchStore.Owner(
+                owner: .init(
                     pid: owner.pid,
                     processBirthMicroseconds:
                         owner.processBirthMicroseconds + 1,
-                    source: .workspaceCallback
+                    source: owner.source
                 ),
-                callbackSucceeded: true,
                 paths: fixture.paths
             )
         )
+    }
 
-        _ = try PlayCoverPendingLaunchStore
-            .markTerminalCallbackFailure(
-                sessionID: fixture.sessionID,
-                errorDescription: "terminal",
+    func testIntentCannotCommitDriverLock() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try PlayCoverPendingLaunchStore.createIntent(
+            fixture.intent,
+            paths: fixture.paths
+        )
+        XCTAssertThrowsError(
+            try PlayCoverPendingLaunchStore
+                .markDriverLockCommitted(
+                    sessionID: fixture.sessionID,
+                    paths: fixture.paths
+                )
+        )
+    }
+
+    func testUnexpectedFieldAndUnknownPhaseAreRejected() throws {
+        for mutation in [
+            { (root: inout [String: Any]) in
+                root["unexpected"] = true
+            },
+            { (root: inout [String: Any]) in
+                root["phase"] = "unknown"
+            },
+        ] {
+            let fixture = try makeFixture()
+            defer {
+                try? FileManager.default.removeItem(at: fixture.root)
+            }
+            _ = try PlayCoverPendingLaunchStore.createIntent(
+                fixture.intent,
                 paths: fixture.paths
             )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.markOwned(
-                sessionID: fixture.sessionID,
-                owner: PlayCoverPendingLaunchStore.Owner(
-                    pid: owner.pid,
-                    processBirthMicroseconds:
-                        owner.processBirthMicroseconds,
-                    source: .workspaceCallback
+            let url = URL(
+                fileURLWithPath:
+                    fixture.paths.playcoverPendingLaunch
+            )
+            var root = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: Data(contentsOf: url)
+                ) as? [String: Any]
+            )
+            mutation(&root)
+            try replaceJournal(
+                JSONSerialization.data(
+                    withJSONObject: root,
+                    options: [.sortedKeys]
                 ),
-                callbackSucceeded: true,
-                paths: fixture.paths
+                at: url
             )
-        )
-    }
-
-    func testJournalRejectsUnknownFieldsAndUnsafeFileTypes()
-        throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        _ = try PlayCoverPendingLaunchStore.createIntent(
-            fixture.intent,
-            paths: fixture.paths
-        )
-
-        let journal = URL(
-            fileURLWithPath: fixture.paths.playcoverPendingLaunch
-        )
-        var object = try XCTUnwrap(
-            try JSONSerialization.jsonObject(
-                with: Data(contentsOf: journal)
-            ) as? [String: Any]
-        )
-        object["unexpected"] = true
-        try replaceJournal(
-            with: try JSONSerialization.data(
-                withJSONObject: object,
-                options: [.sortedKeys]
-            ),
-            at: journal
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            )
-        )
-
-        try FileManager.default.removeItem(at: journal)
-        let victim = fixture.root.appendingPathComponent("victim")
-        try Data("{}".utf8).write(to: victim)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: victim.path
-        )
-        #if canImport(Darwin)
-        XCTAssertEqual(
-            Darwin.link(victim.path, journal.path),
-            0,
-            "hardlink fixture failed with errno \(errno)"
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            )
-        )
-        try FileManager.default.removeItem(at: journal)
-        XCTAssertEqual(
-            Darwin.symlink(victim.path, journal.path),
-            0,
-            "symlink fixture failed with errno \(errno)"
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            )
-        )
-        try FileManager.default.removeItem(at: journal)
-        try Data(
-            repeating: 0x61,
-            count: PlayCoverPendingLaunchStore.maximumBytes + 1
-        ).write(to: journal)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: journal.path
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            )
-        )
-        try replaceJournal(
-            with: Data("{}".utf8),
-            at: journal
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o644],
-            ofItemAtPath: journal.path
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            )
-        )
-        try FileManager.default.removeItem(at: journal)
-        XCTAssertEqual(
-            Darwin.mkfifo(journal.path, 0o600),
-            0,
-            "FIFO fixture failed with errno \(errno)"
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            )
-        )
-        #endif
-    }
-
-    func testUnsafeLockIsRejectedEvenWhenJournalIsAbsent()
-        throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        _ = try PlayCoverPendingLaunchStore.createIntent(
-            fixture.intent,
-            paths: fixture.paths
-        )
-        try FileManager.default.removeItem(
-            atPath: fixture.paths.playcoverPendingLaunch
-        )
-        try FileManager.default.removeItem(
-            atPath: fixture.paths.playcoverPendingLaunchLock
-        )
-        let victim = fixture.root.appendingPathComponent("lock-victim")
-        try Data().write(to: victim)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: victim.path
-        )
-        #if canImport(Darwin)
-        XCTAssertEqual(
-            Darwin.link(
-                victim.path,
-                fixture.paths.playcoverPendingLaunchLock
-            ),
-            0,
-            "hardlink fixture failed with errno \(errno)"
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            )
-        )
-        var victimStatus = stat()
-        XCTAssertEqual(
-            Darwin.lstat(victim.path, &victimStatus),
-            0
-        )
-        XCTAssertEqual(victimStatus.st_mode & 0o7777, 0o600)
-        XCTAssertEqual(victimStatus.st_nlink, 2)
-        #endif
-    }
-
-    func testNonCanonicalIdentityAndUnsortedInventoryAreRejected()
-        throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-
-        var badIntent = fixture.intent
-        badIntent = PlayCoverPendingLaunchStore.Intent(
-            sessionID: badIntent.sessionID,
-            runtimeSocketPath:
-                fixture.paths.playcoverRun + "/../run/"
-                    + URL(
-                        fileURLWithPath:
-                            badIntent.runtimeSocketPath
-                      ).lastPathComponent,
-            generationKey: badIntent.generationKey,
-            appPath: badIntent.appPath,
-            bundleIdentifier: badIntent.bundleIdentifier,
-            executablePath: badIntent.executablePath,
-            aliasPath: badIntent.aliasPath
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.createIntent(
-                badIntent,
-                paths: fixture.paths
-            )
-        )
-
-        badIntent = PlayCoverPendingLaunchStore.Intent(
-            sessionID: fixture.intent.sessionID,
-            runtimeSocketPath: fixture.intent.runtimeSocketPath,
-            generationKey: fixture.intent.generationKey,
-            appPath: fixture.appPath + "/../Fixture.app",
-            bundleIdentifier: fixture.intent.bundleIdentifier,
-            executablePath: fixture.intent.executablePath,
-            aliasPath: fixture.intent.aliasPath
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.createIntent(
-                badIntent,
-                paths: fixture.paths
-            )
-        )
-
-        _ = try PlayCoverPendingLaunchStore.createIntent(
-            fixture.intent,
-            paths: fixture.paths
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.markAliasReady(
-                sessionID: fixture.sessionID,
-                device: 1,
-                inode: 2,
-                inventory: fixture.inventory.reversed(),
-                paths: fixture.paths
-            )
-        )
-    }
-
-    func testPrivateTmpIdentityRemainsValidAfterPathsExist()
-        throws {
-        #if canImport(Darwin)
-        let root = try makeTemporaryRoot(
-            templatePath: "/private/tmp/iu-pending-XXXXXX"
-        )
-        let fixture = try makeFixture(root: root)
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        try FileManager.default.createDirectory(
-            at: URL(
-                fileURLWithPath: fixture.appPath,
-                isDirectory: true
-            ),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try Data().write(
-            to: URL(
-                fileURLWithPath: fixture.executablePath,
-                isDirectory: false
-            )
-        )
-
-        var record = try PlayCoverPendingLaunchStore.createIntent(
-            fixture.intent,
-            paths: fixture.paths
-        )
-        let inventory = fixture.inventory.map {
-            PlayCoverPendingLaunchStore.AliasEntry(
-                name: $0.name,
-                destination:
-                    record.appPath + "/" + $0.name
+            XCTAssertThrowsError(
+                try PlayCoverPendingLaunchStore.load(
+                    paths: fixture.paths
+                )
             )
         }
-        for entry in inventory {
-            XCTAssertEqual(
-                entry.destination,
-                record.appPath + "/" + entry.name
-            )
-        }
-        record = try PlayCoverPendingLaunchStore.markAliasReady(
-            sessionID: fixture.sessionID,
-            device: 42,
-            inode: 84,
-            inventory: inventory,
-            paths: fixture.paths
-        )
-
-        XCTAssertEqual(record.appPath, fixture.appPath)
-        XCTAssertEqual(record.executablePath, fixture.executablePath)
-        XCTAssertEqual(record.aliasInventory, inventory)
-        XCTAssertEqual(
-            try PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            ),
-            record
-        )
-        #endif
     }
 
-    func testUnsafeManagedDirectoryDoesNotLookLikeNoPendingLaunch()
-        throws {
+    func testJournalSymlinkIsRejected() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try SessionOperationLock.withExclusiveLock(
+            paths: fixture.paths
+        ) {}
+        let target = fixture.root.appendingPathComponent("target")
+        try Data("{}".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(
+            atPath: fixture.paths.playcoverPendingLaunch,
+            withDestinationPath: target.path
+        )
+        XCTAssertThrowsError(
+            try PlayCoverPendingLaunchStore.load(
+                paths: fixture.paths
+            )
+        )
+    }
+
+    private func makeFixture() throws -> Fixture {
         let root = try makeTemporaryRoot()
-        defer { try? FileManager.default.removeItem(at: root) }
         let paths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": root.path]
         )
-        try Data("not a directory".utf8).write(
-            to: URL(fileURLWithPath: paths.playcover)
-        )
-
-        XCTAssertThrowsError(
-            try PlayCoverPendingLaunchStore.load(paths: paths)
-        )
-    }
-
-    private func makeFixture(root explicitRoot: URL? = nil)
-        throws -> Fixture {
-        let root: URL
-        if let explicitRoot {
-            root = explicitRoot
-        } else {
-            root = try makeTemporaryRoot()
-        }
-        let paths = resolvePlayCoverTestPaths(
-            environment: ["IOS_USE_HOME": root.path]
-        )
-        let sessionID = UUID().uuidString.lowercased()
+        let sessionID = UUID().uuidString
         let generationKey = String(repeating: "a", count: 64)
         let app = URL(
             fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
-        )
-        .appendingPathComponent(generationKey, isDirectory: true)
-        .appendingPathComponent("Fixture.app", isDirectory: true)
-        let executable = app.appendingPathComponent(
-            "Fixture",
-            isDirectory: false
-        )
+        ).appendingPathComponent(
+            generationKey,
+            isDirectory: true
+        ).appendingPathComponent("App.app", isDirectory: true)
+        let executable = app.appendingPathComponent("Fixture")
         let aliasRoot = root.appendingPathComponent(
             "launch-aliases",
             isDirectory: true
         )
         PlayCoverService.launchAliasRootOverrideForTesting = aliasRoot
-        let alias = PlayCoverService.sessionLaunchAlias(
-            sessionID: sessionID
-        ).bundleURL.path
-        let inventory = [
-            PlayCoverPendingLaunchStore.AliasEntry(
-                name: "Fixture",
-                destination: executable.path
-            ),
-            PlayCoverPendingLaunchStore.AliasEntry(
-                name: "Info.plist",
-                destination: app.appendingPathComponent(
-                    "Info.plist"
-                ).path
-            ),
-        ]
         let intent = PlayCoverPendingLaunchStore.Intent(
             sessionID: sessionID,
             runtimeSocketPath: try paths.macRuntimeSocketPath(
@@ -623,25 +240,21 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
             appPath: app.path,
             bundleIdentifier: "com.example.fixture",
             executablePath: executable.path,
-            aliasPath: alias
+            aliasPath: PlayCoverService.sessionLaunchAlias(
+                sessionID: sessionID
+            ).bundleURL.path
         )
         return Fixture(
             root: root,
             paths: paths,
             sessionID: sessionID,
-            generationKey: generationKey,
-            appPath: app.path,
-            executablePath: executable.path,
-            inventory: inventory,
             intent: intent
         )
     }
 
-    private func makeTemporaryRoot(
-        templatePath: String = "/tmp/iu-pending-XXXXXX"
-    ) throws -> URL {
+    private func makeTemporaryRoot() throws -> URL {
         #if canImport(Darwin)
-        var template = Array(templatePath.utf8CString)
+        var template = Array("/tmp/iu-pending-XXXXXX".utf8CString)
         guard let pointer = Darwin.mkdtemp(&template) else {
             throw NSError(
                 domain: NSPOSIXErrorDomain,
@@ -659,44 +272,17 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
         return root
         #else
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "iu-pending-\(UUID().uuidString)",
-                isDirectory: true
-            )
+            .appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(
             at: root,
-            withIntermediateDirectories: false,
-            attributes: [.posixPermissions: 0o700]
+            withIntermediateDirectories: false
         )
         return root
         #endif
     }
 
-    @discardableResult
-    private func advanceToSubmissionArmed(
-        _ fixture: Fixture
-    ) throws -> PlayCoverPendingLaunchStore.Record {
-        _ = try PlayCoverPendingLaunchStore.createIntent(
-            fixture.intent,
-            paths: fixture.paths
-        )
-        _ = try PlayCoverPendingLaunchStore.markAliasReady(
-            sessionID: fixture.sessionID,
-            device: 42,
-            inode: 84,
-            inventory: fixture.inventory,
-            paths: fixture.paths
-        )
-        return try PlayCoverPendingLaunchStore
-            .markSubmissionArmed(
-                sessionID: fixture.sessionID,
-                bootSessionUUID: UUID().uuidString,
-                paths: fixture.paths
-            )
-    }
-
     private func replaceJournal(
-        with data: Data,
+        _ data: Data,
         at url: URL
     ) throws {
         try data.write(to: url, options: [.atomic])
@@ -713,12 +299,7 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
     ) {
         #if canImport(Darwin)
         var status = stat()
-        XCTAssertEqual(
-            Darwin.lstat(path, &status),
-            0,
-            file: file,
-            line: line
-        )
+        XCTAssertEqual(lstat(path, &status), 0, file: file, line: line)
         XCTAssertEqual(
             status.st_mode & S_IFMT,
             S_IFREG,
@@ -726,17 +307,12 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
             line: line
         )
         XCTAssertEqual(
-            status.st_mode & 0o7777,
+            status.st_mode & 0o777,
             0o600,
             file: file,
             line: line
         )
-        XCTAssertEqual(
-            status.st_nlink,
-            1,
-            file: file,
-            line: line
-        )
+        XCTAssertEqual(status.st_nlink, 1, file: file, line: line)
         #endif
     }
 }

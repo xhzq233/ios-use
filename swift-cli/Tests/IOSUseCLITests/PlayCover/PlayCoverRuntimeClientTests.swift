@@ -367,6 +367,42 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         )
     }
 
+    func testWaitForDefersAlertRefreshToPreserveItsTimeout()
+        throws
+    {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            XCTAssertNil(request["refreshAlertStatus"])
+            let requestID = try XCTUnwrap(
+                request["requestId"] as? String
+            )
+            return .body(try self.successResponse(
+                requestID: requestID,
+                payload: self.payload(for: .waitFor)
+            ))
+        }
+        _ = try makeClient(
+            socketPath: fixture.socketPath,
+            refreshAlertStatus: true
+        ).request(
+            .waitFor,
+            arguments: .waitFor(.init(
+                target: .init(
+                    label: "Ready",
+                    traits: "",
+                    cindex: nil
+                ),
+                timeout: 1,
+                gone: false,
+                matchMode: 0
+            ))
+        )
+        try server.wait()
+    }
+
     func testRemoteInteractionStateDoesNotRequirePerformanceCollector()
         throws
     {
@@ -1032,6 +1068,69 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             }
             XCTAssertEqual(code, "runtime_ui_not_ready")
             XCTAssertEqual(details?.phase, "waiting-for-window")
+            XCTAssertEqual(details?.retryable, true)
+            XCTAssertEqual(details?.fatal, false)
+        }
+        try server.wait()
+    }
+
+    func testRuntimeUIBackgroundedRemainsATypeableRetryableError()
+        throws
+    {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            let requestID = try XCTUnwrap(
+                request["requestId"] as? String
+            )
+            return .body(
+                try JSONSerialization.data(withJSONObject: [
+                    "requestId": requestID,
+                    "sessionID": self.sessionID,
+                    "ok": false,
+                    "error": [
+                        "code": "runtime_ui_backgrounded",
+                        "message": "Runtime UI is not available",
+                        "details": [
+                            "category": "precondition",
+                            "phase": "inactive-space",
+                            "reason": "inactive-space",
+                            "retryable": true,
+                            "fatal": false,
+                            "candidateCount": 0,
+                            "candidates": [],
+                            "suggestions": [],
+                        ],
+                    ],
+                    "interactionState": [
+                        "refreshComplete": false,
+                        "refreshError": "runtime_ui_backgrounded",
+                        "blocking": false,
+                        "interactions": [],
+                    ],
+                    "performance": [
+                        "alertRefreshElapsedMs": 0.0,
+                    ],
+                ])
+            )
+        }
+
+        XCTAssertThrowsError(
+            try makeClient(
+                socketPath: fixture.socketPath,
+                refreshAlertStatus: true
+            ).dom(
+                .init(raw: false, fresh: true, waitQuiescence: false)
+            )
+        ) {
+            guard case .remoteError(let code, _, let details) =
+                    $0 as? PlayCoverRuntimeClientError else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertEqual(code, "runtime_ui_backgrounded")
+            XCTAssertEqual(details?.phase, "inactive-space")
             XCTAssertEqual(details?.retryable, true)
             XCTAssertEqual(details?.fatal, false)
         }

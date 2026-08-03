@@ -1131,38 +1131,6 @@ static BOOL IOSUseAutomationFramesMatchWithinTolerance(
         fabs(left.size.height - right.size.height) <= tolerance;
 }
 
-static BOOL IOSUseAutomationNativeAlertActionContainsProxyFrame(
-    CGRect actionFrame,
-    CGRect proxyFrame
-) {
-    const CGFloat tolerance = 0.5;
-    const CGFloat maximumInset = 5.5;
-    if (!IOSUseAutomationRectHasArea(actionFrame) ||
-        !IOSUseAutomationRectHasArea(proxyFrame) ||
-        fabs(CGRectGetMidX(actionFrame) -
-             CGRectGetMidX(proxyFrame)) > tolerance ||
-        fabs(CGRectGetMidY(actionFrame) -
-             CGRectGetMidY(proxyFrame)) > tolerance) {
-        return NO;
-    }
-    CGFloat leftInset =
-        CGRectGetMinX(proxyFrame) - CGRectGetMinX(actionFrame);
-    CGFloat topInset =
-        CGRectGetMinY(proxyFrame) - CGRectGetMinY(actionFrame);
-    CGFloat rightInset =
-        CGRectGetMaxX(actionFrame) - CGRectGetMaxX(proxyFrame);
-    CGFloat bottomInset =
-        CGRectGetMaxY(actionFrame) - CGRectGetMaxY(proxyFrame);
-    return leftInset >= -tolerance &&
-        leftInset <= maximumInset &&
-        topInset >= -tolerance &&
-        topInset <= maximumInset &&
-        rightInset >= -tolerance &&
-        rightInset <= maximumInset &&
-        bottomInset >= -tolerance &&
-        bottomInset <= maximumInset;
-}
-
 static NSDictionary<NSString *, id> * _Nullable
 IOSUseAutomationExactNativeAlertAction(
     NSString *label,
@@ -1178,14 +1146,10 @@ IOSUseAutomationExactNativeAlertAction(
         CGRect actionFrame =
             IOSUseAutomationFrameDictionaryRect(action[@"frame"]);
         if (![action[@"label"] isEqualToString:label] ||
-            !(IOSUseAutomationFramesMatchWithinTolerance(
-                  actionFrame,
-                  frame
-              ) ||
-              IOSUseAutomationNativeAlertActionContainsProxyFrame(
-                  actionFrame,
-                  frame
-              ))) {
+            !IOSUseAutomationFramesMatchWithinTolerance(
+                actionFrame,
+                frame
+            )) {
             continue;
         }
         if (matched != nil) {

@@ -183,7 +183,7 @@ static void IOSUseInstallPhotosAuthorizationHooks(void) {
         IOSUsePhotosAuthorizationHookInstalled =
             IOSUsePlayHookRegistryInstallFunction(
                 @"photos.authorization.request",
-                YES,
+                NO,
                 @"pre-main",
                 PHPhotoLibrary.class,
                 YES,
@@ -532,9 +532,13 @@ void IOSUsePlayRuntimeInitializeAfterStdio(void) {
             NSNotificationCenter.defaultCenter;
         for (NSString *name in @[
             UIApplicationDidBecomeActiveNotification,
+            UIApplicationWillResignActiveNotification,
+            UIApplicationDidEnterBackgroundNotification,
             UIWindowDidBecomeKeyNotification,
             UISceneWillEnterForegroundNotification,
             UISceneDidActivateNotification,
+            UISceneWillDeactivateNotification,
+            UISceneDidEnterBackgroundNotification,
             UISceneDidDisconnectNotification,
         ]) {
             [center addObserverForName:name

@@ -137,12 +137,21 @@ EOF
 chmod 755 "$NATIVE_PKG_CONFIG"
 
 "$PYTHON" - "$CONFIG_ROOT" "$SDK_PATH" "$TARGET" \
-    "$TARGET_PKG_CONFIG" "$NATIVE_PKG_CONFIG" <<'PY'
+    "$TARGET_PKG_CONFIG" "$NATIVE_PKG_CONFIG" \
+    "$SOURCE_ROOT" "$GUM_BUILD" <<'PY'
+import os
 import pathlib
 import sys
 
-root, sdk, target, target_pkg, native_pkg = sys.argv[1:]
+root, sdk, target, target_pkg, native_pkg, source, gum_build = sys.argv[1:]
 root = pathlib.Path(root)
+source_argument = os.path.relpath(
+    os.path.realpath(source),
+    os.path.realpath(gum_build),
+)
+reproducible_args = [
+    f'-ffile-prefix-map={source_argument}=frida-gum',
+]
 cross = f'''[binaries]
 c = ['clang', '-target', '{target}', '-isysroot', '{sdk}']
 cpp = ['clang++', '-target', '{target}', '-isysroot', '{sdk}']
@@ -160,12 +169,30 @@ kernel = 'xnu'
 cpu_family = 'aarch64'
 cpu = 'arm64'
 endian = 'little'
+
+[built-in options]
+c_args = {reproducible_args!r}
+cpp_args = {reproducible_args!r}
+objc_args = {reproducible_args!r}
+objcpp_args = {reproducible_args!r}
 '''
 native_file = f'''[binaries]
 pkg-config = '{native_pkg}'
+
+[built-in options]
+c_args = {reproducible_args!r}
+cpp_args = {reproducible_args!r}
+objc_args = {reproducible_args!r}
+objcpp_args = {reproducible_args!r}
 '''
 cross_native = f'''[binaries]
 pkg-config = '{native_pkg}'
+
+[built-in options]
+c_args = {reproducible_args!r}
+cpp_args = {reproducible_args!r}
+objc_args = {reproducible_args!r}
+objcpp_args = {reproducible_args!r}
 '''
 (root / 'catalyst.ini').write_text(cross)
 (root / 'native.ini').write_text(native_file)

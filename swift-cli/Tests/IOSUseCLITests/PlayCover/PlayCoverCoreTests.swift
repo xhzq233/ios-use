@@ -32,9 +32,8 @@ final class PlayCoverCoreTests: XCTestCase {
         #if canImport(AppKit)
         PlayCoverService.workspaceOpenOverrideForTesting = nil
         PlayCoverService.workspaceSubmissionObserverForTesting = nil
+        PlayCoverBundleStartLock.runningBundlePIDsOverrideForTesting = nil
         #endif
-        PlayCoverPendingLaunchRecovery
-            .exactExecutableCensusOverrideForTesting = nil
         PlayCoverManagedAppService.inspectOverrideForTesting = nil
         PlayCoverManagedAppService.readManifestOverrideForTesting = nil
         PlayCoverManagedAppService.prepareOverrideForTesting = nil
@@ -1138,6 +1137,18 @@ final class PlayCoverCoreTests: XCTestCase {
                 stdioLog: nil
             )
         )
+        XCTAssertNoThrow(
+            try PlayCoverService.validateHello(
+                payload(
+                    uiState: "backgrounded",
+                    uiStage: "inactive-space"
+                ),
+                sessionID: "control-session",
+                manifest: manifest,
+                pid: pid,
+                stdioLog: nil
+            )
+        )
         XCTAssertThrowsError(
             try PlayCoverService.validateHello(
                 payload(
@@ -1516,474 +1527,16 @@ final class PlayCoverCoreTests: XCTestCase {
     }
 
     #if canImport(AppKit)
-    func testColdRegistrationRetryRecognizesOnlyRootOSStatusError()
-        throws {
-        let coldRegistration = NSError(
-            domain: NSOSStatusErrorDomain,
-            code: -10_670
-        )
-        XCTAssertTrue(
-            PlayCoverService
-                .isLaunchServicesColdRegistrationRace(
-                    coldRegistration
-                )
-        )
-        let wrapped = NSError(
-            domain: NSCocoaErrorDomain,
-            code: 256,
-            userInfo: [
-                NSUnderlyingErrorKey: coldRegistration,
-            ]
-        )
-        XCTAssertTrue(
-            PlayCoverService
-                .isLaunchServicesColdRegistrationRace(wrapped)
-        )
-        XCTAssertFalse(
-            PlayCoverService
-                .isLaunchServicesColdRegistrationRace(
-                    NSError(
-                        domain: "PlayCoverCoreTests",
-                        code: -10_670
-                    )
-                )
-        )
-        XCTAssertFalse(
-            PlayCoverService
-                .isLaunchServicesColdRegistrationRace(
-                    NSError(
-                        domain: NSOSStatusErrorDomain,
-                        code: -10_671
-                    )
-                )
-        )
-        XCTAssertFalse(
-            PlayCoverService
-                .isLaunchServicesColdRegistrationRace(
-                    NSError(
-                        domain: NSOSStatusErrorDomain,
-                        code: -10_670,
-                        userInfo: [
-                            NSUnderlyingErrorKey: NSError(
-                                domain: NSOSStatusErrorDomain,
-                                code: -10_671
-                            ),
-                        ]
-                    )
-                ),
-            "only the terminal root NSError authorizes retry"
-        )
-    }
-
-    func testColdRegistrationRetryPolicyIsFailClosed() {
-        let error = NSError(
-            domain: NSOSStatusErrorDomain,
-            code: -10_670
-        )
-        var censusReads = 0
-        func emptyCensus()
-            -> PlayCoverPendingLaunchRecovery.Census {
-            censusReads += 1
-            return .complete([])
-        }
-        XCTAssertTrue(
-            PlayCoverService.permitsWorkspaceColdRegistrationRetry(
-                error: error,
-                attemptNumber: 1,
-                hasDurablePendingLaunch: true,
-                hasRuntimeCandidates: false,
-                hasPostSubmissionIntegrityError: false,
-                isBeforeDeadline: true,
-                exactExecutableCensus: emptyCensus()
-            )
-        )
-        XCTAssertEqual(censusReads, 1)
-
-        for rejected in [
-            (
-                attempt: 3,
-                durable: true,
-                candidate: false,
-                integrityError: false,
-                beforeDeadline: true
-            ),
-            (
-                attempt: 1,
-                durable: false,
-                candidate: false,
-                integrityError: false,
-                beforeDeadline: true
-            ),
-            (
-                attempt: 1,
-                durable: true,
-                candidate: true,
-                integrityError: false,
-                beforeDeadline: true
-            ),
-            (
-                attempt: 1,
-                durable: true,
-                candidate: false,
-                integrityError: true,
-                beforeDeadline: true
-            ),
-            (
-                attempt: 1,
-                durable: true,
-                candidate: false,
-                integrityError: false,
-                beforeDeadline: false
-            ),
-        ] {
-            XCTAssertFalse(
-                PlayCoverService
-                    .permitsWorkspaceColdRegistrationRetry(
-                        error: error,
-                        attemptNumber: rejected.attempt,
-                        hasDurablePendingLaunch:
-                            rejected.durable,
-                        hasRuntimeCandidates:
-                            rejected.candidate,
-                        hasPostSubmissionIntegrityError:
-                            rejected.integrityError,
-                        isBeforeDeadline:
-                            rejected.beforeDeadline,
-                        exactExecutableCensus: emptyCensus()
-                    )
-            )
-        }
-        XCTAssertEqual(
-            censusReads,
-            1,
-            "rejected preconditions must not even read the process table"
-        )
-        XCTAssertFalse(
-            PlayCoverService.permitsWorkspaceColdRegistrationRetry(
-                error: NSError(
-                    domain: "PlayCoverCoreTests",
-                    code: -10_670
-                ),
-                attemptNumber: 1,
-                hasDurablePendingLaunch: true,
-                hasRuntimeCandidates: false,
-                hasPostSubmissionIntegrityError: false,
-                isBeforeDeadline: true,
-                exactExecutableCensus: emptyCensus()
-            )
-        )
-        XCTAssertEqual(censusReads, 1)
-        XCTAssertFalse(
-            PlayCoverService.permitsWorkspaceColdRegistrationRetry(
-                error: error,
-                attemptNumber: 1,
-                hasDurablePendingLaunch: true,
-                hasRuntimeCandidates: false,
-                hasPostSubmissionIntegrityError: false,
-                isBeforeDeadline: true,
-                exactExecutableCensus: .incomplete(
-                    candidates: [],
-                    reason: "unreadable process"
-                )
-            )
-        )
-        XCTAssertFalse(
-            PlayCoverService.permitsWorkspaceColdRegistrationRetry(
-                error: error,
-                attemptNumber: 1,
-                hasDurablePendingLaunch: true,
-                hasRuntimeCandidates: false,
-                hasPostSubmissionIntegrityError: false,
-                isBeforeDeadline: true,
-                exactExecutableCensus: .complete([
-                    .init(
-                        pid: 42,
-                        processBirthMicroseconds: 9
-                    ),
-                ])
-            )
-        )
-    }
-
-    func testColdRegistrationRetriesSameFacadeSeriallyWithinOneDeadline()
+    func testWorkspaceCallbackFailureSubmitsOnceAndPreservesIntent()
         throws {
         let fixture = try makePendingWorkspaceLaunchFixture()
         defer {
             try? FileManager.default.removeItem(at: fixture.root)
         }
-        PlayCoverPendingLaunchRecovery
-            .exactExecutableCensusOverrideForTesting = {
-                executablePath in
-                XCTAssertEqual(
-                    executablePath,
-                    fixture.manifest.executablePath
-                )
-                return .complete([])
-            }
-        let rootError = NSError(
-            domain: NSOSStatusErrorDomain,
-            code: -10_670
-        )
-        let callbackError = NSError(
-            domain: NSCocoaErrorDomain,
-            code: 256,
-            userInfo: [NSUnderlyingErrorKey: rootError]
-        )
-        var submittedURLs: [URL] = []
-        var submittedEnvironments: [[String: String]] = []
-        var submittedPromptPolicies: [Bool] = []
-        var observedDeadlines: [TimeInterval] = []
-        var durablePhases:
-            [PlayCoverPendingLaunchStore.Phase] = []
-        var inFlight = 0
-        var maximumInFlight = 0
-        var firstCompletion:
-            ((NSRunningApplication?, Error?) -> Void)?
-        PlayCoverService.workspaceSubmissionObserverForTesting = {
-            _,
-            deadline,
-            url,
-            environment in
-            observedDeadlines.append(deadline)
-            submittedURLs.append(url)
-            submittedEnvironments.append(environment)
-        }
         var submissionCount = 0
         PlayCoverService.workspaceOpenOverrideForTesting = {
-            _,
-            configuration,
-            completion in
-            submittedPromptPolicies.append(
-                configuration.promptsUserIfNeeded
-            )
+            _, _, completion in
             submissionCount += 1
-            if let phase = try? PlayCoverPendingLaunchStore
-                .load(paths: fixture.paths)?.phase {
-                durablePhases.append(phase)
-            }
-            inFlight += 1
-            maximumInFlight = max(maximumInFlight, inFlight)
-            if submissionCount == 1 {
-                firstCompletion = completion
-            } else if submissionCount == 2 {
-                firstCompletion?(
-                    nil,
-                    NSError(
-                        domain: "PlayCoverCoreTests",
-                        code: 1
-                    )
-                )
-            }
-            completion(nil, callbackError)
-            inFlight -= 1
-        }
-        let deadline =
-            ProcessInfo.processInfo.systemUptime + 0.08
-        _ = try runPendingWorkspaceLaunch(
-            fixture,
-            deadline: deadline
-        )
-
-        XCTAssertEqual(
-            submissionCount,
-            PlayCoverService
-                .workspaceColdRegistrationMaximumAttempts
-        )
-        XCTAssertEqual(maximumInFlight, 1)
-        XCTAssertEqual(
-            submittedPromptPolicies,
-            Array(repeating: true, count: submissionCount),
-            "macOS-owned launch UI must remain available on every attempt"
-        )
-        XCTAssertEqual(
-            durablePhases,
-            Array(
-                repeating: .submissionArmed,
-                count: submissionCount
-            ),
-            "every submission must follow a durable armed journal check"
-        )
-        XCTAssertEqual(
-            Set(submittedURLs).count,
-            1,
-            "all attempts must submit the same facade URL"
-        )
-        XCTAssertEqual(
-            observedDeadlines,
-            Array(
-                repeating: deadline,
-                count: submissionCount
-            ),
-            "attempts must share the original monotonic deadline"
-        )
-        XCTAssertEqual(
-            Set(submittedEnvironments.map {
-                $0["IOS_USE_PLAY_SESSION_ID"] ?? ""
-            }),
-            Set([fixture.sessionID])
-        )
-        XCTAssertEqual(
-            Set(submittedEnvironments.map {
-                $0["IOS_USE_PLAY_RUNTIME_SOCKET"] ?? ""
-            }),
-            Set([fixture.runtimeSocketPath])
-        )
-        let firstEnvironment = try XCTUnwrap(
-            submittedEnvironments.first
-        )
-        XCTAssertTrue(
-            submittedEnvironments.dropFirst().allSatisfy {
-                $0 == firstEnvironment
-            }
-        )
-        let pending = try XCTUnwrap(
-            PlayCoverPendingLaunchStore.load(
-                paths: fixture.paths
-            )
-        )
-        XCTAssertEqual(pending.phase, .terminalCallback)
-        XCTAssertEqual(
-            pending.terminalCallback?.outcome,
-            .failure
-        )
-    }
-
-    func testColdRegistrationDoesNotRetryWithoutCompleteEmptyCensus()
-        throws {
-        for census in [
-            PlayCoverPendingLaunchRecovery.Census.incomplete(
-                candidates: [],
-                reason: "process table changed"
-            ),
-            .complete([
-                .init(
-                    pid: 42,
-                    processBirthMicroseconds: 9
-                ),
-            ]),
-        ] {
-            let fixture =
-                try makePendingWorkspaceLaunchFixture()
-            defer {
-                try? FileManager.default.removeItem(
-                    at: fixture.root
-                )
-            }
-            PlayCoverPendingLaunchRecovery
-                .exactExecutableCensusOverrideForTesting = {
-                    _ in census
-                }
-            var submissionCount = 0
-            PlayCoverService.workspaceOpenOverrideForTesting = {
-                _,
-                _,
-                completion in
-                submissionCount += 1
-                completion(
-                    nil,
-                    NSError(
-                        domain: NSOSStatusErrorDomain,
-                        code: -10_670
-                    )
-                )
-            }
-            _ = try runPendingWorkspaceLaunch(
-                fixture,
-                deadline:
-                    ProcessInfo.processInfo.systemUptime + 0.03
-            )
-            XCTAssertEqual(submissionCount, 1)
-            XCTAssertEqual(
-                try PlayCoverPendingLaunchStore.load(
-                    paths: fixture.paths
-                )?.phase,
-                .terminalCallback
-            )
-        }
-    }
-
-    func testPendingLaunchHooksAndRestartableAliasCleanup()
-        throws {
-        let source = try makeSourceApp()
-        defer { try? FileManager.default.removeItem(at: source.root) }
-        var template = Array("/tmp/iu-alias-XXXXXX".utf8CString)
-        let rootPointer = try XCTUnwrap(Darwin.mkdtemp(&template))
-        let root = URL(
-            fileURLWithPath: String(cString: rootPointer),
-            isDirectory: true
-        )
-        defer { try? FileManager.default.removeItem(at: root) }
-        let paths = resolvePlayCoverTestPaths(
-            environment: ["IOS_USE_HOME": root.path]
-        )
-        try SessionOperationLock.withExclusiveLock(paths: paths) {}
-        _ = try PlayCoverManagedAppService.secureManagedDirectories(
-            paths: paths
-        )
-
-        let generationKey = String(repeating: "9", count: 64)
-        let generation = URL(
-            fileURLWithPath: paths.playcoverGlobalObjects,
-            isDirectory: true
-        ).appendingPathComponent(
-            generationKey,
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(
-            at: generation,
-            withIntermediateDirectories: false,
-            attributes: [.posixPermissions: 0o700]
-        )
-        let app = generation.appendingPathComponent(
-            "App.app",
-            isDirectory: true
-        )
-        try FileManager.default.copyItem(
-            at: source.app,
-            to: app
-        )
-        let inspection = try PlayCoverService.inspect(
-            appPath: app.path
-        )
-        let manifest = try makeManifest(
-            inspection: inspection,
-            preparedAppPath: app.path,
-            generationKey: generationKey
-        )
-        let aliasRoot = root.appendingPathComponent(
-            "launch-aliases",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(
-            at: aliasRoot,
-            withIntermediateDirectories: false,
-            attributes: [.posixPermissions: 0o700]
-        )
-        PlayCoverService.launchAliasRootOverrideForTesting =
-            aliasRoot
-        let sessionID = UUID().uuidString
-        let intent = PlayCoverPendingLaunchStore.Intent(
-            sessionID: sessionID,
-            runtimeSocketPath:
-                try paths.macRuntimeSocketPath(
-                    sessionID: sessionID
-                ),
-            generationKey: generationKey,
-            appPath: app.path,
-            bundleIdentifier: manifest.bundleIdentifier,
-            executablePath: manifest.executablePath,
-            aliasPath: PlayCoverService.sessionLaunchAlias(
-                sessionID: sessionID
-            ).bundleURL.path
-        )
-        _ = try PlayCoverPendingLaunchStore.createIntent(
-            intent,
-            paths: paths
-        )
-        PlayCoverService.workspaceOpenOverrideForTesting = {
-            _,
-            _,
-            completion in
             completion(
                 nil,
                 NSError(
@@ -1992,76 +1545,22 @@ final class PlayCoverCoreTests: XCTestCase {
                 )
             )
         }
-        var launchAlias:
-            PlayCoverService.SessionLaunchAlias?
-        var openSubmitted = false
-        var postSubmissionIntegrityError: Error?
-        try PlayCoverService
-            .withUncheckedLaunchCapabilityForTesting(
-                appPath: manifest.preparedAppPath
-            ) { capability in
-                XCTAssertThrowsError(
-                    try PlayCoverService
-                        .launchPreparedApplication(
-                            manifest: manifest,
-                            launchCapability: capability,
-                            sessionID: sessionID,
-                            runtimeSocketPath:
-                                intent.runtimeSocketPath,
-                            playChainPath:
-                                paths.playcoverPlayChain,
-                            pendingLaunchPaths: paths,
-                            deadline:
-                                ProcessInfo.processInfo
-                                    .systemUptime + 0.05,
-                            launchAlias: &launchAlias,
-                            launchSubmitted:
-                                &openSubmitted,
-                            postSubmissionIntegrityError:
-                                &postSubmissionIntegrityError
-                        )
-                )
-            }
-        XCTAssertTrue(openSubmitted)
-        let pending = try XCTUnwrap(
-            PlayCoverPendingLaunchStore.load(paths: paths)
-        )
-        XCTAssertEqual(pending.phase, .terminalCallback)
-        XCTAssertNotNil(pending.aliasDevice)
-        XCTAssertNotNil(pending.aliasInode)
-        XCTAssertEqual(
-            pending.terminalCallback?.outcome,
-            .failure
-        )
-        let alias = try XCTUnwrap(launchAlias)
-        let names = try FileManager.default
-            .contentsOfDirectory(atPath: alias.bundleURL.path)
-            .sorted()
-        let confirmed = try PlayCoverPendingLaunchStore
-            .markConfirmedStopped(
-                sessionID: sessionID,
-                cleanupProof:
-                    .terminalCallbackAndEmptyCensus,
-                paths: paths
-            )
 
-        try FileManager.default.removeItem(
-            at: alias.bundleURL.appendingPathComponent(
-                try XCTUnwrap(names.first)
-            )
+        _ = try runPendingWorkspaceLaunch(
+            fixture,
+            deadline: ProcessInfo.processInfo.systemUptime + 0.03
         )
-        try PlayCoverService.removeSessionLaunchAlias(
-            pendingLaunch: confirmed,
-            manifest: manifest
+
+        XCTAssertEqual(submissionCount, 1)
+        let pending = try XCTUnwrap(
+            PlayCoverPendingLaunchStore.load(paths: fixture.paths)
         )
-        XCTAssertFalse(
+        XCTAssertEqual(pending.phase, .intent)
+        XCTAssertNil(pending.owner)
+        XCTAssertTrue(
             FileManager.default.fileExists(
-                atPath: alias.bundleURL.path
+                atPath: pending.aliasPath
             )
-        )
-        try PlayCoverPendingLaunchStore.removeConfirmed(
-            sessionID: sessionID,
-            paths: paths
         )
     }
 
@@ -3957,6 +3456,69 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertTrue(second.reused)
     }
 
+    #if canImport(AppKit)
+    func testBundleStartLockRejectsAnAlreadyRunningBundle() throws {
+        let fixture = try makeBundleStartLockPaths()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        PlayCoverBundleStartLock.runningBundlePIDsOverrideForTesting = {
+            bundleIdentifier in
+            XCTAssertEqual(bundleIdentifier, "com.example.fixture")
+            return [321]
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverBundleStartLock.acquire(
+                bundleIdentifier: "com.example.fixture",
+                paths: fixture.first
+            )
+        ) { error in
+            guard case .bundleAlreadyRunning(
+                bundleIdentifier: "com.example.fixture",
+                pid: 321
+            ) = error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testBundleStartLockSerializesTwoHomesForTheSameBundle()
+        throws {
+        let fixture = try makeBundleStartLockPaths()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        PlayCoverBundleStartLock.runningBundlePIDsOverrideForTesting = {
+            _ in []
+        }
+        var first: PlayCoverBundleStartLock? =
+            try PlayCoverBundleStartLock.acquire(
+                bundleIdentifier: "com.example.fixture",
+                paths: fixture.first
+            )
+        let started = DispatchSemaphore(value: 0)
+        let completed = DispatchSemaphore(value: 0)
+        let failed = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            started.signal()
+            do {
+                let second = try PlayCoverBundleStartLock.acquire(
+                    bundleIdentifier: "com.example.fixture",
+                    paths: fixture.second
+                )
+                withExtendedLifetime(second) {}
+            } catch {
+                failed.signal()
+            }
+            completed.signal()
+        }
+
+        XCTAssertEqual(started.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(completed.wait(timeout: .now() + 0.1), .timedOut)
+        first = nil
+        XCTAssertNil(first)
+        XCTAssertEqual(completed.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(failed.wait(timeout: .now()), .timedOut)
+    }
+    #endif
+
     func testSameContentAtDifferentSourcePathReusesGeneration() throws {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -4054,7 +3616,7 @@ final class PlayCoverCoreTests: XCTestCase {
             try? FileManager.default.removeItem(at: source.root)
         }
         var template = Array(
-            "/tmp/iu-cold-registration-XXXXXX".utf8CString
+            "/tmp/iu-pending-launch-XXXXXX".utf8CString
         )
         let rootPointer = try XCTUnwrap(Darwin.mkdtemp(&template))
         let root = URL(
@@ -4195,6 +3757,51 @@ final class PlayCoverCoreTests: XCTestCase {
         let root: URL
         let app: URL
     }
+
+    #if canImport(AppKit)
+    private func makeBundleStartLockPaths() throws -> (
+        root: URL,
+        first: IOSUsePaths,
+        second: IOSUsePaths
+    ) {
+        var template = Array("/tmp/iu-bundle-lock-XXXXXX".utf8CString)
+        let pointer = try XCTUnwrap(Darwin.mkdtemp(&template))
+        let root = URL(
+            fileURLWithPath: String(cString: pointer),
+            isDirectory: true
+        )
+        let account = root.appendingPathComponent(
+            "account",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: account,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        return (
+            root,
+            resolvePlayCoverTestPaths(
+                environment: [
+                    "IOS_USE_HOME": root.appendingPathComponent(
+                        "home-a",
+                        isDirectory: true
+                    ).path,
+                ],
+                accountHomeDirectory: account.path
+            ),
+            resolvePlayCoverTestPaths(
+                environment: [
+                    "IOS_USE_HOME": root.appendingPathComponent(
+                        "home-b",
+                        isDirectory: true
+                    ).path,
+                ],
+                accountHomeDirectory: account.path
+            )
+        )
+    }
+    #endif
 
     private func makeSourceApp(
         encrypted: Bool = false

@@ -169,15 +169,18 @@ Final Runtime `hello` must still pass before session commit.
 An account-wide bundle start lock and live-process census reject an already
 running copy of the same bundle ID before launch. ios-use neither attaches to
 nor terminates that existing process, and it has no direct-spawn fallback.
-Confirmed stop and confirmed rollback remove the facade. A facade whose
-asynchronous open was submitted without yielding an owned process remains
-fail-closed so a late LaunchServices completion cannot lose its Bundle
-resources; its pending journal blocks a new start until exact ownership or a
-durable terminal callback plus an empty exact-executable census proves safe
-cleanup. A cold-registration `-10670` callback may be retried only within the
-original start, using the same facade and monotonic deadline. Launch discovery
-uses the full validated `start --timeout` value rather than a shorter hidden
-deadline.
+The launch journal has exactly three transient phases:
+`intent -> owned -> driverLockCommitted`. `intent` is durable before the single
+NSWorkspace submission; `owned` requires an exact callback or authenticated
+Runtime owner; `driverLockCommitted` is reached only after that owner becomes
+the active session, then the journal is removed. A submitted launch that never
+yields an exact owner keeps both its intent and facade and returns
+`mac_pending_launch_unresolved`; later commands do not guess that a delayed
+LaunchServices completion is impossible. There is no automatic unresolved-
+intent recovery or cross-process cleanup.
+Confirmed stop and rollback of an exact owned process remove its facade.
+Launch discovery uses the full validated `start --timeout` value rather than a
+shorter hidden deadline.
 
 Each connection carries one four-byte big-endian length-prefixed JSON request:
 
@@ -205,9 +208,14 @@ revision; there is no schema negotiation or old-Runtime fallback.
 capabilities, stdio state, required pre-main hook state, and a cached UI-state
 snapshot without synchronously entering the UIKit main thread. `start` commits
 as soon as that control identity is healthy, even while UI state remains
-`initializing`. UI commands then fail immediately with typed
-`runtime_ui_not_ready` or `runtime_ui_failed` errors until the Runtime publishes
-`ready`. `diagnostics` retains the complete observational payload used by
+`initializing`. An installed required hook that has not yet received its first
+eligible UIKit call remains `waiting-for-required-hook-observation`; it is not a
+permanent hook failure. UI commands then fail immediately with typed
+`runtime_ui_not_ready`, `runtime_ui_backgrounded(reason)`, or
+`runtime_ui_failed` errors until the Runtime publishes `ready`. `waitFor` is the
+exception: it polls readiness within its own requested timeout and returns the
+last typed readiness error only if that deadline expires. `diagnostics` retains
+the complete observational payload used by
 `status`; ordinary DOM, screenshot, wait, and action responses contain only
 their command result. Request and response sizes, absolute deadlines, and
 one-request-per-connection behavior are bounded. The CLI authenticates the
@@ -215,6 +223,16 @@ peer UID and PID plus the live executable at the Unix transport, then verifies
 bundle, prepared generation, and Runtime identity during handshake and status.
 A mutation whose bytes may have reached the Runtime is never replayed
 automatically.
+
+UI availability follows the real scene-owning host surface, not
+`NSApplication.isActive` or key-window status. A visible window on the active
+Space remains automatable while non-key or occluded, and ios-use never activates,
+orders front, unhides, or changes the user's Space. A backgrounded/disconnected
+scene, hidden or minimized window, inactive Space, or unavailable display
+returns retryable `runtime_ui_backgrounded` with that exact reason while
+control `status` and `stop` remain available. Screen lock is not inferred as
+background by itself: if WindowServer keeps the same live surface, commands may
+continue; if the surface disappears, the same typed gate applies.
 
 All applicable commands keep routing to this Runtime until `ios-use stop`.
 `stop` does not call a lifecycle RPC: the host revalidates the exact
@@ -317,15 +335,15 @@ copied Runtime plus signer are checked again before the generation can win the
 atomic publish. If another process already published the key, the candidate is
 discarded and the immutable winner is fully verified.
 
-ios-use does not garbage-collect generations, Engine objects, logs, artifacts,
-or historical Home records. Lifecycle commands access only the current Home and
+ios-use does not garbage-collect generations, logs, artifacts, Frida development
+caches, or historical Home records. Lifecycle commands access only the current Home and
 never enumerate the Home discovery index. `ios-use du` is the explicit,
 read-only account report. Its default output groups rebuildable cache,
 persistent App data, logical Home data, and metadata/residue so the cleanup
 impact is visible before a user removes anything. Each group shows allocated
 size and latest descendant modification time; prepared Apps also show their
-version, capability, Home references, and session records. `--json` retains the
-raw paths and any incomplete-statistics warnings. The command follows no
+version and capability. `--json` retains raw paths, Home/session generation
+references, and any incomplete-statistics warnings. The command follows no
 symlink, has a bounded traversal, and does no source hashing, signing
 verification, Runtime connection, recovery, or deletion. It does not write its
 own `cli.log` entry. A Home is added to the small discovery index only after a
@@ -359,16 +377,19 @@ produce an acceptance decision.
 
 ## Runtime Distribution
 
-The Runtime is a release-built, ad-hoc-signed framework, not an artifact built
-inside a user's mutable state directory. A release contains the framework
-archive, SHA-256 manifest, applicable licenses, upstream provenance, and an
-exact corresponding-source archive. `scripts/install.sh` verifies the manifest
-before placing the framework under
-`<prefix>/share/ios-use/playcover/IOSUsePlayRuntime.framework`, re-verifies the
-signature, and never copies executable Runtime content into `IOS_USE_HOME`.
-The framework is a read-only source in the behavioral contract: prepare signs
-only the managed App copy. Installed-layout acceptance hashes the complete
-source framework before and after fixture execution.
+The Runtime and pinned Frida Engine are release-built, ad-hoc-signed frameworks,
+not artifacts built inside a user's mutable state directory. The Engine build
+normalizes compiler-visible source paths so local source, cache, and temporary
+build-root paths are not embedded. Frida-generated source maps may still vary,
+so each release records the actual framework digest and size. A release contains
+one PlayCover-resources archive, SHA-256 manifest, applicable licenses, upstream
+provenance, and an exact corresponding-source archive. `scripts/install.sh`
+verifies the manifest before placing both frameworks under
+`<prefix>/share/ios-use/playcover/`, re-verifies their signatures, and never
+copies executable Runtime content into `IOS_USE_HOME`. The frameworks are
+read-only preparation inputs: prepare signs only managed App copies.
+Installed-layout acceptance hashes both complete source frameworks before and
+after fixture execution.
 
 Runtime resolution honors a valid framework explicitly managed by an explicit
 `IOS_USE_HOME`, then the adjacent development layout, and finally this stable
@@ -383,12 +404,17 @@ Home.
 
 ## Optional GumJS Debug Engine
 
-`start --mac --frida --app <source.app>` selects a generation that embeds the
-pinned arm64 Mac Catalyst `IOSUseFridaEngine.framework`. A genuine generation
-miss acquires and verifies the optional Engine object once, then performs one
-normal prepare/sign/publication pass; a prepared Frida generation remains
-launchable without the separate Engine cache. Base generations contain no Gum
-or Engine code, and ordinary start never accesses the Engine cache or network.
+`start --mac --frida --app <source.app>` validates the installed arm64 Mac
+Catalyst `IOSUseFridaEngine.framework` against the pinned version, Gum commit,
+Engine ABI, Agent digest, and wrapper-source closure. Its actual framework
+digest participates in the generation key, so toolchain output cannot alias a
+different prepared App. A genuine generation miss revalidates the resource
+immediately before copying it, then performs one normal prepare/sign/publication
+pass. A prepared Frida generation remains launchable through bare reuse without
+re-reading that input. Base generations contain no Gum or Engine code, and
+ordinary start never accesses the installed Engine or network.
+There is no start-time Engine download, object cache, lock, environment override,
+or compatibility path.
 
 `ios-use debug`, `--reset`, and `--stream` use the existing authenticated
 Runtime Unix socket and one in-process GumJS Agent. The Runtime does not start
@@ -438,6 +464,11 @@ with unknown window visibility and no invented owner, text, or actions. The
 host does not use Accessibility APIs or UI scripting to inspect or click TCC,
 UserNotificationCenter, or Automation prompts; those remain manual or
 Computer Use interactions.
+
+`waitFor` does not perform a separate alert refresh before entering its loop;
+the loop's own fresh snapshots preserve both its timeout budget and current
+interaction state. Other public Runtime commands refresh once per CLI
+invocation.
 
 Mac-start and command-invocation performance measurements are not part of
 user-facing text or JSON envelopes. `cli.log` keeps only `commandElapsedMs` and,

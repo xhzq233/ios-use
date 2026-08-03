@@ -478,6 +478,22 @@ enum PlayCoverSessionService {
         }
     }
 
+    static func requireNoPendingLaunch(
+        paths: IOSUsePaths
+    ) throws {
+        guard let record = try PlayCoverPendingLaunchStore.load(
+            paths: paths
+        ) else {
+            return
+        }
+        throw PlayCoverBackendError.pendingLaunchUnresolved(
+            "phase \(record.phase.rawValue), session "
+                + "\(record.sessionID), bundle "
+                + "\(record.bundleIdentifier); inspect with `ios-use "
+                + "status` or stop an exact owned launch"
+        )
+    }
+
     static func retirePendingLaunchJournalAfterDriverCommit(
         result: LaunchResult,
         paths: IOSUsePaths
@@ -485,138 +501,240 @@ enum PlayCoverSessionService {
         guard result.usesPendingLaunchJournal else {
             return
         }
-        try retirePendingLaunchJournalAfterDriverCommit(
+        guard let record = try PlayCoverPendingLaunchStore.load(
+            paths: paths
+        ) else {
+            throw PlayCoverPendingLaunchStoreError(
+                message: "driver.lock commit has no pending launch"
+            )
+        }
+        try validate(record, matches: result)
+        guard record.phase == .owned else {
+            throw PlayCoverPendingLaunchStoreError(
+                message: "driver.lock commit requires an owned launch"
+            )
+        }
+        _ = try PlayCoverPendingLaunchStore.markDriverLockCommitted(
             sessionID: result.sessionID,
-            pid: result.pid,
-            appPath: result.appPath,
-            bundleIdentifier: result.bundleIdentifier,
-            executablePath: result.executablePath,
-            generationKey: result.generationKey,
-            runtimeSocketPath: result.runtimeSocketPath,
-            paths: paths,
-            required: true
+            paths: paths
+        )
+        #if DEBUG && canImport(Darwin)
+        PlayCoverLaunchCrashCut.hit(.afterPendingDriverLockCommitted)
+        #endif
+        try PlayCoverPendingLaunchStore.remove(
+            sessionID: result.sessionID,
+            expectedPhase: .driverLockCommitted,
+            paths: paths
+        )
+        #if DEBUG && canImport(Darwin)
+        PlayCoverLaunchCrashCut.hit(.afterPendingJournalRemoved)
+        #endif
+    }
+
+    static func retirePendingLaunchMatchingDriverLock(
+        _ session: SessionService.Info,
+        paths: IOSUsePaths
+    ) throws {
+        guard let record = try PlayCoverPendingLaunchStore.load(
+            paths: paths
+        ) else {
+            return
+        }
+        try validate(record, matches: session)
+        switch record.phase {
+        case .intent:
+            throw PlayCoverBackendError.pendingLaunchUnresolved(
+                "an unowned launch intent exists beside driver.lock"
+            )
+        case .owned:
+            _ = try PlayCoverPendingLaunchStore
+                .markDriverLockCommitted(
+                    sessionID: record.sessionID,
+                    paths: paths
+                )
+            try PlayCoverPendingLaunchStore.remove(
+                sessionID: record.sessionID,
+                expectedPhase: .driverLockCommitted,
+                paths: paths
+            )
+        case .driverLockCommitted:
+            try PlayCoverPendingLaunchStore.remove(
+                sessionID: record.sessionID,
+                expectedPhase: .driverLockCommitted,
+                paths: paths
+            )
+        }
+    }
+
+    static func rollbackAfterDriverCommitFailure(
+        result: LaunchResult,
+        paths: IOSUsePaths
+    ) throws {
+        guard result.usesPendingLaunchJournal else {
+            throw PlayCoverPendingLaunchStoreError(
+                message: "commit rollback requires a pending journal"
+            )
+        }
+        guard let record = try PlayCoverPendingLaunchStore.load(
+            paths: paths
+        ) else {
+            throw PlayCoverPendingLaunchStoreError(
+                message: "commit rollback has no pending authority"
+            )
+        }
+        try validate(record, matches: result)
+        guard record.phase == .owned
+                || record.phase == .driverLockCommitted else {
+            throw PlayCoverPendingLaunchStoreError(
+                message: "commit rollback lacks an exact owner"
+            )
+        }
+        let manifest = try validatePendingGeneration(
+            record,
+            paths: paths
+        )
+        try PlayCoverService.terminateFailedLaunch(
+            identity: try pendingLaunchIdentity(record),
+            manifest: manifest
+        )
+        try DriverSessionStore.removeDriverLock(paths: paths)
+        try cleanupStoppedPendingLaunch(
+            record,
+            manifest: manifest,
+            operation: .launch,
+            paths: paths
         )
     }
 
-    static func retirePendingLaunchJournalAfterDriverCommit(
-        session: SessionService.Info,
+    static func stopPendingWithoutDriverLock(
         paths: IOSUsePaths
+    ) throws -> Int32? {
+        guard let record = try PlayCoverPendingLaunchStore.load(
+            paths: paths
+        ) else {
+            return nil
+        }
+        guard record.phase == .owned
+                || record.phase == .driverLockCommitted else {
+            throw PlayCoverBackendError.pendingLaunchUnresolved(
+                "phase intent has no authenticated process owner; "
+                    + "the journal and launch facade were preserved"
+            )
+        }
+        let manifest = try validatePendingGeneration(
+            record,
+            paths: paths
+        )
+        let identity = try pendingLaunchIdentity(record)
+        try PlayCoverService.terminateFailedLaunch(
+            identity: identity,
+            manifest: manifest
+        )
+        try cleanupStoppedPendingLaunch(
+            record,
+            manifest: manifest,
+            operation: .stop,
+            paths: paths
+        )
+        return identity.pid
+    }
+
+    private static func cleanupStoppedPendingLaunch(
+        _ record: PlayCoverPendingLaunchStore.Record,
+        manifest: PlayCoverPrepareManifest,
+        operation: PlayCoverSessionCleanupError.Operation,
+        paths: IOSUsePaths
+    ) throws {
+        do {
+            try PlayCoverService.lockKeyCover(
+                for: manifest,
+                playChainPath: paths.playcoverPlayChain
+            )
+            try PlayCoverService.removeSessionLaunchAlias(
+                sessionID: record.sessionID,
+                manifest: manifest
+            )
+            try PlayCoverPendingLaunchStore.remove(
+                sessionID: record.sessionID,
+                expectedPhase: record.phase,
+                paths: paths
+            )
+        } catch {
+            throw PlayCoverSessionCleanupError(
+                operation: operation,
+                cleanupError: error,
+                originalError: nil,
+                logPath: nil
+            )
+        }
+    }
+
+    private static func pendingLaunchIdentity(
+        _ record: PlayCoverPendingLaunchStore.Record
+    ) throws -> PlayCoverService.LaunchedApplicationIdentity {
+        guard let owner = record.owner else {
+            throw PlayCoverPendingLaunchStoreError(
+                message: "pending launch has no exact owner"
+            )
+        }
+        let source: PlayCoverService.LaunchIdentitySource
+        switch owner.source {
+        case .workspaceCallback:
+            source = .workspaceCallback
+        case .authenticatedRuntime:
+            source = .authenticatedRuntime
+        }
+        return PlayCoverService.LaunchedApplicationIdentity(
+            pid: owner.pid,
+            bundleIdentifier: record.bundleIdentifier,
+            bundleURLPath: record.aliasPath,
+            executablePath: record.executablePath,
+            processStartTimeMicroseconds:
+                owner.processBirthMicroseconds,
+            source: source
+        )
+    }
+
+    private static func validate(
+        _ record: PlayCoverPendingLaunchStore.Record,
+        matches result: LaunchResult
+    ) throws {
+        guard record.sessionID == result.sessionID,
+              record.owner?.pid == result.pid,
+              record.appPath == result.appPath,
+              record.bundleIdentifier == result.bundleIdentifier,
+              record.executablePath == result.executablePath,
+              record.generationKey == result.generationKey,
+              record.runtimeSocketPath == result.runtimeSocketPath else {
+            throw PlayCoverPendingLaunchStoreError(
+                message: "launch result does not match pending authority"
+            )
+        }
+    }
+
+    private static func validate(
+        _ record: PlayCoverPendingLaunchStore.Record,
+        matches session: SessionService.Info
     ) throws {
         guard session.deviceType == deviceType,
               let sessionID = session.sessionIdentifier,
-              let pidValue = session.runnerPid,
-              pidValue > 0,
-              pidValue <= Int(Int32.max),
+              let pid = session.runnerPid,
               let appPath = session.macAppPath,
               let bundleIdentifier = session.bundleId,
-              let executablePath =
-                session.macExecutablePath,
-              let generationKey =
-                session.macGenerationKey,
-              let runtimeSocketPath =
-                session.macRuntimeSocketPath else {
-            throw CLIParseError.invalidValue(
-                "Invalid driver.lock: Mac handoff identity "
-                    + "is incomplete."
-            )
-        }
-        try retirePendingLaunchJournalAfterDriverCommit(
-            sessionID: sessionID,
-            pid: Int32(pidValue),
-            appPath: appPath,
-            bundleIdentifier: bundleIdentifier,
-            executablePath: executablePath,
-            generationKey: generationKey,
-            runtimeSocketPath: runtimeSocketPath,
-            paths: paths,
-            required: false
-        )
-    }
-
-    private static func retirePendingLaunchJournalAfterDriverCommit(
-        sessionID: String,
-        pid: Int32,
-        appPath: String,
-        bundleIdentifier: String,
-        executablePath: String,
-        generationKey: String,
-        runtimeSocketPath: String,
-        paths: IOSUsePaths,
-        required: Bool
-    ) throws {
-        guard var record = try PlayCoverPendingLaunchStore.load(
-            paths: paths
-        ) else {
-            if required {
-                throw PlayCoverPendingLaunchStoreError(
-                    message:
-                        "driver.lock commit has no matching "
-                        + "pending launch"
-                )
-            }
-            return
-        }
-        guard record.sessionID == sessionID,
-              record.owner?.pid == pid,
+              let executablePath = session.macExecutablePath,
+              let generationKey = session.macGenerationKey,
+              let runtimeSocketPath = session.macRuntimeSocketPath,
+              record.sessionID == sessionID,
+              record.owner?.pid == Int32(exactly: pid),
               record.appPath == appPath,
               record.bundleIdentifier == bundleIdentifier,
               record.executablePath == executablePath,
               record.generationKey == generationKey,
               record.runtimeSocketPath == runtimeSocketPath else {
             throw PlayCoverPendingLaunchStoreError(
-                message:
-                    "driver.lock does not match the pending "
-                    + "launch authority"
-                )
-        }
-        switch record.phase {
-        case .owned:
-            record = try PlayCoverPendingLaunchStore
-                .markDriverLockCommitted(
-                    sessionID: sessionID,
-                    paths: paths
-                )
-            #if DEBUG && canImport(Darwin)
-            PlayCoverLaunchCrashCut.hit(
-                .afterPendingDriverLockCommitted
-            )
-            #endif
-            fallthrough
-        case .driverLockCommitted:
-            record = try PlayCoverPendingLaunchStore
-                .markConfirmedStopped(
-                    sessionID: sessionID,
-                    cleanupProof: .driverLockRetired,
-                    paths: paths
-                )
-            #if DEBUG && canImport(Darwin)
-            PlayCoverLaunchCrashCut.hit(
-                .afterPendingDriverLockRetired
-            )
-            #endif
-        case .confirmedStopped:
-            guard record.cleanupProof == .driverLockRetired else {
-                throw PlayCoverPendingLaunchStoreError(
-                    message:
-                        "driver.lock handoff conflicts with "
-                        + "pending cleanup proof"
-                )
-            }
-        case .intent, .aliasReady, .submissionArmed,
-             .terminalCallback:
-            throw PlayCoverPendingLaunchStoreError(
-                message:
-                    "driver.lock was committed before durable "
-                    + "process ownership"
+                message: "driver.lock does not match pending authority"
             )
         }
-        try PlayCoverPendingLaunchStore.removeConfirmed(
-            sessionID: sessionID,
-            paths: paths
-        )
-        #if DEBUG && canImport(Darwin)
-        PlayCoverLaunchCrashCut.hit(.afterPendingJournalRemoved)
-        #endif
     }
 
     @discardableResult

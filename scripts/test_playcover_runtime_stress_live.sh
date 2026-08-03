@@ -330,7 +330,9 @@ validate_pass_attestation() {
         all(
           .responseBytes > 0 and
           .controlHelloFieldCount == 9 and
-          (.uiState == "initializing" or .uiState == "ready") and
+          (.uiState == "initializing" or
+           .uiState == "ready" or
+           .uiState == "backgrounded") and
           (.uiStage | type) == "string" and
           (.uiStage | length) > 0 and
           .forbiddenUIFieldCount == 0 and
@@ -1384,7 +1386,9 @@ if ! jq -e '
     .runtimeListenerSurvived == true and
     .responseBytes > 0 and
     .controlHelloFieldCount == 9 and
-    (.uiState == "initializing" or .uiState == "ready") and
+    (.uiState == "initializing" or
+     .uiState == "ready" or
+     .uiState == "backgrounded") and
     (.uiStage | type) == "string" and
     (.uiStage | length) > 0 and
     .forbiddenUIFieldCount == 0

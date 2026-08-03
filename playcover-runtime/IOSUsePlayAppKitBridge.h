@@ -34,10 +34,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSDictionary<NSString *, id> * _Nullable)
     dismissTransientTextInputWindows:
         (NSError * _Nullable * _Nullable)error;
-+ (NSArray<NSDictionary<NSString *, id> *> * _Nullable)
-    activeAccessibilityElementsWithError:
-        (NSError * _Nullable * _Nullable)error;
 + (NSDictionary<NSString *, id> *)readinessDiagnostics;
++ (NSDictionary<NSString *, id> *)uiAutomationAvailability;
 + (NSDictionary<NSString *, id> *)diagnostics;
 + (NSDictionary<NSString *, id> *)diagnosticsWithNativeAlertSnapshot:
     (NSDictionary<NSString *, id> *)nativeAlertSnapshot;

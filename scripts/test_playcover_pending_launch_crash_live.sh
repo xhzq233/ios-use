@@ -14,31 +14,22 @@ INITIAL_REPOSITORY_STATUS=""
 RUN_DIR=""
 BUILD_ROOT=""
 SOURCE_ROOT=""
-CLI_SCRATCH_PATH=""
-FIXTURE_DERIVED_DATA=""
-RUNTIME_FRAMEWORK=""
-FIXTURE_APP=""
 DEBUG_CLI=""
+RUNTIME_FRAMEWORK=""
 RUNTIME_PROBE=""
-MAIN_HOME=""
-ARMED_HOME=""
+FIXTURE_APP=""
+TEST_HOME=""
 SUCCESS=0
-IDENTITY_PID=""
-IDENTITY_BIRTH=""
-IDENTITY_SOCKET=""
-IDENTITY_SESSION=""
-IDENTITY_EXECUTABLE=""
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/test_playcover_pending_launch_crash_live.sh --live
 
---live    Build committed HEAD in a fresh scratch tree, then deliberately
-          terminate the debug CLI at durable pending-launch boundaries and
-          verify recovery from independent CLI processes. The launch façade
-          is confined to an isolated /tmp alias root. This debug-only gate does
-          not attest production installed-layout callback ordering. It requires
-          the documented disposable-account ACK and expected passwd Home.
+Build committed HEAD in scratch, launch the public fixture, and crash the
+debug CLI at the five durable launch boundaries. The gate verifies the exact
+three-phase pending journal, fail-closed intent behavior, exact-owner stop,
+and driver.lock handoff. It requires the documented disposable-account ACK,
+the matching passwd Home, and an unlocked launch-capable GUI session.
 USAGE
 }
 
@@ -62,10 +53,9 @@ repository_status() {
     --ignore-submodules=none
 }
 
-assert_initial_repository_state() {
-  START_GIT_HEAD="$(
-    git -C "$ROOT_DIR" rev-parse --verify HEAD
-  )" || config_fail "could not resolve current HEAD"
+assert_clean_committed_head() {
+  START_GIT_HEAD="$(git -C "$ROOT_DIR" rev-parse --verify HEAD)" ||
+    config_fail "could not resolve current HEAD"
   if [[
     ! "$START_GIT_HEAD" =~ ^[0-9a-f]{40}$ &&
     ! "$START_GIT_HEAD" =~ ^[0-9a-f]{64}$
@@ -85,23 +75,28 @@ assert_repository_unchanged() {
   local end_status
   end_head="$(git -C "$ROOT_DIR" rev-parse --verify HEAD)" ||
     fail_gate "could not resolve HEAD after the gate"
-  if [[ "$end_head" != "$START_GIT_HEAD" ]]; then
-    fail_gate "checkout HEAD changed during the gate"
-  fi
   end_status="$(repository_status)" ||
     fail_gate "could not inspect repository status after the gate"
-  if [[ "$end_status" != "$INITIAL_REPOSITORY_STATUS" ]]; then
-    printf '%s\n' "$end_status" >&2
-    fail_gate "checkout state changed during the gate"
+  if [[
+    "$end_head" != "$START_GIT_HEAD" ||
+    "$end_status" != "$INITIAL_REPOSITORY_STATUS"
+  ]]; then
+    fail_gate "checkout changed during the gate"
   fi
 }
 
 canonical_directory() {
   local path="$1"
-  if [[ ! -d "$path" || -L "$path" ]]; then
-    return 1
-  fi
+  [[ -d "$path" && ! -L "$path" ]] || return 1
   (cd "$path" && pwd -P)
+}
+
+canonical_file() {
+  local path="$1"
+  local directory
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  directory="$(cd "$(dirname "$path")" && pwd -P)" || return 1
+  printf '%s/%s\n' "$directory" "$(basename "$path")"
 }
 
 assert_owner_only_directory() {
@@ -113,28 +108,41 @@ assert_owner_only_directory() {
     "$(/usr/bin/stat -f '%u' "$path")" != "$(/usr/bin/id -u)" ||
     "$(/usr/bin/stat -f '%Lp' "$path")" != "700"
   ]]; then
-    config_fail "$label is not an owner-only regular directory: $path"
+    config_fail "$label is not an owner-only directory: $path"
   fi
 }
 
 assert_outside_checkout() {
-  local path="$1"
-  local label="$2"
   local canonical
-  canonical="$(canonical_directory "$path")" ||
-    config_fail "$label cannot be canonicalized"
+  canonical="$(canonical_directory "$1")" ||
+    config_fail "$2 cannot be canonicalized"
   case "$canonical" in
     "$ROOT_DIR"|"$ROOT_DIR"/*)
-      config_fail "$label must stay outside the checkout: $canonical"
+      config_fail "$2 must stay outside the checkout: $canonical"
       ;;
   esac
 }
 
+require_test_home() {
+  local home="$1"
+  local canonical
+  case "$home" in
+    /tmp/iupc.*|/private/tmp/iupc.*) ;;
+    *) return 1 ;;
+  esac
+  canonical="$(canonical_directory "$home")" || return 1
+  case "$canonical" in
+    /private/tmp/iupc.*) ;;
+    *) return 1 ;;
+  esac
+  [[
+    "$(/usr/bin/stat -f '%u' "$home")" == "$(/usr/bin/id -u)" &&
+    "$(/usr/bin/stat -f '%Lp' "$home")" == "700"
+  ]]
+}
+
 require_build_root() {
   local canonical
-  if [[ -z "$BUILD_ROOT" ]]; then
-    return 1
-  fi
   case "$BUILD_ROOT" in
     /tmp/ios-use-playcover-pending-crash-build.*|\
     /private/tmp/ios-use-playcover-pending-crash-build.*) ;;
@@ -151,37 +159,35 @@ require_build_root() {
   ]]
 }
 
-require_temporary_home() {
+home_descriptor_path() {
   local home="$1"
   local canonical
-  case "$home" in
-    /tmp/iupc.*|/private/tmp/iupc.*) ;;
-    *) fail_gate "refusing an unexpected temporary home: $home" ;;
-  esac
-  canonical="$(canonical_directory "$home")" ||
-    fail_gate "temporary home cannot be canonicalized: $home"
-  case "$canonical" in
-    /private/tmp/iupc.*) ;;
-    *) fail_gate "temporary home escaped /private/tmp: $canonical" ;;
-  esac
-  if [[
-    "$(/usr/bin/stat -f '%u' "$home")" != "$(/usr/bin/id -u)" ||
-    "$(/usr/bin/stat -f '%Lp' "$home")" != "700"
-  ]]; then
-    fail_gate "temporary home is not owner-only: $home"
-  fi
+  local home_id
+  canonical="$(canonical_directory "$home")" || return 1
+  home_id="$({ printf '%s' "$canonical"; } | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+  [[ "$home_id" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s/%s.json\n' "$PLAYCOVER_KNOWN_HOMES_ROOT" "$home_id"
 }
 
-canonical_existing_file() {
-  local path="$1"
-  local directory
-  local base
-  if [[ ! -e "$path" || -L "$path" ]]; then
+remove_home_descriptor() {
+  local home="$1"
+  local descriptor
+  descriptor="$(home_descriptor_path "$home")" || return 1
+  if [[ ! -e "$descriptor" && ! -L "$descriptor" ]]; then
+    return 0
+  fi
+  case "$descriptor" in
+    "$PLAYCOVER_KNOWN_HOMES_ROOT"/[0-9a-f]*.json) ;;
+    *) return 1 ;;
+  esac
+  if [[
+    ! -f "$descriptor" ||
+    -L "$descriptor" ||
+    "$(/usr/bin/stat -f '%u' "$descriptor")" != "$(/usr/bin/id -u)"
+  ]]; then
     return 1
   fi
-  directory="$(cd "$(dirname "$path")" && pwd -P)" || return 1
-  base="$(basename "$path")"
-  printf '%s/%s\n' "$directory" "$base"
+  /bin/rm -f -- "$descriptor"
 }
 
 cli_env() {
@@ -193,71 +199,39 @@ cli_env() {
     "$@"
 }
 
-try_stop_home() {
-  local home="$1"
-  if [[
-    -z "$DEBUG_CLI" ||
-    ! -x "$DEBUG_CLI" ||
-    -z "$home" ||
-    ! -d "$home"
-  ]]; then
-    return 0
+try_stop() {
+  if [[ -n "$TEST_HOME" && -d "$TEST_HOME" && -x "$DEBUG_CLI" ]]; then
+    cli_env "$TEST_HOME" "$DEBUG_CLI" --json stop >/dev/null 2>&1 || true
   fi
-  cli_env "$home" "$DEBUG_CLI" --json stop >/dev/null 2>&1 || true
-}
-
-remove_build_root() {
-  if [[ -z "$BUILD_ROOT" ]]; then
-    return 0
-  fi
-  if ! require_build_root; then
-    echo \
-      "[playcover-pending-crash] Refusing unsafe build-root cleanup: $BUILD_ROOT" \
-      >&2
-    return 1
-  fi
-  /bin/rm -rf -- "$BUILD_ROOT"
-  BUILD_ROOT=""
-}
-
-remove_home() {
-  local home="$1"
-  require_temporary_home "$home"
-  /bin/rm -rf -- "$home"
 }
 
 cleanup() {
   local exit_status=$?
   if [[ "$SUCCESS" -eq 1 ]]; then
-    try_stop_home "$MAIN_HOME"
-    try_stop_home "$ARMED_HOME"
-    if [[ -n "$MAIN_HOME" && -d "$MAIN_HOME" ]]; then
-      remove_home "$MAIN_HOME" || exit_status=1
-    fi
-    if [[ -n "$ARMED_HOME" && -d "$ARMED_HOME" ]]; then
-      remove_home "$ARMED_HOME" || exit_status=1
-    fi
-    remove_build_root || exit_status=1
-  else
-    if [[ -n "$MAIN_HOME" && -d "$MAIN_HOME" ]]; then
-      echo \
-        "[playcover-pending-crash] Main home retained for recovery: $MAIN_HOME" \
-        >&2
-    fi
-    if [[ -n "$ARMED_HOME" && -d "$ARMED_HOME" ]]; then
-      echo \
-        "[playcover-pending-crash] Armed home retained for evidence: $ARMED_HOME" \
-        >&2
+    try_stop
+    if [[ -n "$TEST_HOME" && -d "$TEST_HOME" ]]; then
+      remove_home_descriptor "$TEST_HOME" || exit_status=1
+      require_test_home "$TEST_HOME" || exit_status=1
+      if [[ "$exit_status" -eq 0 ]]; then
+        /bin/rm -rf -- "$TEST_HOME"
+        TEST_HOME=""
+      fi
     fi
     if [[ -n "$BUILD_ROOT" && -d "$BUILD_ROOT" ]]; then
-      echo \
-        "[playcover-pending-crash] Scratch build retained for recovery: $BUILD_ROOT" \
-        >&2
+      require_build_root || exit_status=1
+      if [[ "$exit_status" -eq 0 ]]; then
+        /bin/rm -rf -- "$BUILD_ROOT"
+        BUILD_ROOT=""
+      fi
     fi
+  else
+    [[ -z "$TEST_HOME" ]] ||
+      echo "[playcover-pending-crash] Home retained: $TEST_HOME" >&2
+    [[ -z "$BUILD_ROOT" ]] ||
+      echo "[playcover-pending-crash] Build retained: $BUILD_ROOT" >&2
   fi
   exit "$exit_status"
 }
-
 trap cleanup EXIT
 
 if [[ $# -ne 1 ]]; then
@@ -286,7 +260,7 @@ playcover_require_disposable_account_contract "playcover-pending-crash"
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   config_fail "Apple-silicon macOS is required"
 fi
-for tool in git jq mktemp plutil rg shasum swift swiftc tar xcrun xcodegen; do
+for tool in git jq mktemp shasum swift swiftc tar xcrun xcodegen; do
   command -v "$tool" >/dev/null 2>&1 ||
     config_fail "missing required tool: $tool"
 done
@@ -298,7 +272,7 @@ if [[
   config_fail "fixture overrides are forbidden for this committed-HEAD gate"
 fi
 
-assert_initial_repository_state
+assert_clean_committed_head
 
 if [[ "$EVIDENCE_ROOT" != /* ]]; then
   config_fail "evidence root must be absolute"
@@ -312,16 +286,9 @@ fi
 assert_owner_only_directory "$EVIDENCE_ROOT" "evidence root"
 assert_outside_checkout "$EVIDENCE_ROOT" "evidence root"
 RUN_DIR="$(mktemp -d "$EVIDENCE_ROOT/run.XXXXXX")" ||
-  config_fail "could not create exclusive evidence directory"
-/bin/chmod 700 "$RUN_DIR" ||
-  config_fail "could not secure evidence directory"
-assert_owner_only_directory "$RUN_DIR" "evidence directory"
-assert_outside_checkout "$RUN_DIR" "evidence directory"
+  config_fail "could not create evidence directory"
+/bin/chmod 700 "$RUN_DIR"
 printf '%s\n' "$START_GIT_HEAD" >"$RUN_DIR/git-head"
-printf '%s\n' "$CRASH_EXIT" >"$RUN_DIR/crash-exit"
-printf '%s\n' \
-  "isolated-debug-alias-gate; not production installed-layout callback ordering" \
-  >"$RUN_DIR/scope"
 
 console_session_state="$(/usr/sbin/ioreg -n Root -d1)"
 if rg -q '"CGSSessionScreenIsLocked"=(Yes|true|1)' \
@@ -329,877 +296,265 @@ if rg -q '"CGSSessionScreenIsLocked"=(Yes|true|1)' \
   config_fail "the macOS console session is locked"
 fi
 
-BUILD_ROOT="$(
-  mktemp -d /tmp/ios-use-playcover-pending-crash-build.XXXXXX
-)" || config_fail "could not create isolated build root"
-/bin/chmod 700 "$BUILD_ROOT" ||
-  config_fail "could not secure isolated build root"
-require_build_root ||
-  config_fail "isolated build root failed canonical/owner checks"
-assert_outside_checkout "$BUILD_ROOT" "isolated build root"
+BUILD_ROOT="$(mktemp -d /tmp/ios-use-playcover-pending-crash-build.XXXXXX)" ||
+  config_fail "could not create build root"
+/bin/chmod 700 "$BUILD_ROOT"
+require_build_root || config_fail "build root failed safety checks"
+assert_outside_checkout "$BUILD_ROOT" "build root"
 
 SOURCE_ROOT="$BUILD_ROOT/source-head"
-CLI_SCRATCH_PATH="$BUILD_ROOT/swiftpm"
-FIXTURE_DERIVED_DATA="$BUILD_ROOT/fixture-derived"
 RUNTIME_FRAMEWORK="$BUILD_ROOT/runtime/IOSUsePlayRuntime.framework"
-FIXTURE_APP="$FIXTURE_DERIVED_DATA/Build/Products/Release-iphoneos/IOSUsePlayFixture.app"
 DEBUG_CLI="$BUILD_ROOT/ios-use"
 RUNTIME_PROBE="$BUILD_ROOT/runtime-socket-probe"
+fixture_derived="$BUILD_ROOT/fixture-derived"
+FIXTURE_APP="$fixture_derived/Build/Products/Release-iphoneos/IOSUsePlayFixture.app"
 
-/bin/mkdir -m 700 "$SOURCE_ROOT" ||
-  config_fail "could not create committed-HEAD source root"
-if ! git -C "$ROOT_DIR" archive "$START_GIT_HEAD" |
-    /usr/bin/tar -x -C "$SOURCE_ROOT"; then
-  fail_gate "could not materialize committed HEAD in scratch"
-fi
-if [[
-  ! -f "$SOURCE_ROOT/swift-cli/Package.swift" ||
-  ! -f "$SOURCE_ROOT/playcover-runtime/project.yml" ||
-  ! -f "$SOURCE_ROOT/playcover-fixtures/project.yml"
-]]; then
-  fail_gate "committed-HEAD source archive is incomplete"
-fi
+/bin/mkdir -m 700 "$SOURCE_ROOT"
+git -C "$ROOT_DIR" archive "$START_GIT_HEAD" |
+  /usr/bin/tar -x -C "$SOURCE_ROOT" ||
+  fail_gate "could not materialize committed HEAD"
 
-echo \
-  "[playcover-pending-crash] Building Runtime from committed HEAD $START_GIT_HEAD..." \
-  >&2
+echo "[playcover-pending-crash] Building committed HEAD..." >&2
 bash "$SOURCE_ROOT/scripts/build_playcover_runtime.sh" \
-  --output "$RUNTIME_FRAMEWORK" \
-  --replace \
+  --output "$RUNTIME_FRAMEWORK" --replace \
   >"$RUN_DIR/build-runtime.stdout" \
   2>"$RUN_DIR/build-runtime.stderr" ||
-  fail_gate "Runtime scratch build failed"
+  fail_gate "Runtime build failed"
 
-echo \
-  "[playcover-pending-crash] Building debug CLI in isolated SwiftPM scratch..." \
-  >&2
-if ! {
-  swift build \
-    --package-path "$SOURCE_ROOT/swift-cli" \
-    --scratch-path "$CLI_SCRATCH_PATH" \
-    --configuration debug \
-    --product ios-use-swift
-  debug_bin_dir="$(
-    swift build \
-      --package-path "$SOURCE_ROOT/swift-cli" \
-      --scratch-path "$CLI_SCRATCH_PATH" \
-      --configuration debug \
-      --show-bin-path
-  )"
-  /bin/cp "$debug_bin_dir/ios-use-swift" "$DEBUG_CLI"
-  /bin/chmod 700 "$DEBUG_CLI"
-} >"$RUN_DIR/build-debug-cli.stdout" \
-  2>"$RUN_DIR/build-debug-cli.stderr"; then
-  fail_gate "debug CLI scratch build failed"
-fi
+swift build \
+  --package-path "$SOURCE_ROOT/swift-cli" \
+  --scratch-path "$BUILD_ROOT/swiftpm" \
+  --configuration debug \
+  --product ios-use-swift \
+  >"$RUN_DIR/build-cli.stdout" \
+  2>"$RUN_DIR/build-cli.stderr" ||
+  fail_gate "debug CLI build failed"
+cli_bin_dir="$(swift build \
+  --package-path "$SOURCE_ROOT/swift-cli" \
+  --scratch-path "$BUILD_ROOT/swiftpm" \
+  --configuration debug \
+  --show-bin-path)"
+/bin/cp "$cli_bin_dir/ios-use-swift" "$DEBUG_CLI"
+/bin/chmod 700 "$DEBUG_CLI"
 
-echo \
-  "[playcover-pending-crash] Building fixture in isolated DerivedData..." \
-  >&2
 bash "$SOURCE_ROOT/playcover-fixtures/build.sh" \
   --configuration Release \
   --sdk iphoneos \
-  --derived-data-path "$FIXTURE_DERIVED_DATA" \
+  --derived-data-path "$fixture_derived" \
   >"$RUN_DIR/build-fixture.stdout" \
   2>"$RUN_DIR/build-fixture.stderr" ||
-  fail_gate "fixture scratch build failed"
+  fail_gate "fixture build failed"
+
+xcrun swiftc \
+  -module-cache-path "$BUILD_ROOT/probe-module-cache" \
+  "$SOURCE_ROOT/playcover-fixtures/runtime_socket_probe.swift" \
+  -o "$RUNTIME_PROBE" \
+  >"$RUN_DIR/build-probe.stdout" \
+  2>"$RUN_DIR/build-probe.stderr" ||
+  fail_gate "Runtime probe build failed"
 
 if [[
   ! -x "$DEBUG_CLI" ||
+  ! -x "$RUNTIME_PROBE" ||
   ! -x "$RUNTIME_FRAMEWORK/IOSUsePlayRuntime" ||
   ! -d "$FIXTURE_APP" ||
-  -L "$FIXTURE_APP" ||
-  ! -f "$FIXTURE_APP/Info.plist"
+  -L "$FIXTURE_APP"
 ]]; then
-  fail_gate "scratch CLI, Runtime, or fixture is unavailable"
+  fail_gate "scratch outputs are incomplete"
 fi
 
-if ! xcrun swiftc \
-    -module-cache-path "$BUILD_ROOT/probe-module-cache" \
-    "$SOURCE_ROOT/playcover-fixtures/runtime_socket_probe.swift" \
-    -o "$RUNTIME_PROBE" \
-    >"$RUN_DIR/build-runtime-probe.stdout" \
-    2>"$RUN_DIR/build-runtime-probe.stderr"; then
-  fail_gate "could not compile the read-only Runtime socket probe"
-fi
-/bin/chmod 700 "$RUNTIME_PROBE"
+TEST_HOME="$(mktemp -d /tmp/iupc.XXXXXX)" ||
+  fail_gate "could not create temporary IOS_USE_HOME"
+/bin/chmod 700 "$TEST_HOME"
+require_test_home "$TEST_HOME" || fail_gate "unsafe temporary IOS_USE_HOME"
+/bin/mkdir -m 700 "$TEST_HOME/mac"
+/usr/bin/ditto \
+  "$RUNTIME_FRAMEWORK" \
+  "$TEST_HOME/mac/IOSUsePlayRuntime.framework"
 
-make_home() {
-  local home
-  home="$(mktemp -d /tmp/iupc.XXXXXX)" ||
-    fail_gate "could not create temporary logical IOS_USE_HOME"
-  /bin/chmod 700 "$home" ||
-    fail_gate "could not secure temporary logical IOS_USE_HOME"
-  require_temporary_home "$home"
-  /bin/mkdir -m 700 "$home/mac" ||
-    fail_gate "could not create temporary logical Mac state"
-  /usr/bin/ditto \
-    "$RUNTIME_FRAMEWORK" \
-    "$home/mac/IOSUsePlayRuntime.framework" ||
-    fail_gate "could not install scratch Runtime in temporary logical home"
-  printf '%s\n' "$home"
-}
-
-global_generation_path() {
-  local generation="$1"
-  printf '%s/%s\n' "$PLAYCOVER_GLOBAL_OBJECTS_ROOT" "$generation"
-}
-
-assert_no_driver_lock() {
-  local home="$1"
-  if [[ -e "$home/state/driver.lock" || -L "$home/state/driver.lock" ]]; then
-    fail_gate "unexpected driver.lock in $home"
+assert_machine_success() {
+  local file="$1"
+  local command="$2"
+  if ! jq -e \
+      --arg command "$command" '
+        .ok == true and
+        .command == $command
+      ' "$file" >/dev/null; then
+    fail_gate "$file is not a successful $command envelope"
   fi
 }
 
-assert_driver_lock_present() {
-  local home="$1"
-  local case_name="$2"
-  local lock="$home/state/driver.lock"
-  if [[
-    ! -f "$lock" ||
-    -L "$lock" ||
-    "$(/usr/bin/stat -f '%u' "$lock")" != "$(/usr/bin/id -u)" ||
-    "$(/usr/bin/stat -f '%Lp' "$lock")" != "600" ||
-    "$(/usr/bin/stat -f '%l' "$lock")" != "1"
-  ]]; then
-    fail_gate "$case_name has no exact owner-only driver.lock"
+assert_pending_failure() {
+  local file="$1"
+  local command="$2"
+  if ! jq -e \
+      --arg command "$command" '
+        .ok == false and
+        .command == $command and
+        .error.category == "session" and
+        .error.code == "mac_pending_launch_unresolved" and
+        .error.phase == "mac_pending_launch" and
+        .error.retryable == false and
+        .error.fatal == false and
+        .error.mutationMayHaveApplied == false
+      ' "$file" >/dev/null; then
+    fail_gate "$file is not the typed unresolved-pending error"
   fi
 }
 
-assert_pending_evidence() {
-  local home="$1"
-  local case_name="$2"
-  local journal="$home/mac/pending-launch.json"
-  local canonical_home
+assert_private_file() {
+  local path="$1"
+  local label="$2"
   if [[
-    ! -f "$journal" ||
-    -L "$journal" ||
-    "$(/usr/bin/stat -f '%u' "$journal")" != "$(/usr/bin/id -u)" ||
-    "$(/usr/bin/stat -f '%Lp' "$journal")" != "600" ||
-    "$(/usr/bin/stat -f '%l' "$journal")" != "1"
+    ! -f "$path" ||
+    -L "$path" ||
+    "$(/usr/bin/stat -f '%u' "$path")" != "$(/usr/bin/id -u)" ||
+    "$(/usr/bin/stat -f '%Lp' "$path")" != "600" ||
+    "$(/usr/bin/stat -f '%l' "$path")" != "1"
   ]]; then
-    fail_gate "$case_name did not retain an exact owner-only pending journal"
+    fail_gate "$label is not an owner-only single-link file"
+  fi
+}
+
+assert_pending_phase() {
+  local expected="$1"
+  local case_name="$2"
+  local journal="$TEST_HOME/mac/pending-launch.json"
+  assert_private_file "$journal" "$case_name pending journal"
+  if ! jq -e \
+      --arg phase "$expected" '
+        .phase == $phase and
+        (keys | sort) == (
+          if $phase == "intent" then
+            ["aliasPath", "appPath", "bundleIdentifier", "executablePath",
+             "generationKey", "phase", "runtimeSocketPath", "sessionID"]
+          else
+            ["aliasPath", "appPath", "bundleIdentifier", "executablePath",
+             "generationKey", "owner", "phase", "runtimeSocketPath", "sessionID"]
+          end | sort
+        ) and
+        ($phase == "intent" or (
+          .owner.pid > 1 and
+          (.owner.processBirthMicroseconds | strings | length) > 0 and
+          (.owner.source == "workspaceCallback" or
+           .owner.source == "authenticatedRuntime")
+        ))
+      ' "$journal" >/dev/null; then
+    fail_gate "$case_name journal is not exact phase $expected"
   fi
   /bin/cp "$journal" "$RUN_DIR/$case_name.pending-launch.json"
   local generation
-  local generation_path
   local alias_path
-  generation="$(jq -er '.generationKey' "$journal")" ||
-    fail_gate "$case_name journal has no generation"
-  generation_path="$(global_generation_path "$generation")"
-  alias_path="$(jq -er '.aliasPath' "$journal")" ||
-    fail_gate "$case_name journal has no façade"
-  canonical_home="$(canonical_directory "$home")" ||
-    fail_gate "$case_name home cannot be canonicalized"
+  generation="$(jq -er '.generationKey' "$journal")"
+  alias_path="$(jq -er '.aliasPath' "$journal")"
+  [[ -d "$PLAYCOVER_GLOBAL_OBJECTS_ROOT/$generation" ]] ||
+    fail_gate "$case_name generation is unavailable"
   case "$alias_path" in
-    "$home"/launch-alias/*.app|\
-    "$canonical_home"/launch-alias/*.app) ;;
-    *)
-      fail_gate "$case_name façade escaped the isolated alias root"
-      ;;
+    "$TEST_HOME"/launch-alias/*.app|/private"$TEST_HOME"/launch-alias/*.app) ;;
+    *) fail_gate "$case_name alias escaped the temporary Home" ;;
   esac
-  if [[
-    ! -d "$generation_path" ||
-    -L "$generation_path"
-  ]]; then
-    fail_gate "$case_name did not retain its account-global pending generation"
-  fi
-  if [[ ! -d "$alias_path" || -L "$alias_path" ]]; then
-    fail_gate "$case_name did not retain its exact isolated façade"
-  fi
+  [[ -d "$alias_path" && ! -L "$alias_path" ]] ||
+    fail_gate "$case_name alias is unavailable"
 }
 
-tree_archive_sha256() {
-  local root="$1"
-  local digest
-  digest="$(
-    COPYFILE_DISABLE=1 /usr/bin/tar -cf - -C "$root" . |
-      /usr/bin/shasum -a 256 |
-      /usr/bin/awk '{ print $1 }'
-  )" || fail_gate "could not hash preserved tree: $root"
-  if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-    fail_gate "tree hash was not a SHA-256 digest: $root"
-  fi
-  printf '%s\n' "$digest"
+assert_no_pending() {
+  [[ ! -e "$TEST_HOME/mac/pending-launch.json" &&
+     ! -L "$TEST_HOME/mac/pending-launch.json" ]] ||
+    fail_gate "$1 retained pending-launch.json"
 }
 
-capture_pending_fingerprint() {
-  local home="$1"
-  local label="$2"
-  assert_pending_evidence "$home" "$label"
-  local journal="$RUN_DIR/$label.pending-launch.json"
-  local alias_path
-  local generation
-  local generation_path
-  local alias_device
-  local alias_inode
-  local alias_stat
-  local generation_stat
-  local manifest_stat
-  local completed_stat
-  local journal_sha
-  local journal_stat
-  local alias_tree_sha
-  local generation_tree_sha
-  alias_path="$(jq -er '.aliasPath' "$journal")" ||
-    fail_gate "$label journal has no façade path"
-  generation="$(jq -er '.generationKey' "$journal")" ||
-    fail_gate "$label journal has no generation"
-  generation_path="$(global_generation_path "$generation")"
-  alias_device="$(/usr/bin/stat -f '%d' "$alias_path")" ||
-    fail_gate "$label could not stat façade device"
-  alias_inode="$(/usr/bin/stat -f '%i' "$alias_path")" ||
-    fail_gate "$label could not stat façade inode"
-  if ! jq -e \
-      --argjson device "$alias_device" \
-      --argjson inode "$alias_inode" '
-      .aliasDevice == $device and
-      .aliasInode == $inode and
-      (.aliasInventory | type) == "array" and
-      (.aliasInventory | length) > 0
-    ' "$journal" >/dev/null; then
-    fail_gate "$label façade identity does not match its journal"
-  fi
-  shopt -s nullglob dotglob
-  local alias_entries=("$alias_path"/*)
-  shopt -u dotglob nullglob
-  local expected_alias_count
-  expected_alias_count="$(jq -er '.aliasInventory | length' "$journal")" ||
-    fail_gate "$label journal has no façade inventory"
-  if [[ "${#alias_entries[@]}" -ne "$expected_alias_count" ]]; then
-    fail_gate "$label façade inventory count changed"
-  fi
-  local entry
-  local entry_name
-  local entry_destination
-  for entry in "${alias_entries[@]}"; do
-    if [[ ! -L "$entry" ]]; then
-      fail_gate "$label façade contains a non-symlink entry"
-    fi
-    entry_name="$(basename "$entry")"
-    entry_destination="$(/usr/bin/readlink "$entry")" ||
-      fail_gate "$label could not read façade entry $entry_name"
-    if ! jq -e \
-        --arg name "$entry_name" \
-        --arg destination "$entry_destination" '
-        [
-          .aliasInventory[] |
-          select(
-            .name == $name and
-            .destination == $destination
-          )
-        ] | length == 1
-      ' "$journal" >/dev/null; then
-      fail_gate "$label façade entry does not match its journal"
-    fi
-  done
-  if [[
-    ! -f "$generation_path/manifest.json" ||
-    -L "$generation_path/manifest.json" ||
-    ! -f "$generation_path/completed.json" ||
-    -L "$generation_path/completed.json"
-  ]]; then
-    fail_gate "$label generation markers are unavailable"
-  fi
-  journal_sha="$(
-    /usr/bin/shasum -a 256 "$journal" |
-      /usr/bin/awk '{ print $1 }'
-  )"
-  journal_stat="$(
-    /usr/bin/stat -f '%d:%i:%u:%Lp:%l:%z' \
-      "$home/mac/pending-launch.json"
-  )"
-  alias_stat="$(/usr/bin/stat -f '%d:%i:%Lp:%l' "$alias_path")"
-  generation_stat="$(
-    /usr/bin/stat -f '%d:%i:%Lp:%l' "$generation_path"
-  )"
-  manifest_stat="$(
-    /usr/bin/stat -f '%d:%i:%Lp:%l:%z' \
-      "$generation_path/manifest.json"
-  )"
-  completed_stat="$(
-    /usr/bin/stat -f '%d:%i:%Lp:%l:%z' \
-      "$generation_path/completed.json"
-  )"
-  alias_tree_sha="$(tree_archive_sha256 "$alias_path")"
-  generation_tree_sha="$(tree_archive_sha256 "$generation_path")"
-  jq -n \
-    --arg journalSHA256 "$journal_sha" \
-    --arg journalStat "$journal_stat" \
-    --arg aliasPath "$alias_path" \
-    --arg aliasStat "$alias_stat" \
-    --arg aliasTreeSHA256 "$alias_tree_sha" \
-    --arg generationPath "$generation_path" \
-    --arg generationStat "$generation_stat" \
-    --arg manifestStat "$manifest_stat" \
-    --arg completedStat "$completed_stat" \
-    --arg generationTreeSHA256 "$generation_tree_sha" '
-      {
-        journalSHA256: $journalSHA256,
-        journalStat: $journalStat,
-        aliasPath: $aliasPath,
-        aliasStat: $aliasStat,
-        aliasTreeSHA256: $aliasTreeSHA256,
-        generationPath: $generationPath,
-        generationStat: $generationStat,
-        manifestStat: $manifestStat,
-        completedStat: $completedStat,
-        generationTreeSHA256: $generationTreeSHA256
-      }
-    ' >"$RUN_DIR/$label.pending-fingerprint.json"
+assert_driver_lock() {
+  assert_private_file "$TEST_HOME/state/driver.lock" "$1 driver.lock"
 }
 
-assert_pending_fingerprint_unchanged() {
-  local home="$1"
-  local before_label="$2"
-  local after_label="$3"
-  capture_pending_fingerprint "$home" "$after_label"
-  if ! /usr/bin/cmp -s \
-      "$RUN_DIR/$before_label.pending-fingerprint.json" \
-      "$RUN_DIR/$after_label.pending-fingerprint.json"; then
-    /usr/bin/diff -u \
-      "$RUN_DIR/$before_label.pending-fingerprint.json" \
-      "$RUN_DIR/$after_label.pending-fingerprint.json" >&2 || true
-    fail_gate "$after_label mutated pending launch evidence"
-  fi
+assert_no_driver_lock() {
+  [[ ! -e "$TEST_HOME/state/driver.lock" &&
+     ! -L "$TEST_HOME/state/driver.lock" ]] ||
+    fail_gate "$1 retained driver.lock"
 }
 
 capture_status() {
-  local home="$1"
-  local case_name="$2"
-  cli_env "$home" "$DEBUG_CLI" status --json \
-    >"$RUN_DIR/$case_name.status.stdout" \
+  local case_name="$1"
+  cli_env "$TEST_HOME" "$DEBUG_CLI" --json status \
+    >"$RUN_DIR/$case_name.status.json" \
     2>"$RUN_DIR/$case_name.status.stderr" ||
     fail_gate "$case_name status failed"
-  if [[ -s "$RUN_DIR/$case_name.status.stderr" ]] ||
-    ! jq -se '
-      length == 1 and
-      (.[0] |
-        .schemaVersion == 1 and
-        .ok == true and
-        .command == "status"
-      )
-    ' "$RUN_DIR/$case_name.status.stdout" >/dev/null; then
-    fail_gate "$case_name status did not emit one success envelope"
-  fi
+  assert_machine_success "$RUN_DIR/$case_name.status.json" status
 }
 
-assert_pending_status_matches_journal() {
-  local case_name="$1"
-  local journal="$RUN_DIR/$case_name.pending-launch.json"
-  local status_file="$RUN_DIR/$case_name.status.stdout"
-  local phase
-  local session
-  local generation
-  local bundle
-  local owner_pid
-  phase="$(jq -er '.phase' "$journal")" ||
-    fail_gate "$case_name journal has no phase"
-  session="$(jq -er '.sessionID' "$journal")" ||
-    fail_gate "$case_name journal has no session"
-  generation="$(jq -er '.generationKey' "$journal")" ||
-    fail_gate "$case_name journal has no generation"
-  bundle="$(jq -er '.bundleIdentifier' "$journal")" ||
-    fail_gate "$case_name journal has no bundle"
-  owner_pid="$(jq -c '.owner.pid // null' "$journal")" ||
-    fail_gate "$case_name journal has no owner field"
-  if ! jq -e \
-      --arg phase "$phase" \
-      --arg session "$session" \
-      --arg generation "$generation" \
-      --arg bundle "$bundle" \
-      --argjson ownerPID "$owner_pid" '
-      .data.driver.phase == $phase and
-      .data.driver.sessionIdentifier == $session and
-      .data.driver.macGenerationKey == $generation and
-      .data.driver.bundleId == $bundle and
-      .data.driver.ownerPid == $ownerPID and
-      (
-        (
-          $phase == "submissionArmed" and
-          .data.driver.status == "unresolvedOpen"
-        ) or
-        (
-          $phase == "terminalCallback" and
-          (
-            .data.driver.status == "unresolvedOpen" or
-            .data.driver.status == "launchPending"
-          )
-        ) or
-        (
-          $phase == "owned" and
-          .data.driver.status == "launchPending"
-        )
-      )
-    ' "$status_file" >/dev/null; then
-    fail_gate "$case_name status did not match its durable journal"
-  fi
-}
-
-assert_phase() {
-  local case_name="$1"
-  shift
-  local journal="$RUN_DIR/$case_name.pending-launch.json"
-  local phase
-  phase="$(jq -er '.phase' "$journal")" ||
-    fail_gate "$case_name has no durable phase"
-  local expected
-  for expected in "$@"; do
-    if [[ "$phase" == "$expected" ]]; then
-      return 0
-    fi
-  done
-  fail_gate "$case_name phase $phase was not one of: $*"
-}
-
-assert_owner_source() {
-  local case_name="$1"
-  if ! jq -e '
-      .phase == "owned" and
-      (
-        .owner.source == "workspaceCallback" or
-        .owner.source == "authenticatedRuntime"
-      )
-    ' "$RUN_DIR/$case_name.pending-launch.json" >/dev/null; then
-    fail_gate "$case_name did not persist a real owner source"
-  fi
-}
-
-capture_live_process() {
-  local case_name="$1"
-  local pid="$2"
-  local output="$RUN_DIR/$case_name.process-live.json"
-  "$RUNTIME_PROBE" "$pid" process-identity >"$output" \
-    2>"$RUN_DIR/$case_name.process-live.stderr" ||
-    fail_gate "$case_name could not read exact live process identity"
-  jq -se \
-    --argjson pid "$pid" '
-      length == 1 and
-      (.[0] |
-        .schemaVersion == 1 and
-        .mode == "process-identity" and
-        .alive == true and
-        .pid == $pid and
-        (.processBirthMicroseconds | type) == "number" and
-        .processBirthMicroseconds > 0 and
-        (.executablePath | type) == "string" and
-        (.executablePath | length) > 0
-      )
-    ' "$output" >/dev/null ||
-    fail_gate "$case_name process probe returned incomplete identity"
-}
-
-assert_identified_runtime_live() {
-  local home="$1"
-  local case_name="$2"
-  local socket_path="$3"
-  local session_id="$4"
-  local expected_pid="$5"
-  local expected_birth="$6"
-  local expected_executable="$7"
-  local canonical_expected
-  local canonical_runtime
-  local expected_socket_prefix="$PLAYCOVER_SOCKET_ROOT/s-"
-  : "$home"
-  case "$socket_path" in
-    "$expected_socket_prefix"*.sock) ;;
-    *)
-      fail_gate "$case_name Runtime socket escaped the fixed UID socket root"
-      ;;
-  esac
-  if [[
-    ! -S "$socket_path" ||
-    -L "$socket_path" ||
-    "$(/usr/bin/stat -f '%u' "$socket_path")" != "$(/usr/bin/id -u)" ||
-    "$(/usr/bin/stat -f '%Lp' "$socket_path")" != "600"
-  ]]; then
-    fail_gate "$case_name Runtime socket is not an exact owner-only endpoint"
-  fi
-  "$RUNTIME_PROBE" \
-    "$socket_path" \
-    identified-ping \
-    "$session_id" \
-    >"$RUN_DIR/$case_name.runtime-live.json" \
-    2>"$RUN_DIR/$case_name.runtime-live.stderr" ||
-    fail_gate "$case_name Runtime did not authenticate the recorded session"
-  jq -se \
-    --argjson pid "$expected_pid" \
-    --argjson birth "$expected_birth" '
-    length == 1 and
-    (.[0] |
-      .schemaVersion == 1 and
-      .mode == "identified-ping" and
-      .runtimeListenerSurvived == true and
-      .runtimePID == $pid and
-      .runtimeBundleIdentifier == "com.iosuse.playfixture.stablev1" and
-      .processBirthMicroseconds == $birth and
-      (.runtimeExecutablePath | type) == "string"
-    )
-  ' "$RUN_DIR/$case_name.runtime-live.json" >/dev/null ||
-    fail_gate "$case_name Runtime probe did not match PID/birth/bundle"
-  canonical_expected="$(canonical_existing_file "$expected_executable")" ||
-    fail_gate "$case_name expected Runtime executable is unavailable"
-  canonical_runtime="$(
-    canonical_existing_file "$(
-      jq -er '.runtimeExecutablePath' \
-        "$RUN_DIR/$case_name.runtime-live.json"
-    )"
-  )" || fail_gate "$case_name Runtime-reported executable is unavailable"
-  if [[ "$canonical_runtime" != "$canonical_expected" ]]; then
-    fail_gate "$case_name Runtime probe did not match the exact executable"
-  fi
-}
-
-set_identity_from_owned_journal() {
-  local home="$1"
-  local case_name="$2"
-  local journal="$RUN_DIR/$case_name.pending-launch.json"
-  local canonical_expected
-  local canonical_observed
-  local owner_source
-  IDENTITY_PID="$(jq -er '.owner.pid' "$journal")" ||
-    fail_gate "$case_name owned journal has no PID"
-  IDENTITY_BIRTH="$(
-    jq -er '.owner.processBirthMicroseconds' "$journal"
-  )" || fail_gate "$case_name owned journal has no process birth"
-  IDENTITY_SOCKET="$(jq -er '.runtimeSocketPath' "$journal")" ||
-    fail_gate "$case_name owned journal has no Runtime socket"
-  IDENTITY_SESSION="$(jq -er '.sessionID' "$journal")" ||
-    fail_gate "$case_name owned journal has no session"
-  IDENTITY_EXECUTABLE="$(jq -er '.executablePath' "$journal")" ||
-    fail_gate "$case_name owned journal has no executable"
-  owner_source="$(jq -er '.owner.source' "$journal")" ||
-    fail_gate "$case_name owned journal has no owner source"
-  if [[
-    ! "$IDENTITY_PID" =~ ^[0-9]+$ ||
-    "$IDENTITY_PID" -le 1 ||
-    ! "$IDENTITY_BIRTH" =~ ^[0-9]+$ ||
-    "$IDENTITY_BIRTH" -le 0
-  ]]; then
-    fail_gate "$case_name owned journal has invalid PID/birth identity"
-  fi
-  capture_live_process "$case_name" "$IDENTITY_PID"
-  if ! jq -e \
-      --argjson birth "$IDENTITY_BIRTH" '
-      .processBirthMicroseconds == $birth
-    ' "$RUN_DIR/$case_name.process-live.json" >/dev/null; then
-    fail_gate "$case_name live PID does not match the durable birth identity"
-  fi
-  canonical_expected="$(canonical_existing_file "$IDENTITY_EXECUTABLE")" ||
-    fail_gate "$case_name durable executable is unavailable"
-  canonical_observed="$(
-    canonical_existing_file "$(
-      jq -er '.executablePath' "$RUN_DIR/$case_name.process-live.json"
-    )"
-  )" || fail_gate "$case_name observed executable is unavailable"
-  if [[ "$canonical_observed" != "$canonical_expected" ]]; then
-    fail_gate "$case_name live PID belongs to a different executable"
-  fi
-  case "$owner_source" in
-    authenticatedRuntime)
-      assert_identified_runtime_live \
-        "$home" \
-        "$case_name" \
-        "$IDENTITY_SOCKET" \
-        "$IDENTITY_SESSION" \
-        "$IDENTITY_PID" \
-        "$IDENTITY_BIRTH" \
-        "$IDENTITY_EXECUTABLE"
-      ;;
-    workspaceCallback)
-      printf '%s\n' \
-        "not-required: workspaceCallback façade/process authority" \
-        >"$RUN_DIR/$case_name.runtime-live.disposition"
-      printf '%s\n' "null" >"$RUN_DIR/$case_name.runtime-live.json"
-      ;;
-    *)
-      fail_gate "$case_name has an unsupported durable owner source"
-      ;;
-  esac
-  capture_status "$home" "$case_name"
-  assert_pending_status_matches_journal "$case_name"
-  jq -e \
-    --argjson pid "$IDENTITY_PID" '
-      .data.driver.status == "launchPending" and
-      .data.driver.phase == "owned" and
-      .data.driver.ownerPid == $pid and
-      (
-        .data.driver.reason ==
-          ("durable pending owner pid " + ($pid | tostring) + " is live")
-      )
-    ' "$RUN_DIR/$case_name.status.stdout" >/dev/null ||
-    fail_gate "$case_name status did not revalidate the durable PID/birth"
-  jq -n \
-    --slurpfile journal "$journal" \
-    --slurpfile process "$RUN_DIR/$case_name.process-live.json" \
-    --slurpfile runtime "$RUN_DIR/$case_name.runtime-live.json" '
-      {
-        authority: "pending-launch.json",
-        ownerSource: $journal[0].owner.source,
-        journal: $journal[0],
-        process: $process[0],
-        runtimeProbeRequired:
-          ($journal[0].owner.source == "authenticatedRuntime"),
-        runtimeProbe: $runtime[0]
-      }
-    ' >"$RUN_DIR/$case_name.identity.json"
-}
-
-set_identity_from_undurable_journal() {
-  local home="$1"
-  local case_name="$2"
-  local timeout_seconds="${3:-30}"
-  local journal="$RUN_DIR/$case_name.pending-launch.json"
-  local expected_bundle
-  local canonical_expected
-  local canonical_observed
-  local deadline=$((SECONDS + timeout_seconds))
-  local probe_status=1
-  IDENTITY_SOCKET="$(jq -er '.runtimeSocketPath' "$journal")" ||
-    fail_gate "$case_name pending journal has no Runtime socket"
-  IDENTITY_SESSION="$(jq -er '.sessionID' "$journal")" ||
-    fail_gate "$case_name pending journal has no session"
-  IDENTITY_EXECUTABLE="$(jq -er '.executablePath' "$journal")" ||
-    fail_gate "$case_name pending journal has no executable"
-  expected_bundle="$(jq -er '.bundleIdentifier' "$journal")" ||
-    fail_gate "$case_name pending journal has no bundle"
-  while (( SECONDS < deadline )); do
-    set +e
-    "$RUNTIME_PROBE" \
-      "$IDENTITY_SOCKET" \
-      identified-ping \
-      "$IDENTITY_SESSION" \
-      >"$RUN_DIR/$case_name.runtime-live.json" \
-      2>"$RUN_DIR/$case_name.runtime-live.stderr"
-    probe_status=$?
-    set -e
-    if [[ "$probe_status" -eq 0 ]]; then
-      break
-    fi
-    sleep 0.1
-  done
-  if [[ "$probe_status" -ne 0 ]] ||
-    ! jq -se \
-      --arg bundle "$expected_bundle" '
-      length == 1 and
-      (.[0] |
-        .schemaVersion == 1 and
-        .mode == "identified-ping" and
-        .runtimeListenerSurvived == true and
-        .runtimeBundleIdentifier == $bundle and
-        (.runtimePID | type) == "number" and
-        .runtimePID > 1 and
-        (.processBirthMicroseconds | type) == "number" and
-        .processBirthMicroseconds > 0 and
-        (.runtimeExecutablePath | type) == "string" and
-        (.runtimeExecutablePath | length) > 0
-      )
-    ' "$RUN_DIR/$case_name.runtime-live.json" >/dev/null; then
-    return 1
-  fi
-  IDENTITY_PID="$(
-    jq -er '.runtimePID' "$RUN_DIR/$case_name.runtime-live.json"
-  )"
-  IDENTITY_BIRTH="$(
-    jq -er \
-      '.processBirthMicroseconds' \
-      "$RUN_DIR/$case_name.runtime-live.json"
-  )"
-  assert_identified_runtime_live \
-    "$home" \
-    "$case_name" \
-    "$IDENTITY_SOCKET" \
-    "$IDENTITY_SESSION" \
-    "$IDENTITY_PID" \
-    "$IDENTITY_BIRTH" \
-    "$IDENTITY_EXECUTABLE"
-  capture_live_process "$case_name" "$IDENTITY_PID"
-  if ! jq -e \
-      --argjson birth "$IDENTITY_BIRTH" '
-      .processBirthMicroseconds == $birth
-    ' "$RUN_DIR/$case_name.process-live.json" >/dev/null; then
-    fail_gate "$case_name Runtime owner birth changed while probing"
-  fi
-  canonical_expected="$(canonical_existing_file "$IDENTITY_EXECUTABLE")" ||
-    fail_gate "$case_name pending executable is unavailable"
-  canonical_observed="$(
-    canonical_existing_file "$(
-      jq -er '.executablePath' "$RUN_DIR/$case_name.process-live.json"
-    )"
-  )" || fail_gate "$case_name pending process executable is unavailable"
-  if [[ "$canonical_observed" != "$canonical_expected" ]]; then
-    fail_gate "$case_name authenticated PID has the wrong executable"
-  fi
-  capture_status "$home" "$case_name"
-  assert_pending_status_matches_journal "$case_name"
-  jq -n \
-    --slurpfile journal "$journal" \
-    --slurpfile process "$RUN_DIR/$case_name.process-live.json" \
-    --slurpfile runtime "$RUN_DIR/$case_name.runtime-live.json" '
-      {
-        authority: "authenticated-pending-candidate",
-        journal: $journal[0],
-        process: $process[0],
-        runtimeProbe: $runtime[0]
-      }
-    ' >"$RUN_DIR/$case_name.identity.json"
-}
-
-set_identity_from_driver_lock() {
-  local home="$1"
-  local case_name="$2"
-  local lock="$home/state/driver.lock"
-  local journal="$home/mac/pending-launch.json"
-  local canonical_expected
-  local canonical_observed
-  assert_driver_lock_present "$home" "$case_name"
-  /bin/cp "$lock" "$RUN_DIR/$case_name.driver.lock.json"
-  IDENTITY_PID="$(jq -er '.runnerPid' "$lock")" ||
-    fail_gate "$case_name driver.lock has no runner PID"
-  IDENTITY_SOCKET="$(
-    jq -er '.macRuntimeSocketPath' "$lock"
-  )" || fail_gate "$case_name driver.lock has no Runtime socket"
-  IDENTITY_SESSION="$(jq -er '.sessionIdentifier' "$lock")" ||
-    fail_gate "$case_name driver.lock has no session"
-  IDENTITY_EXECUTABLE="$(
-    jq -er '.macExecutablePath' "$lock"
-  )" || fail_gate "$case_name driver.lock has no executable"
-  if [[ ! "$IDENTITY_PID" =~ ^[0-9]+$ || "$IDENTITY_PID" -le 1 ]]; then
-    fail_gate "$case_name driver.lock has an invalid runner PID"
-  fi
-  capture_live_process "$case_name" "$IDENTITY_PID"
-  IDENTITY_BIRTH="$(
-    jq -er '.processBirthMicroseconds' \
-      "$RUN_DIR/$case_name.process-live.json"
-  )" || fail_gate "$case_name process probe has no stable birth"
-  canonical_expected="$(canonical_existing_file "$IDENTITY_EXECUTABLE")" ||
-    fail_gate "$case_name locked executable is unavailable"
-  canonical_observed="$(
-    canonical_existing_file "$(
-      jq -er '.executablePath' "$RUN_DIR/$case_name.process-live.json"
-    )"
-  )" || fail_gate "$case_name observed executable is unavailable"
-  if [[ "$canonical_observed" != "$canonical_expected" ]]; then
-    fail_gate "$case_name driver.lock PID belongs to a different executable"
-  fi
-  if [[ -f "$journal" && ! -L "$journal" ]]; then
-    if ! jq -e \
-        --argjson pid "$IDENTITY_PID" \
-        --argjson birth "$IDENTITY_BIRTH" \
-        --arg socket "$IDENTITY_SOCKET" \
-        --arg session "$IDENTITY_SESSION" '
-        .owner.pid == $pid and
-        .owner.processBirthMicroseconds == $birth and
-        .runtimeSocketPath == $socket and
-        .sessionID == $session
-      ' "$journal" >/dev/null; then
-      fail_gate "$case_name driver.lock does not match pending PID/birth/socket"
-    fi
-  fi
-  assert_identified_runtime_live \
-    "$home" \
-    "$case_name" \
-    "$IDENTITY_SOCKET" \
-    "$IDENTITY_SESSION" \
-    "$IDENTITY_PID" \
-    "$IDENTITY_BIRTH" \
-    "$IDENTITY_EXECUTABLE"
-  capture_status "$home" "$case_name"
-  if ! jq -e \
-      --argjson pid "$IDENTITY_PID" \
-      --arg socket "$IDENTITY_SOCKET" \
-      --arg session "$IDENTITY_SESSION" '
-      .data.driver.status == "healthy" and
-      .data.driver.runnerPid == $pid and
-      .data.driver.sessionIdentifier == $session and
-      .data.driver.macRuntimeSocketPath == $socket and
-      .data.driver.runtime.status == "healthy" and
-      .data.driver.runtime.identityVerified == true and
-      .data.driver.runtime.pid == $pid
-    ' "$RUN_DIR/$case_name.status.stdout" >/dev/null; then
-    fail_gate "$case_name status did not authenticate driver.lock identity"
-  fi
-  jq -n \
-    --slurpfile lock "$RUN_DIR/$case_name.driver.lock.json" \
-    --slurpfile process "$RUN_DIR/$case_name.process-live.json" \
-    --slurpfile runtime "$RUN_DIR/$case_name.runtime-live.json" '
-      {
-        authority: "driver.lock",
-        driverLock: $lock[0],
-        process: $process[0],
-        runtimeProbe: $runtime[0]
-      }
-    ' >"$RUN_DIR/$case_name.identity.json"
-}
-
-assert_exact_process_gone() {
+assert_exact_process_live() {
   local case_name="$1"
   local pid="$2"
   local birth="$3"
-  local output="$RUN_DIR/$case_name.process-after-stop.json"
+  local executable="$4"
+  local output="$RUN_DIR/$case_name.process.json"
+  local observed_executable
+  local canonical_expected
+  local canonical_observed
   "$RUNTIME_PROBE" "$pid" process-identity >"$output" \
-    2>"$RUN_DIR/$case_name.process-after-stop.stderr" ||
-    fail_gate "$case_name could not recheck process identity after stop"
-  if ! jq -se \
+    2>"$RUN_DIR/$case_name.process.stderr" ||
+    fail_gate "$case_name process probe failed"
+  if ! jq -e \
       --argjson pid "$pid" \
       --argjson birth "$birth" '
-      length == 1 and
-      (.[0] |
-        .schemaVersion == 1 and
-        .mode == "process-identity" and
+        .alive == true and
         .pid == $pid and
-        (
-          .alive == false or
-          (
-            .alive == true and
-            .processBirthMicroseconds != $birth
-          )
-        )
-      )
-    ' "$output" >/dev/null; then
-    fail_gate "$case_name left exact PID/birth $pid/$birth alive"
+        .processBirthMicroseconds == $birth and
+        (.executablePath | type) == "string"
+      ' "$output" >/dev/null; then
+    fail_gate "$case_name exact process identity is not live"
   fi
+  observed_executable="$(jq -er '.executablePath' "$output")"
+  canonical_expected="$(canonical_file "$executable")" ||
+    fail_gate "$case_name expected executable is unavailable"
+  canonical_observed="$(canonical_file "$observed_executable")" ||
+    fail_gate "$case_name observed executable is unavailable"
+  [[ "$canonical_expected" == "$canonical_observed" ]] ||
+    fail_gate "$case_name process executable does not match"
 }
 
-assert_runtime_socket_unavailable() {
+wait_exact_process_gone() {
   local case_name="$1"
-  local socket_path="$2"
-  local session_id="$3"
-  if [[ -L "$socket_path" ]]; then
-    fail_gate "$case_name replaced the Runtime socket with a symlink"
-  fi
-  set +e
-  "$RUNTIME_PROBE" \
-    "$socket_path" \
-    identified-ping \
-    "$session_id" \
-    >"$RUN_DIR/$case_name.runtime-after-stop.stdout" \
-    2>"$RUN_DIR/$case_name.runtime-after-stop.stderr"
-  local probe_status=$?
-  set -e
-  if [[ "$probe_status" -eq 0 ]]; then
-    fail_gate "$case_name Runtime socket still authenticated after stop"
-  fi
-  if [[ ! -e "$socket_path" && ! -L "$socket_path" ]]; then
-    printf '%s\n' "path-absent" \
-      >"$RUN_DIR/$case_name.runtime-after-stop.disposition"
-  else
-    printf '%s\n' "connection-unavailable" \
-      >"$RUN_DIR/$case_name.runtime-after-stop.disposition"
-  fi
+  local pid="$2"
+  local birth="$3"
+  local deadline=$((SECONDS + 10))
+  local output="$RUN_DIR/$case_name.process-after-stop.json"
+  while (( SECONDS < deadline )); do
+    "$RUNTIME_PROBE" "$pid" process-identity >"$output" 2>/dev/null || true
+    if jq -e \
+        --argjson birth "$birth" '
+          .alive == false or .processBirthMicroseconds != $birth
+        ' "$output" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  fail_gate "$case_name exact PID/birth remained live after stop"
+}
+
+stop_and_verify() {
+  local case_name="$1"
+  local pid="$2"
+  local birth="$3"
+  cli_env "$TEST_HOME" "$DEBUG_CLI" --json stop \
+    >"$RUN_DIR/$case_name.stop.json" \
+    2>"$RUN_DIR/$case_name.stop.stderr" ||
+    fail_gate "$case_name stop failed"
+  assert_machine_success "$RUN_DIR/$case_name.stop.json" stop
+  assert_no_pending "$case_name"
+  assert_no_driver_lock "$case_name"
+  wait_exact_process_gone "$case_name" "$pid" "$birth"
 }
 
 run_crash_start() {
-  local home="$1"
-  local case_name="$2"
-  local cut="$3"
-  shift 3
+  local case_name="$1"
+  local cut="$2"
+  shift 2
   set +e
-  cli_env "$home" \
+  cli_env "$TEST_HOME" \
     "$CRASH_ENV=$cut" \
-    "$DEBUG_CLI" start --mac --timeout 30s "$@" \
-    >"$RUN_DIR/$case_name.start.stdout" \
+    "$DEBUG_CLI" --json start --mac --timeout 30s "$@" \
+    >"$RUN_DIR/$case_name.start.json" \
     2>"$RUN_DIR/$case_name.start.stderr"
   local status=$?
   set -e
@@ -1208,346 +563,224 @@ run_crash_start() {
   fi
 }
 
-assert_machine_failure() {
-  local case_name="$1"
-  local command="$2"
-  local stdout_file="$RUN_DIR/$case_name.stdout"
-  local stderr_file="$RUN_DIR/$case_name.stderr"
-  if [[ -s "$stdout_file" ]]; then
-    fail_gate "$case_name wrote machine failure data to stdout"
-  fi
-  if ! jq -se \
-      --arg command "$command" '
-      length == 1 and
-      (.[0] |
-        .schemaVersion == 1 and
-        .ok == false and
-        .command == $command and
-        (.data | type) == "object" and
-        (.warnings | type) == "array" and
-        .error.category == "validation" and
-        .error.code == "invalid_value" and
-        .error.phase == "validation" and
-        (
-          .error.message |
-          contains("PlayCover launch is unresolved:")
-        ) and
-        (
-          .error.message |
-          contains(
-            "The pending journal, facade, and generation were preserved."
-          )
-        ) and
-        .error.retryable == false and
-        .error.fatal == false and
-        .error.mutationMayHaveApplied == false and
-        .evidenceManifest == null
-      )
-    ' "$stderr_file" >/dev/null; then
-    fail_gate "$case_name did not emit the stable invalid_value envelope"
-  fi
-}
-
-assert_machine_success() {
-  local case_name="$1"
-  local command="$2"
-  local stdout_file="$RUN_DIR/$case_name.stdout"
-  local stderr_file="$RUN_DIR/$case_name.stderr"
-  if [[ -s "$stderr_file" ]] ||
-    ! jq -se \
-      --arg command "$command" '
-      length == 1 and
-      (.[0] |
-        .schemaVersion == 1 and
-        .ok == true and
-        .command == $command
-      )
-    ' "$stdout_file" >/dev/null; then
-    fail_gate "$case_name did not emit one success envelope"
-  fi
-}
-
-assert_start_blocked() {
-  local home="$1"
-  local case_name="$2"
-  set +e
-  cli_env "$home" "$DEBUG_CLI" --json start --mac --reuse --timeout 5s \
-    >"$RUN_DIR/$case_name.blocked-start.stdout" \
-    2>"$RUN_DIR/$case_name.blocked-start.stderr"
-  local status=$?
-  set -e
-  if [[ "$status" -eq 0 ]]; then
-    fail_gate "$case_name unexpectedly allowed a new start"
-  fi
-  assert_machine_failure "$case_name.blocked-start" start
-}
-
-assert_stop_blocked() {
-  local home="$1"
-  local case_name="$2"
-  set +e
-  cli_env "$home" "$DEBUG_CLI" --json stop \
-    >"$RUN_DIR/$case_name.blocked-stop.stdout" \
-    2>"$RUN_DIR/$case_name.blocked-stop.stderr"
-  local status=$?
-  set -e
-  if [[ "$status" -eq 0 ]]; then
-    fail_gate "$case_name unexpectedly allowed stop cleanup"
-  fi
-  assert_machine_failure "$case_name.blocked-stop" stop
-}
-
-assert_home_stopped() {
-  local home="$1"
-  local case_name="$2"
-  if [[
-    -e "$home/mac/pending-launch.json" ||
-    -L "$home/mac/pending-launch.json"
-  ]]; then
-    fail_gate "$case_name retained its journal after successful stop"
-  fi
-  assert_no_driver_lock "$home"
-  shopt -s nullglob
-  local aliases=("$home/launch-alias"/*.app)
-  shopt -u nullglob
-  if [[ "${#aliases[@]}" -ne 0 ]]; then
-    fail_gate "$case_name retained an isolated façade after successful stop"
-  fi
-}
-
-stop_current_identity_once() {
-  local home="$1"
-  local case_name="$2"
-  local pid="$IDENTITY_PID"
-  local birth="$IDENTITY_BIRTH"
-  local socket="$IDENTITY_SOCKET"
-  local session="$IDENTITY_SESSION"
-  cli_env "$home" "$DEBUG_CLI" --json stop \
-    >"$RUN_DIR/$case_name.stop.stdout" \
-    2>"$RUN_DIR/$case_name.stop.stderr" ||
-    fail_gate "$case_name first stop attempt failed"
-  assert_machine_success "$case_name.stop" stop
-  assert_home_stopped "$home" "$case_name"
-  assert_exact_process_gone "$case_name" "$pid" "$birth"
-  assert_runtime_socket_unavailable "$case_name" "$socket" "$session"
-}
-
-start_new_session_and_prove() {
-  local home="$1"
-  local case_name="$2"
-  local old_pid="$3"
-  local old_birth="$4"
-  local old_socket="$5"
-  local old_session="$6"
-  cli_env "$home" "$DEBUG_CLI" --json start --mac --reuse --timeout 30s \
-    >"$RUN_DIR/$case_name.start.stdout" \
-    2>"$RUN_DIR/$case_name.start.stderr" ||
-    fail_gate "$case_name first reuse start attempt failed"
-  assert_machine_success "$case_name.start" start
-  assert_exact_process_gone \
-    "$case_name.old-owner" \
-    "$old_pid" \
-    "$old_birth"
-  assert_runtime_socket_unavailable \
-    "$case_name.old-owner" \
-    "$old_socket" \
-    "$old_session"
-  set_identity_from_driver_lock "$home" "$case_name.new-driver"
-  if [[ "$IDENTITY_SESSION" == "$old_session" ]]; then
-    fail_gate "$case_name reused the recovered session identifier"
-  fi
-  if [[ "$IDENTITY_SOCKET" == "$old_socket" ]]; then
-    fail_gate "$case_name reused the recovered Runtime socket path"
-  fi
-  if [[
-    "$IDENTITY_PID" == "$old_pid" &&
-    "$IDENTITY_BIRTH" == "$old_birth"
-  ]]; then
-    fail_gate "$case_name reused the recovered exact process identity"
-  fi
-  stop_current_identity_once "$home" "$case_name.new-driver"
-}
-
-prove_fresh_start() {
-  local home="$1"
-  local case_name="$2"
-  local old_pid="$IDENTITY_PID"
-  local old_birth="$IDENTITY_BIRTH"
-  local old_socket="$IDENTITY_SOCKET"
-  local old_session="$IDENTITY_SESSION"
-  start_new_session_and_prove \
-    "$home" \
-    "$case_name.fresh" \
-    "$old_pid" \
-    "$old_birth" \
-    "$old_socket" \
-    "$old_session"
-}
-
-run_before_owner_case() {
-  local case_name="beforeOwnerDurable"
-  run_crash_start \
-    "$MAIN_HOME" \
-    "$case_name" \
-    beforeOwnerDurable \
-    --app "$FIXTURE_APP"
-  assert_pending_evidence "$MAIN_HOME" "$case_name"
-  assert_phase "$case_name" submissionArmed terminalCallback
-  assert_no_driver_lock "$MAIN_HOME"
-  capture_status "$MAIN_HOME" "$case_name"
-  assert_pending_status_matches_journal "$case_name"
-  if ! set_identity_from_undurable_journal \
-      "$MAIN_HOME" \
-      "$case_name" \
-      30; then
-    fail_gate "$case_name did not expose its authenticated exact owner"
-  fi
-  local old_pid="$IDENTITY_PID"
-  local old_birth="$IDENTITY_BIRTH"
-  local old_socket="$IDENTITY_SOCKET"
-  local old_session="$IDENTITY_SESSION"
-  start_new_session_and_prove \
-    "$MAIN_HOME" \
-    "$case_name.recover-before-start" \
-    "$old_pid" \
-    "$old_birth" \
-    "$old_socket" \
-    "$old_session"
-}
-
 run_owned_case() {
-  local cut="$1"
-  local case_name="$cut"
-  run_crash_start "$MAIN_HOME" "$case_name" "$cut" --reuse
-  assert_pending_evidence "$MAIN_HOME" "$case_name"
-  assert_phase "$case_name" owned
-  assert_owner_source "$case_name"
-  assert_no_driver_lock "$MAIN_HOME"
-  set_identity_from_owned_journal "$MAIN_HOME" "$case_name"
-  local old_pid="$IDENTITY_PID"
-  local old_birth="$IDENTITY_BIRTH"
-  local old_socket="$IDENTITY_SOCKET"
-  local old_session="$IDENTITY_SESSION"
-  if [[ "$cut" == "afterOwnerDurable" ]]; then
-    stop_current_identity_once "$MAIN_HOME" "$case_name.pending-owner"
-    prove_fresh_start "$MAIN_HOME" "$case_name.pending-owner"
-  else
-    start_new_session_and_prove \
-      "$MAIN_HOME" \
-      "$case_name.recover-before-start" \
-      "$old_pid" \
-      "$old_birth" \
-      "$old_socket" \
-      "$old_session"
-  fi
+  local case_name="afterOwnerDurable"
+  run_crash_start "$case_name" "$case_name" --reuse
+  assert_pending_phase owned "$case_name"
+  assert_no_driver_lock "$case_name"
+  capture_status "$case_name"
+  jq -e '
+    .data.driver.status == "unresolvedOpen" and
+    .data.driver.phase == "owned" and
+    .data.driver.ownerPid > 1
+  ' "$RUN_DIR/$case_name.status.json" >/dev/null ||
+    fail_gate "$case_name status did not expose the exact owned journal"
+  local pid
+  local birth
+  local executable
+  pid="$(jq -er '.owner.pid' "$RUN_DIR/$case_name.pending-launch.json")"
+  birth="$(jq -er '.owner.processBirthMicroseconds' "$RUN_DIR/$case_name.pending-launch.json")"
+  executable="$(jq -er '.executablePath' "$RUN_DIR/$case_name.pending-launch.json")"
+  assert_exact_process_live "$case_name" "$pid" "$birth" "$executable"
+  stop_and_verify "$case_name" "$pid" "$birth"
 }
 
-run_handoff_case() {
+run_driver_handoff_case() {
   local cut="$1"
-  local case_name="$cut"
-  run_crash_start "$MAIN_HOME" "$case_name" "$cut" --reuse
+  run_crash_start "$cut" "$cut" --reuse
+  assert_driver_lock "$cut"
   case "$cut" in
     afterDriverLockDurable)
-      assert_pending_evidence "$MAIN_HOME" "$case_name"
-      assert_phase "$case_name" owned
+      assert_pending_phase owned "$cut"
       ;;
     afterPendingDriverLockCommitted)
-      assert_pending_evidence "$MAIN_HOME" "$case_name"
-      assert_phase "$case_name" driverLockCommitted
-      ;;
-    afterPendingDriverLockRetired)
-      assert_pending_evidence "$MAIN_HOME" "$case_name"
-      assert_phase "$case_name" confirmedStopped
-      jq -e '.cleanupProof == "driverLockRetired"' \
-        "$RUN_DIR/$case_name.pending-launch.json" >/dev/null ||
-        fail_gate "$case_name omitted driverLockRetired cleanup proof"
+      assert_pending_phase driverLockCommitted "$cut"
       ;;
     afterPendingJournalRemoved)
-      if [[
-        -e "$MAIN_HOME/mac/pending-launch.json" ||
-        -L "$MAIN_HOME/mac/pending-launch.json"
-      ]]; then
-        fail_gate "$case_name retained the removed pending journal"
-      fi
+      assert_no_pending "$cut"
       ;;
     *)
-      fail_gate "unhandled driver-lock handoff cut: $cut"
+      fail_gate "unknown handoff cut $cut"
       ;;
   esac
-  set_identity_from_driver_lock "$MAIN_HOME" "$case_name"
-  stop_current_identity_once "$MAIN_HOME" "$case_name"
-  prove_fresh_start "$MAIN_HOME" "$case_name"
+  capture_status "$cut"
+  jq -e '.data.driver.status == "healthy"' \
+    "$RUN_DIR/$cut.status.json" >/dev/null ||
+    fail_gate "$cut status did not use the committed driver.lock"
+  local lock="$TEST_HOME/state/driver.lock"
+  local pid
+  local executable
+  local birth
+  pid="$(jq -er '.runnerPid' "$lock")"
+  executable="$(jq -er '.macExecutablePath' "$lock")"
+  "$RUNTIME_PROBE" "$pid" process-identity \
+    >"$RUN_DIR/$cut.process.json" 2>"$RUN_DIR/$cut.process.stderr" ||
+    fail_gate "$cut process probe failed"
+  birth="$(jq -er '.processBirthMicroseconds' "$RUN_DIR/$cut.process.json")"
+  assert_exact_process_live "$cut" "$pid" "$birth" "$executable"
+  stop_and_verify "$cut" "$pid" "$birth"
 }
 
-MAIN_HOME="$(make_home)"
-cli_env "$MAIN_HOME" "$DEBUG_CLI" --json start --mac \
+wait_for_intent_runtime() {
+  local case_name="$1"
+  local journal="$TEST_HOME/mac/pending-launch.json"
+  local socket
+  local session
+  local expected_executable
+  local expected_bundle
+  local observed_executable
+  local canonical_expected
+  local canonical_observed
+  local output="$RUN_DIR/$case_name.runtime.json"
+  local deadline=$((SECONDS + 30))
+  socket="$(jq -er '.runtimeSocketPath' "$journal")"
+  session="$(jq -er '.sessionID' "$journal")"
+  expected_executable="$(jq -er '.executablePath' "$journal")"
+  expected_bundle="$(jq -er '.bundleIdentifier' "$journal")"
+  while (( SECONDS < deadline )); do
+    if "$RUNTIME_PROBE" "$socket" identified-ping "$session" \
+        >"$output" 2>"$RUN_DIR/$case_name.runtime.stderr"; then
+      break
+    fi
+    sleep 0.05
+  done
+  if ! jq -e \
+      --arg bundle "$expected_bundle" \
+      '
+        .runtimeListenerSurvived == true and
+        .runtimePID > 1 and
+        .processBirthMicroseconds > 0 and
+        .runtimeBundleIdentifier == $bundle and
+        (.runtimeExecutablePath | type) == "string"
+      ' "$output" >/dev/null 2>&1; then
+    fail_gate "$case_name never exposed an authenticated exact Runtime owner"
+  fi
+  observed_executable="$(jq -er '.runtimeExecutablePath' "$output")"
+  canonical_expected="$(canonical_file "$expected_executable")" ||
+    fail_gate "$case_name pending executable is unavailable"
+  canonical_observed="$(canonical_file "$observed_executable")" ||
+    fail_gate "$case_name Runtime executable is unavailable"
+  [[ "$canonical_expected" == "$canonical_observed" ]] ||
+    fail_gate "$case_name Runtime executable does not match the intent"
+}
+
+promote_intent_for_test_cleanup() {
+  local case_name="$1"
+  local journal="$TEST_HOME/mac/pending-launch.json"
+  local runtime="$RUN_DIR/$case_name.runtime.json"
+  local pid
+  local birth
+  local executable
+  local temporary
+  pid="$(jq -er '.runtimePID' "$runtime")"
+  birth="$(jq -er '.processBirthMicroseconds' "$runtime")"
+  executable="$(jq -er '.runtimeExecutablePath' "$runtime")"
+  assert_exact_process_live "$case_name" "$pid" "$birth" "$executable"
+  temporary="$(mktemp "$TEST_HOME/mac/.pending-cleanup.XXXXXX")" ||
+    fail_gate "$case_name could not create cleanup journal"
+  jq \
+    --argjson pid "$pid" \
+    --arg birth "$birth" '
+      .phase = "owned" |
+      .owner = {
+        pid: $pid,
+        processBirthMicroseconds: $birth,
+        source: "authenticatedRuntime"
+      }
+    ' "$journal" >"$temporary" ||
+    fail_gate "$case_name could not encode cleanup authority"
+  /bin/chmod 600 "$temporary"
+  /bin/mv -f "$temporary" "$journal"
+  stop_and_verify "$case_name.test-cleanup" "$pid" "$birth"
+}
+
+run_intent_case() {
+  local case_name="afterOpenReturned"
+  run_crash_start "$case_name" "$case_name" --reuse
+  assert_pending_phase intent "$case_name"
+  assert_no_driver_lock "$case_name"
+  capture_status "$case_name"
+  jq -e '
+    .data.driver.status == "unresolvedOpen" and
+    .data.driver.phase == "intent" and
+    .data.driver.ownerPid == null
+  ' "$RUN_DIR/$case_name.status.json" >/dev/null ||
+    fail_gate "$case_name status did not expose the unresolved intent"
+
+  local before_sha
+  local after_sha
+  before_sha="$(/usr/bin/shasum -a 256 "$TEST_HOME/mac/pending-launch.json" | /usr/bin/awk '{print $1}')"
+  for command in start stop; do
+    set +e
+    if [[ "$command" == "start" ]]; then
+      cli_env "$TEST_HOME" "$DEBUG_CLI" --json start --mac --reuse --timeout 5s \
+        >"$RUN_DIR/$case_name.blocked-$command.stdout" \
+        2>"$RUN_DIR/$case_name.blocked-$command.json"
+    else
+      cli_env "$TEST_HOME" "$DEBUG_CLI" --json stop \
+        >"$RUN_DIR/$case_name.blocked-$command.stdout" \
+        2>"$RUN_DIR/$case_name.blocked-$command.json"
+    fi
+    local status=$?
+    set -e
+    [[ "$status" -ne 0 ]] ||
+      fail_gate "$case_name unexpectedly allowed $command"
+    [[ ! -s "$RUN_DIR/$case_name.blocked-$command.stdout" ]] ||
+      fail_gate "$case_name $command wrote failure data to stdout"
+    assert_pending_failure \
+      "$RUN_DIR/$case_name.blocked-$command.json" "$command"
+  done
+  after_sha="$(/usr/bin/shasum -a 256 "$TEST_HOME/mac/pending-launch.json" | /usr/bin/awk '{print $1}')"
+  [[ "$before_sha" == "$after_sha" ]] ||
+    fail_gate "$case_name commands mutated the unresolved intent"
+
+  # Product code must not guess ownership. The disposable-account harness
+  # independently authenticates the exact Runtime, writes that observed owner
+  # only to make its own residue stoppable, then exercises the normal exact-
+  # owner stop path. This is test cleanup, not a recovery behavior.
+  wait_for_intent_runtime "$case_name"
+  promote_intent_for_test_cleanup "$case_name"
+}
+
+echo "[playcover-pending-crash] Baseline prepare/start..." >&2
+cli_env "$TEST_HOME" "$DEBUG_CLI" --json start --mac \
   --app "$FIXTURE_APP" --timeout 30s \
-  >"$RUN_DIR/baseline-start.stdout" \
-  2>"$RUN_DIR/baseline-start.stderr" ||
-  fail_gate "baseline fixture start failed"
-assert_machine_success baseline-start start
-set_identity_from_driver_lock "$MAIN_HOME" baseline-driver
-stop_current_identity_once "$MAIN_HOME" baseline-driver
-remove_home "$MAIN_HOME"
-MAIN_HOME=""
+  >"$RUN_DIR/baseline.start.json" \
+  2>"$RUN_DIR/baseline.start.stderr" ||
+  fail_gate "baseline start failed"
+assert_machine_success "$RUN_DIR/baseline.start.json" start
+assert_driver_lock baseline
+baseline_pid="$(jq -er '.runnerPid' "$TEST_HOME/state/driver.lock")"
+"$RUNTIME_PROBE" "$baseline_pid" process-identity \
+  >"$RUN_DIR/baseline.process.json" 2>"$RUN_DIR/baseline.process.stderr"
+baseline_birth="$(jq -er '.processBirthMicroseconds' "$RUN_DIR/baseline.process.json")"
+stop_and_verify baseline "$baseline_pid" "$baseline_birth"
 
-MAIN_HOME="$(make_home)"
-echo "[playcover-pending-crash] Running beforeOwnerDurable"
-run_before_owner_case
-
-for cut in afterOwnerDurable afterReadyGate; do
-  echo "[playcover-pending-crash] Running $cut"
-  run_owned_case "$cut"
+echo "[playcover-pending-crash] afterOwnerDurable" >&2
+run_owned_case
+for cut in \
+  afterDriverLockDurable \
+  afterPendingDriverLockCommitted \
+  afterPendingJournalRemoved; do
+  echo "[playcover-pending-crash] $cut" >&2
+  run_driver_handoff_case "$cut"
 done
+echo "[playcover-pending-crash] afterOpenReturned" >&2
+run_intent_case
 
-handoff_cuts=(
-  afterDriverLockDurable
-  afterPendingDriverLockCommitted
-  afterPendingDriverLockRetired
-  afterPendingJournalRemoved
-)
-for cut in "${handoff_cuts[@]}"; do
-  echo "[playcover-pending-crash] Running $cut"
-  run_handoff_case "$cut"
-done
-
-ARMED_HOME="$(make_home)"
-run_crash_start \
-  "$ARMED_HOME" \
-  afterSubmissionArmed \
-  afterSubmissionArmed \
-  --app "$FIXTURE_APP"
-capture_pending_fingerprint "$ARMED_HOME" afterSubmissionArmed
-assert_phase afterSubmissionArmed submissionArmed
-assert_no_driver_lock "$ARMED_HOME"
-capture_status "$ARMED_HOME" afterSubmissionArmed
-assert_pending_status_matches_journal afterSubmissionArmed
-assert_start_blocked "$ARMED_HOME" afterSubmissionArmed
-assert_pending_fingerprint_unchanged \
-  "$ARMED_HOME" \
-  afterSubmissionArmed \
-  afterSubmissionArmed.after-blocked-start
-capture_status "$ARMED_HOME" afterSubmissionArmed.after-blocked-start
-assert_pending_status_matches_journal \
-  afterSubmissionArmed.after-blocked-start
-assert_stop_blocked "$ARMED_HOME" afterSubmissionArmed
-assert_pending_fingerprint_unchanged \
-  "$ARMED_HOME" \
-  afterSubmissionArmed \
-  afterSubmissionArmed.after-blocked-stop
-capture_status "$ARMED_HOME" afterSubmissionArmed.after-blocked-stop
-assert_pending_status_matches_journal \
-  afterSubmissionArmed.after-blocked-stop
-printf '%s\n' \
-  "pre-submission fail-closed only; excluded from recovery/cut PASS" \
-  >"$RUN_DIR/afterSubmissionArmed.scope"
+echo "[playcover-pending-crash] Final normal reuse..." >&2
+cli_env "$TEST_HOME" "$DEBUG_CLI" --json start --mac --reuse --timeout 30s \
+  >"$RUN_DIR/final.start.json" \
+  2>"$RUN_DIR/final.start.stderr" ||
+  fail_gate "final reuse start failed"
+assert_machine_success "$RUN_DIR/final.start.json" start
+assert_driver_lock final
+final_pid="$(jq -er '.runnerPid' "$TEST_HOME/state/driver.lock")"
+"$RUNTIME_PROBE" "$final_pid" process-identity \
+  >"$RUN_DIR/final.process.json" 2>"$RUN_DIR/final.process.stderr"
+final_birth="$(jq -er '.processBirthMicroseconds' "$RUN_DIR/final.process.json")"
+stop_and_verify final "$final_pid" "$final_birth"
 
 assert_repository_unchanged
 SUCCESS=1
-echo \
-  "[playcover-pending-crash] PASS: isolated debug-alias durable crash/restart recovery"
-echo \
-  "[playcover-pending-crash] Scope: not production installed-layout callback ordering"
-echo \
-  "[playcover-pending-crash] afterSubmissionArmed: pre-submission fail-closed evidence only"
-echo "[playcover-pending-crash] Evidence: $RUN_DIR"
+echo "[playcover-pending-crash] PASS"

@@ -10,24 +10,10 @@ enum PlayCoverLaunchCrashCut {
     static let exitStatus: Int32 = 86
 
     enum Point: String, CaseIterable {
-        case afterPreparationPinned
-        case afterSubmissionArmed
         case afterOpenReturned
-        case beforeTerminalCallbackDurable
-        case afterTerminalCallbackDurable
-        case beforeCallbackOwnerDurable
-        case afterCallbackOwnerDurable
-        case beforeRuntimeOwnerDurable
-        case afterRuntimeOwnerDurable
-        case beforeOwnerDurable
         case afterOwnerDurable
-        case afterReadyGate
         case afterDriverLockDurable
         case afterPendingDriverLockCommitted
-        case afterPendingDriverLockRetired
-        case afterPendingPinRetired
-        case afterCleanupPendingPinCleared
-        case afterCleanupActivePinCleared
         case afterPendingJournalRemoved
     }
 

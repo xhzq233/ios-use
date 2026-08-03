@@ -18,7 +18,6 @@ static const NSUInteger IOSUseDOMMaximumRawStringBytes = 512 * 1024;
 static const NSUInteger IOSUseDOMMaximumErrorCandidates = 5;
 static const NSUInteger IOSUseDOMMaximumWebElementCount = 512;
 static const NSUInteger IOSUseDOMMaximumWebTraversalCount = 4096;
-static const NSUInteger IOSUseDOMMaximumAppKitElementCount = 512;
 static const NSTimeInterval IOSUseDOMMainThreadTimeoutSeconds = 2.0;
 static const NSTimeInterval IOSUseDOMWaitDefaultSeconds = 10.0;
 static const NSTimeInterval IOSUseDOMWaitMaximumSeconds = 300.0;
@@ -112,19 +111,6 @@ typedef CGRect (*IOSUseDOMSendRect)(id, SEL);
 @implementation IOSUseDOMWebAccessibilityElement
 @end
 
-@interface IOSUseDOMAppKitAccessibilityElement : UIAccessibilityElement
-@property(nonatomic, copy) NSString *appKitRole;
-@property(nonatomic) BOOL appKitFocused;
-@end
-
-@implementation IOSUseDOMAppKitAccessibilityElement
-
-- (BOOL)accessibilityElementIsFocused {
-    return self.appKitFocused;
-}
-
-@end
-
 @interface IOSUseDOMWebBridgeRecord : NSObject
 @property(nonatomic, weak) WKWebView *webView;
 @property(nonatomic) unsigned long long generation;
@@ -182,8 +168,7 @@ static unsigned long long IOSUseDOMLiveIdentityGeneration;
 typedef NS_ENUM(NSUInteger, IOSUseDOMLiveIdentityKind) {
     IOSUseDOMLiveIdentityKindGeneric = 0,
     IOSUseDOMLiveIdentityKindWebProxy = 1,
-    IOSUseDOMLiveIdentityKindAppKitProxy = 2,
-    IOSUseDOMLiveIdentityKindNativeAlertMirror = 3,
+    IOSUseDOMLiveIdentityKindNativeAlertMirror = 2,
 };
 
 static BOOL IOSUseDOMObjectBelongsToNativeAlertMirror(
@@ -1088,144 +1073,6 @@ static NSArray * _Nullable IOSUseDOMWebAccessibilityElements(
     return proxies;
 }
 
-static NSArray<IOSUseDOMAppKitAccessibilityElement *> * _Nullable
-IOSUseDOMAppKitAccessibilityElements(
-    UIWindow *primaryWindow,
-    IOSUseDOMCaptureContext *context
-) {
-    NSError *bridgeError = nil;
-    NSArray<NSDictionary<NSString *, id> *> *entries = [
-        IOSUsePlayAppKitBridge
-        activeAccessibilityElementsWithError:&bridgeError
-    ];
-    if (entries == nil) {
-        context.failureMessage = bridgeError.localizedDescription ?:
-            @"AppKit accessibility bridge failed";
-        return nil;
-    }
-    if (entries.count > IOSUseDOMMaximumAppKitElementCount) {
-        context.failureMessage =
-            @"AppKit accessibility bridge exceeded 512 elements";
-        return nil;
-    }
-    NSMutableArray<IOSUseDOMAppKitAccessibilityElement *> *proxies =
-        [NSMutableArray arrayWithCapacity:entries.count];
-    NSSet<NSString *> *allowedRoles = [NSSet setWithArray:@[
-        @"button",
-        @"link",
-        @"text",
-        @"heading",
-    ]];
-    for (id candidate in entries) {
-        if (![candidate isKindOfClass:NSDictionary.class]) {
-            context.failureMessage =
-                @"AppKit accessibility bridge returned a non-object element";
-            return nil;
-        }
-        NSDictionary<NSString *, id> *entry = candidate;
-        NSString *role = [entry[@"role"] isKindOfClass:NSString.class]
-            ? entry[@"role"]
-            : nil;
-        NSString *label = [entry[@"label"] isKindOfClass:NSString.class]
-            ? entry[@"label"]
-            : nil;
-        NSString *value = [entry[@"value"] isKindOfClass:NSString.class]
-            ? entry[@"value"]
-            : nil;
-        NSString *identifier =
-            [entry[@"identifier"] isKindOfClass:NSString.class]
-                ? entry[@"identifier"]
-                : nil;
-        NSDictionary<NSString *, id> *frame =
-            [entry[@"frame"] isKindOfClass:NSDictionary.class]
-                ? entry[@"frame"]
-                : nil;
-        NSArray<NSString *> *numberKeys =
-            @[@"x", @"y", @"width", @"height"];
-        BOOL validNumbers = frame != nil;
-        for (NSString *key in numberKeys) {
-            if (!IOSUseDOMIsNumber(frame[key]) ||
-                !isfinite([frame[key] doubleValue])) {
-                validNumbers = NO;
-                break;
-            }
-        }
-        if (![allowedRoles containsObject:role ?: @""] ||
-            label == nil ||
-            value == nil ||
-            identifier == nil ||
-            (label.length == 0 &&
-             value.length == 0 &&
-             identifier.length == 0) ||
-            !validNumbers ||
-            [frame[@"width"] doubleValue] <= 0 ||
-            [frame[@"height"] doubleValue] <= 0 ||
-            !IOSUseDOMIsBoolean(entry[@"enabled"]) ||
-            !IOSUseDOMIsBoolean(entry[@"selected"]) ||
-            !IOSUseDOMIsBoolean(entry[@"focused"])) {
-            context.failureMessage =
-                @"AppKit accessibility bridge returned an invalid element";
-            return nil;
-        }
-        if (([role isEqualToString:@"text"] ||
-             [role isEqualToString:@"heading"]) &&
-            label.length == 0 &&
-            value.length > 0) {
-            label = value;
-            value = @"";
-        } else if (label.length > 0 &&
-                   [label isEqualToString:value]) {
-            value = @"";
-        }
-        CGRect logicalFrame = CGRectMake(
-            [frame[@"x"] doubleValue],
-            [frame[@"y"] doubleValue],
-            [frame[@"width"] doubleValue],
-            [frame[@"height"] doubleValue]
-        );
-        if (!IOSUseDOMRectHasArea(logicalFrame)) {
-            context.failureMessage =
-                @"AppKit accessibility bridge returned invalid geometry";
-            return nil;
-        }
-        IOSUseDOMAppKitAccessibilityElement *proxy = [
-            [IOSUseDOMAppKitAccessibilityElement alloc]
-            initWithAccessibilityContainer:primaryWindow
-        ];
-        proxy.appKitRole = role;
-        proxy.appKitFocused = [entry[@"focused"] boolValue];
-        proxy.isAccessibilityElement = YES;
-        proxy.accessibilityLabel = label.length > 0
-            ? label
-            : identifier;
-        proxy.accessibilityValue =
-            value.length > 0 ? value : nil;
-        proxy.accessibilityIdentifier =
-            identifier.length > 0 ? identifier : nil;
-        proxy.accessibilityFrame = logicalFrame;
-        UIAccessibilityTraits traits = UIAccessibilityTraitNone;
-        if ([role isEqualToString:@"button"]) {
-            traits |= UIAccessibilityTraitButton;
-        } else if ([role isEqualToString:@"link"]) {
-            traits |= UIAccessibilityTraitLink;
-        } else {
-            traits |= UIAccessibilityTraitStaticText;
-            if ([role isEqualToString:@"heading"]) {
-                traits |= UIAccessibilityTraitHeader;
-            }
-        }
-        if (![entry[@"enabled"] boolValue]) {
-            traits |= UIAccessibilityTraitNotEnabled;
-        }
-        if ([entry[@"selected"] boolValue]) {
-            traits |= UIAccessibilityTraitSelected;
-        }
-        proxy.accessibilityTraits = traits;
-        [proxies addObject:proxy];
-    }
-    return proxies;
-}
-
 static IOSUseDOMWebBridgeRecord * _Nullable
 IOSUseDOMWebBridgeRecordForElement(
     NSDictionary<NSString *, id> *element
@@ -1768,9 +1615,6 @@ static void IOSUseDOMRegisterLiveIdentity(
     if ([object isKindOfClass:
             IOSUseDOMWebAccessibilityElement.class]) {
         record.kind = IOSUseDOMLiveIdentityKindWebProxy;
-    } else if ([object isKindOfClass:
-                   IOSUseDOMAppKitAccessibilityElement.class]) {
-        record.kind = IOSUseDOMLiveIdentityKindAppKitProxy;
     } else if (context.nativeAlertActions.count > 0 &&
                IOSUseDOMObjectHasNativeAlertMirrorShape(
                    object,
@@ -1913,11 +1757,7 @@ BOOL IOSUsePlayRuntimeDOMResolveLiveIdentity(
         currentNativeActionLabel = nil;
     }
 
-    if (kind == IOSUseDOMLiveIdentityKindAppKitProxy) {
-        if (record.nativeAlertActionLabel.length == 0) {
-            return NO;
-        }
-    } else if (kind == IOSUseDOMLiveIdentityKindWebProxy) {
+    if (kind == IOSUseDOMLiveIdentityKindWebProxy) {
         if (recordedInteractionView == nil ||
             recordedInteractionView.window == nil ||
             recordedInteractionView.window !=
@@ -2334,38 +2174,6 @@ static BOOL IOSUseDOMFramesMatchWithinTolerance(
         fabs(left.size.height - right.size.height) <= tolerance;
 }
 
-static BOOL IOSUseDOMNativeAlertActionContainsProxyFrame(
-    CGRect actionFrame,
-    CGRect proxyFrame
-) {
-    const CGFloat tolerance = 0.5;
-    const CGFloat maximumInset = 5.5;
-    if (!IOSUseDOMRectHasArea(actionFrame) ||
-        !IOSUseDOMRectHasArea(proxyFrame) ||
-        fabs(CGRectGetMidX(actionFrame) -
-             CGRectGetMidX(proxyFrame)) > tolerance ||
-        fabs(CGRectGetMidY(actionFrame) -
-             CGRectGetMidY(proxyFrame)) > tolerance) {
-        return NO;
-    }
-    CGFloat leftInset =
-        CGRectGetMinX(proxyFrame) - CGRectGetMinX(actionFrame);
-    CGFloat topInset =
-        CGRectGetMinY(proxyFrame) - CGRectGetMinY(actionFrame);
-    CGFloat rightInset =
-        CGRectGetMaxX(actionFrame) - CGRectGetMaxX(proxyFrame);
-    CGFloat bottomInset =
-        CGRectGetMaxY(actionFrame) - CGRectGetMaxY(proxyFrame);
-    return leftInset >= -tolerance &&
-        leftInset <= maximumInset &&
-        topInset >= -tolerance &&
-        topInset <= maximumInset &&
-        rightInset >= -tolerance &&
-        rightInset <= maximumInset &&
-        bottomInset >= -tolerance &&
-        bottomInset <= maximumInset;
-}
-
 static NSDictionary<NSString *, id> * _Nullable
 IOSUseDOMExactNativeAlertAction(
     IOSUseDOMLiveIdentityKind kind,
@@ -2374,8 +2182,7 @@ IOSUseDOMExactNativeAlertAction(
     CGRect frame,
     NSArray<NSDictionary<NSString *, id> *> * _Nullable actions
 ) {
-    if ((kind != IOSUseDOMLiveIdentityKindAppKitProxy &&
-         kind != IOSUseDOMLiveIdentityKindNativeAlertMirror) ||
+    if (kind != IOSUseDOMLiveIdentityKindNativeAlertMirror ||
         elementType != 9 ||
         label.length == 0) {
         return nil;
@@ -2393,15 +2200,10 @@ IOSUseDOMExactNativeAlertAction(
             IOSUseDOMNativeAlertActionFrame(action[@"frame"]);
         if (![action[@"label"] isKindOfClass:NSString.class] ||
             ![action[@"label"] isEqualToString:label] ||
-            !(IOSUseDOMFramesMatchWithinTolerance(
-                  actionFrame,
-                  frame
-              ) ||
-              (kind == IOSUseDOMLiveIdentityKindAppKitProxy &&
-               IOSUseDOMNativeAlertActionContainsProxyFrame(
-                   actionFrame,
-                   frame
-               )))) {
+            !IOSUseDOMFramesMatchWithinTolerance(
+                actionFrame,
+                frame
+            )) {
             continue;
         }
         if (matchedAction != nil) {
@@ -2915,110 +2717,6 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     return node;
 }
 
-static NSInteger IOSUseDOMAppKitElementType(
-    IOSUseDOMAppKitAccessibilityElement *proxy
-) {
-    if ([proxy.appKitRole isEqualToString:@"button"]) {
-        return 9;
-    }
-    if ([proxy.appKitRole isEqualToString:@"link"]) {
-        return 42;
-    }
-    return 48;
-}
-
-static BOOL IOSUseDOMFramesSemanticallyOverlap(
-    CGRect left,
-    CGRect right
-) {
-    if (!IOSUseDOMRectHasArea(left) ||
-        !IOSUseDOMRectHasArea(right)) {
-        return NO;
-    }
-    CGRect intersection = CGRectIntersection(left, right);
-    if (!IOSUseDOMRectHasArea(intersection)) {
-        return NO;
-    }
-    CGFloat intersectionArea =
-        intersection.size.width * intersection.size.height;
-    CGFloat smallerArea = MIN(
-        left.size.width * left.size.height,
-        right.size.width * right.size.height
-    );
-    return smallerArea > 0 &&
-        intersectionArea / smallerArea >= 0.8;
-}
-
-static BOOL IOSUseDOMRawNodeDuplicatesAppKitProxy(
-    IOSUseDOMNode *node,
-    IOSUseDOMAppKitAccessibilityElement *proxy
-) {
-    if (!node.invisible) {
-        CGRect proxyFrame = proxy.accessibilityFrame;
-        if (node.elementType == 58 &&
-            IOSUseDOMRectHasArea(node.rect) &&
-            CGRectContainsPoint(
-                node.rect,
-                CGPointMake(
-                    CGRectGetMidX(proxyFrame),
-                    CGRectGetMidY(proxyFrame)
-                )
-            )) {
-            // WKWebView semantics are owned exclusively by the fixed isolated
-            // Web bridge, including when AppKit mirrors the same descendants.
-            return YES;
-        }
-        NSString *proxyIdentifier =
-            proxy.accessibilityIdentifier ?: @"";
-        NSString *proxyLabel = proxy.accessibilityLabel ?: @"";
-        BOOL compatibleType =
-            node.elementType == IOSUseDOMAppKitElementType(proxy);
-        BOOL overlapping = IOSUseDOMFramesSemanticallyOverlap(
-            node.rect,
-            proxyFrame
-        );
-        BOOL sameIdentifier =
-            proxyIdentifier.length > 0 &&
-            [node.identifier isEqualToString:proxyIdentifier];
-        BOOL sameSemanticText =
-            proxyLabel.length > 0 &&
-            ([node.label isEqualToString:proxyLabel] ||
-             [node.value isEqualToString:proxyLabel]);
-        if (sameIdentifier) {
-            // Matching identity is covered when geometry/type agree. A
-            // conflicting native node still suppresses the lower-priority
-            // AppKit mirror rather than creating an ambiguous duplicate.
-            return YES;
-        }
-        if (compatibleType && overlapping) {
-            // Equal semantics are a mirror. Conflicting non-empty semantics at
-            // the same role/frame are also dropped fail-closed.
-            if (sameSemanticText ||
-                node.label.length > 0 ||
-                node.value.length > 0) {
-                return YES;
-            }
-        }
-        if (IOSUseDOMAppKitElementType(proxy) == 48 &&
-            node.elementType == 9 &&
-            sameSemanticText &&
-            IOSUseDOMFramesSemanticallyOverlap(
-                node.rect,
-                proxyFrame
-            )) {
-            // AppKit often exposes a native button's title as a nested
-            // AXStaticText. The canonical UIKit button already carries it.
-            return YES;
-        }
-    }
-    for (IOSUseDOMNode *child in node.children) {
-        if (IOSUseDOMRawNodeDuplicatesAppKitProxy(child, proxy)) {
-            return YES;
-        }
-    }
-    return NO;
-}
-
 static NSArray<NSString *> *IOSUseDOMTraitsForNode(
     IOSUseDOMNode *node,
     BOOL opaque
@@ -3438,50 +3136,6 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
     for (UIWindow *window in windows) {
         IOSUseDOMNode *root = IOSUseDOMBuildNode(
             window,
-            0,
-            YES,
-            NO,
-            screenBounds,
-            nil,
-            context
-        );
-        if (context.failureMessage != nil) {
-            if (failureMessage != NULL) {
-                *failureMessage = context.failureMessage;
-            }
-            return nil;
-        }
-        if (root != nil) {
-            [rawRoots addObject:root];
-        }
-    }
-
-    NSArray<IOSUseDOMAppKitAccessibilityElement *> *appKitElements =
-        IOSUseDOMAppKitAccessibilityElements(
-            primaryWindow,
-            context
-        );
-    if (context.failureMessage != nil || appKitElements == nil) {
-        if (failureMessage != NULL) {
-            *failureMessage = context.failureMessage ?:
-                @"AppKit accessibility bridge failed";
-        }
-        return nil;
-    }
-    for (IOSUseDOMAppKitAccessibilityElement *proxy in
-         appKitElements) {
-        BOOL duplicate = NO;
-        for (IOSUseDOMNode *root in rawRoots) {
-            if (IOSUseDOMRawNodeDuplicatesAppKitProxy(root, proxy)) {
-                duplicate = YES;
-                break;
-            }
-        }
-        if (duplicate) {
-            continue;
-        }
-        IOSUseDOMNode *root = IOSUseDOMBuildNode(
-            proxy,
             0,
             YES,
             NO,
@@ -4530,6 +4184,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeWaitForCommand(
     IOSUseDOMSnapshot *lastSnapshot = nil;
     NSArray<IOSUseCleanNode *> *lastMatches = @[];
     NSString *lastSnapshotFailure = nil;
+    NSDictionary<NSString *, id> *lastReadinessError = nil;
     for (;;) {
         if (cancellationCheck()) {
             if (commandError != NULL) {
@@ -4562,6 +4217,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeWaitForCommand(
             if (snapshot != nil) {
                 lastSnapshot = snapshot;
                 lastSnapshotFailure = nil;
+                lastReadinessError = nil;
                 IOSUseDOMSelectorResult *result = IOSUseDOMSelect(
                     snapshot,
                     label,
@@ -4618,6 +4274,14 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeWaitForCommand(
                 if ([snapshotError[@"code"]
                         isEqualToString:@"request_cancelled"]) {
                     iterationError = snapshotError;
+                } else if ([snapshotError[@"code"]
+                        isEqualToString:@"runtime_ui_failed"]) {
+                    iterationError = snapshotError;
+                } else if ([snapshotError[@"code"]
+                        isEqualToString:@"runtime_ui_not_ready"] ||
+                    [snapshotError[@"code"]
+                        isEqualToString:@"runtime_ui_backgrounded"]) {
+                    lastReadinessError = snapshotError;
                 }
                 lastSnapshotFailure =
                     snapshotError[@"message"] ?:
@@ -4636,6 +4300,12 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeWaitForCommand(
 
         double elapsed = CFAbsoluteTimeGetCurrent() - startedAt;
         if (elapsed >= timeout) {
+            if (lastReadinessError != nil) {
+                if (commandError != NULL) {
+                    *commandError = lastReadinessError;
+                }
+                return nil;
+            }
             // Keep the cleaned parent graph alive while timeout candidates
             // materialize their weak ancestor links.
             (void)lastSnapshot;

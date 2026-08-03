@@ -717,6 +717,7 @@ struct PlayCoverRuntimeInteractionState:
         var values: [String] = []
         if refreshComplete == false,
            refreshError != "runtime_ui_not_ready",
+           refreshError != "runtime_ui_backgrounded",
            refreshError != "runtime_ui_failed" {
             values.append(
                 "The Runtime could not refresh alert status"
@@ -1332,13 +1333,15 @@ final class PlayCoverRuntimeClient {
         }
         let address = try makeAddress()
         let requestID = UUID().uuidString
+        let requestsAlertRefresh =
+            refreshAlertStatus && command != .waitFor
         let request = RequestEnvelope(
             requestId: requestID,
             sessionID: sessionID,
             command: command,
             arguments: arguments,
             refreshAlertStatus:
-                refreshAlertStatus ? true : nil
+                requestsAlertRefresh ? true : nil
         )
 
         let requestBody: Data
@@ -1375,7 +1378,8 @@ final class PlayCoverRuntimeClient {
         )
         return try decodeResponse(
             responseBody,
-            expectedRequestID: requestID
+            expectedRequestID: requestID,
+            expectsAlertRefresh: requestsAlertRefresh
         )
     }
 
@@ -1881,7 +1885,8 @@ final class PlayCoverRuntimeClient {
 
     private func decodeResponse<Payload: Decodable>(
         _ body: Data,
-        expectedRequestID: String
+        expectedRequestID: String,
+        expectsAlertRefresh: Bool? = nil
     ) throws -> Payload {
         guard let text = String(data: body, encoding: .utf8) else {
             throw PlayCoverRuntimeClientError.responseIsNotUTF8
@@ -1924,7 +1929,9 @@ final class PlayCoverRuntimeClient {
         try consumeResponseMetadata(
             interactionState: envelope.interactionState,
             performance: envelope.performance,
-            responseOK: envelope.ok
+            responseOK: envelope.ok,
+            expectsAlertRefresh:
+                expectsAlertRefresh ?? refreshAlertStatus
         )
         if envelope.ok {
             guard envelope.error == nil else {
@@ -1960,7 +1967,8 @@ final class PlayCoverRuntimeClient {
     private func consumeResponseMetadata(
         interactionState: PlayCoverRuntimeInteractionState?,
         performance: PlayCoverRuntimeResponsePerformance?,
-        responseOK: Bool
+        responseOK: Bool,
+        expectsAlertRefresh: Bool
     ) throws {
         if let performance {
             guard performance.alertRefreshElapsedMs?.isFinite
@@ -1971,13 +1979,13 @@ final class PlayCoverRuntimeClient {
                     "response performance is invalid"
                 )
             }
-        } else if refreshAlertStatus {
+        } else if expectsAlertRefresh {
             throw PlayCoverRuntimeClientError.malformedResponse(
                 "alert-refresh response is missing performance"
             )
         }
 
-        if refreshAlertStatus {
+        if expectsAlertRefresh {
             guard let interactionState,
                   let alertRefreshElapsedMs =
                     performance?.alertRefreshElapsedMs

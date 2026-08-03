@@ -19,47 +19,18 @@ struct PlayCoverPendingLaunchStoreError:
 enum PlayCoverPendingLaunchStore {
     static let maximumBytes = 64 * 1_024
 
-    enum Phase: String, Codable, Equatable, Sendable {
+    enum Phase: String, Equatable, Sendable {
         case intent
-        case aliasReady
-        case submissionArmed
-        case terminalCallback
         case owned
         case driverLockCommitted
-        case confirmedStopped
     }
 
-    enum OwnerSource: String, Codable, Equatable, Sendable {
+    enum OwnerSource: String, Equatable, Sendable {
         case workspaceCallback
         case authenticatedRuntime
     }
 
-    enum CallbackOutcome: String, Codable, Equatable, Sendable {
-        case success
-        case failure
-    }
-
-    enum CleanupProof: String, Codable, Equatable, Sendable {
-        case neverSubmitted
-        case ownedProcessExited
-        case ownedPIDReused
-        case terminalCallbackAndEmptyCensus
-        case newBootAndEmptyCensus
-        case stoppedExactOwner
-        case driverLockRetired
-    }
-
-    struct AliasEntry: Codable, Equatable, Sendable {
-        let name: String
-        let destination: String
-    }
-
-    struct TerminalCallback: Codable, Equatable, Sendable {
-        let outcome: CallbackOutcome
-        let errorDescription: String?
-    }
-
-    struct Owner: Codable, Equatable, Sendable {
+    struct Owner: Equatable, Sendable {
         let pid: Int32
         let processBirthMicroseconds: UInt64
         let source: OwnerSource
@@ -75,7 +46,7 @@ enum PlayCoverPendingLaunchStore {
         let aliasPath: String
     }
 
-    struct Record: Codable, Equatable, Sendable {
+    struct Record: Equatable, Sendable {
         let phase: Phase
         let sessionID: String
         let runtimeSocketPath: String
@@ -84,46 +55,7 @@ enum PlayCoverPendingLaunchStore {
         let bundleIdentifier: String
         let executablePath: String
         let aliasPath: String
-        let aliasDevice: UInt64?
-        let aliasInode: UInt64?
-        let aliasInventory: [AliasEntry]?
-        let submissionBootSessionUUID: String?
-        let terminalCallback: TerminalCallback?
         let owner: Owner?
-        let cleanupProof: CleanupProof?
-
-        fileprivate func replacing(
-            phase: Phase? = nil,
-            aliasDevice: UInt64?? = nil,
-            aliasInode: UInt64?? = nil,
-            aliasInventory: [AliasEntry]?? = nil,
-            submissionBootSessionUUID: String?? = nil,
-            terminalCallback: TerminalCallback?? = nil,
-            owner: Owner?? = nil,
-            cleanupProof: CleanupProof?? = nil
-        ) -> Record {
-            Record(
-                phase: phase ?? self.phase,
-                sessionID: sessionID,
-                runtimeSocketPath: runtimeSocketPath,
-                generationKey: generationKey,
-                appPath: appPath,
-                bundleIdentifier: bundleIdentifier,
-                executablePath: executablePath,
-                aliasPath: aliasPath,
-                aliasDevice: aliasDevice ?? self.aliasDevice,
-                aliasInode: aliasInode ?? self.aliasInode,
-                aliasInventory:
-                    aliasInventory ?? self.aliasInventory,
-                submissionBootSessionUUID:
-                    submissionBootSessionUUID
-                        ?? self.submissionBootSessionUUID,
-                terminalCallback:
-                    terminalCallback ?? self.terminalCallback,
-                owner: owner ?? self.owner,
-                cleanupProof: cleanupProof ?? self.cleanupProof
-            )
-        }
     }
 
     private static let processLock = NSLock()
@@ -143,218 +75,46 @@ enum PlayCoverPendingLaunchStore {
             bundleIdentifier: intent.bundleIdentifier,
             executablePath: intent.executablePath,
             aliasPath: intent.aliasPath,
-            aliasDevice: nil,
-            aliasInode: nil,
-            aliasInventory: nil,
-            submissionBootSessionUUID: nil,
-            terminalCallback: nil,
-            owner: nil,
-            cleanupProof: nil
+            owner: nil
         )
         try validate(record, paths: paths)
-        return try withExclusiveLock(paths: paths) { parent in
-            guard try readUnlocked(
-                parentDescriptor: parent,
-                paths: paths
-            ) == nil else {
+        return try withWritableStore(paths: paths) { parent in
+            guard try readUnlocked(parent, paths: paths) == nil else {
                 throw storeError(
-                    "a pending launch already exists; recover it before "
-                        + "allocating another session"
+                    "a pending launch already exists"
                 )
             }
-            try writeUnlocked(
-                record,
-                parentDescriptor: parent,
-                paths: paths
-            )
+            try writeUnlocked(record, parent: parent)
             return record
-        }
-    }
-
-    static func markAliasReady(
-        sessionID: String,
-        device: UInt64,
-        inode: UInt64,
-        inventory: [AliasEntry],
-        paths: IOSUsePaths
-    ) throws -> Record {
-        return try update(
-            sessionID: sessionID,
-            paths: paths
-        ) { current in
-            if current.phase == .aliasReady {
-                guard current.aliasDevice == device,
-                      current.aliasInode == inode,
-                      current.aliasInventory == inventory else {
-                    throw storeError(
-                        "aliasReady was replayed with different evidence"
-                    )
-                }
-                return current
-            }
-            guard current.phase == .intent else {
-                throw invalidTransition(current.phase, to: .aliasReady)
-            }
-            return current.replacing(
-                phase: .aliasReady,
-                aliasDevice: .some(device),
-                aliasInode: .some(inode),
-                aliasInventory: .some(inventory)
-            )
-        }
-    }
-
-    static func markSubmissionArmed(
-        sessionID: String,
-        bootSessionUUID: String,
-        paths: IOSUsePaths
-    ) throws -> Record {
-        guard let normalizedBootSessionUUID =
-                canonicalUUID(bootSessionUUID) else {
-            throw storeError(
-                "submission boot session is not a UUID"
-            )
-        }
-        return try update(
-            sessionID: sessionID,
-            paths: paths
-        ) { current in
-            if current.phase == .submissionArmed {
-                guard canonicalUUID(
-                    current.submissionBootSessionUUID
-                ) == normalizedBootSessionUUID else {
-                    throw storeError(
-                        "submissionArmed was replayed on another boot"
-                    )
-                }
-                return current
-            }
-            guard current.phase == .aliasReady else {
-                throw invalidTransition(
-                    current.phase,
-                    to: .submissionArmed
-                )
-            }
-            return current.replacing(
-                phase: .submissionArmed,
-                submissionBootSessionUUID:
-                    .some(normalizedBootSessionUUID)
-            )
-        }
-    }
-
-    static func markTerminalCallbackFailure(
-        sessionID: String,
-        errorDescription: String,
-        paths: IOSUsePaths
-    ) throws -> Record {
-        let callback = TerminalCallback(
-            outcome: .failure,
-            errorDescription: errorDescription
-        )
-        return try update(
-            sessionID: sessionID,
-            paths: paths
-        ) { current in
-            switch current.phase {
-            case .submissionArmed:
-                return current.replacing(
-                    phase: .terminalCallback,
-                    terminalCallback: .some(callback)
-                )
-            case .terminalCallback:
-                guard current.terminalCallback == callback else {
-                    throw storeError(
-                        "terminal callback was replayed with different "
-                            + "evidence"
-                    )
-                }
-                return current
-            case .owned, .driverLockCommitted:
-                if let existing = current.terminalCallback {
-                    guard existing == callback else {
-                        throw storeError(
-                            "terminal callback conflicts with durable "
-                                + "ownership evidence"
-                        )
-                    }
-                    return current
-                }
-                return current.replacing(
-                    terminalCallback: .some(callback)
-                )
-            case .confirmedStopped:
-                return current
-            case .intent, .aliasReady:
-                throw invalidTransition(
-                    current.phase,
-                    to: .terminalCallback
-                )
-            }
         }
     }
 
     static func markOwned(
         sessionID: String,
         owner: Owner,
-        callbackSucceeded: Bool,
         paths: IOSUsePaths
     ) throws -> Record {
-        let callback = callbackSucceeded
-            ? TerminalCallback(
-                outcome: .success,
-                errorDescription: nil
-            )
-            : nil
-        return try update(
-            sessionID: sessionID,
-            paths: paths
-        ) { current in
+        try update(sessionID: sessionID, paths: paths) { current in
             switch current.phase {
-            case .submissionArmed, .terminalCallback:
-                if callbackSucceeded,
-                   let existing = current.terminalCallback,
-                   existing.outcome == .failure {
-                    throw storeError(
-                        "successful callback conflicts with the durable "
-                            + "terminal callback"
-                    )
-                }
-                return current.replacing(
+            case .intent:
+                return Record(
                     phase: .owned,
-                    terminalCallback:
-                        callback.map(Optional.some),
-                    owner: .some(owner)
+                    sessionID: current.sessionID,
+                    runtimeSocketPath: current.runtimeSocketPath,
+                    generationKey: current.generationKey,
+                    appPath: current.appPath,
+                    bundleIdentifier: current.bundleIdentifier,
+                    executablePath: current.executablePath,
+                    aliasPath: current.aliasPath,
+                    owner: owner
                 )
             case .owned, .driverLockCommitted:
-                guard let existingOwner = current.owner,
-                      sameProcess(
-                        existingOwner,
-                        owner
-                      ) else {
+                guard current.owner == owner else {
                     throw storeError(
-                        "ownership was replayed for a different process"
-                    )
-                }
-                if callbackSucceeded {
-                    if let existing = current.terminalCallback {
-                        guard existing == callback else {
-                            throw storeError(
-                                "callback result conflicts with durable "
-                                    + "ownership evidence"
-                            )
-                        }
-                        return current
-                    }
-                    return current.replacing(
-                        terminalCallback: .some(callback)
+                        "ownership was replayed for another process"
                     )
                 }
                 return current
-            case .confirmedStopped:
-                return current
-            case .intent, .aliasReady:
-                throw invalidTransition(current.phase, to: .owned)
             }
         }
     }
@@ -364,65 +124,48 @@ enum PlayCoverPendingLaunchStore {
         paths: IOSUsePaths
     ) throws -> Record {
         try update(sessionID: sessionID, paths: paths) { current in
-            if current.phase == .driverLockCommitted {
+            switch current.phase {
+            case .owned:
+                return Record(
+                    phase: .driverLockCommitted,
+                    sessionID: current.sessionID,
+                    runtimeSocketPath: current.runtimeSocketPath,
+                    generationKey: current.generationKey,
+                    appPath: current.appPath,
+                    bundleIdentifier: current.bundleIdentifier,
+                    executablePath: current.executablePath,
+                    aliasPath: current.aliasPath,
+                    owner: current.owner
+                )
+            case .driverLockCommitted:
                 return current
-            }
-            guard current.phase == .owned else {
-                throw invalidTransition(
-                    current.phase,
-                    to: .driverLockCommitted
+            case .intent:
+                throw storeError(
+                    "driver.lock cannot commit an unowned launch"
                 )
             }
-            return current.replacing(
-                phase: .driverLockCommitted
-            )
         }
     }
 
-    static func markConfirmedStopped(
+    static func remove(
         sessionID: String,
-        cleanupProof: CleanupProof,
-        paths: IOSUsePaths
-    ) throws -> Record {
-        try update(sessionID: sessionID, paths: paths) { current in
-            if current.phase == .confirmedStopped {
-                guard current.cleanupProof == cleanupProof else {
-                    throw storeError(
-                        "confirmed cleanup proof changed"
-                    )
-                }
-                return current
-            }
-            try validateCleanupTransition(
-                current.phase,
-                proof: cleanupProof
-            )
-            return current.replacing(
-                phase: .confirmedStopped,
-                cleanupProof: .some(cleanupProof)
-            )
-        }
-    }
-
-    static func removeConfirmed(
-        sessionID: String,
+        expectedPhase: Phase,
         paths: IOSUsePaths
     ) throws {
-        try withExclusiveLock(paths: paths) { parent in
+        try withWritableStore(paths: paths) { parent in
             guard let current = try readUnlocked(
-                parentDescriptor: parent,
+                parent,
                 paths: paths
             ) else {
                 return
             }
             guard current.sessionID == sessionID,
-                  current.phase == .confirmedStopped,
-                  current.cleanupProof != nil else {
+                  current.phase == expectedPhase else {
                 throw storeError(
-                    "pending launch removal requires the matching "
-                        + "confirmedStopped record"
+                    "journal removal identity or phase changed"
                 )
             }
+            #if canImport(Darwin)
             guard Darwin.unlinkat(
                     parent,
                     journalFilename,
@@ -432,7 +175,12 @@ enum PlayCoverPendingLaunchStore {
                     "cannot remove pending-launch.json: errno \(errno)"
                 )
             }
-            try syncParent(parent)
+            try syncDirectory(parent)
+            #else
+            try FileManager.default.removeItem(
+                atPath: paths.playcoverPendingLaunch
+            )
+            #endif
         }
     }
 
@@ -449,45 +197,14 @@ enum PlayCoverPendingLaunchStore {
         }
         guard parent >= 0 else {
             throw storeError(
-                "cannot open managed Mac state: errno \(errno)"
+                "cannot open Mac state directory: errno \(errno)"
             )
         }
         defer { Darwin.close(parent) }
         try validateParent(parent)
-        for _ in 0..<3 {
-            if try namedEntryExists(
-                lockFilename,
-                parentDescriptor: parent
-            ) {
-                return try withExistingLock(
-                    parentDescriptor: parent
-                ) {
-                    try readUnlocked(
-                        parentDescriptor: parent,
-                        paths: paths
-                    )
-                }
-            }
-            let journalExists = try namedEntryExists(
-                journalFilename,
-                parentDescriptor: parent,
-            )
-            if try namedEntryExists(
-                lockFilename,
-                parentDescriptor: parent
-            ) {
-                continue
-            }
-            guard journalExists else {
-                return nil
-            }
-            throw storeError(
-                "pending-launch.json exists without its durable lock"
-            )
+        return try withFileLock(parent: parent, create: false) {
+            try readUnlocked(parent, paths: paths)
         }
-        throw storeError(
-            "pending launch state changed while acquiring its lock"
-        )
         #else
         guard FileManager.default.fileExists(
             atPath: paths.playcoverPendingLaunch
@@ -499,108 +216,88 @@ enum PlayCoverPendingLaunchStore {
                 fileURLWithPath: paths.playcoverPendingLaunch
             )
         )
-        return try decodeAndValidate(data, paths: paths)
+        return try decode(data, paths: paths)
         #endif
     }
 
     private static func update(
         sessionID: String,
         paths: IOSUsePaths,
-        _ body: (Record) throws -> Record
+        _ transform: (Record) throws -> Record
     ) throws -> Record {
-        try withExclusiveLock(paths: paths) { parent in
+        try withWritableStore(paths: paths) { parent in
             guard let current = try readUnlocked(
-                parentDescriptor: parent,
+                parent,
                 paths: paths
             ) else {
                 throw storeError(
-                    "the pending launch disappeared before its durable "
-                        + "transition"
+                    "pending launch disappeared before transition"
                 )
             }
             guard current.sessionID == sessionID else {
                 throw storeError(
-                    "pending launch belongs to a different session"
+                    "pending launch belongs to another session"
                 )
             }
-            let updated = try body(current)
+            let updated = try transform(current)
             try validate(updated, paths: paths)
             if updated != current {
-                try writeUnlocked(
-                    updated,
-                    parentDescriptor: parent,
-                    paths: paths
-                )
+                try writeUnlocked(updated, parent: parent)
             }
             return updated
         }
     }
 
-    private static func withExclusiveLock<T>(
+    private static func withWritableStore<T>(
         paths: IOSUsePaths,
         _ operation: (Int32) throws -> T
     ) throws -> T {
         processLock.lock()
         defer { processLock.unlock() }
         #if canImport(Darwin)
-        return try SessionOperationLock
-            .withSecureStateDirectory(paths: paths) {
-                stateDescriptor,
-                _ in
-                try validateParent(stateDescriptor)
-                return try withLock(
-                    parentDescriptor: stateDescriptor,
-                    create: true
-                ) {
-                    try operation(stateDescriptor)
-                }
+        return try SessionOperationLock.withSecureStateDirectory(
+            paths: paths
+        ) { parent, _ in
+            try validateParent(parent)
+            return try withFileLock(parent: parent, create: true) {
+                try operation(parent)
             }
+        }
         #else
         return try operation(-1)
         #endif
     }
 
     #if canImport(Darwin)
-    private static func withExistingLock<T>(
-        parentDescriptor: Int32,
-        _ operation: () throws -> T
-    ) throws -> T {
-        try withLock(
-            parentDescriptor: parentDescriptor,
-            create: false,
-            operation
-        )
-    }
-
-    private static func withLock<T>(
-        parentDescriptor: Int32,
+    private static func withFileLock<T>(
+        parent: Int32,
         create: Bool,
         _ operation: () throws -> T
     ) throws -> T {
-        var created = false
-        var descriptor: Int32
+        var flags = O_RDWR | O_NOFOLLOW | O_CLOEXEC
         if create {
-            descriptor = Darwin.openat(
-                parentDescriptor,
-                lockFilename,
-                O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC
-                    | O_NOFOLLOW,
-                0o600
+            flags |= O_CREAT
+        }
+        let descriptor = Darwin.openat(
+            parent,
+            lockFilename,
+            flags,
+            0o600
+        )
+        if descriptor < 0, !create, errno == ENOENT {
+            let journal = Darwin.openat(
+                parent,
+                journalFilename,
+                O_RDONLY | O_NOFOLLOW | O_CLOEXEC
             )
-            if descriptor >= 0 {
-                created = true
-            } else if errno == EEXIST {
-                descriptor = Darwin.openat(
-                    parentDescriptor,
-                    lockFilename,
-                    O_RDWR | O_CLOEXEC | O_NOFOLLOW
-                )
+            if journal < 0, errno == ENOENT {
+                return try operation()
             }
-        } else {
-            descriptor = Darwin.openat(
-                parentDescriptor,
-                lockFilename,
-                O_RDWR | O_CLOEXEC | O_NOFOLLOW
+            if journal >= 0 {
+                Darwin.close(journal)
+            }
+            throw storeError(
+                "pending-launch.json exists without its lock"
             )
         }
         guard descriptor >= 0 else {
@@ -609,87 +306,36 @@ enum PlayCoverPendingLaunchStore {
             )
         }
         defer { Darwin.close(descriptor) }
-        if created {
-            guard fchmod(descriptor, 0o600) == 0,
-                  fsync(descriptor) == 0 else {
-                throw storeError(
-                    "cannot durably create pending-launch.lock: "
-                        + "errno \(errno)"
-                )
-            }
-            try syncParent(parentDescriptor)
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              status.st_uid == geteuid(),
+              status.st_nlink == 1,
+              status.st_mode & S_IFMT == S_IFREG else {
+            throw storeError("pending launch lock is not owner-controlled")
         }
-        try validateLock(
-            descriptor,
-            parentDescriptor: parentDescriptor
-        )
-        while Darwin.lockf(descriptor, F_LOCK, 0) != 0 {
-            guard errno == EINTR else {
-                throw storeError(
-                    "cannot acquire pending-launch.lock: errno \(errno)"
-                )
-            }
+        if status.st_mode & 0o777 != 0o600,
+           fchmod(descriptor, 0o600) != 0 {
+            throw storeError(
+                "cannot secure pending launch lock: errno \(errno)"
+            )
         }
-        defer { _ = Darwin.lockf(descriptor, F_ULOCK, 0) }
-        try validateLock(
-            descriptor,
-            parentDescriptor: parentDescriptor
-        )
+        guard flock(descriptor, LOCK_EX) == 0 else {
+            throw storeError(
+                "cannot lock pending launch state: errno \(errno)"
+            )
+        }
+        defer { _ = flock(descriptor, LOCK_UN) }
         return try operation()
     }
 
-    private static func validateLock(
-        _ descriptor: Int32,
-        parentDescriptor: Int32
-    ) throws {
-        var opened = stat()
-        var named = stat()
-        guard fstat(descriptor, &opened) == 0,
-              fstatat(
-                parentDescriptor,
-                lockFilename,
-                &named,
-                AT_SYMLINK_NOFOLLOW
-              ) == 0,
-              sameIdentity(opened, named),
-              isSafeRegularFile(opened, maximum: 0),
-              opened.st_size == 0 else {
-            throw storeError(
-                "pending-launch.lock is not a stable 0600 "
-                    + "singly-linked regular file"
-            )
-        }
-    }
-
-    private static func namedEntryExists(
-        _ name: String,
-        parentDescriptor: Int32
-    ) throws -> Bool {
-        var status = stat()
-        if fstatat(
-            parentDescriptor,
-            name,
-            &status,
-            AT_SYMLINK_NOFOLLOW
-        ) == 0 {
-            return true
-        }
-        if errno == ENOENT {
-            return false
-        }
-        throw storeError(
-            "cannot inspect \(name): errno \(errno)"
-        )
-    }
-
     private static func readUnlocked(
-        parentDescriptor: Int32,
+        _ parent: Int32,
         paths: IOSUsePaths
     ) throws -> Record? {
         let descriptor = Darwin.openat(
-            parentDescriptor,
+            parent,
             journalFilename,
-            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+            O_RDONLY | O_NOFOLLOW | O_CLOEXEC
         )
         if descriptor < 0, errno == ENOENT {
             return nil
@@ -700,635 +346,359 @@ enum PlayCoverPendingLaunchStore {
             )
         }
         defer { Darwin.close(descriptor) }
-        var before = stat()
-        guard fstat(descriptor, &before) == 0,
-              isSafeRegularFile(
-                before,
-                maximum: Int64(maximumBytes)
-              ),
-              before.st_size > 0 else {
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              status.st_uid == geteuid(),
+              status.st_nlink == 1,
+              status.st_mode & S_IFMT == S_IFREG,
+              status.st_mode & 0o777 == 0o600,
+              status.st_size >= 0,
+              status.st_size <= maximumBytes else {
             throw storeError(
-                "pending-launch.json is not a bounded 0600 "
-                    + "singly-linked regular file"
+                "pending-launch.json is not a bounded owner-only file"
             )
         }
-        var data = Data(count: Int(before.st_size))
-        try data.withUnsafeMutableBytes { bytes in
-            guard let base = bytes.baseAddress else { return }
-            var offset = 0
-            while offset < bytes.count {
-                let count = Darwin.read(
+        var data = Data(count: Int(status.st_size))
+        let dataCount = data.count
+        var offset = 0
+        while offset < dataCount {
+            let readCount = data.withUnsafeMutableBytes { bytes in
+                Darwin.read(
                     descriptor,
-                    base.advanced(by: offset),
-                    bytes.count - offset
+                    bytes.baseAddress!.advanced(by: offset),
+                    dataCount - offset
                 )
-                if count > 0 {
-                    offset += count
-                } else if count < 0, errno == EINTR {
-                    continue
-                } else {
-                    throw storeError(
-                        "cannot read pending-launch.json completely"
-                    )
-                }
             }
+            if readCount < 0, errno == EINTR {
+                continue
+            }
+            guard readCount > 0 else {
+                throw storeError(
+                    "pending-launch.json changed while reading"
+                )
+            }
+            offset += readCount
         }
-        var after = stat()
-        var named = stat()
-        guard fstat(descriptor, &after) == 0,
-              fstatat(
-                parentDescriptor,
-                journalFilename,
-                &named,
-                AT_SYMLINK_NOFOLLOW
-              ) == 0,
-              sameStableFile(before, after),
-              sameStableFile(before, named) else {
-            throw storeError(
-                "pending-launch.json changed while it was read"
-            )
-        }
-        return try decodeAndValidate(data, paths: paths)
+        return try decode(data, paths: paths)
     }
 
     private static func writeUnlocked(
         _ record: Record,
-        parentDescriptor: Int32,
-        paths: IOSUsePaths
+        parent: Int32
     ) throws {
-        try validate(record, paths: paths)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(record)
-        guard !data.isEmpty, data.count <= maximumBytes else {
-            throw storeError(
-                "encoded journal exceeds \(maximumBytes) bytes"
-            )
+        let data = try encode(record)
+        guard data.count <= maximumBytes else {
+            throw storeError("pending launch record is too large")
         }
-        var existing = stat()
-        if fstatat(
-            parentDescriptor,
-            journalFilename,
-            &existing,
-            AT_SYMLINK_NOFOLLOW
-        ) == 0 {
-            guard isSafeRegularFile(
-                existing,
-                maximum: Int64(maximumBytes)
-            ) else {
-                throw storeError(
-                    "refusing to replace unsafe pending-launch.json"
-                )
-            }
-        } else if errno != ENOENT {
-            throw storeError(
-                "cannot inspect pending-launch.json before publish: "
-                    + "errno \(errno)"
-            )
-        }
-        let temporary =
-            ".pending-launch-\(UUID().uuidString).tmp"
+        let temporary = ".pending-launch-\(UUID().uuidString).tmp"
         let descriptor = Darwin.openat(
-            parentDescriptor,
+            parent,
             temporary,
             O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
             0o600
         )
         guard descriptor >= 0 else {
             throw storeError(
-                "cannot create pending journal temporary file: "
-                    + "errno \(errno)"
+                "cannot create pending launch staging file: errno \(errno)"
             )
         }
-        var removeTemporary = true
+        var published = false
         defer {
             Darwin.close(descriptor)
-            if removeTemporary {
-                _ = Darwin.unlinkat(
-                    parentDescriptor,
-                    temporary,
-                    0
-                )
+            if !published {
+                _ = Darwin.unlinkat(parent, temporary, 0)
             }
         }
-        try data.withUnsafeBytes { bytes in
-            guard let base = bytes.baseAddress else { return }
-            var offset = 0
-            while offset < bytes.count {
-                let count = Darwin.write(
+        var offset = 0
+        while offset < data.count {
+            let written = data.withUnsafeBytes { bytes in
+                Darwin.write(
                     descriptor,
-                    base.advanced(by: offset),
-                    bytes.count - offset
+                    bytes.baseAddress!.advanced(by: offset),
+                    data.count - offset
                 )
-                if count > 0 {
-                    offset += count
-                } else if count < 0, errno == EINTR {
-                    continue
-                } else {
-                    throw storeError(
-                        "cannot write pending launch journal: "
-                            + "errno \(errno)"
-                    )
-                }
             }
+            if written < 0, errno == EINTR {
+                continue
+            }
+            guard written > 0 else {
+                throw storeError(
+                    "cannot write pending launch staging file: errno \(errno)"
+                )
+            }
+            offset += written
         }
-        guard fchmod(descriptor, 0o600) == 0,
-              fsync(descriptor) == 0 else {
-            throw storeError(
-                "cannot secure pending launch journal: errno \(errno)"
-            )
-        }
-        guard Darwin.renameat(
-                parentDescriptor,
+        guard fsync(descriptor) == 0,
+              Darwin.renameat(
+                parent,
                 temporary,
-                parentDescriptor,
+                parent,
                 journalFilename
               ) == 0 else {
             throw storeError(
-                "cannot publish pending-launch.json: errno \(errno)"
+                "cannot publish pending launch journal: errno \(errno)"
             )
         }
-        removeTemporary = false
-        try syncParent(parentDescriptor)
+        published = true
+        try syncDirectory(parent)
     }
 
-    private static func validateParent(
-        _ descriptor: Int32
-    ) throws {
+    private static func validateParent(_ descriptor: Int32) throws {
         var status = stat()
         guard fstat(descriptor, &status) == 0,
-              status.st_mode & S_IFMT == S_IFDIR,
               status.st_uid == geteuid(),
-              status.st_mode & 0o7777 == 0o700 else {
+              status.st_mode & S_IFMT == S_IFDIR,
+              status.st_mode & 0o777 == 0o700 else {
             throw storeError(
-                "managed Mac state is not an owner-only directory"
+                "Mac state directory is not owner-only"
             )
         }
     }
 
-    private static func syncParent(
-        _ descriptor: Int32
-    ) throws {
+    private static func syncDirectory(_ descriptor: Int32) throws {
         guard fsync(descriptor) == 0 else {
             throw storeError(
-                "cannot fsync managed Mac state: errno \(errno)"
+                "cannot sync Mac state directory: errno \(errno)"
             )
         }
     }
-
-    private static func isSafeRegularFile(
-        _ status: stat,
-        maximum: Int64
-    ) -> Bool {
-        status.st_mode & S_IFMT == S_IFREG
-            && status.st_uid == geteuid()
-            && status.st_nlink == 1
-            && status.st_mode & 0o7777 == 0o600
-            && status.st_size >= 0
-            && status.st_size <= maximum
+    #else
+    private static func readUnlocked(
+        _ parent: Int32,
+        paths: IOSUsePaths
+    ) throws -> Record? {
+        guard FileManager.default.fileExists(
+            atPath: paths.playcoverPendingLaunch
+        ) else {
+            return nil
+        }
+        return try decode(
+            Data(
+                contentsOf: URL(
+                    fileURLWithPath: paths.playcoverPendingLaunch
+                )
+            ),
+            paths: paths
+        )
     }
 
-    private static func sameIdentity(
-        _ lhs: stat,
-        _ rhs: stat
-    ) -> Bool {
-        lhs.st_dev == rhs.st_dev
-            && lhs.st_ino == rhs.st_ino
-            && lhs.st_mode == rhs.st_mode
-            && lhs.st_uid == rhs.st_uid
-            && lhs.st_nlink == rhs.st_nlink
-    }
-
-    private static func sameStableFile(
-        _ lhs: stat,
-        _ rhs: stat
-    ) -> Bool {
-        sameIdentity(lhs, rhs)
-            && lhs.st_size == rhs.st_size
-            && lhs.st_mtimespec.tv_sec
-                == rhs.st_mtimespec.tv_sec
-            && lhs.st_mtimespec.tv_nsec
-                == rhs.st_mtimespec.tv_nsec
-            && lhs.st_ctimespec.tv_sec
-                == rhs.st_ctimespec.tv_sec
-            && lhs.st_ctimespec.tv_nsec
-                == rhs.st_ctimespec.tv_nsec
+    private static func writeUnlocked(
+        _ record: Record,
+        parent: Int32
+    ) throws {
+        _ = parent
+        throw storeError("pending launch persistence requires Darwin")
     }
     #endif
 
-    private static func decodeAndValidate(
+    private static func encode(_ record: Record) throws -> Data {
+        var object: [String: Any] = [
+            "phase": record.phase.rawValue,
+            "sessionID": record.sessionID,
+            "runtimeSocketPath": record.runtimeSocketPath,
+            "generationKey": record.generationKey,
+            "appPath": record.appPath,
+            "bundleIdentifier": record.bundleIdentifier,
+            "executablePath": record.executablePath,
+            "aliasPath": record.aliasPath,
+        ]
+        if let owner = record.owner {
+            object["owner"] = [
+                "pid": Int(owner.pid),
+                "processBirthMicroseconds":
+                    String(owner.processBirthMicroseconds),
+                "source": owner.source.rawValue,
+            ]
+        }
+        do {
+            return try JSONSerialization.data(
+                withJSONObject: object,
+                options: [.sortedKeys]
+            )
+        } catch {
+            throw storeError("cannot encode pending launch: \(error)")
+        }
+    }
+
+    private static func decode(
         _ data: Data,
         paths: IOSUsePaths
     ) throws -> Record {
-        guard data.count <= maximumBytes,
-              let root = try JSONSerialization
-                .jsonObject(with: data) as? [String: Any] else {
-            throw storeError(
-                "journal is oversized or is not a JSON object"
-            )
+        guard !data.isEmpty, data.count <= maximumBytes else {
+            throw storeError("pending launch JSON size is invalid")
         }
-        let allowed = Set([
-            "phase",
-            "sessionID",
-            "runtimeSocketPath",
-            "generationKey",
-            "appPath",
-            "bundleIdentifier",
-            "executablePath",
-            "aliasPath",
-            "aliasDevice",
-            "aliasInode",
-            "aliasInventory",
-            "submissionBootSessionUUID",
-            "terminalCallback",
-            "owner",
-            "cleanupProof",
-        ])
-        guard Set(root.keys).isSubset(of: allowed) else {
-            throw storeError("journal contains unknown fields")
-        }
-        if let inventory = root["aliasInventory"] as? [[String: Any]] {
-            guard inventory.allSatisfy({
-                Set($0.keys) == Set(["name", "destination"])
-            }) else {
-                throw storeError(
-                    "alias inventory contains unknown or missing fields"
-                )
-            }
-        }
-        if let callback =
-            root["terminalCallback"] as? [String: Any] {
-            guard Set(callback.keys).isSubset(
-                of: Set(["outcome", "errorDescription"])
-            ), callback["outcome"] != nil else {
-                throw storeError(
-                    "terminal callback fields are invalid"
-                )
-            }
-        }
-        if let owner = root["owner"] as? [String: Any] {
-            guard Set(owner.keys)
-                    == Set([
-                        "pid",
-                        "processBirthMicroseconds",
-                        "source",
-                    ]) else {
-                throw storeError("owner fields are invalid")
-            }
-        }
-        let record: Record
+        let value: Any
         do {
-            record = try JSONDecoder().decode(
-                Record.self,
-                from: data
+            value = try JSONSerialization.jsonObject(
+                with: data,
+                options: []
             )
         } catch {
-            throw storeError("journal cannot be decoded: \(error)")
+            throw storeError("pending launch JSON is malformed")
         }
+        guard let root = value as? [String: Any],
+              let phaseText = root["phase"] as? String,
+              let phase = Phase(rawValue: phaseText),
+              let sessionID = root["sessionID"] as? String,
+              let runtimeSocketPath =
+                root["runtimeSocketPath"] as? String,
+              let generationKey = root["generationKey"] as? String,
+              let appPath = root["appPath"] as? String,
+              let bundleIdentifier =
+                root["bundleIdentifier"] as? String,
+              let executablePath = root["executablePath"] as? String,
+              let aliasPath = root["aliasPath"] as? String else {
+            throw storeError("pending launch JSON fields are invalid")
+        }
+        let baseKeys: Set<String> = [
+            "phase", "sessionID", "runtimeSocketPath", "generationKey",
+            "appPath", "bundleIdentifier", "executablePath", "aliasPath",
+        ]
+        let owner: Owner?
+        if phase == .intent {
+            guard Set(root.keys) == baseKeys else {
+                throw storeError("intent contains unexpected fields")
+            }
+            owner = nil
+        } else {
+            guard Set(root.keys) == baseKeys.union(["owner"]),
+                  let rawOwner = root["owner"] as? [String: Any],
+                  Set(rawOwner.keys) == [
+                    "pid", "processBirthMicroseconds", "source",
+                  ],
+                  let pidNumber = rawOwner["pid"] as? NSNumber,
+                  CFGetTypeID(pidNumber) != CFBooleanGetTypeID(),
+                  let pid = Int32(exactly: pidNumber.int64Value),
+                  let birthText =
+                    rawOwner["processBirthMicroseconds"] as? String,
+                  let birth = UInt64(birthText),
+                  let sourceText = rawOwner["source"] as? String,
+                  let source = OwnerSource(rawValue: sourceText) else {
+                throw storeError("pending launch owner is invalid")
+            }
+            owner = Owner(
+                pid: pid,
+                processBirthMicroseconds: birth,
+                source: source
+            )
+        }
+        let record = Record(
+            phase: phase,
+            sessionID: sessionID,
+            runtimeSocketPath: runtimeSocketPath,
+            generationKey: generationKey,
+            appPath: appPath,
+            bundleIdentifier: bundleIdentifier,
+            executablePath: executablePath,
+            aliasPath: aliasPath,
+            owner: owner
+        )
         try validate(record, paths: paths)
         return record
     }
 
-    static func validate(
+    private static func validate(
         _ record: Record,
         paths: IOSUsePaths
     ) throws {
-        guard UUID(uuidString: record.sessionID) != nil,
-              isBundleIdentifier(record.bundleIdentifier),
+        guard UUID(uuidString: record.sessionID)?.uuidString
+                == record.sessionID.uppercased(),
               isLowercaseSHA256(record.generationKey),
-              record.runtimeSocketPath.hasPrefix("/"),
-              record.appPath.hasPrefix("/"),
-              record.executablePath.hasPrefix("/"),
-              record.aliasPath.hasPrefix("/") else {
-            throw storeError(
-                "journal common identity is incomplete"
-            )
+              isBoundedText(record.bundleIdentifier, maximum: 512),
+              !record.bundleIdentifier.contains("/"),
+              !record.bundleIdentifier.utf8.contains(0) else {
+            throw storeError("pending launch identity is invalid")
         }
-        let expectedSocket = try paths.macRuntimeSocketPath(
-            sessionID: record.sessionID
-        )
-        guard record.runtimeSocketPath == expectedSocket else {
-            throw storeError(
-                "Runtime socket does not match sessionID"
-            )
-        }
-        guard let prepared = lexicalPathComponents(
-                  paths.playcoverGlobalObjects
-              ),
-              let app = lexicalPathComponents(record.appPath),
-              let executable = lexicalPathComponents(
-                  record.executablePath
-              ),
-              app.count == prepared.count + 2,
-              app.starts(with: prepared),
-              app[prepared.count] == record.generationKey,
-              app.last?.count ?? 0 > 4,
-              app.last?.hasSuffix(".app") == true,
-              executable.count > app.count,
-              executable.starts(with: app) else {
-            throw storeError(
-                "journal App/executable does not identify its managed "
-                    + "generation"
-            )
-        }
+        let expectedApp = canonicalExistingPath(URL(
+            fileURLWithPath: paths.playcoverGlobalObjects,
+            isDirectory: true
+        ).appendingPathComponent(
+            record.generationKey,
+            isDirectory: true
+        ).appendingPathComponent(
+            "App.app",
+            isDirectory: true
+        ).path)
         let expectedAlias = PlayCoverService.sessionLaunchAlias(
             sessionID: record.sessionID
         ).bundleURL.standardizedFileURL.path
+        let expectedSocket = try paths.macRuntimeSocketPath(
+            sessionID: record.sessionID
+        )
+        guard record.appPath == expectedApp else {
+            throw storeError(
+                "prepared App path is outside its generation: "
+                    + "\(record.appPath) != \(expectedApp)"
+            )
+        }
         guard record.aliasPath == expectedAlias else {
-            throw storeError(
-                "façade path does not match sessionID"
-            )
+            throw storeError("launch facade path is not session-derived")
         }
-        try validateAliasEvidence(record)
-        try validateSubmissionEvidence(record)
-        try validatePhase(record)
-    }
-
-    private static func lexicalPathComponents(
-        _ path: String
-    ) -> [String]? {
-        guard path.hasPrefix("/"),
-              !path.utf8.contains(0) else {
-            return nil
+        guard record.runtimeSocketPath == expectedSocket else {
+            throw storeError("Runtime socket path is not session-derived")
         }
-        let components = path.split(
-            separator: "/",
-            omittingEmptySubsequences: false
-        )
-        guard components.first?.isEmpty == true else {
-            return nil
+        guard record.executablePath.hasPrefix(record.appPath + "/"),
+              isBoundedAbsolutePath(record.executablePath),
+              isBoundedAbsolutePath(record.appPath),
+              isBoundedAbsolutePath(record.aliasPath),
+              isBoundedAbsolutePath(record.runtimeSocketPath) else {
+            throw storeError("pending launch contains a non-canonical path")
         }
-        let tail = components.dropFirst()
-        guard !tail.isEmpty,
-              tail.allSatisfy({
-                  !$0.isEmpty && $0 != "." && $0 != ".."
-              }) else {
-            return nil
-        }
-        return tail.map(String.init)
-    }
-
-    private static func validateAliasEvidence(
-        _ record: Record
-    ) throws {
-        let values = (
-            record.aliasDevice,
-            record.aliasInode,
-            record.aliasInventory
-        )
-        if values.0 == nil, values.1 == nil, values.2 == nil {
-            return
-        }
-        guard let device = values.0,
-              let inode = values.1,
-              let inventory = values.2,
-              device > 0,
-              inode > 0,
-              !inventory.isEmpty,
-              inventory == inventory.sorted(by: {
-                $0.name < $1.name
-              }) else {
-            throw storeError(
-                "façade identity/inventory is incomplete"
-            )
-        }
-        var names = Set<String>()
-        for entry in inventory {
-            guard isSafeName(entry.name),
-                  names.insert(entry.name).inserted,
-                  entry.destination
-                    == record.appPath + "/" + entry.name else {
-                throw storeError(
-                    "façade inventory is unsafe or mismatched"
-                )
-            }
-        }
-    }
-
-    private static func validateSubmissionEvidence(
-        _ record: Record
-    ) throws {
-        if let boot = record.submissionBootSessionUUID {
-            guard UUID(uuidString: boot) != nil else {
-                throw storeError(
-                    "submission boot session is not a UUID"
-                )
-            }
-        }
-        if let callback = record.terminalCallback {
-            switch callback.outcome {
-            case .success:
-                guard callback.errorDescription == nil else {
-                    throw storeError(
-                        "successful callback cannot contain an error"
-                    )
-                }
-            case .failure:
-                guard let error = callback.errorDescription,
-                      !error.isEmpty,
-                      error.utf8.count <= 4_096 else {
-                    throw storeError(
-                        "failed callback requires a bounded error"
-                    )
-                }
-            }
-        }
-        if let owner = record.owner {
-            guard owner.pid > 0,
-                  owner.processBirthMicroseconds > 0 else {
-                throw storeError(
-                    "owned process identity is incomplete"
-                )
-            }
-        }
-    }
-
-    private static func validatePhase(
-        _ record: Record
-    ) throws {
-        let hasAlias = record.aliasDevice != nil
-            && record.aliasInode != nil
-            && record.aliasInventory != nil
         switch record.phase {
         case .intent:
-            guard !hasAlias,
-                  record.submissionBootSessionUUID == nil,
-                  record.terminalCallback == nil,
-                  record.owner == nil,
-                  record.cleanupProof == nil else {
-                throw storeError("intent fields are inconsistent")
-            }
-        case .aliasReady:
-            guard hasAlias,
-                  record.submissionBootSessionUUID == nil,
-                  record.terminalCallback == nil,
-                  record.owner == nil,
-                  record.cleanupProof == nil else {
-                throw storeError("aliasReady fields are inconsistent")
-            }
-        case .submissionArmed:
-            guard hasAlias,
-                  record.submissionBootSessionUUID != nil,
-                  record.terminalCallback == nil,
-                  record.owner == nil,
-                  record.cleanupProof == nil else {
-                throw storeError(
-                    "submissionArmed fields are inconsistent"
-                )
-            }
-        case .terminalCallback:
-            guard hasAlias,
-                  record.submissionBootSessionUUID != nil,
-                  record.terminalCallback?.outcome == .failure,
-                  record.owner == nil,
-                  record.cleanupProof == nil else {
-                throw storeError(
-                    "terminalCallback fields are inconsistent"
-                )
+            guard record.owner == nil else {
+                throw storeError("intent cannot contain an owner")
             }
         case .owned, .driverLockCommitted:
-            guard hasAlias,
-                  record.submissionBootSessionUUID != nil,
-                  record.owner != nil,
-                  record.cleanupProof == nil else {
-                throw storeError(
-                    "\(record.phase.rawValue) fields are inconsistent"
-                )
+            guard let owner = record.owner,
+                  owner.pid > 0,
+                  owner.processBirthMicroseconds > 0 else {
+                throw storeError("owned launch has no exact process identity")
             }
-        case .confirmedStopped:
-            guard let cleanupProof = record.cleanupProof else {
-                throw storeError(
-                    "confirmedStopped requires a cleanup proof"
-                )
+        }
+    }
+
+    private static func isLowercaseSHA256(_ value: String) -> Bool {
+        value.utf8.count == 64
+            && value.utf8.allSatisfy {
+                ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
             }
-            try validateCleanupEvidence(
-                record,
-                proof: cleanupProof
-            )
-        }
     }
 
-    private static func validateCleanupTransition(
-        _ phase: Phase,
-        proof: CleanupProof
-    ) throws {
-        let allowed: Set<Phase>
-        switch proof {
-        case .neverSubmitted:
-            allowed = [.intent, .aliasReady]
-        case .terminalCallbackAndEmptyCensus:
-            allowed = [.terminalCallback]
-        case .newBootAndEmptyCensus:
-            allowed = [.submissionArmed, .terminalCallback]
-        case .ownedProcessExited, .ownedPIDReused,
-             .stoppedExactOwner:
-            allowed = [.owned, .driverLockCommitted]
-        case .driverLockRetired:
-            allowed = [.driverLockCommitted]
-        }
-        guard allowed.contains(phase) else {
-            throw storeError(
-                "cleanup proof \(proof.rawValue) cannot follow "
-                    + phase.rawValue
-            )
-        }
+    private static func isBoundedText(
+        _ value: String,
+        maximum: Int
+    ) -> Bool {
+        !value.isEmpty && value.utf8.count <= maximum
     }
 
-    private static func validateCleanupEvidence(
-        _ record: Record,
-        proof: CleanupProof
-    ) throws {
-        let valid: Bool
-        switch proof {
-        case .neverSubmitted:
-            valid = record.submissionBootSessionUUID == nil
-                && record.terminalCallback == nil
-                && record.owner == nil
-        case .terminalCallbackAndEmptyCensus:
-            valid = record.submissionBootSessionUUID != nil
-                && record.terminalCallback?.outcome == .failure
-                && record.owner == nil
-        case .newBootAndEmptyCensus:
-            valid = record.submissionBootSessionUUID != nil
-                && record.owner == nil
-        case .ownedProcessExited, .ownedPIDReused,
-             .stoppedExactOwner, .driverLockRetired:
-            valid = record.submissionBootSessionUUID != nil
-                && record.owner != nil
+    private static func isBoundedAbsolutePath(_ value: String) -> Bool {
+        guard isBoundedText(value, maximum: 4_096),
+              value.hasPrefix("/"),
+              !value.utf8.contains(0),
+              !value.contains("//") else {
+            return false
         }
-        guard valid else {
-            throw storeError(
-                "cleanup proof \(proof.rawValue) conflicts with "
-                    + "the durable launch evidence"
-            )
-        }
+        return !value.split(separator: "/", omittingEmptySubsequences: true)
+            .contains { $0 == "." || $0 == ".." }
     }
 
-    private static func invalidTransition(
-        _ from: Phase,
-        to: Phase
-    ) -> PlayCoverPendingLaunchStoreError {
-        storeError(
-            "invalid phase transition \(from.rawValue) -> \(to.rawValue)"
-        )
+    private static func canonicalExistingPath(_ value: String) -> String {
+        #if canImport(Darwin)
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        if value.withCString({ Darwin.realpath($0, &buffer) }) != nil {
+            return String(cString: buffer)
+        }
+        #endif
+        return URL(fileURLWithPath: value)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
     }
 
     private static func storeError(
         _ message: String
     ) -> PlayCoverPendingLaunchStoreError {
         PlayCoverPendingLaunchStoreError(message: message)
-    }
-
-    private static func isLowercaseSHA256(
-        _ value: String
-    ) -> Bool {
-        let bytes = value.utf8
-        return bytes.count == 64
-            && bytes.allSatisfy {
-                ($0 >= 48 && $0 <= 57)
-                    || ($0 >= 97 && $0 <= 102)
-            }
-    }
-
-    private static func isBundleIdentifier(
-        _ value: String
-    ) -> Bool {
-        let bytes = value.utf8
-        return !bytes.isEmpty
-            && bytes.count <= 512
-            && bytes.allSatisfy {
-                ($0 >= 48 && $0 <= 57)
-                    || ($0 >= 65 && $0 <= 90)
-                    || ($0 >= 97 && $0 <= 122)
-                    || $0 == 45
-                    || $0 == 46
-            }
-    }
-
-    private static func isSafeName(_ value: String) -> Bool {
-        !value.isEmpty
-            && value != "."
-            && value != ".."
-            && !value.contains("/")
-            && !value.utf8.contains(0)
-    }
-
-    private static func canonicalUUID(
-        _ value: String?
-    ) -> String? {
-        guard let value,
-              let uuid = UUID(uuidString: value) else {
-            return nil
-        }
-        return uuid.uuidString.lowercased()
-    }
-
-    private static func sameProcess(
-        _ lhs: Owner,
-        _ rhs: Owner
-    ) -> Bool {
-        lhs.pid == rhs.pid
-            && lhs.processBirthMicroseconds
-                == rhs.processBirthMicroseconds
     }
 }

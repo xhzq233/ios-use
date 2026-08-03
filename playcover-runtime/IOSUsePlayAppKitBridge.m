@@ -15,7 +15,6 @@
 typedef id (*IOSUseBridgeSendID)(id, SEL);
 typedef id (*IOSUseBridgeSendIDInteger)(id, SEL, NSInteger);
 typedef BOOL (*IOSUseBridgeSendBool)(id, SEL);
-typedef BOOL (*IOSUseBridgeSendBoolInteger)(id, SEL, NSInteger);
 typedef NSInteger (*IOSUseBridgeSendInteger)(id, SEL);
 typedef CGFloat (*IOSUseBridgeSendFloat)(id, SEL);
 typedef CGPoint (*IOSUseBridgeSendPoint)(id, SEL);
@@ -63,18 +62,6 @@ typedef id (*IOSUseBridgeSendIDUnsignedIntegerID)(
     NSUInteger,
     id
 );
-typedef NSUInteger (*IOSUseBridgeSendUnsignedIntegerID)(
-    id,
-    SEL,
-    id
-);
-typedef id (*IOSUseBridgeSendIDIDUnsignedIntegerUnsignedInteger)(
-    id,
-    SEL,
-    id,
-    NSUInteger,
-    NSUInteger
-);
 typedef CFArrayRef _Nullable (*IOSUseBridgeCGWindowListCopyWindowInfo)(
     CGWindowListOption,
     CGWindowID
@@ -112,18 +99,6 @@ static NSString *const IOSUsePlayNativeAlertErrorDomain =
     @"io.ios-use.play-runtime.native-alert";
 static NSString *const IOSUsePlayAccessibilityBridgeErrorDomain =
     @"io.ios-use.play-runtime.appkit-accessibility";
-static const NSUInteger
-    IOSUseBridgeMaximumAccessibilityTraversalCount = 4096;
-static const NSUInteger
-    IOSUseBridgeMaximumAccessibilityDepth = 64;
-static const NSUInteger
-    IOSUseBridgeMaximumAccessibilityChildrenPerNode = 512;
-static const NSUInteger
-    IOSUseBridgeMaximumAccessibilityElementCount = 512;
-static const NSUInteger
-    IOSUseBridgeMaximumAccessibilityStringLength = 4096;
-static const NSUInteger
-    IOSUseBridgeMaximumAccessibilityTotalStringLength = 512 * 1024;
 static NSString *IOSUsePlayWindowStatus = @"not-configured";
 static NSString *IOSUsePlayWindowFailure;
 static NSUInteger IOSUsePlayWindowAttemptCount;
@@ -153,8 +128,6 @@ static BOOL IOSUsePlayBootstrapContentReady;
 static BOOL IOSUsePlayBootstrapContentNormalizationScheduled;
 static NSUInteger IOSUsePlayBootstrapContentNormalizationAttempts;
 static NSUInteger IOSUsePlayHostContentGeneration;
-static NSUInteger IOSUsePlayHostActivationGeneration;
-static NSUInteger IOSUsePlayHostActivationAttempts;
 static Class IOSUsePlayResizableEdgesHookClass;
 static Class IOSUsePlayResizeHookClass;
 static IOSUseBridgeSendProposedSize IOSUsePlayOriginalProposedSize;
@@ -175,6 +148,7 @@ static BOOL IOSUseBridgeUpdateHostCanvasLayout(
     NSString **failure
 );
 static void IOSUseBridgeScheduleHostCanvasLayoutUpdate(void);
+static UIWindow *IOSUseBridgeAutomationUIKitWindow(void);
 
 static BOOL IOSUseBridgeLoadAppKit(void) {
     static void *appKitHandle;
@@ -301,8 +275,8 @@ static id IOSUseBridgeWindowForUIKitWindow(
 
 static id IOSUseBridgeSelectedWindow(void) {
     return IOSUseBridgeWindowForUIKitWindow(
-        IOSUseBridgeKeyUIKitWindow(),
-        YES
+        IOSUseBridgeAutomationUIKitWindow(),
+        NO
     );
 }
 
@@ -916,8 +890,7 @@ static NSInteger IOSUseBridgeWindowActivationSceneRank(
     return -1;
 }
 
-static UIWindow *
-IOSUseBridgeBackgroundActivationUIKitWindow(void) {
+static UIWindow *IOSUseBridgeAutomationUIKitWindow(void) {
     NSMutableArray<UIWindowScene *> *scenes =
         [NSMutableArray array];
     NSMutableSet<NSString *> *identifiers =
@@ -1017,234 +990,6 @@ static NSError *IOSUseBridgeAccessibilityError(
     }];
 }
 
-static BOOL IOSUseBridgeAccessibilityObject(
-    id object,
-    NSString *selectorName,
-    id _Nullable __autoreleasing *value,
-    NSError * _Nullable __autoreleasing *error
-) {
-    if (value != NULL) {
-        *value = nil;
-    }
-    SEL selector = NSSelectorFromString(selectorName);
-    if (object == nil || ![object respondsToSelector:selector]) {
-        return YES;
-    }
-    @try {
-        id result = ((IOSUseBridgeSendID)objc_msgSend)(
-            object,
-            selector
-        );
-        if (value != NULL) {
-            *value = result;
-        }
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) {
-            *error = IOSUseBridgeAccessibilityError(
-                2,
-                [NSString stringWithFormat:
-                    @"AppKit accessibility selector %@ raised %@",
-                    selectorName,
-                    exception.name]
-            );
-        }
-        return NO;
-    }
-}
-
-static NSArray * _Nullable IOSUseBridgeAccessibilityChildren(
-    id object,
-    NSError * _Nullable __autoreleasing *error
-) {
-    SEL countSelector =
-        NSSelectorFromString(@"accessibilityArrayAttributeCount:");
-    SEL valuesSelector = NSSelectorFromString(
-        @"accessibilityArrayAttributeValues:index:maxCount:"
-    );
-    NSString *childrenAttribute = @"AXChildren";
-    if ([object respondsToSelector:countSelector] &&
-        [object respondsToSelector:valuesSelector]) {
-        @try {
-            NSUInteger count = (
-                (IOSUseBridgeSendUnsignedIntegerID)objc_msgSend
-            )(
-                object,
-                countSelector,
-                childrenAttribute
-            );
-            if (count >
-                IOSUseBridgeMaximumAccessibilityChildrenPerNode) {
-                if (error != NULL) {
-                    *error = IOSUseBridgeAccessibilityError(
-                        10,
-                        @"AppKit accessibility node exceeded 512 children"
-                    );
-                }
-                return nil;
-            }
-            if (count == 0) {
-                return @[];
-            }
-            id values = (
-                (IOSUseBridgeSendIDIDUnsignedIntegerUnsignedInteger)
-                    objc_msgSend
-            )(
-                object,
-                valuesSelector,
-                childrenAttribute,
-                0,
-                count
-            );
-            if (![values isKindOfClass:NSArray.class] ||
-                [(NSArray *)values count] > count) {
-                if (error != NULL) {
-                    *error = IOSUseBridgeAccessibilityError(
-                        9,
-                        @"bounded AppKit AXChildren query returned invalid data"
-                    );
-                }
-                return nil;
-            }
-            return values;
-        } @catch (__unused NSException *exception) {
-            // Some Catalyst proxy objects advertise the legacy bounded API
-            // but reject AXChildren. Fall through to the modern property;
-            // its materialized result is still immediately count-checked.
-        }
-    }
-
-    id childrenValue = nil;
-    if (!IOSUseBridgeAccessibilityObject(
-            object,
-            @"accessibilityChildren",
-            &childrenValue,
-            error
-        )) {
-        return nil;
-    }
-    if (childrenValue == nil) {
-        return @[];
-    }
-    if (![childrenValue isKindOfClass:NSArray.class] ||
-        [(NSArray *)childrenValue count] >
-            IOSUseBridgeMaximumAccessibilityChildrenPerNode) {
-        if (error != NULL) {
-            *error = IOSUseBridgeAccessibilityError(
-                9,
-                @"AppKit accessibilityChildren returned invalid data"
-            );
-        }
-        return nil;
-    }
-    return childrenValue;
-}
-
-static BOOL IOSUseBridgeAccessibilityRect(
-    id object,
-    NSString *selectorName,
-    CGRect *value,
-    NSError * _Nullable __autoreleasing *error
-) {
-    if (value != NULL) {
-        *value = CGRectZero;
-    }
-    SEL selector = NSSelectorFromString(selectorName);
-    if (object == nil || ![object respondsToSelector:selector]) {
-        return YES;
-    }
-    @try {
-        CGRect result = ((IOSUseBridgeSendRect)objc_msgSend)(
-            object,
-            selector
-        );
-        if (value != NULL) {
-            *value = result;
-        }
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) {
-            *error = IOSUseBridgeAccessibilityError(
-                3,
-                [NSString stringWithFormat:
-                    @"AppKit accessibility frame selector raised %@",
-                    exception.name]
-            );
-        }
-        return NO;
-    }
-}
-
-static BOOL IOSUseBridgeAccessibilityBool(
-    id object,
-    NSString *selectorName,
-    BOOL fallback,
-    BOOL *value,
-    NSError * _Nullable __autoreleasing *error
-) {
-    if (value != NULL) {
-        *value = fallback;
-    }
-    SEL selector = NSSelectorFromString(selectorName);
-    if (object == nil || ![object respondsToSelector:selector]) {
-        return YES;
-    }
-    @try {
-        BOOL result = ((IOSUseBridgeSendBool)objc_msgSend)(
-            object,
-            selector
-        );
-        if (value != NULL) {
-            *value = result;
-        }
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) {
-            *error = IOSUseBridgeAccessibilityError(
-                4,
-                [NSString stringWithFormat:
-                    @"AppKit accessibility boolean selector %@ raised %@",
-                    selectorName,
-                    exception.name]
-            );
-        }
-        return NO;
-    }
-}
-
-static NSString * _Nullable IOSUseBridgeAccessibilityString(
-    id value,
-    NSUInteger *totalStringLength,
-    NSError * _Nullable __autoreleasing *error
-) {
-    NSString *string = nil;
-    if ([value isKindOfClass:NSString.class]) {
-        string = value;
-    } else if ([value isKindOfClass:NSAttributedString.class]) {
-        string = [(NSAttributedString *)value string];
-    } else if ([value isKindOfClass:NSNumber.class]) {
-        string = [(NSNumber *)value stringValue];
-    } else if (value == nil || value == NSNull.null) {
-        return nil;
-    } else {
-        return nil;
-    }
-    if (string.length > IOSUseBridgeMaximumAccessibilityStringLength ||
-        *totalStringLength >
-            IOSUseBridgeMaximumAccessibilityTotalStringLength -
-                string.length) {
-        if (error != NULL) {
-            *error = IOSUseBridgeAccessibilityError(
-                5,
-                @"AppKit accessibility strings exceeded fixed bounds"
-            );
-        }
-        return nil;
-    }
-    *totalStringLength += string.length;
-    return string;
-}
-
 static BOOL IOSUseBridgeAccessibilityFiniteRect(CGRect rect) {
     return !CGRectIsNull(rect) &&
         !CGRectIsInfinite(rect) &&
@@ -1254,24 +999,6 @@ static BOOL IOSUseBridgeAccessibilityFiniteRect(CGRect rect) {
         isfinite(rect.size.height) &&
         rect.size.width > 0 &&
         rect.size.height > 0;
-}
-
-static NSString * _Nullable IOSUseBridgeAccessibilityRole(
-    NSString *rawRole
-) {
-    if ([rawRole isEqualToString:@"AXButton"]) {
-        return @"button";
-    }
-    if ([rawRole isEqualToString:@"AXLink"]) {
-        return @"link";
-    }
-    if ([rawRole isEqualToString:@"AXStaticText"]) {
-        return @"text";
-    }
-    if ([rawRole isEqualToString:@"AXHeading"]) {
-        return @"heading";
-    }
-    return nil;
 }
 
 static BOOL IOSUseBridgeAppKitScreenRectToCGWindowRect(
@@ -1385,363 +1112,6 @@ static CGRect IOSUseBridgeAppKitScreenRectToCanvasLogicalRect(
         }
         return CGRectNull;
     }
-}
-
-static CGRect IOSUseBridgeAccessibilityLogicalFrame(
-    CGRect appKitScreenFrame,
-    id window,
-    NSError * _Nullable __autoreleasing *error
-) {
-    return IOSUseBridgeAppKitScreenRectToCanvasLogicalRect(
-        appKitScreenFrame,
-        window,
-        error
-    );
-}
-
-static NSArray<NSDictionary<NSString *, id> *> * _Nullable
-IOSUseBridgeCollectAccessibilityElements(
-    id window,
-    NSError * _Nullable __autoreleasing *error
-) {
-    if (window == nil) {
-        if (error != NULL) {
-            *error = IOSUseBridgeAccessibilityError(
-                1,
-                @"selected AppKit window is unavailable"
-            );
-        }
-        return nil;
-    }
-    NSString *layoutFailure = nil;
-    if (window != IOSUsePlayHostWindow ||
-        !IOSUseBridgeUpdateHostCanvasLayout(window, &layoutFailure)) {
-        if (error != NULL) {
-            *error = IOSUseBridgeAccessibilityError(
-                6,
-                layoutFailure ?: @"host does not have a fixed "
-                 "logical canvas"
-            );
-        }
-        return nil;
-    }
-    if (!IOSUseBridgeWindowPolicyIsHost(window)) {
-        if (error != NULL) {
-            *error = IOSUseBridgeAccessibilityError(
-                6,
-                @"host does not have a fixed logical canvas"
-            );
-        }
-        return nil;
-    }
-
-    NSMutableArray *queue = [NSMutableArray arrayWithObject:window];
-    NSMutableArray<NSNumber *> *depths =
-        [NSMutableArray arrayWithObject:@0];
-    NSHashTable *visited = [NSHashTable
-        hashTableWithOptions:
-            NSPointerFunctionsObjectPointerPersonality |
-            NSPointerFunctionsStrongMemory];
-    NSMutableArray<NSDictionary<NSString *, id> *> *elements =
-        [NSMutableArray array];
-    NSUInteger cursor = 0;
-    NSUInteger totalStringLength = 0;
-    CGRect logicalScreen = CGRectMake(
-        0,
-        0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
-    );
-
-    while (cursor < queue.count) {
-        if (cursor >=
-            IOSUseBridgeMaximumAccessibilityTraversalCount) {
-            if (error != NULL) {
-                *error = IOSUseBridgeAccessibilityError(
-                    7,
-                    @"AppKit accessibility traversal exceeded 4096 nodes"
-                );
-            }
-            return nil;
-        }
-        id object = queue[cursor];
-        NSUInteger depth = depths[cursor].unsignedIntegerValue;
-        cursor += 1;
-        if ([visited containsObject:object]) {
-            continue;
-        }
-        [visited addObject:object];
-        if (depth > IOSUseBridgeMaximumAccessibilityDepth) {
-            if (error != NULL) {
-                *error = IOSUseBridgeAccessibilityError(
-                    8,
-                    @"AppKit accessibility traversal exceeded 64 levels"
-                );
-            }
-            return nil;
-        }
-
-        NSArray *children =
-            IOSUseBridgeAccessibilityChildren(object, error);
-        if (children == nil) {
-            return nil;
-        }
-        for (id child in children) {
-            if (child == nil) {
-                continue;
-            }
-            [queue addObject:child];
-            [depths addObject:@(depth + 1)];
-        }
-        if (queue.count >
-            IOSUseBridgeMaximumAccessibilityTraversalCount) {
-            if (error != NULL) {
-                *error = IOSUseBridgeAccessibilityError(
-                    7,
-                    @"AppKit accessibility traversal exceeded 4096 nodes"
-                );
-            }
-            return nil;
-        }
-
-        BOOL isAccessibilityElement = YES;
-        BOOL accessibilityIgnored = NO;
-        if (!IOSUseBridgeAccessibilityBool(
-                object,
-                @"isAccessibilityElement",
-                YES,
-                &isAccessibilityElement,
-                error
-            ) ||
-            !IOSUseBridgeAccessibilityBool(
-                object,
-                @"accessibilityIsIgnored",
-                NO,
-                &accessibilityIgnored,
-                error
-            )) {
-            return nil;
-        }
-        if (!isAccessibilityElement || accessibilityIgnored) {
-            continue;
-        }
-
-        id rawRoleValue = nil;
-        if (!IOSUseBridgeAccessibilityObject(
-                object,
-                @"accessibilityRole",
-                &rawRoleValue,
-                error
-            )) {
-            return nil;
-        }
-        NSString *rawRole = [rawRoleValue
-            isKindOfClass:NSString.class]
-            ? rawRoleValue
-            : nil;
-        NSString *role =
-            IOSUseBridgeAccessibilityRole(rawRole);
-        if (role == nil) {
-            continue;
-        }
-
-        id identifierValue = nil;
-        id labelValue = nil;
-        id titleValue = nil;
-        id helpValue = nil;
-        id valueDescriptionValue = nil;
-        id valueValue = nil;
-        BOOL protectedContent = NO;
-        if (!IOSUseBridgeAccessibilityBool(
-                object,
-                @"isAccessibilityProtectedContent",
-                NO,
-                &protectedContent,
-                error
-            )) {
-            return nil;
-        }
-        if (!IOSUseBridgeAccessibilityObject(
-                object,
-                @"accessibilityIdentifier",
-                &identifierValue,
-                error
-            ) ||
-            !IOSUseBridgeAccessibilityObject(
-                object,
-                @"accessibilityLabel",
-                &labelValue,
-                error
-            ) ||
-            !IOSUseBridgeAccessibilityObject(
-                object,
-                @"accessibilityTitle",
-                &titleValue,
-                error
-            ) ||
-            !IOSUseBridgeAccessibilityObject(
-                object,
-                @"accessibilityHelp",
-                &helpValue,
-                error
-            ) ||
-            !IOSUseBridgeAccessibilityObject(
-                object,
-                @"accessibilityValueDescription",
-                &valueDescriptionValue,
-                error
-            )) {
-            return nil;
-        }
-        if (!protectedContent &&
-            !IOSUseBridgeAccessibilityObject(
-                object,
-                @"accessibilityValue",
-                &valueValue,
-                error
-            )) {
-            return nil;
-        }
-        NSString *identifier = IOSUseBridgeAccessibilityString(
-            identifierValue,
-            &totalStringLength,
-            error
-        );
-        if (error != NULL && *error != nil) {
-            return nil;
-        }
-        NSString *label = IOSUseBridgeAccessibilityString(
-            labelValue,
-            &totalStringLength,
-            error
-        );
-        if (error != NULL && *error != nil) {
-            return nil;
-        }
-        NSString *title = IOSUseBridgeAccessibilityString(
-            titleValue,
-            &totalStringLength,
-            error
-        );
-        if (error != NULL && *error != nil) {
-            return nil;
-        }
-        NSString *help =
-            IOSUseBridgeAccessibilityString(
-                helpValue,
-                &totalStringLength,
-                error
-            );
-        if (error != NULL && *error != nil) {
-            return nil;
-        }
-        NSString *valueDescription =
-            IOSUseBridgeAccessibilityString(
-                valueDescriptionValue,
-                &totalStringLength,
-                error
-            );
-        if (error != NULL && *error != nil) {
-            return nil;
-        }
-        NSString *value = IOSUseBridgeAccessibilityString(
-            valueValue,
-            &totalStringLength,
-            error
-        );
-        if (error != NULL && *error != nil) {
-            return nil;
-        }
-        if (label.length == 0) {
-            label = title.length > 0
-                ? title
-                : (valueDescription.length > 0
-                    ? valueDescription
-                    : help);
-        }
-        if (label.length == 0 && identifier.length == 0 &&
-            value.length == 0) {
-            continue;
-        }
-
-        CGRect appKitFrame = CGRectZero;
-        if (!IOSUseBridgeAccessibilityRect(
-                object,
-                @"accessibilityFrame",
-                &appKitFrame,
-                error
-            )) {
-            return nil;
-        }
-        if (!IOSUseBridgeAccessibilityFiniteRect(appKitFrame)) {
-            continue;
-        }
-        CGRect logicalFrame =
-            IOSUseBridgeAccessibilityLogicalFrame(
-                appKitFrame,
-                window,
-                error
-            );
-        if (error != NULL && *error != nil) {
-            return nil;
-        }
-        if (!IOSUseBridgeAccessibilityFiniteRect(logicalFrame)) {
-            continue;
-        }
-        CGRect visibleFrame =
-            CGRectIntersection(logicalFrame, logicalScreen);
-        if (!IOSUseBridgeAccessibilityFiniteRect(visibleFrame)) {
-            continue;
-        }
-
-        BOOL enabled = YES;
-        BOOL selected = NO;
-        BOOL focused = NO;
-        if (!IOSUseBridgeAccessibilityBool(
-                object,
-                @"isAccessibilityEnabled",
-                YES,
-                &enabled,
-                error
-            ) ||
-            !IOSUseBridgeAccessibilityBool(
-                object,
-                @"isAccessibilitySelected",
-                NO,
-                &selected,
-                error
-            ) ||
-            !IOSUseBridgeAccessibilityBool(
-                object,
-                @"isAccessibilityFocused",
-                NO,
-                &focused,
-                error
-            )) {
-            return nil;
-        }
-        if (elements.count >=
-            IOSUseBridgeMaximumAccessibilityElementCount) {
-            if (error != NULL) {
-                *error = IOSUseBridgeAccessibilityError(
-                    11,
-                    @"AppKit accessibility bridge exceeded 512 elements"
-                );
-            }
-            return nil;
-        }
-        [elements addObject:@{
-            @"role": role,
-            @"label": label ?: @"",
-            @"value": value ?: @"",
-            @"identifier": identifier ?: @"",
-            @"frame": IOSUseBridgeRectJSON(logicalFrame),
-            @"enabled": @(enabled),
-            @"selected": @(selected),
-            @"focused": @(focused),
-        }];
-    }
-    return elements;
 }
 
 static BOOL IOSUseBridgeScreenCanFit(id window) {
@@ -2161,9 +1531,6 @@ static BOOL IOSUseBridgeInstallHostCanvas(id window) {
     IOSUsePlayBootstrapContentNormalizationScheduled = NO;
     IOSUsePlayBootstrapContentNormalizationAttempts = 0;
     IOSUsePlayHostContentGeneration += 1;
-    IOSUsePlayHostActivationGeneration =
-        IOSUsePlayHostContentGeneration;
-    IOSUsePlayHostActivationAttempts = 0;
     return YES;
 }
 
@@ -2332,60 +1699,6 @@ static BOOL IOSUseBridgeReassertIdentitySceneScale(
         *failure = IOSUsePlaySceneScaleFailure;
     }
     return ready;
-}
-
-static void IOSUseBridgeRequestHostActivation(
-    id window,
-    BOOL requiresKeyUIKitWindow
-) {
-    if (window != IOSUsePlayHostWindow ||
-        IOSUsePlayHostActivationGeneration !=
-            IOSUsePlayHostContentGeneration) {
-        return;
-    }
-    id application = IOSUseBridgeApplication();
-    if (application == nil) {
-        return;
-    }
-    NSInteger policy =
-        IOSUseBridgeInteger(application, @"activationPolicy");
-    if (policy != 0) {
-        SEL policySelector =
-            NSSelectorFromString(@"setActivationPolicy:");
-        if (![application respondsToSelector:policySelector]) {
-            return;
-        }
-        BOOL accepted =
-            ((IOSUseBridgeSendBoolInteger)objc_msgSend)(
-                application,
-                policySelector,
-                0
-            );
-        if (!accepted &&
-            IOSUseBridgeInteger(application, @"activationPolicy") != 0) {
-            return;
-        }
-    }
-    if ((!requiresKeyUIKitWindow &&
-            IOSUseBridgeBool(application, @"isActive")) ||
-        IOSUsePlayHostActivationAttempts >= 20) {
-        return;
-    }
-    IOSUsePlayHostActivationAttempts += 1;
-    IOSUseBridgeSetBool(
-        application,
-        @"activateIgnoringOtherApps:",
-        YES
-    );
-    SEL activateSelector = NSSelectorFromString(@"activate");
-    if ([application respondsToSelector:activateSelector]) {
-        ((IOSUseBridgeSendVoid)objc_msgSend)(
-            application,
-            activateSelector
-        );
-    }
-    // UIKit scene/key-window selection is the acknowledgement. A background
-    // fallback calls this bounded, idempotent request again on later probes.
 }
 
 static BOOL IOSUseBridgeNormalizeBootstrapContentAspect(
@@ -4098,9 +3411,13 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         for (NSString *name in @[
             @"NSWindowDidBecomeKeyNotification",
             UIApplicationDidBecomeActiveNotification,
+            UIApplicationWillResignActiveNotification,
+            UIApplicationDidEnterBackgroundNotification,
             UIWindowDidBecomeKeyNotification,
             UISceneWillEnterForegroundNotification,
             UISceneDidActivateNotification,
+            UISceneWillDeactivateNotification,
+            UISceneDidEnterBackgroundNotification,
             UISceneDidDisconnectNotification,
         ]) {
             [center addObserverForName:name
@@ -4159,22 +3476,10 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         }
         return NO;
     }
-    BOOL usedBackgroundActivationFallback = NO;
-    UIWindow *uiWindow = IOSUseBridgeKeyUIKitWindow();
+    UIWindow *uiWindow = IOSUseBridgeAutomationUIKitWindow();
     id window = uiWindow == nil
         ? nil
-        : IOSUseBridgeWindowForUIKitWindow(uiWindow, YES);
-    if (uiWindow == nil) {
-        uiWindow =
-            IOSUseBridgeBackgroundActivationUIKitWindow();
-        if (uiWindow != nil) {
-            window = IOSUseBridgeWindowForUIKitWindow(
-                uiWindow,
-                NO
-            );
-            usedBackgroundActivationFallback = window != nil;
-        }
-    }
+        : IOSUseBridgeWindowForUIKitWindow(uiWindow, NO);
     NSError *safeAreaError = nil;
     BOOL safeAreaReconciled =
         IOSUsePlaySafeAreaCompatibilityReconcile(&safeAreaError);
@@ -4183,7 +3488,6 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         IOSUsePlayWindowFailure = @"UIKit/AppKit window bridge is unavailable";
         return NO;
     }
-    BOOL isNewHost = window != IOSUsePlayHostWindow;
     IOSUseBridgeSceneGeometryState sceneGeometryState =
         IOSUseBridgeLockSceneToFixedCanvas(uiWindow);
     if (sceneGeometryState != IOSUseBridgeSceneGeometryStateReady) {
@@ -4247,16 +3551,6 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             }];
         }
         return NO;
-    }
-    if (isNewHost || usedBackgroundActivationFallback) {
-        IOSUseBridgeRequestHostActivation(
-            window,
-            usedBackgroundActivationFallback
-        );
-        // The mapped NSWindow is owned by UIKitMacHelper. NSWorkspace launch
-        // activation and UIKit scene activation decide when it becomes key;
-        // ordering it directly while the zoom controller is reconciling the
-        // scene frame re-enters AppKit and terminates with SIGTRAP.
     }
     NSString *layoutFailure = nil;
     if (!IOSUseBridgeNormalizeBootstrapContentAspect(
@@ -4337,24 +3631,6 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         canvasMatchesLayout &&
         mouseMonitorReady &&
         IOSUseBridgeRectIsDeviceScreen(uiWindow.bounds);
-    if (geometryExact && usedBackgroundActivationFallback) {
-        IOSUsePlayWindowStatus =
-            @"waiting-for-foreground-activation";
-        IOSUsePlayWindowFailure =
-            @"background UIKit window was activated; waiting for "
-             "strict foreground key-window selection";
-        if (error != NULL) {
-            *error = [
-                NSError
-                errorWithDomain:IOSUsePlayWindowErrorDomain
-                           code:4
-                       userInfo:@{
-                NSLocalizedDescriptionKey:
-                    IOSUsePlayWindowFailure,
-            }];
-        }
-        return NO;
-    }
     BOOL safeAreaReady =
         safeAreaReconciled &&
         IOSUsePlaySafeAreaCompatibilityIsReadyForWindow(uiWindow);
@@ -4822,30 +4098,6 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     };
 }
 
-+ (NSArray<NSDictionary<NSString *, id> *> * _Nullable)
-    activeAccessibilityElementsWithError:
-        (NSError * _Nullable * _Nullable)error {
-    if (!NSThread.isMainThread) {
-        if (error != NULL) {
-            *error = IOSUseBridgeAccessibilityError(
-                12,
-                @"AppKit accessibility bridge must run on the main thread"
-            );
-        }
-        return nil;
-    }
-    NSError *localError = nil;
-    NSArray<NSDictionary<NSString *, id> *> *elements =
-        IOSUseBridgeCollectAccessibilityElements(
-        IOSUsePlayHostWindow ?: IOSUseBridgeSelectedWindow(),
-        &localError
-    );
-    if (elements == nil && error != NULL) {
-        *error = localError;
-    }
-    return elements;
-}
-
 + (NSDictionary<NSString *, id> *)diagnosticsIncludingStatusOnlyFields:
     (BOOL)includeStatusOnlyFields
     nativeAlertSnapshot:
@@ -4899,7 +4151,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     CGRect contentViewFrame = includeStatusOnlyFields
         ? IOSUseBridgeRect(contentView, @"frame")
         : CGRectNull;
-    UIWindow *uiWindow = IOSUseBridgeKeyUIKitWindow();
+    UIWindow *uiWindow = IOSUseBridgeAutomationUIKitWindow();
     // This is the observed UIKit logical canvas. Do not synthesize the fixed
     // contract here: Runtime readiness must fail if a host drag causes
     // UIKitMacHelper to relayout the scene.
@@ -5302,6 +4554,95 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     return [self
         diagnosticsIncludingStatusOnlyFields:NO
         nativeAlertSnapshot:nil];
+}
+
++ (NSDictionary<NSString *, id> *)uiAutomationAvailability {
+    NSParameterAssert(NSThread.isMainThread);
+    UIWindow *uiWindow = IOSUseBridgeAutomationUIKitWindow();
+    if (uiWindow == nil) {
+        BOOL hasBackgroundScene = NO;
+        BOOL hasDisconnectedScene = NO;
+        for (UIScene *candidate in
+             UIApplication.sharedApplication.connectedScenes) {
+            if (![candidate isKindOfClass:UIWindowScene.class] ||
+                ![candidate.session.role
+                    isEqualToString:
+                        UIWindowSceneSessionRoleApplication]) {
+                continue;
+            }
+            hasBackgroundScene = hasBackgroundScene ||
+                candidate.activationState ==
+                    UISceneActivationStateBackground;
+            hasDisconnectedScene = hasDisconnectedScene ||
+                candidate.activationState ==
+                    UISceneActivationStateUnattached;
+        }
+        return @{
+            @"available": @NO,
+            @"reason": hasBackgroundScene
+                ? @"scene-backgrounded"
+                : hasDisconnectedScene || IOSUsePlayHostWindow != nil
+                    ? @"scene-disconnected"
+                    : @"window-unavailable",
+        };
+    }
+    UISceneActivationState activationState =
+        uiWindow.windowScene.activationState;
+    if (activationState == UISceneActivationStateBackground ||
+        activationState == UISceneActivationStateUnattached) {
+        return @{
+            @"available": @NO,
+            @"reason": activationState ==
+                    UISceneActivationStateBackground
+                ? @"scene-backgrounded"
+                : @"scene-disconnected",
+        };
+    }
+    id window = IOSUseBridgeWindowForUIKitWindow(uiWindow, NO);
+    if (window == nil) {
+        return @{
+            @"available": @NO,
+            @"reason": @"window-unavailable",
+        };
+    }
+    if (IOSUseBridgeBool(window, @"isMiniaturized")) {
+        return @{
+            @"available": @NO,
+            @"reason": @"minimized",
+        };
+    }
+    if (uiWindow.hidden || uiWindow.alpha <= 0.01 ||
+        !IOSUseBridgeBool(window, @"isVisible")) {
+        return @{
+            @"available": @NO,
+            @"reason": @"hidden",
+        };
+    }
+    SEL activeSpaceSelector = NSSelectorFromString(@"isOnActiveSpace");
+    if (![window respondsToSelector:activeSpaceSelector] ||
+        !((IOSUseBridgeSendBool)objc_msgSend)(
+            window,
+            activeSpaceSelector
+        )) {
+        return @{
+            @"available": @NO,
+            @"reason": @"inactive-space",
+        };
+    }
+    SEL screenSelector = NSSelectorFromString(@"screen");
+    id screen = [window respondsToSelector:screenSelector]
+        ? ((IOSUseBridgeSendID)objc_msgSend)(window, screenSelector)
+        : nil;
+    if (screen == nil || [self screenCount] == 0) {
+        return @{
+            @"available": @NO,
+            @"reason": @"display-unavailable",
+        };
+    }
+    return @{
+        @"available": @YES,
+        @"reason": NSNull.null,
+    };
 }
 
 + (NSDictionary<NSString *, id> *)diagnostics {

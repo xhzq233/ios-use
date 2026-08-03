@@ -2,6 +2,7 @@
 #import "IOSUsePlayRuntime.h"
 #import "IOSUsePlayRuntimeAutomation.h"
 #import "IOSUsePlayRuntimeDOM.h"
+#import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayHookRegistry.h"
 #import "IOSUsePlayRuntimeScreenshot.h"
 #import "IOSUsePlayRuntimeStdio.h"
@@ -151,7 +152,7 @@ void IOSUsePlayRuntimeSetUIReadiness(
     NSString *stage,
     NSString *failure
 ) {
-    if (![@[@"initializing", @"ready", @"failed"]
+    if (![@[@"initializing", @"ready", @"backgrounded", @"failed"]
             containsObject:state] ||
         stage.length == 0) {
         return;
@@ -987,6 +988,7 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
     __block NSDictionary<NSString *, id> *observed;
     __block NSString *stage;
     __block BOOL requiredHooksReady = NO;
+    __block BOOL requiredHooksFailed = NO;
     void (^capture)(void) = ^{
         UIScreen *screen = UIScreen.mainScreen;
         UIWindow *keyWindow = nil;
@@ -1069,10 +1071,20 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
             nativeAlertSnapshot,
             photosAuthorizationDiagnostics
         );
-        requiredHooksReady = [
-            hooks[@"hookRegistry"][@"requiredReady"]
-            boolValue
-        ];
+        NSDictionary<NSString *, id> *hookRegistry =
+            hooks[@"hookRegistry"];
+        NSString *configurationStage =
+            [hooks[@"configurationStage"] isKindOfClass:NSString.class]
+                ? hooks[@"configurationStage"]
+                : @"runtime-constructor";
+        BOOL configurationFailed =
+            [configurationStage hasSuffix:@"-failed"];
+        requiredHooksReady = [hookRegistry[@"requiredReady"] boolValue];
+        requiredHooksFailed =
+            IOSUsePlayHookRegistryHasRequiredFailure(
+                hookRegistry,
+                configurationFailed
+            );
         NSDictionary<NSString *, id> *hostGeometry =
             IOSUseHostGeometry(hooks);
         geometry = @{
@@ -1179,11 +1191,12 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
             [hooks[@"configurationStage"]
                 isEqualToString:@"window-configured"] &&
             IOSUseHostGeometryReady(hostGeometry);
-        NSString *configurationStage = hooks[@"configurationStage"];
         stage = exact
             ? @"ready"
-            : !requiredHooksReady
+            : requiredHooksFailed
                 ? @"required-hook-failed"
+            : !requiredHooksReady
+                ? @"waiting-for-required-hook-observation"
             : !deviceIdentityReady
                 ? @"device-identity-mismatch"
             : [configurationStage isEqualToString:@"window-configured"]
@@ -1301,6 +1314,18 @@ void IOSUsePlayRuntimePublishUIReadiness(void) {
                [stage isEqualToString:@"device-identity-mismatch"] ||
                [stage isEqualToString:@"playchain-location-invalid"]) {
         state = @"failed";
+    }
+    NSDictionary<NSString *, id> *availability =
+        [IOSUsePlayAppKitBridge uiAutomationAvailability];
+    NSString *availabilityReason =
+        [availability[@"reason"] isKindOfClass:NSString.class]
+            ? availability[@"reason"]
+            : @"window-unavailable";
+    if (![state isEqualToString:@"failed"] &&
+        ![availability[@"available"] boolValue] &&
+        ![availabilityReason isEqualToString:@"window-unavailable"]) {
+        state = @"backgrounded";
+        stage = availabilityReason;
     }
     NSDictionary<NSString *, id> *runtime = snapshot[@"runtime"];
     id rawFailure = runtime[@"configurationFailure"];
@@ -1798,6 +1823,7 @@ IOSUseRuntimeUIReadinessErrorObject(
         ? uiState[@"stage"]
         : @"runtime-constructor";
     BOOL failed = [state isEqualToString:@"failed"];
+    BOOL backgrounded = [state isEqualToString:@"backgrounded"];
     id rawFailure = uiState[@"failure"];
     NSString *failure = [rawFailure isKindOfClass:NSString.class]
         ? rawFailure
@@ -1805,20 +1831,29 @@ IOSUseRuntimeUIReadinessErrorObject(
     return @{
         @"code": failed
             ? @"runtime_ui_failed"
-            : @"runtime_ui_not_ready",
+            : backgrounded
+                ? @"runtime_ui_backgrounded"
+                : @"runtime_ui_not_ready",
         @"message": failed
             ? failure ?: @"Runtime UI initialization failed"
-            : @"Runtime UI is still initializing; retry this command",
+            : backgrounded
+                ? [NSString stringWithFormat:
+                    @"Runtime UI is not available: %@",
+                    stage]
+                : @"Runtime UI is still initializing; retry this command",
         @"details": @{
             @"category": @"precondition",
             @"phase": stage,
+            @"reason": backgrounded ? stage : (id)NSNull.null,
             @"retryable": @((BOOL)!failed),
             @"fatal": @(failed),
             @"candidateCount": @0,
             @"candidates": @[],
             @"suggestions": failed
                 ? @[]
-                : @[@"retry the same UI command"],
+                : backgrounded
+                    ? @[@"make the App window visible on the active Space, then retry"]
+                    : @[@"retry the same UI command"],
         },
     };
 }
@@ -1828,22 +1863,38 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeUICommandError(void) {
         NSThread.isMainThread,
         @"UI command readiness validation is main-only"
     );
-    NSDictionary<NSString *, id> *uiState =
-        IOSUseCurrentUIReadiness();
+    NSDictionary<NSString *, id> *uiState = IOSUseCurrentUIReadiness();
+    if ([uiState[@"state"] isEqualToString:@"failed"]) {
+        return IOSUseRuntimeUIReadinessErrorObject(uiState);
+    }
+    NSDictionary<NSString *, id> *availability =
+        [IOSUsePlayAppKitBridge uiAutomationAvailability];
+    if (![availability[@"available"] boolValue]) {
+        NSString *reason =
+            [availability[@"reason"] isKindOfClass:NSString.class]
+                ? availability[@"reason"]
+                : @"window-unavailable";
+        if ([reason isEqualToString:@"window-unavailable"] &&
+            [uiState[@"state"] isEqualToString:@"initializing"]) {
+            return IOSUseRuntimeUIReadinessErrorObject(uiState);
+        }
+        IOSUsePlayRuntimeSetUIReadiness(
+            @"backgrounded",
+            reason,
+            nil
+        );
+        return IOSUseRuntimeUIReadinessErrorObject(
+            IOSUseCurrentUIReadiness()
+        );
+    }
+    if (![uiState[@"state"] isEqualToString:@"ready"]) {
+        IOSUsePlayRuntimePublishUIReadiness();
+        uiState = IOSUseCurrentUIReadiness();
+    }
     if ([uiState[@"state"] isEqualToString:@"ready"]) {
         return nil;
     }
     return IOSUseRuntimeUIReadinessErrorObject(uiState);
-}
-
-static NSDictionary<NSString *, id> *IOSUseRuntimeUIReadinessError(
-    NSString *requestID,
-    NSDictionary<NSString *, id> *uiState
-) {
-    return IOSUseErrorEnvelope(
-        requestID,
-        IOSUseRuntimeUIReadinessErrorObject(uiState)
-    );
 }
 
 static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
@@ -1919,32 +1970,6 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
     }
     NSString *command = request[@"command"];
     NSDictionary<NSString *, id> *arguments = request[@"arguments"];
-    if (IOSUseRuntimeIsUICommand(command)) {
-        NSDictionary<NSString *, id> *uiState =
-            IOSUseCurrentUIReadiness();
-        if (![uiState[@"state"] isEqualToString:@"ready"]) {
-            if ([refreshAlertStatus boolValue]) {
-                if (interactionState != NULL) {
-                    *interactionState = @{
-                        @"refreshComplete": @NO,
-                        @"refreshError":
-                            [uiState[@"state"] isEqualToString:@"failed"]
-                                ? @"runtime_ui_failed"
-                                : @"runtime_ui_not_ready",
-                        @"blocking": @NO,
-                        @"interactions": @[],
-                    };
-                }
-                if (alertRefreshElapsedMs != NULL) {
-                    *alertRefreshElapsedMs = @0.0;
-                }
-            }
-            return IOSUseRuntimeUIReadinessError(
-                requestID,
-                uiState
-            );
-        }
-    }
     __block NSDictionary<NSString *, id>
         *preexecutedAutomationResult = nil;
     __block NSDictionary<NSString *, id>
@@ -1961,7 +1986,8 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
     BOOL shouldRefreshAlertStatus =
         [refreshAlertStatus boolValue] &&
         ![@[@"hello", @"ping", @"diagnostics"]
-            containsObject:command];
+            containsObject:command] &&
+        ![command isEqualToString:@"waitFor"];
     if (shouldRefreshAlertStatus) {
         NSTimeInterval refreshStarted =
             NSProcessInfo.processInfo.systemUptime;
@@ -1988,7 +2014,19 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
                 IOSUseRuntimeIsUICommand(command)
                     ? IOSUsePlayRuntimeUICommandError()
                     : nil;
-            if (capturedGateError == nil) {
+            if (capturedGateError != nil) {
+                NSString *refreshError =
+                    [capturedGateError[@"code"]
+                        isKindOfClass:NSString.class]
+                        ? capturedGateError[@"code"]
+                        : @"runtime_ui_not_ready";
+                capturedState = @{
+                    @"refreshComplete": @NO,
+                    @"refreshError": refreshError,
+                    @"blocking": @NO,
+                    @"interactions": @[],
+                };
+            } else {
                 capturedState =
                     IOSUseRuntimeInteractionSnapshotOnMainThread(
                         &capturedPhotosStateVersion,

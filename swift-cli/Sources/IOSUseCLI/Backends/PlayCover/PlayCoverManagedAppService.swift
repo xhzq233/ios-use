@@ -148,13 +148,16 @@ enum PlayCoverManagedAppService {
         }
 
         let runtime = try resolveDefaultRuntime(paths: paths)
+        let fridaEngine = fridaEnabled
+            ? try PlayCoverFridaEngineService.ensureAvailable()
+            : nil
         let plan = try PlayCoverService.makePreparationPlan(
             source: preparationSource,
             runtimeFrameworkPath: runtime,
             paths: paths,
             signingIdentity: signingIdentity,
             fridaEnabled: fridaEnabled,
-            fridaEngine: nil,
+            fridaEngine: fridaEngine,
             generationKeyOverride: generationKeyOverrideForTesting
         )
         let generationKey = plan.generationKey
@@ -278,7 +281,7 @@ enum PlayCoverManagedAppService {
             let preparationPlan: PlayCoverPreparationPlan
             if plan.fridaEnabled {
                 let engine = try PlayCoverFridaEngineService
-                    .ensureAvailable(paths: paths)
+                    .ensureAvailable()
                 guard engine.sha256 == plan.fridaEngineSHA256 else {
                     throw PlayCoverBackendError.capabilityUnavailable(
                         "frida-engine (resolved asset digest changed during "

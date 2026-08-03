@@ -6,9 +6,6 @@ RELEASE_DIR="$ROOT_DIR/release"
 RELEASE_STARTED_AT="$(date +%s)"
 RELEASE_TEMP="$(mktemp -d "${TMPDIR:-/tmp}/ios-use-release-build.XXXXXX")"
 UPSTREAM_CACHE="${IOS_USE_PLAYCOVER_UPSTREAM_CACHE:-${TMPDIR:-/tmp}/ios-use-playcover-upstream-audit}"
-EXTRA_RELEASE_ASSETS=()
-FRIDA_ENGINE_DESCRIPTOR_SHA256="9e6d4844b76f71cb2fd46ef3e827b33df5fca4674be9a054395f0331f9bc6e3b"
-FRIDA_ENGINE_DESCRIPTOR_SIZE="8973197"
 
 cleanup() {
   if [[ -d "$RELEASE_TEMP" ]]; then
@@ -136,41 +133,21 @@ if ! cmp -s "$RUNTIME_INPUTS_BEFORE" "$RUNTIME_INPUTS_AFTER"; then
   exit 1
 fi
 
-RUNTIME_STAGE_PARENT="$RELEASE_TEMP/runtime-asset"
-RUNTIME_STAGE="$RUNTIME_STAGE_PARENT/IOSUsePlayRuntime.framework"
-mkdir -p "$RUNTIME_STAGE_PARENT"
+PLAYCOVER_RESOURCES_STAGE="$RELEASE_TEMP/playcover-resources"
+RUNTIME_STAGE="$PLAYCOVER_RESOURCES_STAGE/IOSUsePlayRuntime.framework"
+FRIDA_ENGINE_STAGE="$PLAYCOVER_RESOURCES_STAGE/IOSUseFridaEngine.framework"
+mkdir -p "$PLAYCOVER_RESOURCES_STAGE"
 cp -R "$RUNTIME_SOURCE" "$RUNTIME_STAGE"
 /usr/bin/codesign --verify --strict "$RUNTIME_STAGE"
-(
-  cd "$RUNTIME_STAGE_PARENT"
-  COPYFILE_DISABLE=1 tar -czf "$RELEASE_DIR/ios-use-playcover-runtime.tar.gz" \
-    "$(basename "$RUNTIME_STAGE")"
-)
-RUNTIME_ARCHIVE_SHA256="$(
-  shasum -a 256 "$RELEASE_DIR/ios-use-playcover-runtime.tar.gz" |
-    awk '{print $1}'
-)"
-
-if [[ "${IOS_USE_RELEASE_FRIDA_ENGINE:-0}" == "1" ]]; then
-  echo "[release-build] Building optional pinned Frida Engine asset..."
-  FRIDA_ENGINE_STAGE_PARENT="$RELEASE_TEMP/frida-engine-asset"
-  FRIDA_ENGINE_STAGE="$FRIDA_ENGINE_STAGE_PARENT/IOSUseFridaEngine.framework"
-  FRIDA_GUM_BUILD_ROOT="$RELEASE_TEMP/frida-gum-build"
-  mkdir -p "$FRIDA_ENGINE_STAGE_PARENT"
-  IOS_USE_FRIDA_GUM_BUILD_ROOT="$FRIDA_GUM_BUILD_ROOT" \
-    bash "$ROOT_DIR/scripts/build_playcover_frida_engine.sh" \
-      --build-gum \
-      --output "$FRIDA_ENGINE_STAGE" \
-      --replace
-  /usr/bin/codesign --verify --strict "$FRIDA_ENGINE_STAGE"
-  FRIDA_ENGINE_ASSET="ios-use-frida-engine.tar.gz"
-  FRIDA_ENGINE_MANIFEST_ASSET="IOSUSE-FRIDA-ENGINE-MANIFEST.txt"
-  (
-    cd "$FRIDA_ENGINE_STAGE_PARENT"
-    COPYFILE_DISABLE=1 tar -czf "$RELEASE_DIR/$FRIDA_ENGINE_ASSET" \
-      "$(basename "$FRIDA_ENGINE_STAGE")"
-  )
-  FRIDA_ENGINE_BUNDLE_DIGEST="$(
+echo "[release-build] Building pinned Frida Engine resource..."
+FRIDA_GUM_BUILD_ROOT="$RELEASE_TEMP/frida-gum-build"
+IOS_USE_FRIDA_GUM_BUILD_ROOT="$FRIDA_GUM_BUILD_ROOT" \
+  bash "$ROOT_DIR/scripts/build_playcover_frida_engine.sh" \
+    --build-gum \
+    --output "$FRIDA_ENGINE_STAGE" \
+    --replace
+/usr/bin/codesign --verify --strict "$FRIDA_ENGINE_STAGE"
+FRIDA_ENGINE_BUNDLE_DIGEST="$(
     python3 - "$FRIDA_ENGINE_STAGE" <<'PY'
 import hashlib
 import pathlib
@@ -191,33 +168,24 @@ for relative, data in sorted(files):
     hasher.update(data)
 print(hasher.hexdigest())
 PY
-  )"
-  FRIDA_ENGINE_BUNDLE_SIZE="$(
+)"
+FRIDA_ENGINE_BUNDLE_SIZE="$(
     python3 - "$FRIDA_ENGINE_STAGE" <<'PY'
 import pathlib
 import sys
 print(sum(path.stat().st_size for path in pathlib.Path(sys.argv[1]).rglob('*') if path.is_file()))
 PY
-  )"
-  if [[ "$FRIDA_ENGINE_BUNDLE_DIGEST" != "$FRIDA_ENGINE_DESCRIPTOR_SHA256" ||
-        "$FRIDA_ENGINE_BUNDLE_SIZE" != "$FRIDA_ENGINE_DESCRIPTOR_SIZE" ]]; then
-    echo "[release-build] ERROR: Frida Engine bundle does not match the pinned runtime descriptor" >&2
-    echo "[release-build] expected sha256=$FRIDA_ENGINE_DESCRIPTOR_SHA256 size=$FRIDA_ENGINE_DESCRIPTOR_SIZE" >&2
-    echo "[release-build] actual   sha256=$FRIDA_ENGINE_BUNDLE_DIGEST size=$FRIDA_ENGINE_BUNDLE_SIZE" >&2
-    exit 1
-  fi
-  {
-    printf 'Frida Gum source commit: %s\n' \
-      '0afeb85fcdeae1d995a55bc07f0fe57b197aecae'
-    printf 'Engine ABI: %s\n' 'ios-use-frida-engine-cabi-v2'
-    printf 'Framework bundle SHA-256: %s\n' "$FRIDA_ENGINE_BUNDLE_DIGEST"
-    printf 'Framework bundle bytes: %s\n' "$FRIDA_ENGINE_BUNDLE_SIZE"
-    printf 'Framework archive SHA-256: %s\n' \
-      "$(shasum -a 256 "$RELEASE_DIR/$FRIDA_ENGINE_ASSET" | awk '{print $1}')"
-    plutil -p "$FRIDA_ENGINE_STAGE/Info.plist"
-  } > "$RELEASE_DIR/$FRIDA_ENGINE_MANIFEST_ASSET"
-  EXTRA_RELEASE_ASSETS+=("$FRIDA_ENGINE_ASSET" "$FRIDA_ENGINE_MANIFEST_ASSET")
-fi
+)"
+PLAYCOVER_RESOURCES_ASSET="ios-use-playcover-resources.tar.gz"
+(
+  cd "$PLAYCOVER_RESOURCES_STAGE"
+  COPYFILE_DISABLE=1 tar -czf "$RELEASE_DIR/$PLAYCOVER_RESOURCES_ASSET" \
+    IOSUsePlayRuntime.framework IOSUseFridaEngine.framework
+)
+PLAYCOVER_RESOURCES_ARCHIVE_SHA256="$(
+  shasum -a 256 "$RELEASE_DIR/$PLAYCOVER_RESOURCES_ASSET" |
+    awk '{print $1}'
+)"
 
 SOURCE_ARCHIVE="ios-use-v$ACTUAL_VERSION-corresponding-source.tar.gz"
 SOURCE_PREFIX="ios-use-v$ACTUAL_VERSION/"
@@ -322,13 +290,18 @@ BUILD_MANIFEST_ASSET="PLAYCOVER-BUILD-MANIFEST-v$ACTUAL_VERSION.txt"
   printf 'ios-use source commit: %s\n' "$SOURCE_COMMIT"
   printf 'Yams source commit: %s\n' "$YAMS_COMMIT"
   printf 'PlayCover Runtime input manifest SHA-256: %s\n' "$RUNTIME_SOURCE_SHA256"
-  printf 'PlayCover Runtime archive SHA-256: %s\n' "$RUNTIME_ARCHIVE_SHA256"
+  printf 'PlayCover resources archive SHA-256: %s\n' "$PLAYCOVER_RESOURCES_ARCHIVE_SHA256"
+  printf 'Frida Gum source commit: %s\n' \
+    '0afeb85fcdeae1d995a55bc07f0fe57b197aecae'
+  printf 'Frida Engine ABI: %s\n' 'ios-use-frida-engine-cabi-v2'
+  printf 'Frida Engine framework SHA-256: %s\n' "$FRIDA_ENGINE_BUNDLE_DIGEST"
+  printf 'Frida Engine framework bytes: %s\n' "$FRIDA_ENGINE_BUNDLE_SIZE"
   printf 'Corresponding-source archive SHA-256: %s\n' "$SOURCE_ARCHIVE_SHA256"
 } > "$RELEASE_DIR/$BUILD_MANIFEST_ASSET"
 PROVENANCE_ASSET="PLAYCOVER-PROVENANCE-v$ACTUAL_VERSION.md"
 {
   printf '# PlayCover release provenance\n\n'
-  printf 'This release packages `IOSUsePlayRuntime.framework` as a read-only resource under `share/ios-use/playcover/`.\n\n'
+  printf 'This release packages `IOSUsePlayRuntime.framework` and the optional-at-runtime `IOSUseFridaEngine.framework` as read-only resources under `share/ios-use/playcover/`.\n\n'
   printf 'The complete corresponding source for this exact release is `%s`; it includes the complete pinned Yams tree.\n\n' "$SOURCE_ARCHIVE"
   printf 'Fresh Runtime/source/archive digests are recorded in `%s`.\n\n' "$BUILD_MANIFEST_ASSET"
   for provenance in \
@@ -352,7 +325,7 @@ for asset in \
   ios-use-darwin-arm64 \
   driver.ipa \
   driver-sim.ipa \
-  ios-use-playcover-runtime.tar.gz \
+  "$PLAYCOVER_RESOURCES_ASSET" \
   "$SOURCE_ARCHIVE" \
   LICENSE \
   PLAYCOVER-LICENSE-GPL-3.0 \
@@ -362,8 +335,7 @@ for asset in \
   THIRD-PARTY-LICENSES.md \
   "$BUILD_MANIFEST_ASSET" \
   "$PROVENANCE_ASSET" \
-  "$CHANGELOG_ASSET" \
-  "${EXTRA_RELEASE_ASSETS[@]}"; do
+  "$CHANGELOG_ASSET"; do
   if [ ! -s "$RELEASE_DIR/$asset" ]; then
     echo "[release-build] ERROR: missing or empty release asset: $asset" >&2
     exit 1
@@ -376,7 +348,7 @@ done
     ios-use-darwin-arm64 \
     driver.ipa \
     driver-sim.ipa \
-    ios-use-playcover-runtime.tar.gz \
+    "$PLAYCOVER_RESOURCES_ASSET" \
     "$SOURCE_ARCHIVE" \
     LICENSE \
     PLAYCOVER-LICENSE-GPL-3.0 \
@@ -386,8 +358,7 @@ done
     THIRD-PARTY-LICENSES.md \
     "$BUILD_MANIFEST_ASSET" \
     "$PROVENANCE_ASSET" \
-    "$CHANGELOG_ASSET" \
-    "${EXTRA_RELEASE_ASSETS[@]}" > SHA256SUMS
+    "$CHANGELOG_ASSET" > SHA256SUMS
 )
 
 STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))

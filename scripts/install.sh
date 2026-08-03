@@ -20,7 +20,7 @@ BUILD_FROM_SOURCE=0
 DIST_DIR=""
 OUTFILE=""
 CHECKSUM_FILE=""
-RUNTIME_ARCHIVE=""
+PLAYCOVER_RESOURCES_ARCHIVE=""
 
 cleanup() {
   if [[ -n "$BOOTSTRAP_DIR" && -d "$BOOTSTRAP_DIR" ]]; then
@@ -122,7 +122,7 @@ refresh_paths() {
   DIST_DIR="$ROOT_DIR/dist"
   OUTFILE="$DIST_DIR/ios-use"
   CHECKSUM_FILE="$DIST_DIR/SHA256SUMS"
-  RUNTIME_ARCHIVE="$DIST_DIR/ios-use-playcover-runtime.tar.gz"
+  PLAYCOVER_RESOURCES_ARCHIVE="$DIST_DIR/ios-use-playcover-resources.tar.gz"
 }
 
 release_asset_url() {
@@ -171,6 +171,17 @@ build_or_download_cli() {
     fi
     echo "Compiling ios-use binary from source..."
     bash "$ROOT_DIR/scripts/build_swift_cli.sh"
+    local engine="$ROOT_DIR/.ios-use/playcover/IOSUseFridaEngine.framework"
+    if [[ -e "$engine" ]]; then
+      bash "$ROOT_DIR/scripts/build_playcover_frida_engine.sh" \
+        --build-gum \
+        --output "$engine" \
+        --replace
+    else
+      bash "$ROOT_DIR/scripts/build_playcover_frida_engine.sh" \
+        --build-gum \
+        --output "$engine"
+    fi
     install -m 755 "$ROOT_DIR/ios-use" "$OUTFILE"
     codesign --sign - --force "$OUTFILE" >/dev/null
     return
@@ -178,7 +189,9 @@ build_or_download_cli() {
 
   download_release_checksums
   download_checked_release_asset "$(mac_cli_asset_name)" "$OUTFILE"
-  download_checked_release_asset "ios-use-playcover-runtime.tar.gz" "$RUNTIME_ARCHIVE"
+  download_checked_release_asset \
+    "ios-use-playcover-resources.tar.gz" \
+    "$PLAYCOVER_RESOURCES_ARCHIVE"
 }
 
 download_release_checksums() {
@@ -284,62 +297,86 @@ cleanup_legacy_flow_artifacts() {
   fi
 }
 
-runtime_destination_for_prefix() {
+playcover_resources_destination_for_prefix() {
   local prefix="$1"
-  printf '%s\n' "$prefix/share/ios-use/playcover/IOSUsePlayRuntime.framework"
+  printf '%s\n' "$prefix/share/ios-use/playcover"
 }
 
-install_playcover_runtime() {
+install_playcover_resources() {
   local prefix="$1"
-  local destination source staged
-  destination="$(runtime_destination_for_prefix "$prefix")"
-  staged="$DIST_DIR/runtime-stage"
+  local destination staged runtime engine
+  destination="$(playcover_resources_destination_for_prefix "$prefix")"
+  staged="$DIST_DIR/playcover-resources-stage"
+  runtime="$staged/IOSUsePlayRuntime.framework"
+  engine="$staged/IOSUseFridaEngine.framework"
   rm -rf "$staged"
   mkdir -p "$staged"
 
   if [[ "$BUILD_FROM_SOURCE" -eq 1 ]]; then
-    source="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
-    if [[ ! -x "$source/IOSUsePlayRuntime" ]]; then
+    local source_root="$ROOT_DIR/.ios-use/playcover"
+    if [[ ! -x "$source_root/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" ]]; then
       echo "Source build did not produce IOSUsePlayRuntime.framework." >&2
       exit 1
     fi
-    cp -R "$source" "$staged/IOSUsePlayRuntime.framework"
+    if [[ ! -x "$source_root/IOSUseFridaEngine.framework/IOSUseFridaEngine" ]]; then
+      echo "Source build did not produce IOSUseFridaEngine.framework." >&2
+      exit 1
+    fi
+    cp -R "$source_root/IOSUsePlayRuntime.framework" "$runtime"
+    cp -R "$source_root/IOSUseFridaEngine.framework" "$engine"
   else
     local archived_path
     while IFS= read -r archived_path; do
       case "$archived_path" in
-        IOSUsePlayRuntime.framework|IOSUsePlayRuntime.framework/*) ;;
+        IOSUsePlayRuntime.framework|IOSUsePlayRuntime.framework/*|IOSUseFridaEngine.framework|IOSUseFridaEngine.framework/*) ;;
         *)
-          echo "PlayCover Runtime archive contains an unexpected path: $archived_path" >&2
+          echo "PlayCover resources archive contains an unexpected path: $archived_path" >&2
           exit 1
           ;;
       esac
-    done < <(tar -tzf "$RUNTIME_ARCHIVE")
-    tar -xzf "$RUNTIME_ARCHIVE" -C "$staged"
+    done < <(tar -tzf "$PLAYCOVER_RESOURCES_ARCHIVE")
+    tar -xzf "$PLAYCOVER_RESOURCES_ARCHIVE" -C "$staged"
   fi
 
-  if [[ ! -x "$staged/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" ]]; then
-    echo "PlayCover Runtime archive does not contain IOSUsePlayRuntime.framework." >&2
+  if [[ ! -x "$runtime/IOSUsePlayRuntime" ]]; then
+    echo "PlayCover resources do not contain IOSUsePlayRuntime.framework." >&2
     exit 1
   fi
-  if [[ ! -f "$staged/IOSUsePlayRuntime.framework/Info.plist" ]] &&
-     [[ ! -f "$staged/IOSUsePlayRuntime.framework/Versions/A/Resources/Info.plist" ]]; then
+  if [[ ! -f "$runtime/Info.plist" ]] &&
+     [[ ! -f "$runtime/Versions/A/Resources/Info.plist" ]]; then
     echo "PlayCover Runtime archive does not contain an Info.plist." >&2
     exit 1
   fi
-  if ! codesign --verify --strict "$staged/IOSUsePlayRuntime.framework" >/dev/null 2>&1; then
+  if [[ ! -x "$engine/IOSUseFridaEngine" || ! -f "$engine/Info.plist" ]]; then
+    echo "PlayCover resources do not contain IOSUseFridaEngine.framework." >&2
+    exit 1
+  fi
+  if ! codesign --verify --strict "$runtime" >/dev/null 2>&1; then
     echo "PlayCover Runtime signature verification failed." >&2
     exit 1
   fi
+  if ! codesign --verify --strict "$engine" >/dev/null 2>&1; then
+    echo "Frida Engine signature verification failed." >&2
+    exit 1
+  fi
 
-  mkdir -p "$(dirname "$destination")"
-  rm -rf "$destination"
-  mv "$staged/IOSUsePlayRuntime.framework" "$destination"
-  if ! codesign --verify --strict "$destination" >/dev/null 2>&1; then
+  mkdir -p "$destination"
+  rm -rf \
+    "$destination/IOSUsePlayRuntime.framework" \
+    "$destination/IOSUseFridaEngine.framework"
+  mv "$runtime" "$destination/IOSUsePlayRuntime.framework"
+  mv "$engine" "$destination/IOSUseFridaEngine.framework"
+  if ! codesign --verify --strict \
+      "$destination/IOSUsePlayRuntime.framework" >/dev/null 2>&1; then
     echo "Installed PlayCover Runtime signature verification failed." >&2
     exit 1
   fi
-  echo "Installed PlayCover Runtime read-only resource to $destination"
+  if ! codesign --verify --strict \
+      "$destination/IOSUseFridaEngine.framework" >/dev/null 2>&1; then
+    echo "Installed Frida Engine signature verification failed." >&2
+    exit 1
+  fi
+  echo "Installed PlayCover resources to $destination"
 }
 
 install_binary() {
@@ -347,7 +384,7 @@ install_binary() {
   local install_prefix="$2"
   mkdir -p "$target_dir" "$HOME/.ios-use/runtime"
   install -m 755 "$OUTFILE" "$target_dir/ios-use"
-  install_playcover_runtime "$install_prefix"
+  install_playcover_resources "$install_prefix"
 
   install_driver_artifact "driver.ipa" "$HOME/.ios-use/driver.ipa"
   install_driver_artifact "driver-sim.ipa" "$HOME/.ios-use/driver-sim.ipa"
@@ -455,4 +492,4 @@ case ":$PATH:" in
 esac
 
 echo "Verify with: $TARGET_PATH --version"
-echo "PlayCover Runtime: $(runtime_destination_for_prefix "$INSTALL_PREFIX")"
+echo "PlayCover resources: $(playcover_resources_destination_for_prefix "$INSTALL_PREFIX")"

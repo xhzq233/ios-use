@@ -121,11 +121,10 @@ public enum StatusService {
                 driver = .object(fields)
             } else {
                 do {
-                    if let pending =
-                            try PlayCoverPendingLaunchCoordinator
-                                .readOnlySnapshot(paths: paths) {
+                    if let pending = try PlayCoverPendingLaunchStore
+                        .load(paths: paths) {
                         driver = .object([
-                            "status": .string(pending.status),
+                            "status": .string("unresolvedOpen"),
                             "deviceType": .string(
                                 PlayCoverSessionService.deviceType
                             ),
@@ -141,10 +140,12 @@ public enum StatusService {
                             "macGenerationKey": .string(
                                 pending.generationKey
                             ),
-                            "ownerPid": pending.ownerPID.map {
+                            "ownerPid": (pending.owner?.pid).map {
                                 .integer(Int($0))
                             } ?? .null,
-                            "reason": .string(pending.reason),
+                            "reason": .string(
+                                pendingLaunchReason(pending)
+                            ),
                         ])
                     } else {
                         driver = .object([
@@ -228,6 +229,19 @@ public enum StatusService {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    private static func pendingLaunchReason(
+        _ record: PlayCoverPendingLaunchStore.Record
+    ) -> String {
+        switch record.phase {
+        case .intent:
+            return "launch intent has no authenticated process owner"
+        case .owned:
+            return "exact process owner is pending session handoff or stop"
+        case .driverLockCommitted:
+            return "driver.lock handoff journal was not retired"
+        }
+    }
+
     private static func deviceLines(simulatorOnly: Bool, paths: IOSUsePaths, configuredDevices: [String: DeviceService.ConfiguredDevice], verbose: Bool, emptyMessage: String) -> [String] {
         do {
             let devices = try DeviceService.listDevices(simulatorOnly: simulatorOnly, paths: paths)
@@ -245,23 +259,24 @@ public enum StatusService {
         do {
             guard let info = try SessionService.readDriverLockInfo(paths: paths) else {
                 do {
-                    guard let pending =
-                            try PlayCoverPendingLaunchCoordinator
-                                .readOnlySnapshot(paths: paths) else {
+                    guard let pending = try PlayCoverPendingLaunchStore
+                        .load(paths: paths) else {
                         return ["  not running (no driver.lock)"]
                     }
                     var parts = [
-                        pending.status,
+                        "unresolved pending launch",
                         "device: \(PlayCoverSessionService.deviceType)",
                         "phase: \(pending.phase.rawValue)",
                         "session: \(pending.sessionID)",
                         "bundle: \(pending.bundleIdentifier)",
                         "generation: \(pending.generationKey)",
                     ]
-                    if let ownerPID = pending.ownerPID {
+                    if let ownerPID = pending.owner?.pid {
                         parts.append("owner pid: \(ownerPID)")
                     }
-                    parts.append("reason: \(pending.reason)")
+                    parts.append(
+                        "reason: \(pendingLaunchReason(pending))"
+                    )
                     return [
                         "  - \(parts.joined(separator: " | "))",
                     ]

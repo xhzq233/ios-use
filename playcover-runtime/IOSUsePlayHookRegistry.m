@@ -82,7 +82,6 @@ IOSUsePlayHookRegistryExpectedRequiredIdentifiers(void) {
             @"playtools.device.model",
             @"playtools.device.localized-model",
             @"playtools.trait.idiom",
-            @"photos.authorization.request",
             @"fake-touch.runloop-source",
             @"fake-touch.application-event",
             @"fake-touch.event-clear",
@@ -1069,6 +1068,39 @@ IOSUsePlayHookRegistryDiagnostics(void) {
         @"requiredReady": @(requiredReady),
         @"entries": items,
     };
+}
+
+BOOL IOSUsePlayHookRegistryHasRequiredFailure(
+    NSDictionary<NSString *, id> *diagnostics,
+    BOOL configurationFailed
+) {
+    NSArray *entries = [diagnostics[@"entries"] isKindOfClass:NSArray.class]
+        ? diagnostics[@"entries"]
+        : @[];
+    for (id rawEntry in entries) {
+        if (![rawEntry isKindOfClass:NSDictionary.class]) {
+            continue;
+        }
+        NSDictionary<NSString *, id> *entry = rawEntry;
+        if (![entry[@"required"] boolValue]) {
+            continue;
+        }
+        if ([entry[@"kind"] isEqualToString:@"missing-required"] &&
+            !configurationFailed) {
+            continue;
+        }
+        id rawFailure = entry[@"failure"];
+        BOOL hasFailure =
+            [rawFailure isKindOfClass:NSString.class] &&
+            [(NSString *)rawFailure length] > 0;
+        if (hasFailure ||
+            [entry[@"identifierConflict"] boolValue] ||
+            ![entry[@"installed"] boolValue] ||
+            ![entry[@"currentIMPMatchesInstalled"] boolValue]) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 #if defined(IOS_USE_PLAY_HOOK_REGISTRY_TESTING)

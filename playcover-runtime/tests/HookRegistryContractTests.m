@@ -116,10 +116,26 @@ int main(void) {
         BOOL passed = YES;
         NSError *error = nil;
 
-        IOSUseHookReset(@"missing.required");
         passed &= IOSUseHookRequire(
-            !IOSUsePlayHookRegistryRequiredReady(),
-            @"missing expected identifier did not fail closed"
+            ![IOSUsePlayHookRegistryExpectedRequiredIdentifiers()
+                containsObject:@"photos.authorization.request"],
+            @"Photos feature hook was classified as Runtime/UI core"
+        );
+
+        IOSUseHookReset(@"missing.required");
+        NSDictionary<NSString *, id> *missingDiagnostics =
+            IOSUsePlayHookRegistryDiagnostics();
+        passed &= IOSUseHookRequire(
+            !IOSUsePlayHookRegistryRequiredReady() &&
+                !IOSUsePlayHookRegistryHasRequiredFailure(
+                    missingDiagnostics,
+                    NO
+                ) &&
+                IOSUsePlayHookRegistryHasRequiredFailure(
+                    missingDiagnostics,
+                    YES
+                ),
+            @"missing declaration was not separated from configuration failure"
         );
 
         IOSUseHookReset(@"nil.target");
@@ -204,7 +220,11 @@ int main(void) {
                 &error
             ) &&
                 error == nil &&
-                !IOSUsePlayHookRegistryRequiredReady(),
+                !IOSUsePlayHookRegistryRequiredReady() &&
+                !IOSUsePlayHookRegistryHasRequiredFailure(
+                    IOSUsePlayHookRegistryDiagnostics(),
+                    NO
+                ),
             @"first-use gate did not block before invocation"
         );
         IOSUseHookInheritedChild *inherited =
@@ -250,7 +270,11 @@ int main(void) {
             method_getTypeEncoding(childValue)
         );
         passed &= IOSUseHookRequire(
-            !IOSUsePlayHookRegistryRequiredReady(),
+            !IOSUsePlayHookRegistryRequiredReady() &&
+                IOSUsePlayHookRegistryHasRequiredFailure(
+                    IOSUsePlayHookRegistryDiagnostics(),
+                    NO
+                ),
             @"post-install receiving-IMP collision was not detected"
         );
         class_replaceMethod(

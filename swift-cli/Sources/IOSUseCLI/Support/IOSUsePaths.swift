@@ -28,9 +28,8 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let playcoverGlobalObjects: String
     public let playcoverGlobalLocks: String
     public let playcoverLastGeneration: String
-    public let playcoverFridaEngineRoot: String
-    public let playcoverFridaEngineObjects: String
-    public let playcoverFridaEngineLocks: String
+    public let playcoverFridaSourceCache: String
+    public let playcoverFridaBuildCache: String
     public let playcoverSocketRoot: String
     public let playcoverPlayChain: String
     public let playcoverSigningBinding: String
@@ -176,12 +175,10 @@ public struct IOSUsePaths: Equatable, Sendable {
             playcoverGlobalLocks: "\(globalCache)/locks",
             playcoverLastGeneration:
                 "\(configured.root)/mac/last-generation.json",
-            playcoverFridaEngineRoot:
-                "\(accountCacheRoot)/mac/frida-engine",
-            playcoverFridaEngineObjects:
-                "\(accountCacheRoot)/mac/frida-engine/objects",
-            playcoverFridaEngineLocks:
-                "\(accountCacheRoot)/mac/frida-engine/locks",
+            playcoverFridaSourceCache:
+                "\(accountCacheRoot)/mac/frida-engine/source",
+            playcoverFridaBuildCache:
+                "\(accountCacheRoot)/mac/frida-engine/build",
             playcoverSocketRoot: socketRoot,
             playcoverPlayChain: playChain,
             playcoverSigningBinding:

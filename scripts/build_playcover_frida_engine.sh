@@ -228,6 +228,8 @@ plutil -insert CFBundleShortVersionString -string 16.5.6 \
   "$BUILD_TEMP/IOSUseFridaEngine.framework/Info.plist"
 plutil -insert IOSUseFridaEngineABI -string "$ENGINE_ABI_REVISION" \
   "$BUILD_TEMP/IOSUseFridaEngine.framework/Info.plist"
+plutil -insert IOSUseFridaSourceCommit -string "$FRIDA_COMMIT" \
+  "$BUILD_TEMP/IOSUseFridaEngine.framework/Info.plist"
 plutil -insert IOSUseFridaAgentSHA256 -string "$AGENT_SHA256" \
   "$BUILD_TEMP/IOSUseFridaEngine.framework/Info.plist"
 plutil -insert IOSUseFridaSourceClosureSHA256 -string \

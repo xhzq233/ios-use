@@ -23,18 +23,15 @@ Run the release build script with the intended tag:
 IOS_USE_RELEASE_VERSION=v1.2.0 bash scripts/release_build.sh
 ```
 
-The ordinary release is Engine-free. To publish the optional, separately
-verified Frida Catalyst asset as well, opt in explicitly:
-
-```bash
-IOS_USE_RELEASE_VERSION=v1.2.0 \
-IOS_USE_RELEASE_FRIDA_ENGINE=1 \
-bash scripts/release_build.sh
-```
-
-That mode adds `ios-use-frida-engine.tar.gz` and
-`IOSUSE-FRIDA-ENGINE-MANIFEST.txt`; it does not change the normal installer or
-Runtime archive.
+Every release builds and verifies the pinned Frida Catalyst Engine together
+with the base Runtime. The installer keeps both as read-only resources; only
+`start --mac --frida` copies the Engine into a prepared App.
+The Engine build normalizes compiler-visible source paths so local source,
+cache, and temporary build-root paths are not embedded in the binary. Frida's
+generated source maps may still vary between otherwise equivalent builds, so
+the release records the framework's actual digest and size in its build
+manifest and protects the complete resources archive with `SHA256SUMS`; it
+does not duplicate one toolchain-specific framework hash in source code.
 
 This script:
 
@@ -46,9 +43,9 @@ This script:
 3. Builds the Swift CLI and verifies `./ios-use --version` matches
    `IOS_USE_RELEASE_VERSION` when provided.
 4. Builds the real-device and simulator driver IPAs.
-5. Refuses any source-input change during the build and stages the Runtime as
-   a read-only source resource under `release/`; preparation may sign only a
-   managed copy.
+5. Refuses any source-input change during the build and stages the Runtime and
+   pinned Engine as read-only source resources under `release/`; preparation
+   may sign only a managed copy.
 6. Builds corresponding source from the exact current `HEAD`, adds the complete
    pinned Yams Git tree, and proves its Runtime inputs have the same digest as
    the fresh binary build.
@@ -62,9 +59,7 @@ Expected assets:
 - `release/ios-use-darwin-arm64`
 - `release/driver.ipa`
 - `release/driver-sim.ipa`
-- `release/ios-use-playcover-runtime.tar.gz`
-- optionally `release/ios-use-frida-engine.tar.gz` and
-  `release/IOSUSE-FRIDA-ENGINE-MANIFEST.txt` when the explicit opt-in is set
+- `release/ios-use-playcover-resources.tar.gz`
 - `release/ios-use-v1.2.0-corresponding-source.tar.gz`
 - `release/LICENSE`, `release/*-LICENSE-*` (including Yams MIT), and
   `release/THIRD-PARTY-LICENSES.md`
@@ -125,7 +120,7 @@ The release workflow runs on tag pushes that match `v*` and uploads:
 - `ios-use-darwin-arm64`
 - `driver.ipa`
 - `driver-sim.ipa`
-- `ios-use-playcover-runtime.tar.gz`
+- `ios-use-playcover-resources.tar.gz`
 - `ios-use-vX.Y.Z-corresponding-source.tar.gz`
 - license, PlayCover provenance, and versioned Runtime/source digest assets
 - `CHANGELOG-vX.Y.Z.md`
@@ -149,7 +144,7 @@ To watch it:
 - `release/` contains all expected assets.
 - `git diff --check` passes.
 - The tag is pushed to origin.
-- The GitHub Release has the Runtime archive, corresponding source, license,
+- The GitHub Release has the PlayCover resources archive, corresponding source, license,
   provenance, build manifest, changelog, and checksums in addition to the CLI
   and driver IPAs.
 

@@ -532,6 +532,12 @@ enum MachineOutput {
                 phase = "mac_preflight"
                 retryable = true
                 fatal = false
+            case .pendingLaunchUnresolved:
+                category = IOSUseErrorCategory.session
+                code = "mac_pending_launch_unresolved"
+                phase = "mac_pending_launch"
+                retryable = false
+                fatal = false
             }
             return MachineError(
                 message: backendError.description,

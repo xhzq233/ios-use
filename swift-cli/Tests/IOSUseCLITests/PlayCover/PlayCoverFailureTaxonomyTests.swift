@@ -54,6 +54,13 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
                 "mac_runtime_hello",
                 true
             ),
+            (
+                .pendingLaunchUnresolved("intent"),
+                "session",
+                "mac_pending_launch_unresolved",
+                "mac_pending_launch",
+                false
+            ),
         ]
 
         for (error, category, code, phase, retryable) in cases {
