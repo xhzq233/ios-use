@@ -162,6 +162,34 @@ IOS_USE_FRIDA_SOURCE_CACHE="$RELEASE_TEMP/frida-source-cache" \
     --output "$FRIDA_ENGINE_STAGE" \
     --replace
 /usr/bin/codesign --verify --strict "$FRIDA_ENGINE_STAGE"
+FRIDA_NOTICE_STAGE="$FRIDA_ENGINE_STAGE/Resources/ThirdPartyNotices.txt"
+if [[ ! -s "$FRIDA_NOTICE_STAGE" || -L "$FRIDA_NOTICE_STAGE" ]]; then
+  echo "[release-build] ERROR: Frida Engine lacks its static-dependency notices" >&2
+  exit 1
+fi
+shopt -s nullglob
+FRIDA_SOURCE_ROOTS=("$RELEASE_TEMP/frida-source-cache"/*)
+shopt -u nullglob
+if [[ "${#FRIDA_SOURCE_ROOTS[@]}" -ne 1 ||
+      ! -d "${FRIDA_SOURCE_ROOTS[0]}" ]]; then
+  echo "[release-build] ERROR: release build did not retain one pinned Frida source checkout" >&2
+  exit 1
+fi
+FRIDA_SOURCE_ROOT="${FRIDA_SOURCE_ROOTS[0]}"
+python3 "$ROOT_DIR/scripts/frida_distribution.py" validate-source \
+  --repository-root "$ROOT_DIR" \
+  --source-root "$FRIDA_SOURCE_ROOT"
+FRIDA_SOURCE_COMMIT="$(
+  plutil -extract IOSUseFridaSourceCommit raw "$FRIDA_ENGINE_STAGE/Info.plist"
+)"
+FRIDA_VERSION="$(
+  plutil -extract CFBundleShortVersionString raw "$FRIDA_ENGINE_STAGE/Info.plist"
+)"
+if [[ "$FRIDA_SOURCE_COMMIT" != "$(basename "$FRIDA_SOURCE_ROOT")" ]]; then
+  echo "[release-build] ERROR: Frida Engine and retained source checkout disagree" >&2
+  exit 1
+fi
+FRIDA_NOTICE_SHA256="$(shasum -a 256 "$FRIDA_NOTICE_STAGE" | awk '{print $1}')"
 FRIDA_ENGINE_BUNDLE_DIGEST="$(
     python3 - "$FRIDA_ENGINE_STAGE" <<'PY'
 import hashlib
@@ -267,6 +295,22 @@ git -C "$YAMS_CHECKOUT" ls-tree -r --name-only "$YAMS_COMMIT" |
 verify_file_set "Yams $YAMS_COMMIT source" \
   "$RELEASE_TEMP/yams-source.expected" "$RELEASE_TEMP/yams-source.actual"
 
+FRIDA_SOURCE="$SOURCE_STAGE/ThirdParty/Frida/upstream-source"
+FRIDA_SOURCE_FILES="$RELEASE_TEMP/frida-source.files"
+python3 "$ROOT_DIR/scripts/frida_distribution.py" stage-source \
+  --repository-root "$ROOT_DIR" \
+  --source-root "$FRIDA_SOURCE_ROOT" \
+  --output "$FRIDA_SOURCE" \
+  --file-list-output "$FRIDA_SOURCE_FILES"
+FRIDA_SOURCE_MANIFEST="$FRIDA_SOURCE/FRIDA-SOURCE-MANIFEST.txt"
+if [[ ! -s "$FRIDA_SOURCE_MANIFEST" ]]; then
+  echo "[release-build] ERROR: staged Frida source lacks its content manifest" >&2
+  exit 1
+fi
+FRIDA_SOURCE_MANIFEST_SHA256="$(
+  shasum -a 256 "$FRIDA_SOURCE_MANIFEST" | awk '{print $1}'
+)"
+
 runtime_source_manifest "$SOURCE_STAGE" "$RELEASE_TEMP/runtime-inputs.archived"
 if ! cmp -s "$RUNTIME_INPUTS_BEFORE" "$RELEASE_TEMP/runtime-inputs.archived"; then
   echo "[release-build] ERROR: archived Runtime sources do not match the freshly built Runtime inputs" >&2
@@ -278,6 +322,8 @@ fi
 printf '%s\n' \
   "ios-use source commit: $SOURCE_COMMIT" \
   "Yams source commit: $YAMS_COMMIT" \
+  "Frida Gum source commit: $FRIDA_SOURCE_COMMIT" \
+  "Frida source closure manifest SHA-256: $FRIDA_SOURCE_MANIFEST_SHA256" \
   "Mac Runtime input manifest SHA-256: $RUNTIME_SOURCE_SHA256" \
   > "$SOURCE_STAGE/CORRESPONDING-SOURCE-MANIFEST.txt"
 
@@ -290,6 +336,9 @@ printf '%s\n' \
     sed "s#^#$SOURCE_PREFIX#"
   git -C "$YAMS_CHECKOUT" ls-tree -r --name-only "$YAMS_COMMIT" |
     sed "s#^#${SOURCE_PREFIX}ThirdParty/Yams/upstream-source/#"
+  sed \
+    "s#^#${SOURCE_PREFIX}ThirdParty/Frida/upstream-source/#" \
+    "$FRIDA_SOURCE_FILES"
   printf '%sCORRESPONDING-SOURCE-MANIFEST.txt\n' "$SOURCE_PREFIX"
 } |
   LC_ALL=C sort > "$SOURCE_EXPECTED"
@@ -310,6 +359,8 @@ cp "$ROOT_DIR/playcover-runtime/PlayTools/LICENSE" "$RELEASE_DIR/PLAYTOOLS-LICEN
 cp "$ROOT_DIR/ThirdParty/inject/LICENSE" "$RELEASE_DIR/INJECT-LICENSE-GPL-3.0"
 cp "$ROOT_DIR/ThirdParty/Yams/LICENSE" "$RELEASE_DIR/YAMS-LICENSE-MIT"
 cp "$ROOT_DIR/ThirdParty/LICENSES.md" "$RELEASE_DIR/THIRD-PARTY-LICENSES.md"
+cp "$FRIDA_NOTICE_STAGE" \
+  "$RELEASE_DIR/FRIDA-STATIC-DEPENDENCY-NOTICES.txt"
 BUILD_MANIFEST_ASSET="MAC-BACKEND-BUILD-MANIFEST-v$ACTUAL_VERSION.txt"
 {
   printf 'ios-use source commit: %s\n' "$SOURCE_COMMIT"
@@ -317,8 +368,12 @@ BUILD_MANIFEST_ASSET="MAC-BACKEND-BUILD-MANIFEST-v$ACTUAL_VERSION.txt"
   printf 'Mac Runtime input manifest SHA-256: %s\n' "$RUNTIME_SOURCE_SHA256"
   printf 'Mac backend resources archive SHA-256: %s\n' "$PLAYCOVER_RESOURCES_ARCHIVE_SHA256"
   printf 'Mac sandbox rules SHA-256: %s\n' "$RULES_SHA256"
-  printf 'Frida Gum source commit: %s\n' \
-    '0afeb85fcdeae1d995a55bc07f0fe57b197aecae'
+  printf 'Frida version: %s\n' "$FRIDA_VERSION"
+  printf 'Frida Gum source commit: %s\n' "$FRIDA_SOURCE_COMMIT"
+  printf 'Frida source closure manifest SHA-256: %s\n' \
+    "$FRIDA_SOURCE_MANIFEST_SHA256"
+  printf 'Frida static-dependency notices SHA-256: %s\n' \
+    "$FRIDA_NOTICE_SHA256"
   printf 'Frida Engine ABI: %s\n' 'ios-use-frida-engine-cabi-v2'
   printf 'Frida Engine framework SHA-256: %s\n' "$FRIDA_ENGINE_BUNDLE_DIGEST"
   printf 'Frida Engine framework bytes: %s\n' "$FRIDA_ENGINE_BUNDLE_SIZE"
@@ -328,13 +383,14 @@ PROVENANCE_ASSET="MAC-BACKEND-PROVENANCE-v$ACTUAL_VERSION.md"
 {
   printf '# Mac backend release provenance\n\n'
   printf 'This release packages `IOSUsePlayRuntime.framework`, the optional-at-runtime `IOSUseFridaEngine.framework`, and the pinned sandbox rules as read-only resources under `share/ios-use/mac/`.\n\n'
-  printf 'The complete corresponding source for this exact release is `%s`; it includes the complete pinned Yams tree.\n\n' "$SOURCE_ARCHIVE"
+  printf 'The complete corresponding source for this exact release is `%s`; it includes the complete pinned Yams tree and the Frida GumJS static source closure.\n\n' "$SOURCE_ARCHIVE"
   printf 'Fresh Runtime/source/archive digests are recorded in `%s`.\n\n' "$BUILD_MANIFEST_ASSET"
   for provenance in \
     "$ROOT_DIR/ThirdParty/PlayCover/PROVENANCE.md" \
     "$ROOT_DIR/playcover-runtime/PlayTools/PROVENANCE.md" \
     "$ROOT_DIR/ThirdParty/inject/PROVENANCE.md" \
-    "$ROOT_DIR/ThirdParty/Yams/PROVENANCE.md"; do
+    "$ROOT_DIR/ThirdParty/Yams/PROVENANCE.md" \
+    "$ROOT_DIR/ThirdParty/Frida/PROVENANCE.md"; do
     printf '\n---\n\n'
     sed -n '1,$p' "$provenance"
   done
@@ -358,6 +414,7 @@ for asset in \
   PLAYTOOLS-LICENSE-AGPL-3.0 \
   INJECT-LICENSE-GPL-3.0 \
   YAMS-LICENSE-MIT \
+  FRIDA-STATIC-DEPENDENCY-NOTICES.txt \
   THIRD-PARTY-LICENSES.md \
   "$BUILD_MANIFEST_ASSET" \
   "$PROVENANCE_ASSET" \
@@ -381,6 +438,7 @@ done
     PLAYTOOLS-LICENSE-AGPL-3.0 \
     INJECT-LICENSE-GPL-3.0 \
     YAMS-LICENSE-MIT \
+    FRIDA-STATIC-DEPENDENCY-NOTICES.txt \
     THIRD-PARTY-LICENSES.md \
     "$BUILD_MANIFEST_ASSET" \
     "$PROVENANCE_ASSET" \

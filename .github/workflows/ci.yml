@@ -69,6 +69,7 @@ jobs:
           for script in scripts/*.sh; do
             bash -n "$script"
           done
+          python3 -m py_compile scripts/frida_distribution.py
           bash scripts/test_install.sh
           bash scripts/test_playcover_packaging_contract.sh
           bash scripts/test_playcover_live_workflow_contract.sh

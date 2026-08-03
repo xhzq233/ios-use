@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FRIDA_COMMIT="0afeb85fcdeae1d995a55bc07f0fe57b197aecae"
 FRIDA_REPOSITORY="https://github.com/frida/frida-gum.git"
+FRIDA_BUILD_VERSION="16.5.6"
 SOURCE_ROOT="${IOS_USE_FRIDA_SOURCE_ROOT:-}"
 BUILD_ROOT="${IOS_USE_FRIDA_GUM_BUILD_ROOT:-}"
 REPLACE=false
@@ -44,21 +45,27 @@ if [ -z "$SOURCE_ROOT" ]; then
   fi
 fi
 SOURCE_ROOT="$(cd "$SOURCE_ROOT" && pwd)"
-if [ -n "$(git -C "$SOURCE_ROOT" status --porcelain=v1 --untracked-files=all)" ]; then
-  echo "Frida source checkout is dirty; refusing to change it before pinning $FRIDA_COMMIT" >&2
-  exit 65
-fi
-actual_commit="$(git -C "$SOURCE_ROOT" rev-parse HEAD)"
-if [ "$actual_commit" != "$FRIDA_COMMIT" ]; then
-  git -C "$SOURCE_ROOT" fetch --no-tags --depth=1 origin "$FRIDA_COMMIT"
-  git -C "$SOURCE_ROOT" checkout --detach "$FRIDA_COMMIT"
+if [ -e "$SOURCE_ROOT/.git" ]; then
+  if [ -n "$(git -C "$SOURCE_ROOT" status --porcelain=v1 --untracked-files=all)" ]; then
+    echo "Frida source checkout is dirty; refusing to change it before pinning $FRIDA_COMMIT" >&2
+    exit 65
+  fi
   actual_commit="$(git -C "$SOURCE_ROOT" rev-parse HEAD)"
+  if [ "$actual_commit" != "$FRIDA_COMMIT" ]; then
+    git -C "$SOURCE_ROOT" fetch --no-tags --depth=1 origin "$FRIDA_COMMIT"
+    git -C "$SOURCE_ROOT" checkout --detach "$FRIDA_COMMIT"
+    actual_commit="$(git -C "$SOURCE_ROOT" rev-parse HEAD)"
+  fi
+  if [ "$actual_commit" != "$FRIDA_COMMIT" ]; then
+    echo "Frida source is $actual_commit, expected pinned $FRIDA_COMMIT" >&2
+    exit 65
+  fi
+  git -C "$SOURCE_ROOT" submodule update --init --recursive
+else
+  python3 "$ROOT_DIR/scripts/frida_distribution.py" validate-source \
+    --repository-root "$ROOT_DIR" \
+    --source-root "$SOURCE_ROOT"
 fi
-if [ "$actual_commit" != "$FRIDA_COMMIT" ]; then
-  echo "Frida source is $actual_commit, expected pinned $FRIDA_COMMIT" >&2
-  exit 65
-fi
-git -C "$SOURCE_ROOT" submodule update --init --recursive
 
 if [ -z "$BUILD_ROOT" ]; then
   cache_root="${IOS_USE_FRIDA_BUILD_CACHE:-$HOME/Library/Caches/dev.ios-use/mac/frida-engine/build}"
@@ -220,6 +227,7 @@ if [ ! -f "$GUM_BUILD/build.ninja" ]; then
     --cross-file "$CONFIG_ROOT/catalyst.ini" \
     --native-file "$CONFIG_ROOT/gum-native.ini" \
     -Dbuildtype=release -Ddefault_library=static \
+    -Dfrida_version="$FRIDA_BUILD_VERSION" \
     -Dgumjs=enabled -Dquickjs=enabled -Dv8=disabled \
     -Dtests=disabled -Dgraft_tool=disabled -Dgumpp=disabled \
     -Ddevkits=gumjs

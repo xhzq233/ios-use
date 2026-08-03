@@ -65,10 +65,11 @@ while [[ $# -gt 0 ]]; do
     *) shift ;;
   esac
 done
-mkdir -p "$output"
+mkdir -p "$output/Resources"
 printf '#!/bin/sh\necho engine\n' > "$output/IOSUseFridaEngine"
 chmod +x "$output/IOSUseFridaEngine"
 printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$output/Info.plist"
+printf 'fake Frida notices\n' > "$output/Resources/ThirdPartyNotices.txt"
 SCRIPT
 chmod +x "$FAKE_SOURCE/scripts/build_playcover_frida_engine.sh"
 (cd "$FAKE_SOURCE_PARENT" && tar -czf "$FAKE_TARBALL" ios-use-fake)
@@ -79,6 +80,9 @@ printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$FAKE_RUNTIME_DIR/Info.p
 printf '#!/bin/sh\necho engine\n' > "$FAKE_ENGINE_DIR/IOSUseFridaEngine"
 chmod +x "$FAKE_ENGINE_DIR/IOSUseFridaEngine"
 printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$FAKE_ENGINE_DIR/Info.plist"
+mkdir -p "$FAKE_ENGINE_DIR/Resources"
+printf 'fake Frida notices\n' > \
+  "$FAKE_ENGINE_DIR/Resources/ThirdPartyNotices.txt"
 printf 'allow: []\n' > "$FAKE_RULES"
 (cd "$(dirname "$FAKE_RUNTIME_DIR")" && tar -czf "$FAKE_RESOURCES_ARCHIVE" IOSUsePlayRuntime.framework IOSUseFridaEngine.framework default-sandbox-rules.yaml)
 {
@@ -268,6 +272,10 @@ if [[ ! -x "$BUILD_HOME/share/ios-use/mac/IOSUseFridaEngine.framework/IOSUseFrid
   echo "[install-test] ERROR: build-from-source install did not install the Frida Engine resource" >&2
   exit 1
 fi
+if [[ ! -s "$BUILD_HOME/share/ios-use/mac/IOSUseFridaEngine.framework/Resources/ThirdPartyNotices.txt" ]]; then
+  echo "[install-test] ERROR: build-from-source install omitted Frida notices" >&2
+  exit 1
+fi
 if [[ ! -s "$BUILD_HOME/share/ios-use/mac/default-sandbox-rules.yaml" ]]; then
   echo "[install-test] ERROR: build-from-source install did not install the sandbox rules" >&2
   exit 1
@@ -310,6 +318,10 @@ if [[ ! -x "$DOWNLOAD_HOME/share/ios-use/mac/IOSUsePlayRuntime.framework/IOSUseP
 fi
 if [[ ! -x "$DOWNLOAD_HOME/share/ios-use/mac/IOSUseFridaEngine.framework/IOSUseFridaEngine" ]]; then
   echo "[install-test] ERROR: release install did not install the prebuilt Frida Engine" >&2
+  exit 1
+fi
+if [[ ! -s "$DOWNLOAD_HOME/share/ios-use/mac/IOSUseFridaEngine.framework/Resources/ThirdPartyNotices.txt" ]]; then
+  echo "[install-test] ERROR: release install omitted Frida notices" >&2
   exit 1
 fi
 if [[ ! -s "$DOWNLOAD_HOME/share/ios-use/mac/default-sandbox-rules.yaml" ]]; then

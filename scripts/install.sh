@@ -304,11 +304,12 @@ playcover_resources_destination_for_prefix() {
 
 install_playcover_resources() {
   local prefix="$1"
-  local destination staged runtime engine rules
+  local destination staged runtime engine engine_notices rules
   destination="$(playcover_resources_destination_for_prefix "$prefix")"
   staged="$DIST_DIR/playcover-resources-stage"
   runtime="$staged/IOSUsePlayRuntime.framework"
   engine="$staged/IOSUseFridaEngine.framework"
+  engine_notices="$engine/Resources/ThirdPartyNotices.txt"
   rules="$staged/default-sandbox-rules.yaml"
   rm -rf "$staged"
   mkdir -p "$staged"
@@ -355,6 +356,11 @@ install_playcover_resources() {
     echo "Mac backend resources do not contain IOSUseFridaEngine.framework." >&2
     exit 1
   fi
+  if [[ ! -f "$engine_notices" || -L "$engine_notices" ||
+        ! -s "$engine_notices" ]]; then
+    echo "Frida Engine does not contain its static-dependency notices." >&2
+    exit 1
+  fi
   if [[ ! -f "$rules" || -L "$rules" || ! -s "$rules" ]]; then
     echo "Mac backend resources do not contain the sandbox rules." >&2
     exit 1
@@ -384,6 +390,10 @@ install_playcover_resources() {
   if ! codesign --verify --strict \
       "$destination/IOSUseFridaEngine.framework" >/dev/null 2>&1; then
     echo "Installed Frida Engine signature verification failed." >&2
+    exit 1
+  fi
+  if [[ ! -s "$destination/IOSUseFridaEngine.framework/Resources/ThirdPartyNotices.txt" ]]; then
+    echo "Installed Frida Engine lost its static-dependency notices." >&2
     exit 1
   fi
   echo "Installed Mac backend resources to $destination"

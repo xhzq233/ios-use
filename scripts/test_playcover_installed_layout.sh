@@ -99,6 +99,7 @@ CUSTOM_HOME="$TEMP_ROOT/h"
 INSTALLED_BINARY="$PREFIX/bin/ios-use"
 INSTALLED_RUNTIME="$PREFIX/share/ios-use/mac/IOSUsePlayRuntime.framework"
 INSTALLED_ENGINE="$PREFIX/share/ios-use/mac/IOSUseFridaEngine.framework"
+INSTALLED_ENGINE_NOTICES="$INSTALLED_ENGINE/Resources/ThirdPartyNotices.txt"
 INSTALLED_RULES="$PREFIX/share/ios-use/mac/default-sandbox-rules.yaml"
 LOG_FILE="$TEMP_ROOT/start.log"
 STATUS_FILE="$TEMP_ROOT/status.json"
@@ -236,6 +237,7 @@ else
     PLAYTOOLS-LICENSE-AGPL-3.0
     INJECT-LICENSE-GPL-3.0
     YAMS-LICENSE-MIT
+    FRIDA-STATIC-DEPENDENCY-NOTICES.txt
     THIRD-PARTY-LICENSES.md
     SHA256SUMS
   )
@@ -304,9 +306,12 @@ else
   if [[ "${#source_roots[@]}" -ne 1 ||
         ! -d "${source_roots[0]}/ios-use-skill" ||
         ! -d "${source_roots[0]}/ThirdParty/Yams/upstream-source" ||
+        ! -d "${source_roots[0]}/ThirdParty/Frida/upstream-source/frida-gum" ||
         ! -s "${source_roots[0]}/ThirdParty/Yams/PROVENANCE.md" ||
+        ! -s "${source_roots[0]}/ThirdParty/Frida/PROVENANCE.md" ||
+        ! -s "${source_roots[0]}/ThirdParty/Frida/upstream-source/FRIDA-SOURCE-MANIFEST.txt" ||
         ! -s "${source_roots[0]}/CORRESPONDING-SOURCE-MANIFEST.txt" ]]; then
-    echo "[installed-layout] ERROR: corresponding source lacks its versioned root, skill, Yams source, or source manifest" >&2
+    echo "[installed-layout] ERROR: corresponding source lacks its versioned root, skill, Yams/Frida source, or source manifest" >&2
     exit 1
   fi
   if ! cmp -s \
@@ -321,6 +326,16 @@ else
     echo "[installed-layout] ERROR: release and corresponding-source license materials differ" >&2
     exit 1
   fi
+  if ! cmp -s \
+       "$ASSET_DIR/FRIDA-STATIC-DEPENDENCY-NOTICES.txt" \
+       "$EXPECTED_ENGINE/Resources/ThirdPartyNotices.txt"; then
+    echo "[installed-layout] ERROR: top-level and framework Frida notices differ" >&2
+    exit 1
+  fi
+  python3 "${source_roots[0]}/scripts/frida_distribution.py" validate-source \
+    --repository-root "${source_roots[0]}" \
+    --source-root \
+      "${source_roots[0]}/ThirdParty/Frida/upstream-source/frida-gum"
 
   BUILD_MANIFEST="${build_manifests[0]}"
   if ! grep -Fq "\`$SOURCE_ASSET\`" "${provenance_assets[0]}" ||
@@ -340,6 +355,16 @@ else
     awk -F': ' '$1 == "Mac Runtime input manifest SHA-256" { print $2 }' \
       "$BUILD_MANIFEST"
   )"
+  expected_frida_source_manifest_sha="$(
+    awk -F': ' \
+      '$1 == "Frida source closure manifest SHA-256" { print $2 }' \
+      "$BUILD_MANIFEST"
+  )"
+  expected_frida_notices_sha="$(
+    awk -F': ' \
+      '$1 == "Frida static-dependency notices SHA-256" { print $2 }' \
+      "$BUILD_MANIFEST"
+  )"
   archived_runtime_source_sha="$(
     runtime_source_digest \
       "${source_roots[0]}" \
@@ -357,7 +382,17 @@ else
           awk -F': ' '$1 == "Mac Runtime input manifest SHA-256" { print $2 }' \
             "${source_roots[0]}/CORRESPONDING-SOURCE-MANIFEST.txt"
         )" ||
-        "$expected_runtime_source_sha" != "$archived_runtime_source_sha" ]]; then
+        "$expected_runtime_source_sha" != "$archived_runtime_source_sha" ||
+        "$expected_frida_source_manifest_sha" != "$(
+          shasum -a 256 \
+            "${source_roots[0]}/ThirdParty/Frida/upstream-source/FRIDA-SOURCE-MANIFEST.txt" |
+            awk '{print $1}'
+        )" ||
+        "$expected_frida_notices_sha" != "$(
+          shasum -a 256 \
+            "$ASSET_DIR/FRIDA-STATIC-DEPENDENCY-NOTICES.txt" |
+            awk '{print $1}'
+        )" ]]; then
     echo "[installed-layout] ERROR: release build/source/archive digest evidence is inconsistent" >&2
     exit 1
   fi
@@ -433,6 +468,7 @@ fi
 if [[ ! -x "$INSTALLED_BINARY" ||
       ! -x "$INSTALLED_RUNTIME/IOSUsePlayRuntime" ||
       ! -x "$INSTALLED_ENGINE/IOSUseFridaEngine" ||
+      ! -s "$INSTALLED_ENGINE_NOTICES" ||
       ! -s "$INSTALLED_RULES" ]]; then
   echo "[installed-layout] ERROR: release assets were not installed into the prefix layout" >&2
   exit 1
@@ -457,6 +493,12 @@ if ! cmp -s "$TEMP_ROOT/engine.expected" "$TEMP_ROOT/engine.installed.before"; t
   exit 1
 fi
 /usr/bin/codesign --verify --strict "$INSTALLED_ENGINE"
+if ! cmp -s \
+     "$EXPECTED_ENGINE/Resources/ThirdPartyNotices.txt" \
+     "$INSTALLED_ENGINE_NOTICES"; then
+  echo "[installed-layout] ERROR: installed Frida notices differ from the release archive" >&2
+  exit 1
+fi
 if ! cmp -s "$EXPECTED_RULES" "$INSTALLED_RULES"; then
   echo "[installed-layout] ERROR: installed sandbox rules differ from the release archive" >&2
   exit 1

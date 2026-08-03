@@ -86,21 +86,27 @@ if [ -z "$SOURCE_ROOT" ]; then
 fi
 
 SOURCE_ROOT="$(cd "$SOURCE_ROOT" && pwd)"
-if [ -n "$(git -C "$SOURCE_ROOT" status --porcelain=v1 --untracked-files=all)" ]; then
-  echo "Frida source checkout is dirty; refusing to change it before pinning $FRIDA_COMMIT" >&2
-  exit 65
-fi
-actual_commit="$(git -C "$SOURCE_ROOT" rev-parse HEAD)"
-if [ "$actual_commit" != "$FRIDA_COMMIT" ]; then
-  git -C "$SOURCE_ROOT" fetch --no-tags --depth=1 origin "$FRIDA_COMMIT"
-  git -C "$SOURCE_ROOT" checkout --detach "$FRIDA_COMMIT"
+if [ -e "$SOURCE_ROOT/.git" ]; then
+  if [ -n "$(git -C "$SOURCE_ROOT" status --porcelain=v1 --untracked-files=all)" ]; then
+    echo "Frida source checkout is dirty; refusing to change it before pinning $FRIDA_COMMIT" >&2
+    exit 65
+  fi
   actual_commit="$(git -C "$SOURCE_ROOT" rev-parse HEAD)"
+  if [ "$actual_commit" != "$FRIDA_COMMIT" ]; then
+    git -C "$SOURCE_ROOT" fetch --no-tags --depth=1 origin "$FRIDA_COMMIT"
+    git -C "$SOURCE_ROOT" checkout --detach "$FRIDA_COMMIT"
+    actual_commit="$(git -C "$SOURCE_ROOT" rev-parse HEAD)"
+  fi
+  if [ "$actual_commit" != "$FRIDA_COMMIT" ]; then
+    echo "Frida source is $actual_commit, expected pinned $FRIDA_COMMIT" >&2
+    exit 65
+  fi
+  git -C "$SOURCE_ROOT" submodule update --init --recursive
+else
+  python3 "$ROOT_DIR/scripts/frida_distribution.py" validate-source \
+    --repository-root "$ROOT_DIR" \
+    --source-root "$SOURCE_ROOT"
 fi
-if [ "$actual_commit" != "$FRIDA_COMMIT" ]; then
-  echo "Frida source is $actual_commit, expected pinned $FRIDA_COMMIT" >&2
-  exit 65
-fi
-git -C "$SOURCE_ROOT" submodule update --init --recursive
 
 if [ "$BUILD_GUM" = true ] && [ -n "$GUM_DEVKIT" ]; then
   echo "--build-gum cannot be combined with --gum-devkit" >&2
@@ -235,6 +241,12 @@ plutil -insert IOSUseFridaAgentSHA256 -string "$AGENT_SHA256" \
 plutil -insert IOSUseFridaSourceClosureSHA256 -string \
   "$ENGINE_SOURCE_CLOSURE_SHA256" \
   "$BUILD_TEMP/IOSUseFridaEngine.framework/Info.plist"
+python3 "$ROOT_DIR/scripts/frida_distribution.py" notices \
+  --repository-root "$ROOT_DIR" \
+  --source-root "$SOURCE_ROOT" \
+  --engine "$BUILD_TEMP/IOSUseFridaEngine.framework/IOSUseFridaEngine" \
+  --output \
+    "$BUILD_TEMP/IOSUseFridaEngine.framework/Resources/ThirdPartyNotices.txt"
 
 /usr/bin/codesign --force --sign - --timestamp=none \
   "$BUILD_TEMP/IOSUseFridaEngine.framework"

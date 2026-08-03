@@ -11,7 +11,8 @@
 - Added `ios-use du` to report ios-use storage by category, size, and latest
   update time without deleting data.
 - Mac releases now include the Runtime and optional Frida Engine resources
-  required by the backend.
+  required by the backend, the Engine's static-dependency notices, and the
+  complete pinned Frida source closure in the corresponding-source archive.
 
 ## Breaking Behavior
 

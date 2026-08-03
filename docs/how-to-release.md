@@ -26,6 +26,9 @@ IOS_USE_RELEASE_VERSION=v1.2.0 bash scripts/release_build.sh
 Every release builds and verifies the pinned Frida Catalyst Engine together
 with the base Runtime. The installer keeps both as read-only resources; only
 `start --mac --frida` copies the Engine into a prepared App.
+The Engine embeds the complete notices for its statically linked GumJS
+closure. The same notice is published as a release asset, and the exact pinned
+Frida source closure is included in the corresponding-source archive.
 The Engine build normalizes compiler-visible source paths so local source,
 cache, and temporary build-root paths are not embedded in the binary. Frida's
 generated source maps may still vary between otherwise equivalent builds, so
@@ -36,8 +39,8 @@ does not duplicate one toolchain-specific framework hash in source code.
 This script:
 
 1. Refuses a dirty source tree and audits pinned PlayCover, PlayTools, `inject`,
-   and Yams remotes, commits, licenses, expected vendored files, local patch
-   sets, and SwiftPM resolutions.
+   Yams, and Frida closure metadata, commits, licenses, expected vendored
+   files, local patch sets, and SwiftPM resolutions.
 2. Hashes the complete tracked Runtime build-input set, then forces a fresh
    Runtime build from a new derived-data directory.
 3. Builds the Swift CLI and verifies `./ios-use --version` matches
@@ -47,8 +50,8 @@ This script:
    pinned Engine as read-only source resources under `release/`; preparation
    may sign only a managed copy.
 6. Builds corresponding source from the exact current `HEAD`, adds the complete
-   pinned Yams Git tree, and proves its Runtime inputs have the same digest as
-   the fresh binary build.
+   pinned Yams Git tree and Frida GumJS static source closure, and proves its
+   Runtime inputs have the same digest as the fresh binary build.
 7. Stages the versioned build digest manifest, licenses, upstream provenance,
    and changelog.
 8. Verifies every source/archive file set and writes `release/SHA256SUMS` for
@@ -66,6 +69,7 @@ optional-at-runtime Frida Engine under one installed resource root.
 - `release/ios-use-v1.2.0-corresponding-source.tar.gz`
 - `release/LICENSE`, `release/*-LICENSE-*` (including Yams MIT), and
   `release/THIRD-PARTY-LICENSES.md`
+- `release/FRIDA-STATIC-DEPENDENCY-NOTICES.txt`
 - `release/MAC-BACKEND-BUILD-MANIFEST-v1.2.0.txt`
 - `release/MAC-BACKEND-PROVENANCE-v1.2.0.md`
 - `release/CHANGELOG-v1.2.0.md`
@@ -126,7 +130,8 @@ The release workflow runs on tag pushes that match `v*` and uploads:
 - `driver-sim.ipa`
 - `ios-use-mac-resources.tar.gz`
 - `ios-use-vX.Y.Z-corresponding-source.tar.gz`
-- license, upstream provenance, and versioned Runtime/source digest assets
+- license, Frida static-dependency notices, upstream provenance, and versioned
+  Runtime/source digest assets
 - `CHANGELOG-vX.Y.Z.md`
 - `SHA256SUMS`
 
@@ -149,8 +154,8 @@ To watch it:
 - `git diff --check` passes.
 - The tag is pushed to origin.
 - The GitHub Release has the Mac backend resources archive, corresponding source, license,
-  provenance, build manifest, changelog, and checksums in addition to the CLI
-  and driver IPAs.
+  Frida static-dependency notices, provenance, build manifest, changelog, and
+  checksums in addition to the CLI and driver IPAs.
 
 The non-live integration and core PlayCover live gates are explicit
 `workflow_dispatch` entries because they mutate account-global state on the
