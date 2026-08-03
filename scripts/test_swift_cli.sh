@@ -2,14 +2,27 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TEST_SCOPE="${1:-all}"
 
-ISOLATED_TESTS='OSLogServiceTests|PlayCover'
-
-echo "[swift-cli] Running general Swift CLI unit tests..."
-swift test --package-path "$ROOT_DIR/swift-cli" --skip "$ISOLATED_TESTS"
-
-echo "[swift-cli] Running OSLog and Mac-backend tests in a clean XCTest process..."
-swift test --package-path "$ROOT_DIR/swift-cli" --filter "$ISOLATED_TESTS"
+case "$TEST_SCOPE" in
+  all)
+    echo "[swift-cli] Running all Swift CLI unit tests..."
+    swift test --package-path "$ROOT_DIR/swift-cli"
+    ;;
+  general)
+    echo "[swift-cli] Running general Swift CLI unit tests..."
+    swift test --package-path "$ROOT_DIR/swift-cli" --skip PlayCover
+    ;;
+  mac)
+    echo "[swift-cli] Running Mac-backend Swift CLI unit tests..."
+    swift test --package-path "$ROOT_DIR/swift-cli" --filter PlayCover
+    exit 0
+    ;;
+  *)
+    echo "[swift-cli] ERROR: expected test scope all, general, or mac" >&2
+    exit 64
+    ;;
+esac
 
 echo "[swift-cli] Checking driver version stamping..."
 if grep -Eq 'date -u \+%Y%m%d%H%M%S|rev-parse --short=12' "$ROOT_DIR/scripts/build_driver.sh"; then

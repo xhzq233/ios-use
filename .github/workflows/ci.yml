@@ -79,6 +79,10 @@ jobs:
   swift-cli-tests:
     runs-on: macos-26
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        scope: [general, mac]
     steps:
       - uses: actions/checkout@v4
 
@@ -91,7 +95,7 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-swift-cli-
 
       - name: Run Swift CLI tests and smoke checks
-        run: bash scripts/test_swift_cli.sh
+        run: bash scripts/test_swift_cli.sh "${{ matrix.scope }}"
 
   driver-unit-tests:
     runs-on: macos-26
