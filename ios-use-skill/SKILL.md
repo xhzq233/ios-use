@@ -48,7 +48,8 @@ Run ordinary `ios-use stop` before switching backends.
 
 - Connect real devices over USB and use iOS 17.4 or later.
 - Run `config` on first use, after upgrading ios-use, when `status` reports
-  `driver update required`, or when signing has expired.
+  `driver update required`, when signing expires soon, or when signing has
+  expired. Refresh before expiry instead of deferring renewal across sessions.
 - Run `start` before `dom`, `tap`, `longpress`, `swipe`, `input`, `waitFor`,
   `screenshot`, `capture`, `home`, `dismissAlert`, default `activateApp`,
   `open --dom`, or device-backed proxy commands.
@@ -68,6 +69,18 @@ ios-use config --udid <udid> --apple-id <email>
 
 Omit `--password`; let the CLI request the Apple Developer account password and
 two-factor code interactively. A free Personal Team is sufficient.
+
+After the first successful login, ios-use normally reuses the cached Apple
+Developer authentication for up to one year. Routine `config` renewals therefore
+usually do not require the Apple ID, password, or two-factor code again. Ask the
+user to authenticate only when the cache is missing or expired, or when the CLI
+explicitly requests interactive authentication.
+
+Renew real-device signing with `config` within each seven-day signing window. If
+signing is allowed to expire, installing the newly signed driver requires the
+user to open Settings on the device and manually trust the developer again.
+Avoid that interruption by checking `status` and refreshing while the current
+driver is still valid.
 
 ## 3. Follow the observe-act-verify loop
 
@@ -238,8 +251,8 @@ Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
 - `No active driver`: run `ios-use status`, then `ios-use start <udid>`.
 - `driver update required`, `signing expired`, or a driver that no longer launches:
   rerun `ios-use config --udid <udid>`, then start again.
-- `signing expires soon`: finish the current short task if appropriate, but refresh
-  signing before a long run.
+- `signing expires soon`: run `config` while the current driver is still valid;
+  do not defer renewal across a long or multi-session task.
 - Element not found or ambiguous: inspect a fresh DOM, use the exact displayed
   label/value, then add `--traits` or `--cindex` only if needed.
 - DDI missing or mismatched: use `ddi-mount`, the fallback archive above, and an
