@@ -10,6 +10,15 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         case sliceTemporaryFileObserved
     }
 
+    private func pinnedDefaultRulesData() throws -> Data {
+        try Data(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("PlayCover/Rules/default.yaml")
+        )
+    }
+
     func testLowercaseHexEncodingIsByteExactForArraysAndSlices() {
         let bytes: [UInt8] = [
             0x00, 0x01, 0x0f, 0x10, 0x7f, 0x80, 0xfe, 0xff,
@@ -131,6 +140,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                         "@executable_path/Frameworks/"
                         + "IOSUsePlayRuntime.framework/"
                         + "IOSUsePlayRuntime",
+                    defaultRulesData: try pinnedDefaultRulesData(),
                     codesignIdentity: "-"
                 )
             )
@@ -1185,6 +1195,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             appURL: fixture.app,
             originalPlist: originalData,
             runtimeSocketPath: socket,
+            defaultRulesData: try pinnedDefaultRulesData(),
             playSignActive: false
         )
         let final = try XCTUnwrap(
@@ -1199,6 +1210,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             discordActivityEnabled: false,
             bypass: false,
             playSignActive: false,
+            defaultRulesData: try pinnedDefaultRulesData(),
             homeDirectory:
                 FileManager.default.homeDirectoryForCurrentUser
         )
@@ -1283,6 +1295,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     "s-runtime.sock"
                 ).path,
                 managedHome: lexicalRoot,
+                defaultRulesData: try pinnedDefaultRulesData(),
                 playSignActive: false
             )
         let final = try XCTUnwrap(
@@ -1639,6 +1652,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 runtimeSocketPath:
                     managed.appendingPathComponent("s-runtime.sock").path,
                 runtimeLoadPath: runtimeLoadPath,
+                defaultRulesData: try pinnedDefaultRulesData(),
                 codesignIdentity: "-",
                 expectedRuntimeBuildHash: runtimeBuildHash
             ),
@@ -1861,7 +1875,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         let runtimeLoadPath =
             "@executable_path/Frameworks/IOSUsePlayRuntime.framework/"
                 + "IOSUsePlayRuntime"
-        func options(for home: URL) -> PlayCoverUpstreamPrepareOptions {
+        func options(for home: URL) throws -> PlayCoverUpstreamPrepareOptions {
             PlayCoverUpstreamPrepareOptions(
                 sourceApp: source,
                 stagingApp: home.appendingPathComponent(
@@ -1878,12 +1892,13 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 runtimeSocketPath:
                     home.appendingPathComponent("s-runtime.sock").path,
                 runtimeLoadPath: runtimeLoadPath,
+                defaultRulesData: try pinnedDefaultRulesData(),
                 codesignIdentity: "-",
                 expectedRuntimeBuildHash: runtimeHash
             )
         }
 
-        let consumerOptions = options(for: homes[1])
+        let consumerOptions = try options(for: homes[1])
         let poisonedContainer = root.appendingPathComponent(
             "poisoned-container",
             isDirectory: true
@@ -2041,6 +2056,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                         runtimeSocketPath: managed
                             .appendingPathComponent("s-runtime.sock").path,
                         runtimeLoadPath: runtimeLoadPath,
+                        defaultRulesData: try pinnedDefaultRulesData(),
                         codesignIdentity: "-"
                     ),
                     sourceInspection: sourceInspection
@@ -2140,6 +2156,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     runtimeSocketPath: managed
                         .appendingPathComponent("s-runtime.sock").path,
                     runtimeLoadPath: runtimeLoadPath,
+                    defaultRulesData: try pinnedDefaultRulesData(),
                     codesignIdentity: "-",
                     expectedRuntimeBuildHash:
                         try PlayCoverUpstreamEngine.runtimeBuildHash(
@@ -2210,6 +2227,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             runtimeLoadPath:
                 "@executable_path/Frameworks/"
                 + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+            defaultRulesData: try pinnedDefaultRulesData(),
             codesignIdentity: "-",
             expectedRuntimeBuildHash: String(repeating: "0", count: 64)
         )

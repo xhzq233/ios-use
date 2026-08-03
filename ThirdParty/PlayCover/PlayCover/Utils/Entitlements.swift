@@ -42,6 +42,7 @@ public final class Entitlements {
         discordActivityEnabled: Bool = false,
         bypass: Bool = false,
         playSignActive: Bool? = nil,
+        defaultRulesData: Data,
         homeDirectory: URL
     ) throws -> Bool {
         guard let old = try dumpEntitlements(exec: app.executable) as? [String: AnyHashable] else { return false }
@@ -50,6 +51,7 @@ public final class Entitlements {
             discordActivityEnabled: discordActivityEnabled,
             bypass: bypass,
             playSignActive: playSignActive,
+            defaultRulesData: defaultRulesData,
             homeDirectory: homeDirectory
         ) as? [String: AnyHashable] else { return false }
         return new.hashValue == old.hashValue
@@ -83,6 +85,7 @@ public final class Entitlements {
         discordActivityEnabled: Bool = false,
         bypass: Bool = false,
         playSignActive: Bool? = nil,
+        defaultRulesData: Data,
         homeDirectory: URL
     ) throws -> [String: Any] {
         var base = [String: Any]()
@@ -101,7 +104,7 @@ public final class Entitlements {
 
         var sandboxProfile = [String]()
 
-        var rules = try getDefaultRules()
+        var rules = try getDefaultRules(defaultRulesData)
         if discordActivityEnabled {
              rules.allow?.append("(allow network* ipc-posix*)")
          }
@@ -196,47 +199,13 @@ public final class Entitlements {
         kTCCServiceSystemPolicyDocumentsFolder
         """
 
-    static func getDefaultRules() throws -> PlayRules {
-        let path: URL
-        if let bpath = Bundle.module.path(
-            forResource: "default",
-            ofType: "yaml"
-        ) {
-            path = URL(fileURLWithPath: bpath)
-        } else {
-            throw "Default config not found: default.yaml"
-        }
-
+    static func getDefaultRules(_ data: Data) throws -> PlayRules {
         do {
-            let data = try Data(contentsOf: path, options: .mappedIfSafe)
             let decoder = YAMLDecoder()
             let decoded: PlayRules = try decoder.decode(PlayRules.self, from: data)
             return decoded
         } catch {
-            print("failed to get default rules at \(path): \(error)")
-            throw "failed to get default rules at \(path): \(error)"
-        }
-    }
-
-    static func getBundleRules(_ bundleID: String) throws -> PlayRules? {
-        let path: URL
-        if let bpath = Bundle.module.path(
-            forResource: bundleID,
-            ofType: "yaml"
-        ) {
-            path = URL(fileURLWithPath: bpath)
-        } else {
-            return nil
-        }
-
-        do {
-            let data = try Data(contentsOf: path, options: .mappedIfSafe)
-            let decoder = YAMLDecoder()
-            let decoded: PlayRules = try decoder.decode(PlayRules.self, from: data)
-            return decoded
-        } catch {
-            print("failed to get bundle rules at \(path): \(error)")
-            throw error
+            throw "failed to decode default sandbox rules: \(error)"
         }
     }
 

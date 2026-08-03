@@ -3,6 +3,18 @@ import Foundation
 import XCTest
 
 final class PlayCoverUpstreamEngineTests: XCTestCase {
+    private func pinnedDefaultRulesData() throws -> Data {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 {
+            root.deleteLastPathComponent()
+        }
+        return try Data(
+            contentsOf: root.appendingPathComponent(
+                "ThirdParty/PlayCover/PlayCover/Rules/default.yaml"
+            )
+        )
+    }
+
     override func tearDown() {
         PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
         PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
@@ -633,6 +645,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             runtimeSocketRoot: fixture.root,
             runtimeSocketPath: "/tmp/unused.sock",
             runtimeLoadPath: "@rpath/Unused.framework/Unused",
+            defaultRulesData: try pinnedDefaultRulesData(),
             codesignIdentity: "-"
         )
 
@@ -723,6 +736,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     runtimeLoadPath:
                         "@executable_path/Frameworks/"
                         + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+                    defaultRulesData: try pinnedDefaultRulesData(),
                     codesignIdentity: "-",
                     expectedRuntimeEvidence: evidence
                 ),
@@ -807,6 +821,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 runtimeLoadPath:
                     "@executable_path/Frameworks/"
                     + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+                defaultRulesData: try pinnedDefaultRulesData(),
                 codesignIdentity: "-",
                 expectedRuntimeEvidence: evidence
             ),

@@ -20,7 +20,10 @@ final class IOSUseDriver: XCTestCase {
                 try server.start()
             }
         } catch {
-            XCTFail("Failed to start server: \(error)")
+            XCTFail(
+                "Failed to start server: \(error)",
+                file: #fileID
+            )
         }
 
         // Block forever, keeping the server alive

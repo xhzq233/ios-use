@@ -106,14 +106,15 @@ require_exact_playcover_exclude_block() {
             exclude: [
                 "Model/PlayApp.swift",
                 "Utils/Extensions/PlayAppExtensions.swift",
+                "Rules/default.yaml",
             ],
 EXCLUDE
   )"
   if [[ "$start_count" != "1" || "$actual" != "$expected" ]]; then
-    echo "[upstream-audit] ERROR: PlayCover Package.swift must keep the exact pinned GUI exclusion block." >&2
+    echo "[upstream-audit] ERROR: PlayCover Package.swift must keep the exact pinned headless exclusion block." >&2
     exit 1
   fi
-  echo "[upstream-audit] PlayCover Package.swift: exact pinned GUI exclusion block"
+  echo "[upstream-audit] PlayCover Package.swift: exact pinned headless exclusion block"
 }
 
 verify_provenance_metadata() {
@@ -466,8 +467,8 @@ require_exact_playcover_exclude_block \
 for playcover_source in "${PLAYCOVER_IMPORTED_FILES[@]}"; do
   if [[ "$playcover_source" == "Rules/default.yaml" ]]; then
     require_exact_text "$ROOT_DIR/ThirdParty/PlayCover/Package.swift" \
-      ".copy(\"$playcover_source\")" \
-      "PlayCover Package.swift resource membership for $playcover_source"
+      "\"$playcover_source\"," \
+      "PlayCover Package.swift installed-resource exclusion for $playcover_source"
   elif [[ "$playcover_source" == "Model/PlayApp.swift" \
        || "$playcover_source" == "Utils/Extensions/PlayAppExtensions.swift" ]]; then
     require_exact_text "$ROOT_DIR/ThirdParty/PlayCover/Package.swift" \

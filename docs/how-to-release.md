@@ -56,6 +56,9 @@ This script:
 
 Expected assets:
 
+The Mac resources archive contains the Runtime, pinned sandbox rules, and the
+optional-at-runtime Frida Engine under one installed resource root.
+
 - `release/ios-use-darwin-arm64`
 - `release/driver.ipa`
 - `release/driver-sim.ipa`

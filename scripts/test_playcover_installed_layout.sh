@@ -6,6 +6,7 @@ GLOBAL_STATE_GUARD="$ROOT_DIR/scripts/test_playcover_global_state_guard.sh"
 FIXTURE_APP="$ROOT_DIR/playcover-fixtures/.build/DerivedData/Build/Products/Release-iphoneos/IOSUsePlayFixture.app"
 RUNTIME_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
 ENGINE_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUseFridaEngine.framework"
+RULES_SOURCE="$ROOT_DIR/ThirdParty/PlayCover/PlayCover/Rules/default.yaml"
 RELEASE_ASSET_DIR=""
 
 usage() {
@@ -69,6 +70,10 @@ if [[ -z "$RELEASE_ASSET_DIR" ]]; then
     echo "[installed-layout] ERROR: current pinned Frida Engine is missing; build it before this release gate" >&2
     exit 1
   fi
+  if [[ ! -s "$RULES_SOURCE" ]]; then
+    echo "[installed-layout] ERROR: pinned sandbox rules are missing" >&2
+    exit 1
+  fi
   /usr/bin/codesign --verify --strict "$RUNTIME_SOURCE"
   /usr/bin/codesign --verify --strict "$ENGINE_SOURCE"
 else
@@ -94,12 +99,14 @@ CUSTOM_HOME="$TEMP_ROOT/h"
 INSTALLED_BINARY="$PREFIX/bin/ios-use"
 INSTALLED_RUNTIME="$PREFIX/share/ios-use/mac/IOSUsePlayRuntime.framework"
 INSTALLED_ENGINE="$PREFIX/share/ios-use/mac/IOSUseFridaEngine.framework"
+INSTALLED_RULES="$PREFIX/share/ios-use/mac/default-sandbox-rules.yaml"
 LOG_FILE="$TEMP_ROOT/start.log"
 STATUS_FILE="$TEMP_ROOT/status.json"
 SOURCE_ASSET="source.tar.gz"
 INSTALL_VERSION_FOR_TEST="v0.0.0-test"
 EXPECTED_RUNTIME="$RUNTIME_SOURCE"
 EXPECTED_ENGINE="$ENGINE_SOURCE"
+EXPECTED_RULES="$RULES_SOURCE"
 START_ATTEMPTED=0
 SESSION_STOPPED=0
 
@@ -196,12 +203,18 @@ if [[ -z "$RELEASE_ASSET_DIR" ]]; then
   # destinations.
   printf 'release-install-test device driver\n' > "$ASSET_DIR/driver.ipa"
   printf 'release-install-test simulator driver\n' > "$ASSET_DIR/driver-sim.ipa"
+  RESOURCE_STAGE="$TEMP_ROOT/resources"
+  mkdir -p "$RESOURCE_STAGE"
+  cp -R "$RUNTIME_SOURCE" "$RESOURCE_STAGE/IOSUsePlayRuntime.framework"
+  cp -R "$ENGINE_SOURCE" "$RESOURCE_STAGE/IOSUseFridaEngine.framework"
+  cp "$RULES_SOURCE" "$RESOURCE_STAGE/default-sandbox-rules.yaml"
   (
-    cd "$(dirname "$RUNTIME_SOURCE")"
+    cd "$RESOURCE_STAGE"
     COPYFILE_DISABLE=1 tar -czf \
       "$ASSET_DIR/ios-use-mac-resources.tar.gz" \
-      "$(basename "$RUNTIME_SOURCE")" \
-      "$(basename "$ENGINE_SOURCE")"
+      IOSUsePlayRuntime.framework \
+      IOSUseFridaEngine.framework \
+      default-sandbox-rules.yaml
   )
   (
     cd "$ASSET_DIR"
@@ -285,6 +298,7 @@ else
   tar -xzf "$ASSET_DIR/ios-use-mac-resources.tar.gz" -C "$EXPECTED_PARENT"
   EXPECTED_RUNTIME="$EXPECTED_PARENT/IOSUsePlayRuntime.framework"
   EXPECTED_ENGINE="$EXPECTED_PARENT/IOSUseFridaEngine.framework"
+  EXPECTED_RULES="$EXPECTED_PARENT/default-sandbox-rules.yaml"
   tar -xzf "$ASSET_DIR/$SOURCE_ASSET" -C "$SOURCE_PARENT"
   source_roots=("$SOURCE_PARENT"/ios-use-v*)
   if [[ "${#source_roots[@]}" -ne 1 ||
@@ -418,7 +432,8 @@ if [[ "$(printf '%s\n' "$INSTALL_OUTPUT" | tail -n 1)" != "$INSTALLED_BINARY" ]]
 fi
 if [[ ! -x "$INSTALLED_BINARY" ||
       ! -x "$INSTALLED_RUNTIME/IOSUsePlayRuntime" ||
-      ! -x "$INSTALLED_ENGINE/IOSUseFridaEngine" ]]; then
+      ! -x "$INSTALLED_ENGINE/IOSUseFridaEngine" ||
+      ! -s "$INSTALLED_RULES" ]]; then
   echo "[installed-layout] ERROR: release assets were not installed into the prefix layout" >&2
   exit 1
 fi
@@ -442,6 +457,10 @@ if ! cmp -s "$TEMP_ROOT/engine.expected" "$TEMP_ROOT/engine.installed.before"; t
   exit 1
 fi
 /usr/bin/codesign --verify --strict "$INSTALLED_ENGINE"
+if ! cmp -s "$EXPECTED_RULES" "$INSTALLED_RULES"; then
+  echo "[installed-layout] ERROR: installed sandbox rules differ from the release archive" >&2
+  exit 1
+fi
 
 if [[ -e "$CUSTOM_HOME/mac/IOSUsePlayRuntime.framework" ]] ||
    [[ -e "$CUSTOM_HOME/mac/IOSUseFridaEngine.framework" ]] ||

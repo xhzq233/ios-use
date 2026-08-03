@@ -20,11 +20,13 @@ FAKE_BIN="$TMP_ROOT/fake-bin"
 FAKE_HOME="$TMP_ROOT/home"
 FAKE_RUNTIME_DIR="$TMP_ROOT/runtime/IOSUsePlayRuntime.framework"
 FAKE_ENGINE_DIR="$TMP_ROOT/runtime/IOSUseFridaEngine.framework"
+FAKE_RULES="$TMP_ROOT/runtime/default-sandbox-rules.yaml"
 FAKE_RESOURCES_ARCHIVE="$TMP_ROOT/ios-use-mac-resources.tar.gz"
 FAKE_CHECKSUMS="$TMP_ROOT/SHA256SUMS"
 mkdir -p \
   "$FAKE_SOURCE/ios-use-skill" \
   "$FAKE_SOURCE/swift-cli" \
+  "$FAKE_SOURCE/ThirdParty/PlayCover/PlayCover/Rules" \
   "$FAKE_SOURCE/scripts" \
   "$FAKE_RUNTIME_DIR" \
   "$FAKE_ENGINE_DIR" \
@@ -33,6 +35,8 @@ mkdir -p \
 
 printf 'remote skill fixture\n' > "$FAKE_SOURCE/ios-use-skill/SKILL.md"
 printf '// fake package\n' > "$FAKE_SOURCE/swift-cli/Package.swift"
+printf 'allow: []\n' > \
+  "$FAKE_SOURCE/ThirdParty/PlayCover/PlayCover/Rules/default.yaml"
 cat > "$FAKE_SOURCE/scripts/build_swift_cli.sh" <<'SCRIPT'
 #!/bin/bash
 set -euo pipefail
@@ -75,7 +79,8 @@ printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$FAKE_RUNTIME_DIR/Info.p
 printf '#!/bin/sh\necho engine\n' > "$FAKE_ENGINE_DIR/IOSUseFridaEngine"
 chmod +x "$FAKE_ENGINE_DIR/IOSUseFridaEngine"
 printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$FAKE_ENGINE_DIR/Info.plist"
-(cd "$(dirname "$FAKE_RUNTIME_DIR")" && tar -czf "$FAKE_RESOURCES_ARCHIVE" IOSUsePlayRuntime.framework IOSUseFridaEngine.framework)
+printf 'allow: []\n' > "$FAKE_RULES"
+(cd "$(dirname "$FAKE_RUNTIME_DIR")" && tar -czf "$FAKE_RESOURCES_ARCHIVE" IOSUsePlayRuntime.framework IOSUseFridaEngine.framework default-sandbox-rules.yaml)
 {
   printf '#!/bin/sh\necho 1.0.3\n' | shasum -a 256 | awk '{print $1 "  ios-use-darwin-arm64"}'
   printf 'remote-driver\n' | shasum -a 256 | awk '{print $1 "  driver.ipa"}'
@@ -263,6 +268,10 @@ if [[ ! -x "$BUILD_HOME/share/ios-use/mac/IOSUseFridaEngine.framework/IOSUseFrid
   echo "[install-test] ERROR: build-from-source install did not install the Frida Engine resource" >&2
   exit 1
 fi
+if [[ ! -s "$BUILD_HOME/share/ios-use/mac/default-sandbox-rules.yaml" ]]; then
+  echo "[install-test] ERROR: build-from-source install did not install the sandbox rules" >&2
+  exit 1
+fi
 if [[ -e "$BUILD_HOME/.ios-use/playcover/IOSUsePlayRuntime.framework" ]]; then
   echo "[install-test] ERROR: build-from-source install left the Runtime in mutable IOS_USE_HOME state" >&2
   exit 1
@@ -301,6 +310,10 @@ if [[ ! -x "$DOWNLOAD_HOME/share/ios-use/mac/IOSUsePlayRuntime.framework/IOSUseP
 fi
 if [[ ! -x "$DOWNLOAD_HOME/share/ios-use/mac/IOSUseFridaEngine.framework/IOSUseFridaEngine" ]]; then
   echo "[install-test] ERROR: release install did not install the prebuilt Frida Engine" >&2
+  exit 1
+fi
+if [[ ! -s "$DOWNLOAD_HOME/share/ios-use/mac/default-sandbox-rules.yaml" ]]; then
+  echo "[install-test] ERROR: release install did not install the sandbox rules" >&2
   exit 1
 fi
 if [[ -e "$DOWNLOAD_HOME/.ios-use/playcover/IOSUsePlayRuntime.framework" ]]; then

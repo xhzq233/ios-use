@@ -39,6 +39,7 @@ done
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_DIR="$ROOT_DIR/driver"
+SOURCE_PREFIX_MAP="$ROOT_DIR=/ios-use"
 
 # Regenerate Xcode project from project.yml
 if command -v xcodegen &>/dev/null; then
@@ -93,7 +94,51 @@ XCODE_COMMON=(
   MARKETING_VERSION="$CLI_VERSION"
   CURRENT_PROJECT_VERSION="$CLI_VERSION"
   CODE_SIGNING_ALLOWED=NO
+  "OTHER_SWIFT_FLAGS=\$(inherited) -file-prefix-map $SOURCE_PREFIX_MAP -debug-prefix-map $SOURCE_PREFIX_MAP"
+  "OTHER_CFLAGS=\$(inherited) -ffile-prefix-map=$SOURCE_PREFIX_MAP -fdebug-prefix-map=$SOURCE_PREFIX_MAP -fmacro-prefix-map=$SOURCE_PREFIX_MAP"
+  "OTHER_CPLUSPLUSFLAGS=\$(inherited) -ffile-prefix-map=$SOURCE_PREFIX_MAP -fdebug-prefix-map=$SOURCE_PREFIX_MAP -fmacro-prefix-map=$SOURCE_PREFIX_MAP"
 )
+
+verify_release_path_hygiene() {
+  local product="$1"
+  local local_path matches
+  if [[ "$BUILD_MODE" != "release" ]]; then
+    return
+  fi
+  for local_path in "/Users/" "$ROOT_DIR/" "$HOME/"; do
+    matches="$(
+      LC_ALL=C rg --text --files-with-matches --fixed-strings \
+        --glob '!**/*.dSYM/**' -- \
+        "$local_path" "$product" || true
+    )"
+    if [[ -n "$matches" ]]; then
+      echo \
+        "[build] ERROR: release driver embeds local build path $local_path in: $matches" \
+        >&2
+      exit 1
+    fi
+  done
+}
+
+strip_release_test_binary() {
+  local app_path="$1"
+  local test_bundle="$app_path/PlugIns/IOSUseDriver.xctest"
+  local executable_name executable_path
+  if [[ "$BUILD_MODE" != "release" ]]; then
+    return
+  fi
+  executable_name="$(
+    /usr/libexec/PlistBuddy \
+      -c 'Print :CFBundleExecutable' \
+      "$test_bundle/Info.plist"
+  )"
+  executable_path="$test_bundle/$executable_name"
+  if [[ ! -f "$executable_path" || -L "$executable_path" ]]; then
+    echo "[build] ERROR: release driver test binary is missing: $executable_path" >&2
+    exit 1
+  fi
+  /usr/bin/strip -x "$executable_path"
+}
 
 if [ "$DEBUG_PERF" = true ]; then
   XCODE_COMMON+=(
@@ -266,6 +311,9 @@ if [ "$SIMULATOR_ONLY" != true ]; then
   STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
   printf '[build] iOS device strip completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 
+  strip_release_test_binary "$XCTEST_WRAPPER_PATH"
+  verify_release_path_hygiene "$XCTEST_WRAPPER_PATH"
+
   echo "[build] Packaging device IPA..."
   STEP_STARTED_AT="$(date +%s)"
   package_ipa "$XCTEST_WRAPPER_PATH" "$IPA_OUTPUT"
@@ -306,6 +354,9 @@ SHIMMED="$(add_simulator_testing_interop_shim "$XCTEST_WRAPPER_PATH")"
 echo "[build] Added $SHIMMED Simulator TestingInterop shim(s)"
 STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
 printf '[build] Simulator TestingInterop shim completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
+
+strip_release_test_binary "$XCTEST_WRAPPER_PATH"
+verify_release_path_hygiene "$XCTEST_WRAPPER_PATH"
 
 # Package Simulator IPA
 echo "[build] Packaging simulator IPA..."

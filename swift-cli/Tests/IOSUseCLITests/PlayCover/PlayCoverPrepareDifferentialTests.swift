@@ -85,6 +85,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             + "                \"Model/PlayApp.swift\",\n"
             + "                \"Utils/Extensions/"
             + "PlayAppExtensions.swift\",\n"
+            + "                \"Rules/default.yaml\",\n"
             + "            ],\n"
             + "            sources: ["
         XCTAssertEqual(
@@ -92,8 +93,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 separatedBy: exactExclusionBlock
             ).count - 1,
             1,
-            "both pinned GUI authorities must remain in the exact "
-                + "exclude block immediately before sources"
+            "the pinned GUI authorities and externally installed rules "
+                + "must remain in the exact exclude block before sources"
         )
         XCTAssertEqual(
             package.components(
@@ -167,7 +168,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             PlayCoverPinnedPrimitivePrepareOptions(
                 sourceApp: aliasedSource,
                 stagingApp: staging,
-                managedHome: managedHome
+                managedHome: managedHome,
+                defaultRulesData:
+                    try PlayCoverRulesService.ensureAvailable()
             )
         )
 
@@ -259,6 +262,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 sourceApp: source,
                 stagingApp: pinnedOutput,
                 managedHome: pinnedHome,
+                defaultRulesData:
+                    try PlayCoverRulesService.ensureAvailable(),
                 bundledPlayToolsFramework: playTools
             )
         )
@@ -816,6 +821,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "PlayCoverManagedAppService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverFridaEngineService.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverRulesService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverHomeStore.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"

@@ -209,7 +209,7 @@ The GitHub release workflow builds and uploads:
 | `ios-use-darwin-arm64` | Prebuilt Apple Silicon macOS CLI binary. The Runtime and complete release install are Apple-Silicon-only; Intel macOS is unsupported. |
 | `driver.ipa` | Real-device XCTest driver IPA. |
 | `driver-sim.ipa` | Simulator XCTest driver IPA. |
-| `ios-use-mac-resources.tar.gz` | Read-only, prebuilt Runtime and pinned arm64 Mac Catalyst Frida Engine installed under `<prefix>/share/ios-use/mac/`. The Engine is copied only for `start --mac --frida`. |
+| `ios-use-mac-resources.tar.gz` | Read-only, prebuilt Runtime, pinned sandbox rules, and pinned arm64 Mac Catalyst Frida Engine installed under `<prefix>/share/ios-use/mac/`. The Engine is copied only for `start --mac --frida`. |
 | `ios-use-vX.Y.Z-corresponding-source.tar.gz` | Complete corresponding source for the release, including vendored upstreams, the full pinned Yams Git tree, build recipes, source commit, and Runtime-input digest. |
 | `MAC-BACKEND-BUILD-MANIFEST-vX.Y.Z.txt` | Exact source commit, Yams/Frida evidence, Runtime-input digest, Mac backend resources archive digest, and corresponding-source digest. |
 | `LICENSE`, `*-LICENSE-*`, `THIRD-PARTY-LICENSES.md`, `MAC-BACKEND-PROVENANCE-vX.Y.Z.md` | ios-use and upstream license/provenance materials, including the Yams MIT license, for the Runtime distribution. |

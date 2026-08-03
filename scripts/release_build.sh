@@ -136,12 +136,27 @@ fi
 PLAYCOVER_RESOURCES_STAGE="$RELEASE_TEMP/playcover-resources"
 RUNTIME_STAGE="$PLAYCOVER_RESOURCES_STAGE/IOSUsePlayRuntime.framework"
 FRIDA_ENGINE_STAGE="$PLAYCOVER_RESOURCES_STAGE/IOSUseFridaEngine.framework"
+RULES_SOURCE="$ROOT_DIR/ThirdParty/PlayCover/PlayCover/Rules/default.yaml"
+RULES_STAGE="$PLAYCOVER_RESOURCES_STAGE/default-sandbox-rules.yaml"
+RULES_EXPECTED_SHA256="$(
+  sed -n \
+    '/public static let defaultRulesRevision/{n;s/.*"\([0-9a-f]*\)".*/\1/p;}' \
+    "$ROOT_DIR/ThirdParty/PlayCover/PlayCover/Headless/PlayCoverUpstreamEngine.swift"
+)"
+RULES_SHA256="$(shasum -a 256 "$RULES_SOURCE" | awk '{print $1}')"
+if [[ -z "$RULES_EXPECTED_SHA256" ||
+      "$RULES_SHA256" != "$RULES_EXPECTED_SHA256" ]]; then
+  echo "[release-build] ERROR: sandbox rules do not match the pinned Runtime descriptor" >&2
+  exit 1
+fi
 mkdir -p "$PLAYCOVER_RESOURCES_STAGE"
 cp -R "$RUNTIME_SOURCE" "$RUNTIME_STAGE"
+cp "$RULES_SOURCE" "$RULES_STAGE"
 /usr/bin/codesign --verify --strict "$RUNTIME_STAGE"
 echo "[release-build] Building pinned Frida Engine resource..."
 FRIDA_GUM_BUILD_ROOT="$RELEASE_TEMP/frida-gum-build"
 IOS_USE_FRIDA_GUM_BUILD_ROOT="$FRIDA_GUM_BUILD_ROOT" \
+IOS_USE_FRIDA_SOURCE_CACHE="$RELEASE_TEMP/frida-source-cache" \
   bash "$ROOT_DIR/scripts/build_playcover_frida_engine.sh" \
     --build-gum \
     --output "$FRIDA_ENGINE_STAGE" \
@@ -176,11 +191,21 @@ import sys
 print(sum(path.stat().st_size for path in pathlib.Path(sys.argv[1]).rglob('*') if path.is_file()))
 PY
 )"
+for local_path in "$ROOT_DIR/" "$HOME/"; do
+  if LC_ALL=C rg --text --hidden --no-ignore --fixed-strings --quiet -- \
+      "$local_path" "$PLAYCOVER_RESOURCES_STAGE"; then
+    echo \
+      "[release-build] ERROR: Mac resources embed local build path: $local_path" \
+      >&2
+    exit 1
+  fi
+done
 PLAYCOVER_RESOURCES_ASSET="ios-use-mac-resources.tar.gz"
 (
   cd "$PLAYCOVER_RESOURCES_STAGE"
   COPYFILE_DISABLE=1 tar -czf "$RELEASE_DIR/$PLAYCOVER_RESOURCES_ASSET" \
-    IOSUsePlayRuntime.framework IOSUseFridaEngine.framework
+    IOSUsePlayRuntime.framework IOSUseFridaEngine.framework \
+    default-sandbox-rules.yaml
 )
 PLAYCOVER_RESOURCES_ARCHIVE_SHA256="$(
   shasum -a 256 "$RELEASE_DIR/$PLAYCOVER_RESOURCES_ASSET" |
@@ -291,6 +316,7 @@ BUILD_MANIFEST_ASSET="MAC-BACKEND-BUILD-MANIFEST-v$ACTUAL_VERSION.txt"
   printf 'Yams source commit: %s\n' "$YAMS_COMMIT"
   printf 'Mac Runtime input manifest SHA-256: %s\n' "$RUNTIME_SOURCE_SHA256"
   printf 'Mac backend resources archive SHA-256: %s\n' "$PLAYCOVER_RESOURCES_ARCHIVE_SHA256"
+  printf 'Mac sandbox rules SHA-256: %s\n' "$RULES_SHA256"
   printf 'Frida Gum source commit: %s\n' \
     '0afeb85fcdeae1d995a55bc07f0fe57b197aecae'
   printf 'Frida Engine ABI: %s\n' 'ios-use-frida-engine-cabi-v2'
@@ -301,7 +327,7 @@ BUILD_MANIFEST_ASSET="MAC-BACKEND-BUILD-MANIFEST-v$ACTUAL_VERSION.txt"
 PROVENANCE_ASSET="MAC-BACKEND-PROVENANCE-v$ACTUAL_VERSION.md"
 {
   printf '# Mac backend release provenance\n\n'
-  printf 'This release packages `IOSUsePlayRuntime.framework` and the optional-at-runtime `IOSUseFridaEngine.framework` as read-only resources under `share/ios-use/mac/`.\n\n'
+  printf 'This release packages `IOSUsePlayRuntime.framework`, the optional-at-runtime `IOSUseFridaEngine.framework`, and the pinned sandbox rules as read-only resources under `share/ios-use/mac/`.\n\n'
   printf 'The complete corresponding source for this exact release is `%s`; it includes the complete pinned Yams tree.\n\n' "$SOURCE_ARCHIVE"
   printf 'Fresh Runtime/source/archive digests are recorded in `%s`.\n\n' "$BUILD_MANIFEST_ASSET"
   for provenance in \

@@ -29,6 +29,7 @@ let package = Package(
             exclude: [
                 "Model/PlayApp.swift",
                 "Utils/Extensions/PlayAppExtensions.swift",
+                "Rules/default.yaml",
             ],
             sources: [
                 "PlayCoverError.swift",
@@ -48,9 +49,6 @@ let package = Package(
                 "Model/PlayRules.swift",
                 "Headless/PlayCoverUpstreamEngine.swift",
                 "Headless/PlayCoverPrepareDifferential.swift",
-            ],
-            resources: [
-                .copy("Rules/default.yaml"),
             ]
         ),
         .testTarget(

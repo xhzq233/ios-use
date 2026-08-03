@@ -485,6 +485,7 @@ public enum PlayCoverService {
             ),
             runtimeSocketPath: sandboxSocket,
             runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
+            defaultRulesData: try PlayCoverRulesService.ensureAvailable(),
             codesignIdentity:
                 plan.signingIdentity.codesignSelector,
             expectedRuntimeBuildHash: plan.runtimeBuildHash,

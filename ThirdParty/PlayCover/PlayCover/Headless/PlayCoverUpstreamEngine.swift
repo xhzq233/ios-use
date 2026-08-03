@@ -571,6 +571,7 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
     public let runtimeSocketRoot: URL
     public let runtimeSocketPath: String
     public let runtimeLoadPath: String
+    public let defaultRulesData: Data
     public let playSignActive: Bool
     public let codesignIdentity: String
     public let expectedRuntimeBuildHash: String?
@@ -587,6 +588,7 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         runtimeSocketRoot: URL,
         runtimeSocketPath: String,
         runtimeLoadPath: String,
+        defaultRulesData: Data,
         playSignActive: Bool = false,
         codesignIdentity: String,
         expectedRuntimeBuildHash: String? = nil,
@@ -602,6 +604,7 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         self.runtimeSocketRoot = runtimeSocketRoot
         self.runtimeSocketPath = runtimeSocketPath
         self.runtimeLoadPath = runtimeLoadPath
+        self.defaultRulesData = defaultRulesData
         self.playSignActive = playSignActive
         self.codesignIdentity = codesignIdentity
         self.expectedRuntimeBuildHash = expectedRuntimeBuildHash
@@ -1258,6 +1261,7 @@ public enum PlayCoverUpstreamEngine {
                         .entitlementsPlist,
                 runtimeSocketPath: options.runtimeSocketPath,
                 managedHome: options.managedHome,
+                defaultRulesData: options.defaultRulesData,
                 playSignActive: options.playSignActive
             )
         }
@@ -3986,6 +3990,7 @@ public enum PlayCoverUpstreamEngine {
         originalPlist: Data?,
         runtimeSocketPath: String,
         managedHome: URL? = nil,
+        defaultRulesData: Data,
         playSignActive: Bool
     ) throws -> EntitlementComposition {
         let original = try entitlementDictionary(originalPlist)
@@ -4006,6 +4011,7 @@ public enum PlayCoverUpstreamEngine {
                 discordActivityEnabled: false,
                 bypass: false,
                 playSignActive: playSignActive,
+                defaultRulesData: defaultRulesData,
                 homeDirectory: managedHome
                     ?? FileManager.default.homeDirectoryForCurrentUser
             )

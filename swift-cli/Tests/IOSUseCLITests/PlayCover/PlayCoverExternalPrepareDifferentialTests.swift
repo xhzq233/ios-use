@@ -1024,6 +1024,8 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                     sourceApp: sourceSnapshot,
                     stagingApp: pinnedOutput,
                     managedHome: pinnedHome,
+                    defaultRulesData:
+                        try PlayCoverRulesService.ensureAvailable(),
                     bundledPlayToolsFramework: playTools
                 )
             )

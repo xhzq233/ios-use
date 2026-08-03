@@ -17,7 +17,17 @@ for arg in "$@"; do
 done
 
 echo "[swift-cli] Building ios-use ($CONFIGURATION)..."
-swift build --package-path "$ROOT_DIR/swift-cli" -c "$CONFIGURATION"
+SOURCE_PREFIX_MAP="$ROOT_DIR=/ios-use"
+swift build \
+  --package-path "$ROOT_DIR/swift-cli" \
+  -c "$CONFIGURATION" \
+  -Xswiftc -file-prefix-map \
+  -Xswiftc "$SOURCE_PREFIX_MAP" \
+  -Xswiftc -debug-prefix-map \
+  -Xswiftc "$SOURCE_PREFIX_MAP" \
+  -Xcc "-ffile-prefix-map=$SOURCE_PREFIX_MAP" \
+  -Xcc "-fdebug-prefix-map=$SOURCE_PREFIX_MAP" \
+  -Xcc "-fmacro-prefix-map=$SOURCE_PREFIX_MAP"
 
 TMP_BIN="$(mktemp "$ROOT_DIR/.ios-use.tmp.XXXXXX")"
 cleanup() {
@@ -31,6 +41,15 @@ chmod +x "$TMP_BIN"
 if [ "$CONFIGURATION" = "release" ]; then
   echo "[swift-cli] Stripping release binary..."
   strip "$TMP_BIN"
+  for local_path in "/Users/" "$ROOT_DIR/" "$HOME/"; do
+    if LC_ALL=C rg --text --fixed-strings --quiet -- \
+        "$local_path" "$TMP_BIN"; then
+      echo \
+        "[swift-cli] ERROR: release binary embeds local build path: $local_path" \
+        >&2
+      exit 1
+    fi
+  done
 fi
 
 mv "$TMP_BIN" "$ROOT_DIR/ios-use"

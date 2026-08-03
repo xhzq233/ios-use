@@ -107,6 +107,14 @@ if [ ! -x "$IOS_USE_RUNTIME_FRAMEWORK/IOSUsePlayRuntime" ]; then
   exit 1
 fi
 
+# This framework is injected as a binary resource. Compiler modules and
+# headers are development-only and may retain local build paths.
+rm -rf \
+  "$IOS_USE_RUNTIME_FRAMEWORK/Modules" \
+  "$IOS_USE_RUNTIME_FRAMEWORK/PrivateHeaders" \
+  "$IOS_USE_RUNTIME_FRAMEWORK/Versions/A/Modules" \
+  "$IOS_USE_RUNTIME_FRAMEWORK/Versions/A/PrivateHeaders"
+
 IOS_USE_RUNTIME_BINARY="$IOS_USE_RUNTIME_FRAMEWORK/IOSUsePlayRuntime"
 IOS_USE_RUNTIME_ENTRY="$(
   /usr/bin/nm -nm "$IOS_USE_RUNTIME_BINARY" |
@@ -136,6 +144,7 @@ if [ -z "$IOS_USE_RUNTIME_ENTRY" ] ||
     >&2
   exit 1
 fi
+/usr/bin/strip -x "$IOS_USE_RUNTIME_BINARY"
 
 IOS_USE_RUNTIME_INFO_PLIST="$IOS_USE_RUNTIME_FRAMEWORK/Info.plist"
 if [ ! -f "$IOS_USE_RUNTIME_INFO_PLIST" ]; then
