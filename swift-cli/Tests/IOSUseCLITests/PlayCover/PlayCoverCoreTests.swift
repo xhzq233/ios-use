@@ -3361,11 +3361,6 @@ final class PlayCoverCoreTests: XCTestCase {
             [.posixPermissions: 0o755],
             ofItemAtPath: executable.path
         )
-        let manifest = try makeManifest(
-            inspection: inspection,
-            preparedAppPath: prepared.path,
-            generationKey: String(repeating: "e", count: 64)
-        )
         let process = Process()
         process.executableURL = executable
         process.arguments = [
@@ -3384,6 +3379,17 @@ final class PlayCoverCoreTests: XCTestCase {
             PlayCoverService.processStartTimeMicroseconds(
                 for: process.processIdentifier
             )
+        )
+        let runningExecutable = try XCTUnwrap(
+            PlayCoverRuntimeClient.executablePath(
+                for: process.processIdentifier
+            )
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: prepared.path,
+            generationKey: String(repeating: "e", count: 64),
+            executablePathOverride: runningExecutable
         )
 
         try PlayCoverService.terminateFailedLaunch(
@@ -3945,7 +3951,8 @@ final class PlayCoverCoreTests: XCTestCase {
         generationKey: String,
         runtimeBuildHash: String = String(repeating: "d", count: 64),
         accountNamespacePolicyHash: String =
-            String(repeating: "7", count: 64)
+            String(repeating: "7", count: 64),
+        executablePathOverride: String? = nil
     ) throws -> PlayCoverPrepareManifest {
         let prepared = URL(
             fileURLWithPath: preparedAppPath,
@@ -3957,9 +3964,10 @@ final class PlayCoverCoreTests: XCTestCase {
             preparedAppPath: prepared.path,
             bundleIdentifier: inspection.bundleIdentifier,
             executableName: inspection.executableName,
-            executablePath: prepared.appendingPathComponent(
-                inspection.executableName
-            ).path,
+            executablePath: executablePathOverride
+                ?? prepared.appendingPathComponent(
+                    inspection.executableName
+                ).path,
             sourceContentHash: inspection.sourceContentHash,
             sourceHashAfterPreparation: inspection.sourceContentHash,
             runtimeBuildHash: runtimeBuildHash,
