@@ -12,7 +12,7 @@ import MachO
 import injection
 
 private let playCoverPrepareDifferentialEmbeddedSourceClosureSHA256 =
-    "266bb6008b88dca0ea7df8b774c9321f2f35bc26c293ca974ab3316c474c3993"
+    "d201e4a098bcfcf7353c1600b8ad258e4c2c4dfe4b07abf231e1247a9233d71f"
 
 private func playCoverCanonicalExistingURL(_ url: URL) -> URL? {
     guard let resolved = realpath(url.standardizedFileURL.path, nil) else {
@@ -3517,7 +3517,10 @@ public enum PlayCoverPrepareDifferentialGate {
         guard digest
             == playCoverPrepareDifferentialEmbeddedSourceClosureSHA256 else {
             throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                "loaded XCTest was not built from the attested source closure",
+                "loaded XCTest was not built from the attested source "
+                    + "closure: expected "
+                    + playCoverPrepareDifferentialEmbeddedSourceClosureSHA256
+                    + ", observed " + digest,
             ])
         }
         let loadedImage = try loadedXCTestImageIdentity()

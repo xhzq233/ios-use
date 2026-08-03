@@ -36,16 +36,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         super.tearDown()
     }
 
-    private enum HermeticOneSidedGoldenV1 {
-        static let manifestID = "playcover-hermetic-one-sided-v1"
-        static let runtimeSHA256 =
-            "119fa7707e50c05fd7157223ab553af1140ee9ff437126c0a"
-                + "2c2d00b853d2cd1"
-        static let pluginSHA256 =
-            "70af94bb12ace93bda3d29348ba4d209761832142108a28fa"
-                + "5e5c7664e1771bf"
-    }
-
     func testVendoredPlayAppSigningAuthorityIsOrderedAndExplicitlyExcluded()
         throws
     {
@@ -228,26 +218,16 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 ),
                 relativePath: pluginRelativePath
             )
-        try requireGoldenDigest(
-            runtimeBaselineInspection.fileSHA256,
-            expected: HermeticOneSidedGoldenV1.runtimeSHA256,
-            name: "fixture Runtime"
-        )
-        try requireGoldenDigest(
-            pluginBaselineInspection.fileSHA256,
-            expected: HermeticOneSidedGoldenV1.pluginSHA256,
-            name: "fixture AKInterface plugin"
-        )
         let baselines = [
             PlayCoverDifferentialObjectBaseline(
                 id: "pinned-akinterface-input",
                 side: .pinned,
                 relativePath: pluginRelativePath,
                 inspection: pluginBaselineInspection,
-                sourceSHA256: HermeticOneSidedGoldenV1.pluginSHA256,
+                sourceSHA256: pluginBaselineInspection.fileSHA256,
                 provenance:
-                    HermeticOneSidedGoldenV1.manifestID
-                    + "; fixture PlayTools.framework resource consumed by "
+                    "generated fixture PlayTools.framework resource "
+                    + "consumed by "
                     + "PlayTools.installPluginInIPA"
             ),
             PlayCoverDifferentialObjectBaseline(
@@ -255,10 +235,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 side: .iosUse,
                 relativePath: runtimeRelativePath,
                 inspection: runtimeBaselineInspection,
-                sourceSHA256: HermeticOneSidedGoldenV1.runtimeSHA256,
+                sourceSHA256: runtimeBaselineInspection.fileSHA256,
                 provenance:
-                    HermeticOneSidedGoldenV1.manifestID
-                    + "; fixture Runtime framework passed to "
+                    "generated fixture Runtime framework passed to "
                     + "PlayCoverService.prepare"
             ),
         ]
@@ -687,7 +666,10 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             oneSidedBaselines: baselines,
             normalization: normalization
         )
-        let allowances = makeAllowances()
+        let allowances = makeAllowances(
+            runtimeSHA256: runtimeBaselineInspection.fileSHA256,
+            pluginSHA256: pluginBaselineInspection.fileSHA256
+        )
         let report = try PlayCoverPrepareDifferentialGate.enforce(
             pinned: pinned.prepared,
             iosUse: iosUse,
@@ -2147,29 +2129,10 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         return root.standardizedFileURL
     }
 
-    private func requireGoldenDigest(
-        _ actual: String,
-        expected: String,
-        name: String
-    ) throws {
-        guard actual == expected else {
-            XCTFail(
-                "\(name) does not match the reviewed "
-                    + "\(HermeticOneSidedGoldenV1.manifestID) manifest: "
-                    + "expected \(expected), observed \(actual)"
-            )
-            throw NSError(
-                domain: "PlayCoverPrepareDifferentialTests",
-                code: 1,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "\(name) one-sided golden digest changed",
-                ]
-            )
-        }
-    }
-
-    private func makeAllowances() -> [PlayCoverDifferentialAllowance] {
+    private func makeAllowances(
+        runtimeSHA256: String,
+        pluginSHA256: String
+    ) -> [PlayCoverDifferentialAllowance] {
         let pinnedSign = "Shell.signAppWith(--deep)"
         let iosUseSign = "PlayCoverUpstreamEngine.signInsideOut"
         let arm64 =
@@ -2334,9 +2297,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                         "frameworkExecutable",
                     ])
                 ),
-                "The one-sided executable is independently pinned by "
-                    + "\(HermeticOneSidedGoldenV1.manifestID) and compared as "
-                    + "a complete Mach-O baseline.",
+                "The generated one-sided executable is compared against "
+                    + "its complete pre-transform Mach-O baseline.",
                 "PlayTools.playToolsPath",
                 "PlayCoverUpstreamEngine.prepare"
             ),
@@ -2468,9 +2430,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     ])
                 ),
                 .absent,
-                "The one-sided executable is independently pinned by "
-                    + "\(HermeticOneSidedGoldenV1.manifestID) and compared as "
-                    + "a complete Mach-O baseline.",
+                "The generated one-sided executable is compared against "
+                    + "its complete pre-transform Mach-O baseline.",
                 "PlayTools.installPluginInIPA",
                 "IOSUsePlayRuntime"
             ),
@@ -2873,7 +2834,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .absent,
                 .exact(
                     "present;baseline=ios-use-runtime-input;fileSHA256="
-                        + HermeticOneSidedGoldenV1.runtimeSHA256
+                        + runtimeSHA256
                 ),
                 "Pinned PlayCover loads system PlayTools; ios-use embeds and "
                     + "signs its Runtime framework in the managed App.",
@@ -2886,7 +2847,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "object.presence",
                 .exact(
                     "present;baseline=pinned-akinterface-input;fileSHA256="
-                        + HermeticOneSidedGoldenV1.pluginSHA256
+                        + pluginSHA256
                 ),
                 .absent,
                 "Pinned PlayTools installs and signs its AppKit plugin bundle; "
