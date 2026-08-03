@@ -117,8 +117,6 @@ jobs:
     # Installed execution performs a real launch. This label must resolve to a
     # host with the stable signer initialized and a launch-capable GUI session.
     runs-on: [self-hosted, macOS, arm64, playcover-live]
-    env:
-      IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
     steps:
       - uses: actions/checkout@v4
 
@@ -132,10 +130,13 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-playcover-upstreams-7190cc9-d688f6-e6d3aa-yams3036ba
 
       - name: Audit pinned upstream sources and local patches
+        env:
+          IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
         run: bash scripts/audit_playcover_upstreams.sh --cache-dir "$IOS_USE_PLAYCOVER_UPSTREAM_CACHE"
 
       - name: Build, analyze, fixture, compositor, vendored Swift, and installed-layout checks
         env:
+          IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
           IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
           IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
         run: bash scripts/test_playcover_backend.sh --non-live
@@ -146,14 +147,12 @@ jobs:
     # The two public-fixture gates also require the initialized stable signer
     # and an unlocked, launch-capable GUI session.
     runs-on: [self-hosted, macOS, arm64, playcover-live]
-    env:
-      IOS_USE_PLAYCOVER_LIVE_RUN_DIR: ${{ runner.temp }}/ios-use-playcover-live-run-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Prepare runner-temporary live log directory
         run: |
-          mkdir -p "$IOS_USE_PLAYCOVER_LIVE_RUN_DIR"
+          mkdir -p "$RUNNER_TEMP/ios-use-playcover-live-run-$GITHUB_RUN_ID"
 
       - name: Run core PlayCover live gate
         shell: bash
@@ -163,13 +162,13 @@ jobs:
         run: |
           set -o pipefail
           bash scripts/test_playcover_backend.sh --live 2>&1 |
-            tee "$IOS_USE_PLAYCOVER_LIVE_RUN_DIR/run.log"
+            tee "$RUNNER_TEMP/ios-use-playcover-live-run-$GITHUB_RUN_ID/run.log"
 
       - name: Upload core live gate log
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: playcover-live-run-${{ github.sha }}-${{ github.run_id }}
-          path: ${{ env.IOS_USE_PLAYCOVER_LIVE_RUN_DIR }}/run.log
+          path: ${{ runner.temp }}/ios-use-playcover-live-run-${{ github.run_id }}/run.log
           if-no-files-found: error
           retention-days: 30

@@ -99,25 +99,20 @@ validate_workflow() {
     '        description: "Run the core pending-launch and Runtime crash/stress gate on its dedicated self-hosted runner."' \
     "the core live workflow-dispatch description" ||
     return 1
-  require_exact_line \
-    "$file" \
-    '      IOS_USE_PLAYCOVER_LIVE_RUN_DIR: ${{ runner.temp }}/ios-use-playcover-live-run-${{ github.run_id }}' \
-    "the runner-temporary core live log directory" ||
-    return 1
   validate_disposable_secret_bindings "$file" 2 ||
     return 1
   if [[ "$(
     count_pattern \
       "$file" \
-      '^[[:space:]]*IOS_USE_PLAYCOVER_LIVE_[A-Z_]+:'
-  )" != "1" ]]; then
-    fail_contract "the core live workflow must define exactly one run-log directory"
+      '^      IOS_USE_[A-Z_]+:.*\$\{\{ runner\.'
+  )" != "0" ]]; then
+    fail_contract "runner context must not be evaluated from job-level env"
     return 1
   fi
 
   require_exact_line \
     "$file" \
-    '          mkdir -p "$IOS_USE_PLAYCOVER_LIVE_RUN_DIR"' \
+    '          mkdir -p "$RUNNER_TEMP/ios-use-playcover-live-run-$GITHUB_RUN_ID"' \
     "core live run-log directory creation" ||
     return 1
   require_exact_line \
@@ -132,7 +127,7 @@ validate_workflow() {
     return 1
   require_exact_line \
     "$file" \
-    '            tee "$IOS_USE_PLAYCOVER_LIVE_RUN_DIR/run.log"' \
+    '            tee "$RUNNER_TEMP/ios-use-playcover-live-run-$GITHUB_RUN_ID/run.log"' \
     "the pipefail-protected core live run log" ||
     return 1
   require_exact_line \
@@ -147,7 +142,7 @@ validate_workflow() {
     return 1
   require_exact_line \
     "$file" \
-    '          path: ${{ env.IOS_USE_PLAYCOVER_LIVE_RUN_DIR }}/run.log' \
+    '          path: ${{ runner.temp }}/ios-use-playcover-live-run-${{ github.run_id }}/run.log' \
     "the exact core live run-log artifact path" ||
     return 1
   require_exact_line \
@@ -189,6 +184,14 @@ validate_workflow() {
 
 validate_release_workflow() {
   local file="$1"
+  if [[ "$(
+    count_pattern \
+      "$file" \
+      '^      IOS_USE_[A-Z_]+:.*\$\{\{ runner\.'
+  )" != "0" ]]; then
+    fail_contract "release runner context must not be evaluated from job-level env"
+    return 1
+  fi
   validate_disposable_secret_bindings "$file" 1 ||
     return 1
   require_exact_line \
@@ -373,7 +376,7 @@ expect_workflow_rejected \
 
 directory_upload="$TEST_TEMP/directory-upload.yml"
 sed \
-  's#path: ${{ env.IOS_USE_PLAYCOVER_LIVE_RUN_DIR }}/run.log#path: ${{ env.IOS_USE_PLAYCOVER_LIVE_RUN_DIR }}/#' \
+  's#path: ${{ runner.temp }}/ios-use-playcover-live-run-${{ github.run_id }}/run.log#path: ${{ runner.temp }}/ios-use-playcover-live-run-${{ github.run_id }}/#' \
   "$WORKFLOW" >"$directory_upload"
 expect_workflow_rejected \
   "$directory_upload" \

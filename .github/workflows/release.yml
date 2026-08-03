@@ -25,8 +25,6 @@ jobs:
   release:
     name: Build and upload release assets
     runs-on: macos-26
-    env:
-      IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
     steps:
       - name: Resolve release tag
         id: resolve_tag
@@ -112,6 +110,7 @@ jobs:
       - name: Build release assets
         env:
           IOS_USE_RELEASE_VERSION: ${{ steps.resolve_tag.outputs.tag }}
+          IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
         run: bash scripts/release_build.sh
 
       - name: Build the installed-layout fixture
