@@ -3342,81 +3342,53 @@ final class PlayCoverCoreTests: XCTestCase {
         let inspection = try PlayCoverService.inspect(
             appPath: fixture.app.path
         )
-        let prepared = fixture.root.appendingPathComponent(
-            "Rollback.app",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(
-            at: prepared,
-            withIntermediateDirectories: true
-        )
-        let executable = prepared.appendingPathComponent(
-            inspection.executableName
-        )
-        try FileManager.default.copyItem(
-            at: URL(fileURLWithPath: "/bin/sh"),
-            to: executable
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755],
-            ofItemAtPath: executable.path
-        )
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = [
-            "-c",
-            "trap '' TERM; while :; do sleep 1; done",
-        ]
-        try process.run()
-        let reaper = DispatchGroup()
-        reaper.enter()
-        DispatchQueue.global().async {
-            process.waitUntilExit()
-            reaper.leave()
-        }
-        defer {
-            if process.isRunning {
-                _ = kill(process.processIdentifier, SIGKILL)
-            }
-            _ = reaper.wait(timeout: .now() + 5)
-        }
-        usleep(100_000)
-        let processStart = try XCTUnwrap(
-            PlayCoverService.processStartTimeMicroseconds(
-                for: process.processIdentifier
-            )
-        )
-        let runningExecutable = try XCTUnwrap(
-            PlayCoverRuntimeClient.executablePath(
-                for: process.processIdentifier
-            )
-        )
         let manifest = try makeManifest(
             inspection: inspection,
-            preparedAppPath: prepared.path,
-            generationKey: String(repeating: "e", count: 64),
-            executablePathOverride: runningExecutable
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "e", count: 64)
         )
+        let identity = PlayCoverService.LaunchedApplicationIdentity(
+            pid: 42,
+            bundleIdentifier: manifest.bundleIdentifier,
+            bundleURLPath: manifest.preparedAppPath,
+            executablePath: manifest.executablePath,
+            processStartTimeMicroseconds: 100,
+            source: .workspaceCallback
+        )
+        var killed = false
+        var processProbeCount = 0
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = {
+            pid in
+            XCTAssertEqual(pid, identity.pid)
+            processProbeCount += 1
+            return killed
+                ? .missing
+                : .running(
+                    executablePath: manifest.executablePath,
+                    processStartTimeMicroseconds: 100
+                )
+        }
+        var signals: [Int32] = []
+        PlayCoverService.failedLaunchSignalOverrideForTesting = {
+            pid,
+            signal in
+            XCTAssertEqual(pid, identity.pid)
+            signals.append(signal)
+            if signal == SIGKILL {
+                killed = true
+            }
+            return 0
+        }
 
         try PlayCoverService.terminateFailedLaunch(
-            identity: PlayCoverService.LaunchedApplicationIdentity(
-                pid: process.processIdentifier,
-                bundleIdentifier: manifest.bundleIdentifier,
-                bundleURLPath: manifest.preparedAppPath,
-                executablePath: manifest.executablePath,
-                processStartTimeMicroseconds: processStart,
-                source: .workspaceCallback
-            ),
+            identity: identity,
             manifest: manifest
         )
-        XCTAssertEqual(
-            reaper.wait(timeout: .now() + 5),
-            .success
-        )
 
-        XCTAssertFalse(process.isRunning)
-        XCTAssertEqual(process.terminationReason, .uncaughtSignal)
-        XCTAssertEqual(process.terminationStatus, SIGKILL)
+        XCTAssertTrue(killed)
+        XCTAssertGreaterThan(processProbeCount, 2)
+        XCTAssertEqual(signals, [SIGTERM, SIGKILL])
     }
 
     func testSameContentReusesOneGlobalGenerationAcrossHomes()
