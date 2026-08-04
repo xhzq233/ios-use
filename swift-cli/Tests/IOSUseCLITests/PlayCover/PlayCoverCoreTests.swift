@@ -3368,11 +3368,17 @@ final class PlayCoverCoreTests: XCTestCase {
             "trap '' TERM; while :; do sleep 1; done",
         ]
         try process.run()
+        let reaper = DispatchGroup()
+        reaper.enter()
+        DispatchQueue.global().async {
+            process.waitUntilExit()
+            reaper.leave()
+        }
         defer {
             if process.isRunning {
                 _ = kill(process.processIdentifier, SIGKILL)
-                process.waitUntilExit()
             }
+            _ = reaper.wait(timeout: .now() + 5)
         }
         usleep(100_000)
         let processStart = try XCTUnwrap(
@@ -3403,7 +3409,10 @@ final class PlayCoverCoreTests: XCTestCase {
             ),
             manifest: manifest
         )
-        process.waitUntilExit()
+        XCTAssertEqual(
+            reaper.wait(timeout: .now() + 5),
+            .success
+        )
 
         XCTAssertFalse(process.isRunning)
         XCTAssertEqual(process.terminationReason, .uncaughtSignal)
