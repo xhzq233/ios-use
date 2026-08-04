@@ -363,17 +363,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
                             cindex: cindex
                         ),
                     fromTarget: isEmptyTarget(from)
-                        ? PlayCoverRuntimeTarget(
-                            label: "",
-                            point: PlayCoverRuntimePoint(
-                                x: Double(
-                                    IOSUsePlayDeviceLogicalWidth
-                                ) / 2,
-                                y: Double(
-                                    IOSUsePlayDeviceLogicalHeight
-                                ) / 2
-                            )
-                        )
+                        ? nil
                         : mapTarget(
                             from,
                             traits: nil,

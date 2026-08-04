@@ -329,6 +329,27 @@ enum MachineOutput {
                 mutationMayHaveApplied: false
             )
         }
+        if case PlayCoverRuntimeClientError.remoteError(
+            let code,
+            let message,
+            let details
+        ) = error {
+            return MachineError(
+                message: message,
+                category: details?.category
+                    ?? IOSUseErrorCategory.protocolFailure,
+                code: code,
+                phase: details?.phase
+                    ?? IOSUseErrorPhase.dispatch,
+                retryable: details?.retryable ?? false,
+                fatal: details?.fatal ?? false,
+                mutationMayHaveApplied:
+                    code == "frida_eval_failed"
+                    || code == "frida_reset_failed"
+                    || code == "frida_eval_timeout"
+                    || code == "frida_invalid_query"
+            )
+        }
         if case DriverCommandExecutionError.postconditionFailed(let label, let underlying) = error {
             let classified = classify(underlying)
             return MachineError(

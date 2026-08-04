@@ -713,15 +713,15 @@ assert_canonical_host_status() {
         (($rect.x | abs) <= $originTolerance) and
         (($rect.y | abs) <= $originTolerance) and
         ($rect.width - 430 >= -$originTolerance) and
-        ($rect.width - 430 <= $widthTolerance + 0.000001) and
+        ($rect.width - 430 <= $widthTolerance + 0.00001) and
         ($rect.height - 932 >= -$originTolerance) and
-        ($rect.height - 932 <= $heightTolerance + 0.000001) and
+        ($rect.height - 932 <= $heightTolerance + 0.00001) and
         ($rect.x + $rect.width - 430 >= -$originTolerance) and
         ($rect.x + $rect.width - 430 <=
-          $widthTolerance + 0.000001) and
+          $widthTolerance + 0.00001) and
         ($rect.y + $rect.height - 932 >= -$originTolerance) and
         ($rect.y + $rect.height - 932 <=
-          $heightTolerance + 0.000001);
+          $heightTolerance + 0.00001);
       def rects_agree($lhs; $rhs):
         (($lhs.x - $rhs.x) | abs) <= 0.01 and
         (($lhs.y - $rhs.y) | abs) <= 0.01 and
@@ -3036,6 +3036,90 @@ assert_display_matrix_identity
 record_case swipe_fixed swipe --dir forth --distance 300 \
   --dom --json
 assert_evidence swipe_fixed 'Scroll y [1-9][0-9]*'
+
+swipe_anchor_stdout="$RUN_DIR/swipe_anchor_required.stdout"
+swipe_anchor_stderr="$RUN_DIR/swipe_anchor_required.stderr"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$MATRIX_VERSION" \
+  "swipe_anchor_required" \
+  'swipe --to Missing Semantic Target --json (expected anchor-required failure)' \
+  "$swipe_anchor_stdout" \
+  "$swipe_anchor_stderr" >>"$MANIFEST"
+if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+    swipe --to "Missing Semantic Target" --json \
+    >"$swipe_anchor_stdout" 2>"$swipe_anchor_stderr"; then
+  echo \
+    "[playcover-fixture-live] FAIL: missing semantic target guessed a scroll container" \
+    >&2
+  exit 1
+fi
+assert_failure_json swipe_anchor_required '
+  .ok == false and
+  .error.category == "precondition" and
+  .error.code == "scroll_anchor_required" and
+  .error.phase == "lookup" and
+  .error.mutationMayHaveApplied == false
+'
+
+record_case swipe_semantic_to_end swipe \
+  --to "Scroll Target End" --from "Increment" --dom --json
+assert_evidence swipe_semantic_to_end 'Scroll Target End'
+assert_evidence swipe_semantic_to_end \
+  '"scrolls"[[:space:]]*:[[:space:]]*[1-9][0-9]*'
+
+swipe_boundary_stdout="$RUN_DIR/swipe_boundary.stdout"
+swipe_boundary_stderr="$RUN_DIR/swipe_boundary.stderr"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$MATRIX_VERSION" \
+  "swipe_boundary" \
+  'swipe --to Missing Semantic Target --from Scroll Target End --dir forth --json (expected boundary failure)' \
+  "$swipe_boundary_stdout" \
+  "$swipe_boundary_stderr" >>"$MANIFEST"
+if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+    swipe --to "Missing Semantic Target" --from "Scroll Target End" \
+    --dir forth --json \
+    >"$swipe_boundary_stdout" 2>"$swipe_boundary_stderr"; then
+  echo \
+    "[playcover-fixture-live] FAIL: missing semantic target crossed the boundary" \
+    >&2
+  exit 1
+fi
+assert_failure_json swipe_boundary '
+  .ok == false and
+  .error.category == "action" and
+  .error.code == "scroll_boundary" and
+  .error.phase == "interaction" and
+  .error.mutationMayHaveApplied == true
+'
+
+swipe_no_effect_stdout="$RUN_DIR/swipe_no_effect.stdout"
+swipe_no_effect_stderr="$RUN_DIR/swipe_no_effect.stderr"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$MATRIX_VERSION" \
+  "swipe_no_effect" \
+  'swipe --from Scroll Target End --dir forth --distance 300 --json (expected no-effect failure)' \
+  "$swipe_no_effect_stdout" \
+  "$swipe_no_effect_stderr" >>"$MANIFEST"
+if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+    swipe --from "Scroll Target End" --dir forth --distance 300 --json \
+    >"$swipe_no_effect_stdout" 2>"$swipe_no_effect_stderr"; then
+  echo \
+    "[playcover-fixture-live] FAIL: fixed swipe at the boundary reported success" \
+    >&2
+  exit 1
+fi
+assert_failure_json swipe_no_effect '
+  .ok == false and
+  .error.category == "action" and
+  .error.code == "scroll_no_effect" and
+  .error.phase == "postcondition" and
+  .error.mutationMayHaveApplied == true
+'
+
+record_case swipe_semantic_back_to_top swipe \
+  --to "UIKit Fixture" --from "Scroll Target End" --dir back \
+  --dom --json
+assert_evidence swipe_semantic_back_to_top 'UIKit Fixture'
 
 record_case scene_replace tap "Replace Scene Window" \
   --dom --json

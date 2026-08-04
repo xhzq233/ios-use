@@ -480,10 +480,6 @@ static void IOSUseFridaMessageHandler(
         [state->_condition signal];
     } else if ([kind isEqualToString:@"error"] &&
                [payload[@"id"] isEqualToString:state->_pendingID]) {
-        NSString *display = [payload[@"message"] isKindOfClass:NSString.class]
-            ? payload[@"message"]
-            : @"JavaScript evaluation failed";
-        [state appendEvent:display];
         state->_pendingError = [NSError errorWithDomain:@"IOSUseFridaEngine"
                                                       code:6
                                                   userInfo:@{
@@ -492,9 +488,6 @@ static void IOSUseFridaMessageHandler(
         }];
         state->_pending = NO;
         [state->_condition signal];
-        [state->_condition unlock];
-        [state emitEventKind:@"error" display:display];
-        return;
     } else if ([kind isEqualToString:@"event"]) {
         NSString *display = [payload[@"display"] isKindOfClass:NSString.class]
             ? payload[@"display"]
@@ -530,7 +523,6 @@ static void IOSUseFridaMessageHandler(
         NSString *display = [object[@"description"] isKindOfClass:NSString.class]
             ? object[@"description"]
             : @"Frida script error";
-        [state appendEvent:display];
         if (state->_loading) {
             state->_loadError = [NSError errorWithDomain:@"IOSUseFridaEngine"
                                                         code:10
@@ -544,13 +536,11 @@ static void IOSUseFridaMessageHandler(
         state->_pendingError = [NSError errorWithDomain:@"IOSUseFridaEngine"
                                                       code:7
                                                   userInfo:@{
-            NSLocalizedDescriptionKey: object[@"description"] ?: @"Frida script error"
+            NSLocalizedDescriptionKey: object[@"description"] ?: @"Frida script error",
+            @"stack": object[@"stack"] ?: @""
         }];
         state->_pending = NO;
         [state->_condition signal];
-        [state->_condition unlock];
-        [state emitEventKind:@"error" display:display];
-        return;
     }
     [state->_condition unlock];
 }

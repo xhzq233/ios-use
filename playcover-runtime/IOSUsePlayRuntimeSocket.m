@@ -665,6 +665,11 @@ static BOOL IOSUseSocketMatchesPixelQuantizedPrivateCanvas(
     CGFloat positiveWidthTolerance,
     CGFloat positiveHeightTolerance
 ) {
+    // UIKitMacHelper's private frame accessors can quantize one axis to five
+    // fractional digits while the host-canvas layout retains the full double.
+    // Keep this far below one backing pixel, but do not reject a valid resized
+    // host over a few millionths of one logical point.
+    const CGFloat quantizationEpsilon = 0.00001;
     CGFloat widthDelta =
         rect.size.width - IOSUsePlayDeviceLogicalWidth;
     CGFloat heightDelta =
@@ -676,13 +681,13 @@ static BOOL IOSUseSocketMatchesPixelQuantizedPrivateCanvas(
     return fabs(rect.origin.x) <= originTolerance &&
         fabs(rect.origin.y) <= originTolerance &&
         widthDelta >= -originTolerance &&
-        widthDelta <= positiveWidthTolerance + 0.000001 &&
+        widthDelta <= positiveWidthTolerance + quantizationEpsilon &&
         heightDelta >= -originTolerance &&
-        heightDelta <= positiveHeightTolerance + 0.000001 &&
+        heightDelta <= positiveHeightTolerance + quantizationEpsilon &&
         maximumXDelta >= -originTolerance &&
-        maximumXDelta <= positiveWidthTolerance + 0.000001 &&
+        maximumXDelta <= positiveWidthTolerance + quantizationEpsilon &&
         maximumYDelta >= -originTolerance &&
-        maximumYDelta <= positiveHeightTolerance + 0.000001;
+        maximumYDelta <= positiveHeightTolerance + quantizationEpsilon;
 }
 
 static BOOL IOSUseSocketRectsApproximatelyEqual(

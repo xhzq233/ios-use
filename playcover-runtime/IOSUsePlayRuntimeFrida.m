@@ -51,19 +51,22 @@ BOOL IOSUsePlayRuntimeFridaEnabled(void) {
 static NSDictionary<NSString *, id> *IOSUseFridaError(
     NSString *code,
     NSString *message,
-    BOOL retryable
+    NSString *category,
+    NSString *phase,
+    BOOL retryable,
+    NSArray<NSString *> *suggestions
 ) {
     return @{
         @"code": code,
         @"message": message,
         @"details": @{
-            @"category": @"capability",
-            @"phase": @"debug",
+            @"category": category,
+            @"phase": phase,
             @"retryable": @(retryable),
             @"fatal": @NO,
             @"candidateCount": @0,
             @"candidates": @[],
-            @"suggestions": @[],
+            @"suggestions": suggestions ?: @[],
         },
     };
 }
@@ -119,7 +122,10 @@ static BOOL IOSUseFridaResolveSymbols(void) {
             [NSString stringWithFormat:
                 @"the prepared App does not contain a loadable pinned "
                 "IOSUseFridaEngine.framework%@", suffix],
-            NO
+            @"internal",
+            @"debug_engine",
+            NO,
+            @[]
         );
         return NO;
     }
@@ -153,7 +159,10 @@ static BOOL IOSUseFridaResolveSymbols(void) {
         IOSUseFridaLoadError = IOSUseFridaError(
             @"frida_engine_abi_mismatch",
             @"IOSUseFridaEngine.framework does not expose the pinned Engine ABI",
-            NO
+            @"internal",
+            @"debug_engine",
+            NO,
+            @[]
         );
         dlclose(handle);
         IOSUseFridaHandle = NULL;
@@ -188,7 +197,10 @@ IOSUsePlayRuntimeFridaDebugCommand(
             *error = IOSUseFridaError(
                 @"frida_capability_unavailable",
                 @"the active App generation was not prepared with --frida",
-                NO
+                @"validation",
+                @"debug_preflight",
+                NO,
+                @[]
             );
         }
         return nil;
@@ -198,7 +210,10 @@ IOSUsePlayRuntimeFridaDebugCommand(
             *error = IOSUseFridaError(
                 @"invalid_arguments",
                 @"debug arguments must be an object",
-                NO
+                @"validation",
+                @"validation",
+                NO,
+                @[]
             );
         }
         return nil;
@@ -211,7 +226,10 @@ IOSUsePlayRuntimeFridaDebugCommand(
             *error = IOSUseFridaError(
                 @"invalid_arguments",
                 @"debug script must be a string or null",
-                NO
+                @"validation",
+                @"validation",
+                NO,
+                @[]
             );
         }
         return nil;
@@ -224,7 +242,10 @@ IOSUsePlayRuntimeFridaDebugCommand(
                 *error = IOSUseFridaLoadError ?: IOSUseFridaError(
                     @"frida_engine_missing",
                     @"the pinned Frida Engine could not be loaded",
-                    NO
+                    @"internal",
+                    @"debug_engine",
+                    NO,
+                    @[]
                 );
             }
             return nil;
@@ -236,7 +257,10 @@ IOSUsePlayRuntimeFridaDebugCommand(
                     *error = IOSUseFridaError(
                         @"frida_engine_init_failed",
                         @"the pinned Frida Engine failed to initialize",
-                        NO
+                        @"internal",
+                        @"debug_engine",
+                        NO,
+                        @[]
                     );
                 }
                 return nil;
@@ -255,7 +279,12 @@ IOSUsePlayRuntimeFridaDebugCommand(
                     *error = IOSUseFridaError(
                         @"frida_stream_busy",
                         @"another Frida stream is already active",
-                        NO
+                        @"session",
+                        @"debug_stream",
+                        YES,
+                        @[
+                            @"Close the existing ios-use debug --stream connection and retry.",
+                        ]
                     );
                 }
                 return nil;
@@ -301,11 +330,57 @@ IOSUsePlayRuntimeFridaDebugCommand(
                 }
             }
             if (error != NULL) {
-                *error = IOSUseFridaError(
-                    @"frida_eval_failed",
+                NSString *evaluationMessage =
                     evaluationError.localizedDescription ?:
-                        @"Frida Engine evaluation failed",
-                    YES
+                        @"Frida Engine evaluation failed";
+                NSString *failureMessage = evaluationMessage;
+                NSString *stack = [evaluationError.userInfo[@"stack"]
+                    isKindOfClass:NSString.class]
+                        ? evaluationError.userInfo[@"stack"]
+                        : @"";
+                if (stack.length > 0) {
+                    failureMessage = [NSString stringWithFormat:
+                        @"%@\n%@",
+                        failureMessage,
+                        stack];
+                }
+                BOOL resetOnly = reset && script.length == 0;
+                BOOL timedOut =
+                    !resetOnly &&
+                    [evaluationError.domain isEqualToString:
+                        @"IOSUseFridaEngine"] &&
+                    evaluationError.code == 5;
+                BOOL invalidQuery =
+                    !resetOnly &&
+                    [evaluationMessage rangeOfString:@"invalid query"
+                                               options:NSCaseInsensitiveSearch]
+                        .location != NSNotFound;
+                NSString *failureCode = @"frida_eval_failed";
+                NSArray<NSString *> *suggestions = @[
+                    @"Run ios-use debug --reset before continuing if you need a clean Agent.",
+                ];
+                if (resetOnly) {
+                    failureCode = @"frida_reset_failed";
+                } else if (timedOut) {
+                    failureCode = @"frida_eval_timeout";
+                    suggestions = @[
+                        @"Narrow symbol work to one loaded Module and a specific pattern; avoid full-process symbol enumeration.",
+                        @"Run ios-use debug --reset before continuing if you need a clean Agent.",
+                    ];
+                } else if (invalidQuery) {
+                    failureCode = @"frida_invalid_query";
+                    suggestions = @[
+                        @"Swift resolver queries require functions:<module-pattern>!<symbol-pattern>, for example functions:*MyApp*!*recordProbe*.",
+                        @"Run ios-use debug --reset before continuing if you need a clean Agent.",
+                    ];
+                }
+                *error = IOSUseFridaError(
+                    failureCode,
+                    failureMessage,
+                    @"action",
+                    resetOnly ? @"debug_reset" : @"debug_eval",
+                    YES,
+                    suggestions
                 );
             }
             return nil;

@@ -7,6 +7,10 @@ public enum StatusService {
     static var playCoverDiagnosticsForTesting:
         ((SessionService.Info) throws
             -> PlayCoverRuntimeDiagnosticsPayload)?
+    static var macSigningResolutionForTesting:
+        (() -> PlayCoverSigningIdentityResolution)?
+    static var macRuntimeResolutionForTesting:
+        ((IOSUsePaths) throws -> String)?
 
     static func machineSnapshot(paths: IOSUsePaths) -> (data: MachineValue, warnings: [String]) {
         let configured = DeviceService.configuredDevices(paths: paths)
@@ -193,6 +197,7 @@ public enum StatusService {
                 "selectedTarget": activeUdid.map(MachineValue.string) ?? .null,
                 "connectedDevices": .array(deviceValues),
                 "driver": driver,
+                "macBackend": macReadinessMachineValue(paths: paths),
                 "configuredDevices": .array(configValues),
             ]),
             warnings
@@ -211,6 +216,9 @@ public enum StatusService {
         lines.append(contentsOf: driverLines(paths: paths, verbose: verbose))
         lines.append("")
 
+        lines.append(macReadinessLine(paths: paths))
+        lines.append("")
+
         lines.append("App log:")
         lines.append(contentsOf: appLogLines(paths: paths))
         lines.append("")
@@ -227,6 +235,125 @@ public enum StatusService {
         lines.append(contentsOf: configLines(entries: ConfigService.listEntries(paths: paths)))
 
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    private struct MacReadiness {
+        let resourcesReady: Bool
+        let runtimePath: String?
+        let resourceError: String?
+        let signerHealth: PlayCoverSigningIdentityHealth
+        let sessionStatus: String
+
+        var ready: Bool {
+            resourcesReady && signerHealth == .healthy
+        }
+
+        var nextAction: String? {
+            if !resourcesReady {
+                return "Reinstall ios-use so the Mac Runtime resources are available."
+            }
+            if signerHealth != .healthy {
+                return "Run `ios-use config --mac`."
+            }
+            switch sessionStatus {
+            case "notRunning":
+                return "Run `ios-use start --mac --app <App.app>`."
+            case "unresolvedOpen", "invalidPendingLaunch", "invalid":
+                return "Resolve the reported Mac session state before starting again."
+            default:
+                return nil
+            }
+        }
+    }
+
+    private static func macReadiness(
+        paths: IOSUsePaths
+    ) -> MacReadiness {
+        let signingResolution = macSigningResolutionForTesting?()
+            ?? PlayCoverSigningIdentityService().resolve()
+        let runtimePath: String?
+        let resourceError: String?
+        do {
+            runtimePath = try (
+                macRuntimeResolutionForTesting
+                    ?? PlayCoverManagedAppService.resolveDefaultRuntime
+            )(paths)
+            resourceError = nil
+        } catch {
+            runtimePath = nil
+            resourceError = String(describing: error)
+        }
+        return MacReadiness(
+            resourcesReady: runtimePath != nil,
+            runtimePath: runtimePath,
+            resourceError: resourceError,
+            signerHealth: signingResolution.health,
+            sessionStatus: macSessionStatus(paths: paths)
+        )
+    }
+
+    private static func macSessionStatus(
+        paths: IOSUsePaths
+    ) -> String {
+        do {
+            if let info = try SessionService.readDriverLockInfo(
+                paths: paths
+            ), info.deviceType == PlayCoverSessionService.deviceType {
+                return "running"
+            }
+            if try PlayCoverPendingLaunchStore.load(
+                paths: paths
+            ) != nil {
+                return "unresolvedOpen"
+            }
+            return "notRunning"
+        } catch {
+            return "invalidPendingLaunch"
+        }
+    }
+
+    private static func macReadinessMachineValue(
+        paths: IOSUsePaths
+    ) -> MachineValue {
+        let readiness = macReadiness(paths: paths)
+        return .object([
+            "status": .string(
+                readiness.ready ? "ready" : "unavailable"
+            ),
+            "resources": .object([
+                "status": .string(
+                    readiness.resourcesReady ? "ready" : "missing"
+                ),
+                "runtimePath": readiness.runtimePath
+                    .map(MachineValue.string) ?? .null,
+                "error": readiness.resourceError
+                    .map(MachineValue.string) ?? .null,
+            ]),
+            "signer": .object([
+                "status": .string(readiness.signerHealth.rawValue),
+            ]),
+            "session": .object([
+                "status": .string(readiness.sessionStatus),
+            ]),
+            "nextAction": readiness.nextAction
+                .map(MachineValue.string) ?? .null,
+        ])
+    }
+
+    private static func macReadinessLine(
+        paths: IOSUsePaths
+    ) -> String {
+        let readiness = macReadiness(paths: paths)
+        var parts = [
+            "Mac Backend: \(readiness.ready ? "ready" : "unavailable")",
+            "resources: \(readiness.resourcesReady ? "ready" : "missing")",
+            "signer: \(readiness.signerHealth.rawValue)",
+            "session: \(readiness.sessionStatus)",
+        ]
+        if let nextAction = readiness.nextAction {
+            parts.append("next: \(nextAction)")
+        }
+        return parts.joined(separator: " | ")
     }
 
     private static func pendingLaunchReason(

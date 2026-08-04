@@ -12,6 +12,9 @@
 #import <stdint.h>
 
 static const NSTimeInterval IOSUseAutomationMainTimeout = 40.0;
+static const NSUInteger IOSUseAutomationMaximumSemanticScrolls = 25;
+static const CGFloat IOSUseAutomationScrollProportion = 0.75;
+static const CGFloat IOSUseAutomationScrollEpsilon = 0.5;
 
 NSTimeInterval IOSUsePlayRuntimeAutomationMainThreadTimeout(void) {
     return IOSUseAutomationMainTimeout;
@@ -623,6 +626,7 @@ NSArray<NSDictionary<NSString *, id> *> *
 IOSUseAutomationSelectElements(
     NSDictionary<NSString *, id> *dom,
     NSDictionary<NSString *, id> *target,
+    BOOL includeOffscreenElements,
     NSDictionary<NSString *, id> **commandError
 ) {
     NSString *label = [target[@"label"]
@@ -662,7 +666,8 @@ IOSUseAutomationSelectElements(
     for (NSDictionary<NSString *, id> *element in dom[@"elements"]) {
         if (![element isKindOfClass:NSDictionary.class] ||
             !IOSUseAutomationElementHasTraits(element, traits) ||
-            ![element[@"state"][@"visible"] boolValue]) {
+            (!includeOffscreenElements &&
+             ![element[@"state"][@"visible"] boolValue])) {
             continue;
         }
         BOOL exactMatch = NO;
@@ -750,6 +755,7 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
     NSDictionary<NSString *, id> *target,
     NSDictionary<NSString *, id> *dom,
     BOOL deferSemanticTapPlacement,
+    BOOL includeOffscreenElements,
     CGPoint *point,
     UIWindow **window,
     UIView **hitView,
@@ -803,6 +809,7 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
             IOSUseAutomationSelectElements(
                 dom,
                 target,
+                includeOffscreenElements,
                 commandError
             );
         if (matches == nil) {
@@ -875,7 +882,8 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
         }
     }
     BOOL placementDeferred =
-        deferSemanticTapPlacement && explicitPoint == nil;
+        (deferSemanticTapPlacement || includeOffscreenElements) &&
+        explicitPoint == nil;
     if (!placementDeferred &&
         !IOSUseAutomationFinitePoint(resolvedPoint)) {
         if (commandError != NULL) {
@@ -1007,6 +1015,221 @@ static UIView *IOSUseAutomationScrollDeliveryView(UIView *hitView) {
         candidate = candidate.superview;
     }
     return hitView;
+}
+
+static UIView *IOSUseAutomationCandidateView(
+    IOSUseAutomationCandidate *candidate,
+    UIView *fallback
+) {
+    if (candidate.interactionView != nil) {
+        return candidate.interactionView;
+    }
+    if ([candidate.object isKindOfClass:UIView.class]) {
+        return candidate.object;
+    }
+    return fallback;
+}
+
+static UIScrollView *IOSUseAutomationScrollableAncestor(UIView *view) {
+    for (UIView *candidate = view;
+         candidate != nil;
+         candidate = candidate.superview) {
+        if (![candidate isKindOfClass:UIScrollView.class]) {
+            continue;
+        }
+        UIScrollView *scrollView = (UIScrollView *)candidate;
+        if (!scrollView.scrollEnabled ||
+            !scrollView.userInteractionEnabled) {
+            continue;
+        }
+        UIEdgeInsets inset = scrollView.adjustedContentInset;
+        CGFloat horizontalRange =
+            scrollView.contentSize.width -
+            scrollView.bounds.size.width +
+            inset.left + inset.right;
+        CGFloat verticalRange =
+            scrollView.contentSize.height -
+            scrollView.bounds.size.height +
+            inset.top + inset.bottom;
+        if (horizontalRange > IOSUseAutomationScrollEpsilon ||
+            verticalRange > IOSUseAutomationScrollEpsilon) {
+            return scrollView;
+        }
+    }
+    return nil;
+}
+
+static BOOL IOSUseAutomationPointsApproximatelyEqual(
+    CGPoint left,
+    CGPoint right
+) {
+    return fabs(left.x - right.x) <= IOSUseAutomationScrollEpsilon &&
+        fabs(left.y - right.y) <= IOSUseAutomationScrollEpsilon;
+}
+
+static CGPoint IOSUseAutomationClampedContentOffset(
+    UIScrollView *scrollView,
+    CGPoint offset
+) {
+    UIEdgeInsets inset = scrollView.adjustedContentInset;
+    CGFloat minimumX = -inset.left;
+    CGFloat maximumX = MAX(
+        minimumX,
+        scrollView.contentSize.width -
+            scrollView.bounds.size.width + inset.right
+    );
+    CGFloat minimumY = -inset.top;
+    CGFloat maximumY = MAX(
+        minimumY,
+        scrollView.contentSize.height -
+            scrollView.bounds.size.height + inset.bottom
+    );
+    return CGPointMake(
+        MIN(maximumX, MAX(minimumX, offset.x)),
+        MIN(maximumY, MAX(minimumY, offset.y))
+    );
+}
+
+static CGRect IOSUseAutomationScrollViewport(UIScrollView *scrollView) {
+    CGRect frame = [scrollView convertRect:scrollView.bounds toView:nil];
+    CGRect logical = CGRectMake(
+        0,
+        0,
+        IOSUsePlayDeviceLogicalWidth,
+        IOSUsePlayDeviceLogicalHeight
+    );
+    return CGRectIntersection(frame, logical);
+}
+
+static BOOL IOSUseAutomationCandidateVisibleInScrollView(
+    IOSUseAutomationCandidate *candidate,
+    UIScrollView *scrollView
+) {
+    if (candidate == nil || CGRectIsNull(candidate.frame) ||
+        CGRectIsEmpty(candidate.frame) ||
+        ![candidate.serialized[@"state"][@"visible"] boolValue]) {
+        return NO;
+    }
+    CGRect viewport = IOSUseAutomationScrollViewport(scrollView);
+    if (CGRectIsNull(viewport) || CGRectIsEmpty(viewport)) {
+        return NO;
+    }
+    CGPoint center = CGPointMake(
+        CGRectGetMidX(candidate.frame),
+        CGRectGetMidY(candidate.frame)
+    );
+    CGRect tolerantViewport = CGRectInset(
+        viewport,
+        -IOSUseAutomationScrollEpsilon,
+        -IOSUseAutomationScrollEpsilon
+    );
+    return CGRectContainsRect(tolerantViewport, candidate.frame) &&
+        IOSUseAutomationFinitePoint(center);
+}
+
+static BOOL IOSUseAutomationScrollUsesHorizontalAxis(
+    UIScrollView *scrollView,
+    IOSUseAutomationCandidate *target
+) {
+    UIEdgeInsets inset = scrollView.adjustedContentInset;
+    CGFloat horizontalRange = MAX(
+        0,
+        scrollView.contentSize.width -
+            scrollView.bounds.size.width +
+            inset.left + inset.right
+    );
+    CGFloat verticalRange = MAX(
+        0,
+        scrollView.contentSize.height -
+            scrollView.bounds.size.height +
+            inset.top + inset.bottom
+    );
+    if (horizontalRange <= IOSUseAutomationScrollEpsilon) {
+        return NO;
+    }
+    if (verticalRange <= IOSUseAutomationScrollEpsilon) {
+        return YES;
+    }
+    if (target != nil) {
+        CGRect viewport = IOSUseAutomationScrollViewport(scrollView);
+        CGFloat horizontalOverflow = MAX(
+            MAX(CGRectGetMinX(viewport) - CGRectGetMidX(target.frame), 0),
+            MAX(CGRectGetMidX(target.frame) - CGRectGetMaxX(viewport), 0)
+        );
+        CGFloat verticalOverflow = MAX(
+            MAX(CGRectGetMinY(viewport) - CGRectGetMidY(target.frame), 0),
+            MAX(CGRectGetMidY(target.frame) - CGRectGetMaxY(viewport), 0)
+        );
+        if (horizontalOverflow != verticalOverflow) {
+            return horizontalOverflow > verticalOverflow;
+        }
+    }
+    return horizontalRange > verticalRange;
+}
+
+static BOOL IOSUseAutomationScrollBackwardTowardTarget(
+    UIScrollView *scrollView,
+    IOSUseAutomationCandidate *target,
+    BOOL horizontal,
+    NSInteger requestedDirection
+) {
+    if (target != nil) {
+        CGRect viewport = IOSUseAutomationScrollViewport(scrollView);
+        CGFloat targetCenter = horizontal
+            ? CGRectGetMidX(target.frame)
+            : CGRectGetMidY(target.frame);
+        CGFloat viewportCenter = horizontal
+            ? CGRectGetMidX(viewport)
+            : CGRectGetMidY(viewport);
+        if (fabs(targetCenter - viewportCenter) >
+            IOSUseAutomationScrollEpsilon) {
+            return targetCenter < viewportCenter;
+        }
+    }
+    return requestedDirection == 1;
+}
+
+static CGPoint IOSUseAutomationProposedContentOffset(
+    UIScrollView *scrollView,
+    BOOL horizontal,
+    BOOL backward
+) {
+    UIEdgeInsets inset = scrollView.adjustedContentInset;
+    CGPoint current = scrollView.contentOffset;
+    if (horizontal) {
+        CGFloat minimum = -inset.left;
+        CGFloat maximum = MAX(
+            minimum,
+            scrollView.contentSize.width -
+                scrollView.bounds.size.width + inset.right
+        );
+        CGFloat delta = MAX(
+            1,
+            scrollView.bounds.size.width *
+                IOSUseAutomationScrollProportion
+        );
+        current.x = MIN(
+            maximum,
+            MAX(minimum, current.x + (backward ? -delta : delta))
+        );
+    } else {
+        CGFloat minimum = -inset.top;
+        CGFloat maximum = MAX(
+            minimum,
+            scrollView.contentSize.height -
+                scrollView.bounds.size.height + inset.bottom
+        );
+        CGFloat delta = MAX(
+            1,
+            scrollView.bounds.size.height *
+                IOSUseAutomationScrollProportion
+        );
+        current.y = MIN(
+            maximum,
+            MAX(minimum, current.y + (backward ? -delta : delta))
+        );
+    }
+    return current;
 }
 
 static NSDictionary<NSString *, id> *IOSUseAutomationHitViewJSON(
@@ -1875,6 +2098,358 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDeliveryResult(
     return result;
 }
 
+static NSDictionary<NSString *, id> *
+IOSUseAutomationSemanticSwipeResult(
+    IOSUseAutomationCandidate *target,
+    UIView *deliveryView,
+    NSUInteger scrolls,
+    BOOL horizontal,
+    BOOL backward
+) {
+    UIView *targetView = IOSUseAutomationCandidateView(
+        target,
+        deliveryView
+    );
+    CGPoint point = CGPointMake(
+        CGRectGetMidX(target.frame),
+        CGRectGetMidY(target.frame)
+    );
+    return IOSUseAutomationDeliveryResult(
+        target,
+        targetView,
+        point,
+        -1,
+        @"programmatic-scroll",
+        nil,
+        @{
+            @"scrolls": @(scrolls),
+            @"direction": scrolls == 0
+                ? @""
+                : (
+                    horizontal
+                        ? (backward ? @"left" : @"right")
+                        : (backward ? @"up" : @"down")
+                ),
+        }
+    );
+}
+
+static NSDictionary<NSString *, id> * _Nullable
+IOSUseAutomationSemanticSwipe(
+    NSDictionary<NSString *, id> *arguments,
+    NSDictionary<NSString *, id> *initialDOM,
+    BOOL *handled,
+    NSDictionary<NSString *, id> **commandError
+) {
+    if (handled != NULL) {
+        *handled = NO;
+    }
+    NSDictionary<NSString *, id> *toTarget = arguments[@"toTarget"];
+    NSDictionary<NSString *, id> *fromTarget = arguments[@"fromTarget"];
+    NSString *toLabel = [toTarget[@"label"]
+        isKindOfClass:NSString.class]
+            ? [toTarget[@"label"]
+                stringByTrimmingCharactersInSet:
+                    NSCharacterSet.whitespaceAndNewlineCharacterSet]
+            : @"";
+    NSString *fromLabel = [fromTarget[@"label"]
+        isKindOfClass:NSString.class]
+            ? [fromTarget[@"label"]
+                stringByTrimmingCharactersInSet:
+                    NSCharacterSet.whitespaceAndNewlineCharacterSet]
+            : @"";
+    BOOL hasAnchor = fromLabel.length > 0 ||
+        [fromTarget[@"point"] isKindOfClass:NSDictionary.class];
+    if (![toTarget isKindOfClass:NSDictionary.class] ||
+        toLabel.length == 0) {
+        return nil;
+    }
+    if (handled != NULL) {
+        *handled = YES;
+    }
+
+    UIView *anchorHitView = nil;
+    unsigned long long anchorGeneration = 0;
+    IOSUseAutomationCandidate *anchor = nil;
+    IOSUseAutomationCandidate *initialTarget = nil;
+    NSDictionary<NSString *, id> *initialTargetError = nil;
+    if (hasAnchor) {
+        anchor = IOSUseAutomationResolveWithDOM(
+            fromTarget,
+            initialDOM,
+            YES,
+            NO,
+            NULL,
+            NULL,
+            &anchorHitView,
+            &anchorGeneration,
+            commandError
+        );
+        if (anchor == nil) {
+            return nil;
+        }
+    } else {
+        initialTarget = IOSUseAutomationResolveWithDOM(
+            toTarget,
+            initialDOM,
+            NO,
+            YES,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            &initialTargetError
+        );
+        if (initialTarget == nil) {
+            if ([initialTargetError[@"code"] isEqualToString:
+                    @"element_not_found"]) {
+                if (commandError != NULL) {
+                    *commandError = IOSUseAutomationError(
+                        @"scroll_anchor_required",
+                        @"a semantic target that is not in the current DOM requires --from to identify its scroll container",
+                        @"precondition",
+                        @"lookup",
+                        NO,
+                        toTarget,
+                        @[]
+                    );
+                }
+            } else if (commandError != NULL) {
+                *commandError = initialTargetError;
+            }
+            return nil;
+        }
+        CGRect logicalScreen = CGRectMake(
+            0,
+            0,
+            IOSUsePlayDeviceLogicalWidth,
+            IOSUsePlayDeviceLogicalHeight
+        );
+        CGRect tolerantScreen = CGRectInset(
+            logicalScreen,
+            -IOSUseAutomationScrollEpsilon,
+            -IOSUseAutomationScrollEpsilon
+        );
+        if (![initialTarget.serialized[@"state"][@"visible"]
+                boolValue] ||
+            !CGRectContainsRect(tolerantScreen, initialTarget.frame)) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"scroll_anchor_required",
+                    @"an off-screen semantic target requires --from to identify its scroll container",
+                    @"precondition",
+                    @"lookup",
+                    NO,
+                    toTarget,
+                    @[]
+                );
+            }
+            return nil;
+        }
+        anchor = initialTarget;
+    }
+    UIView *anchorView = IOSUseAutomationCandidateView(anchor, anchorHitView);
+    UIScrollView *scrollView = IOSUseAutomationScrollableAncestor(anchorView);
+    if (scrollView == nil) {
+        if (!hasAnchor && initialTarget != nil) {
+            return IOSUseAutomationSemanticSwipeResult(
+                initialTarget,
+                anchorView,
+                0,
+                NO,
+                NO
+            );
+        }
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"scroll_unavailable",
+                @"the visible swipe anchor is not inside a scrollable UIKit view",
+                @"action",
+                @"interaction",
+                YES,
+                fromTarget,
+                @[]
+            );
+        }
+        return nil;
+    }
+
+    NSDictionary<NSString *, id> *currentDOM = initialDOM;
+    IOSUseAutomationCandidate *target = initialTarget;
+    BOOL horizontal = NO;
+    BOOL backward = NO;
+    NSInteger requestedDirection =
+        [arguments[@"direction"] integerValue];
+    NSMutableSet<NSString *> *seenOffsets = [NSMutableSet set];
+    for (NSUInteger attempt = 0;
+         attempt <= IOSUseAutomationMaximumSemanticScrolls;
+         attempt += 1) {
+        NSDictionary<NSString *, id> *targetError = nil;
+        if (attempt > 0 || target == nil) {
+            target = IOSUseAutomationResolveWithDOM(
+                toTarget,
+                currentDOM,
+                NO,
+                YES,
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                &targetError
+            );
+        }
+        if (target == nil &&
+            ![targetError[@"code"] isEqualToString:
+                @"element_not_found"]) {
+            if (commandError != NULL) {
+                *commandError = targetError;
+            }
+            return nil;
+        }
+        if (target != nil) {
+            UIView *targetView = IOSUseAutomationCandidateView(
+                target,
+                nil
+            );
+            UIScrollView *targetScrollView =
+                IOSUseAutomationScrollableAncestor(targetView);
+            if (targetScrollView != nil &&
+                targetScrollView != scrollView) {
+                if (commandError != NULL) {
+                    *commandError = IOSUseAutomationError(
+                        @"scroll_unavailable",
+                        @"swipe target and anchor resolved in different scrollable UIKit views",
+                        @"action",
+                        @"interaction",
+                        NO,
+                        toTarget,
+                        @[]
+                    );
+                }
+                return nil;
+            }
+            if (IOSUseAutomationCandidateVisibleInScrollView(
+                    target,
+                    scrollView
+                )) {
+                horizontal = IOSUseAutomationScrollUsesHorizontalAxis(
+                    scrollView,
+                    target
+                );
+                backward = IOSUseAutomationScrollBackwardTowardTarget(
+                    scrollView,
+                    target,
+                    horizontal,
+                    requestedDirection
+                );
+                return IOSUseAutomationSemanticSwipeResult(
+                    target,
+                    scrollView,
+                    attempt,
+                    horizontal,
+                    backward
+                );
+            }
+        }
+        if (attempt == IOSUseAutomationMaximumSemanticScrolls) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"scroll_limit_reached",
+                    [NSString stringWithFormat:
+                        @"target was not visible after %lu bounded scroll attempts",
+                        (unsigned long)attempt],
+                    @"action",
+                    @"interaction",
+                    YES,
+                    toTarget,
+                    @[]
+                );
+            }
+            return nil;
+        }
+
+        horizontal = IOSUseAutomationScrollUsesHorizontalAxis(
+            scrollView,
+            target
+        );
+        backward = IOSUseAutomationScrollBackwardTowardTarget(
+            scrollView,
+            target,
+            horizontal,
+            requestedDirection
+        );
+        CGPoint before = scrollView.contentOffset;
+        NSString *offsetKey = [NSString stringWithFormat:
+            @"%.3f,%.3f",
+            before.x,
+            before.y];
+        if ([seenOffsets containsObject:offsetKey]) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"scroll_boundary",
+                    @"scroll state repeated before the semantic target became visible",
+                    @"action",
+                    @"interaction",
+                    YES,
+                    toTarget,
+                    @[]
+                );
+            }
+            return nil;
+        }
+        [seenOffsets addObject:offsetKey];
+        CGPoint proposed = IOSUseAutomationProposedContentOffset(
+            scrollView,
+            horizontal,
+            backward
+        );
+        if (IOSUseAutomationPointsApproximatelyEqual(
+                before,
+                proposed
+            )) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"scroll_boundary",
+                    @"scrollable reached its boundary before the semantic target became visible",
+                    @"action",
+                    @"interaction",
+                    YES,
+                    toTarget,
+                    @[]
+                );
+            }
+            return nil;
+        }
+        [scrollView setContentOffset:proposed animated:NO];
+        [scrollView layoutIfNeeded];
+        IOSUseAutomationPump(0.1);
+        CGPoint after = scrollView.contentOffset;
+        if (IOSUseAutomationPointsApproximatelyEqual(before, after)) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"scroll_no_effect",
+                    @"scrollable accepted a new offset request but its content offset did not change",
+                    @"action",
+                    @"interaction",
+                    YES,
+                    toTarget,
+                    @[]
+                );
+            }
+            return nil;
+        }
+        NSDictionary<NSString *, id> *snapshotError = nil;
+        currentDOM = IOSUseAutomationFreshDOM(&snapshotError);
+        if (currentDOM == nil) {
+            if (commandError != NULL) {
+                *commandError = snapshotError;
+            }
+            return nil;
+        }
+    }
+    return nil;
+}
+
 static BOOL IOSUseAutomationUnsupportedTouchBlockedByNativeAlert(
     NSDictionary<NSString *, id> *dom,
     NSDictionary<NSString *, id> * _Nullable target,
@@ -1904,10 +2479,20 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
     NSDictionary<NSString *, id> *arguments,
     NSDictionary<NSString *, id> **commandError
 ) {
-    NSDictionary *target =
-        [command isEqualToString:@"swipe"]
-            ? arguments[@"fromTarget"]
-            : arguments[@"target"];
+    BOOL isSwipe = [command isEqualToString:@"swipe"];
+    NSDictionary *target = isSwipe
+        ? arguments[@"fromTarget"]
+        : arguments[@"target"];
+    if (isSwipe && ![target isKindOfClass:NSDictionary.class]) {
+        target = @{
+            @"label": @"",
+            @"traits": @"",
+            @"point": @{
+                @"x": @(IOSUsePlayDeviceLogicalWidth / 2.0),
+                @"y": @(IOSUsePlayDeviceLogicalHeight / 2.0),
+            },
+        };
+    }
     CGPoint point = CGPointZero;
     UIWindow *window = nil;
     UIView *hitView = nil;
@@ -1929,11 +2514,25 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         )) {
         return nil;
     }
+    if (isSwipe) {
+        BOOL handled = NO;
+        NSDictionary<NSString *, id> *semanticResult =
+            IOSUseAutomationSemanticSwipe(
+                arguments,
+                preDOM,
+                &handled,
+                commandError
+            );
+        if (handled) {
+            return semanticResult;
+        }
+    }
     IOSUseAutomationCandidate *candidate =
         IOSUseAutomationResolveWithDOM(
         target,
         preDOM,
         [command isEqualToString:@"tap"],
+        NO,
         &point,
         &window,
         &hitView,
@@ -2054,6 +2653,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                 target,
                 preDOM,
                 YES,
+                NO,
                 &point,
                 &window,
                 &hitView,
@@ -2325,6 +2925,8 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
     CGPoint endPoint = CGPointZero;
     IOSUseAutomationCandidate *toCandidate = nil;
     UIView *deliveryView = hitView;
+    UIScrollView *observedScrollView = nil;
+    CGPoint contentOffsetBefore = CGPointZero;
     if ([toTarget isKindOfClass:NSDictionary.class]) {
         UIWindow *endWindow = nil;
         UIView *endHitView = nil;
@@ -2332,6 +2934,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         toCandidate = IOSUseAutomationResolveWithDOM(
             toTarget,
             preDOM,
+            NO,
             NO,
             &endPoint,
             &endWindow,
@@ -2393,6 +2996,14 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         );
         deliveryView =
             IOSUseAutomationScrollDeliveryView(hitView);
+        if ([deliveryView isKindOfClass:UIScrollView.class]) {
+            observedScrollView = (UIScrollView *)deliveryView;
+            contentOffsetBefore =
+                IOSUseAutomationClampedContentOffset(
+                    observedScrollView,
+                    observedScrollView.contentOffset
+                );
+        }
     }
     if (!IOSUseAutomationFinitePoint(endPoint)) {
         if (commandError != NULL) {
@@ -2481,6 +3092,27 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                 @"swipe began, moved, and ended phases were not all delivered to UIApplication",
                 @"interaction",
                 @"delivery",
+                YES,
+                target,
+                @[]
+            );
+        }
+        return nil;
+    }
+    if (observedScrollView != nil &&
+        IOSUseAutomationPointsApproximatelyEqual(
+            contentOffsetBefore,
+            IOSUseAutomationClampedContentOffset(
+                observedScrollView,
+                observedScrollView.contentOffset
+            )
+        )) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"scroll_no_effect",
+                @"swipe touch phases were delivered but the scrollable content offset did not change",
+                @"action",
+                @"postcondition",
                 YES,
                 target,
                 @[]
@@ -2842,6 +3474,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
         candidate = IOSUseAutomationResolveWithDOM(
             target,
             preDOM,
+            NO,
             NO,
             &point,
             &window,

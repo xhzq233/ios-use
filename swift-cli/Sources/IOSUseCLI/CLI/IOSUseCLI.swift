@@ -310,18 +310,55 @@ public struct IOSUseCLI: Sendable {
         case .config(let options) where options.playCover:
             return executePlayCoverConfiguration(json: json)
         case .config(let options) where options.list:
-            return CLIResult(exitCode: 0, stdout: ConfigService.formatList(ConfigService.listEntries(paths: paths)))
+            let output = ConfigService.formatList(
+                ConfigService.listEntries(paths: paths)
+            )
+            if json {
+                return MachineOutput.success(
+                    command: parsed.commandName,
+                    data: .object(["display": .string(output)])
+                )
+            }
+            return CLIResult(exitCode: 0, stdout: output)
         case .config(let options) where options.simulator:
             do {
-                return CLIResult(exitCode: 0, stdout: try ConfigService.configureSimulator(udid: options.udid, paths: paths))
+                let output = try ConfigService.configureSimulator(
+                    udid: options.udid,
+                    paths: paths
+                )
+                if json {
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: .object(["display": .string(output)])
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: output)
             } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+                return commandFailure(
+                    command: parsed.commandName,
+                    error: error,
+                    json: json
+                )
             }
         case .config(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try ConfigService.configureDevice(options: options, paths: paths))
+                let output = try ConfigService.configureDevice(
+                    options: options,
+                    paths: paths
+                )
+                if json {
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: .object(["display": .string(output)])
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: output)
             } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+                return commandFailure(
+                    command: parsed.commandName,
+                    error: error,
+                    json: json
+                )
             }
         case .start(let options):
             do {
@@ -597,7 +634,7 @@ public struct IOSUseCLI: Sendable {
             )
         case .driver(let action):
             switch action {
-            case .dom, .inspect, .screenshot, .waitFor,
+            case .dom, .screenshot, .waitFor,
                     .tap, .longPress, .swipe, .input,
                     .dismissAlert:
                 return nil
@@ -835,12 +872,87 @@ public struct IOSUseCLI: Sendable {
                 stderr: eventText.isEmpty ? "" : eventText + "\n"
             )
         } catch {
-            return commandFailure(
-                command: "debug",
-                error: error,
-                json: json
+            let mutationMayHaveApplied =
+                Self.debugMutationMayHaveApplied(error)
+            if json {
+                return commandFailure(
+                    command: "debug",
+                    error: error,
+                    json: true,
+                    mutationMayHaveApplied:
+                        mutationMayHaveApplied
+                )
+            }
+            return CLIErrorEnvelope(
+                message: Self.debugFailureMessage(
+                    error,
+                    mutationMayHaveApplied:
+                        mutationMayHaveApplied
+                ),
+                exitCode: 1
+            ).render()
+        }
+    }
+
+    static func debugMutationMayHaveApplied(
+        _ error: Error
+    ) -> Bool {
+        guard let runtimeError =
+                error as? PlayCoverRuntimeClientError else {
+            return false
+        }
+        switch runtimeError {
+        case .remoteError(let code, _, _):
+            return code == "frida_eval_failed"
+                || code == "frida_reset_failed"
+                || code == "frida_eval_timeout"
+                || code == "frida_invalid_query"
+        case .readFailed,
+             .unexpectedEOF,
+             .emptyResponseFrame,
+             .responseFrameTooLarge,
+             .responseIsNotUTF8,
+             .responseDecodingFailed,
+             .requestIDMismatch,
+             .sessionIDMismatch,
+             .responseIdentityMismatch,
+             .malformedResponse:
+            return true
+        case .timeout(let operation):
+            return operation.hasPrefix("response ")
+        default:
+            return false
+        }
+    }
+
+    static func debugFailureMessage(
+        _ error: Error,
+        mutationMayHaveApplied: Bool
+    ) -> String {
+        var lines = ["\(error)"]
+        if case PlayCoverRuntimeClientError.remoteError(
+            _, _, let details
+        ) = error {
+            lines.append(
+                contentsOf: (details?.suggestions ?? [])
+                    .filter {
+                        !$0.localizedCaseInsensitiveContains(
+                            "debug --reset"
+                        )
+                    }
+                    .map { "Suggestion: \($0)" }
             )
         }
+        if mutationMayHaveApplied {
+            lines.append(
+                "Debug execution may have installed hooks or changed "
+                    + "Agent/App state before failing. Run "
+                    + "`ios-use debug --reset` before continuing if you "
+                    + "need a clean Agent. Reset does not undo arbitrary "
+                    + "App object or native-memory changes."
+            )
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func commandFailure(

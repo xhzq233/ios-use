@@ -9,8 +9,8 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["config", "--simulator", "--udid", "SIM-1", "--apple-id", "user@example.com", "--password", "secret", "--verbose"]),
-            .config(ConfigOptions(udid: "SIM-1", list: false, simulator: true, appleId: "user@example.com", password: "secret", verbose: true))
+            try CLIParser.parse(["config", "--simulator", "--udid", "SIM-1", "--verbose"]),
+            .config(ConfigOptions(udid: "SIM-1", list: false, simulator: true, verbose: true))
         )
 
         XCTAssertEqual(
@@ -145,8 +145,6 @@ final class CLIParserTests: XCTestCase {
             ["--udid", "REAL-1"],
             ["--simulator"],
             ["--list"],
-            ["--apple-id", "user@example.com"],
-            ["--password", "secret"],
         ]
 
         for arguments in conflictingArguments {
@@ -160,9 +158,19 @@ final class CLIParserTests: XCTestCase {
                     error as? CLIParseError,
                     .invalidValue(
                         "--mac cannot be combined with --udid, "
-                            + "--simulator, --list, --apple-id, or "
-                            + "--password"
+                            + "--simulator, or --list"
                     )
+                )
+            }
+        }
+
+        for option in ["--apple-id", "--password"] {
+            XCTAssertThrowsError(
+                try CLIParser.parse(["config", option, "secret"])
+            ) { error in
+                XCTAssertEqual(
+                    error as? CLIParseError,
+                    .unknownOption(option)
                 )
             }
         }
@@ -363,16 +371,6 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parse(["dom", "--fresh", "--wait-quiescence"]),
             .driver(.dom(raw: false, fresh: true, waitQuiescence: true))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["dom", "--ocr"]),
-            .driver(.inspect(waitQuiescence: false))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["dom", "--ocr", "--wait-quiescence"]),
-            .driver(.inspect(waitQuiescence: true))
         )
 
         XCTAssertEqual(
@@ -768,15 +766,15 @@ final class CLIParserTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--fresh"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--wait-quiescence"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence"))
         }
 
-        XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--ocr"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr"))
+        XCTAssertThrowsError(try CLIParser.parse(["dom", "--ocr"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--ocr"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["find", "General"])) { error in
@@ -961,8 +959,9 @@ final class CLIParserTests: XCTestCase {
         XCTAssertThrowsError(try CLIParser.parseInvocation(["proxy", "start", "-i", "--json"])) { error in
             XCTAssertEqual(error as? CLIParseError, .missingOptionValue("-i"))
         }
-        XCTAssertThrowsError(try CLIParser.parseInvocation(["config", "--list", "--json"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .unknownOption("--json"))
-        }
+        XCTAssertEqual(
+            try CLIParser.parseInvocation(["config", "--list", "--json"]),
+            ParsedInvocation(command: .config(ConfigOptions(list: true)), json: true)
+        )
     }
 }

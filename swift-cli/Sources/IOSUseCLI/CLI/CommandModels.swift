@@ -67,8 +67,6 @@ public struct ConfigOptions: Equatable, Sendable {
     public var udid: String?
     public var list = false
     public var simulator = false
-    public var appleId: String?
-    public var password: String?
     public var verbose = false
     public var playCover = false
 
@@ -76,16 +74,12 @@ public struct ConfigOptions: Equatable, Sendable {
         udid: String? = nil,
         list: Bool = false,
         simulator: Bool = false,
-        appleId: String? = nil,
-        password: String? = nil,
         verbose: Bool = false,
         playCover: Bool = false
     ) {
         self.udid = udid
         self.list = list
         self.simulator = simulator
-        self.appleId = appleId
-        self.password = password
         self.verbose = verbose
         self.playCover = playCover
     }
@@ -334,7 +328,6 @@ public enum DriverAction: Equatable, Sendable {
     case input(tap: String?, content: String, delete: Int, enter: Bool, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool)
-    case inspect(waitQuiescence: Bool)
     case screenshot(name: String?, ocr: Bool)
     case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode)
     case activateApp(bundleId: String)
@@ -349,7 +342,6 @@ public enum DriverAction: Equatable, Sendable {
         case .input: return "input"
         case .swipe: return "swipe"
         case .dom: return "dom"
-        case .inspect: return "dom"
         case .screenshot: return "screenshot"
         case .waitFor: return "waitFor"
         case .activateApp: return "activateApp"

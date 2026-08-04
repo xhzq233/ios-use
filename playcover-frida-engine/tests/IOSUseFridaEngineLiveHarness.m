@@ -59,6 +59,50 @@ static BOOL IOSUseEvaluate(
     return YES;
 }
 
+static BOOL IOSUseEvaluatePartialFailure(
+    void *engine,
+    NSMutableArray<NSString *> *callbackEvents
+) {
+    NSUInteger eventCount = 0;
+    @synchronized (callbackEvents) {
+        eventCount = callbackEvents.count;
+    }
+    NSError *error = nil;
+    NSDictionary<NSString *, id> *result =
+        IOSUseFridaEngineEvaluate(
+            engine,
+            @"globalThis.__iosUsePartialMarker = 1; throw new Error('partial-mutation')",
+            NO,
+            NO,
+            &error
+        );
+    if (result != nil || error == nil ||
+        ![error.localizedDescription containsString:@"partial-mutation"] ||
+        ![error.userInfo[@"stack"] containsString:@"partial-mutation"]) {
+        NSLog(@"Unexpected partial failure result=%@ error=%@", result, error);
+        return NO;
+    }
+    @synchronized (callbackEvents) {
+        if (callbackEvents.count != eventCount) {
+            NSLog(@"Failed eval was duplicated as an event: %@", callbackEvents);
+            return NO;
+        }
+    }
+    return IOSUseEvaluate(
+        engine,
+        @"globalThis.__iosUsePartialMarker === 1",
+        NO,
+        @"true",
+        NO
+    ) && IOSUseEvaluate(
+        engine,
+        @"typeof globalThis.__iosUsePartialMarker",
+        YES,
+        @"\"undefined\"",
+        NO
+    );
+}
+
 int main(void) {
     @autoreleasepool {
         void *engine = IOSUseFridaEngineCreate();
@@ -86,6 +130,10 @@ int main(void) {
                 YES,
                 @"84",
                 NO
+            ) ||
+            !IOSUseEvaluatePartialFailure(
+                engine,
+                callbackEvents
             )) {
             IOSUseFridaEngineClearEventCallback(
                 engine,

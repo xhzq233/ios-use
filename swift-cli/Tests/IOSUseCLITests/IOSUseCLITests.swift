@@ -7,6 +7,15 @@ import IOSUseProtocol
 final class IOSUseCLITests: XCTestCase {
     override func setUp() {
         super.setUp()
+        StatusService.macSigningResolutionForTesting = {
+            PlayCoverSigningIdentityResolution(
+                health: .healthy,
+                evidence: nil
+            )
+        }
+        StatusService.macRuntimeResolutionForTesting = { _ in
+            "/test/IOSUsePlayRuntime.framework"
+        }
     }
 
     override func tearDown() {
@@ -49,6 +58,8 @@ final class IOSUseCLITests: XCTestCase {
         Shell.runOverrideForTesting = nil
         Shell.runResultOverrideForTesting = nil
         ConfigService.nowProviderForTesting = nil
+        StatusService.macSigningResolutionForTesting = nil
+        StatusService.macRuntimeResolutionForTesting = nil
         super.tearDown()
     }
 
@@ -92,6 +103,113 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(swipe.stdout.contains("Use coordinate anchors or --dir/--distance only"))
         XCTAssertTrue(tap.stderr.isEmpty)
         XCTAssertTrue(swipe.stderr.isEmpty)
+    }
+
+    func testDebugHelpExplainsExistingInputStreamJSONAndResetContract() {
+        let result = IOSUseCLI().run(arguments: ["debug", "--help"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("[--stream] [--json] -"))
+        XCTAssertTrue(result.stdout.contains("ios-use debug - <<'JS'"))
+        XCTAssertTrue(result.stdout.contains("ios-use debug --stream - <<'JS'"))
+        XCTAssertTrue(result.stdout.contains("Agent globals, hooks, and completed native mutations"))
+        XCTAssertTrue(result.stdout.contains("Reset clears Agent globals and hooks, not arbitrary App"))
+        XCTAssertTrue(result.stdout.contains("JavaScript ASI can install a hook"))
+        XCTAssertTrue(result.stderr.isEmpty)
+    }
+
+    func testDebugFailureRecoveryOnlyWarnsAfterPossibleExecution() {
+        let evaluation = PlayCoverRuntimeClientError.remoteError(
+            code: "frida_eval_failed",
+            message: "boom\nstack",
+            details: nil
+        )
+        XCTAssertTrue(IOSUseCLI.debugMutationMayHaveApplied(evaluation))
+        XCTAssertTrue(
+            IOSUseCLI.debugMutationMayHaveApplied(
+                PlayCoverRuntimeClientError.remoteError(
+                    code: "frida_eval_timeout",
+                    message: "timed out",
+                    details: nil
+                )
+            )
+        )
+        XCTAssertTrue(
+            IOSUseCLI.debugMutationMayHaveApplied(
+                PlayCoverRuntimeClientError.remoteError(
+                    code: "frida_invalid_query",
+                    message: "invalid query",
+                    details: nil
+                )
+            )
+        )
+        let message = IOSUseCLI.debugFailureMessage(
+            evaluation,
+            mutationMayHaveApplied: true
+        )
+        XCTAssertTrue(message.contains("ios-use debug --reset"))
+        XCTAssertTrue(message.contains("does not undo arbitrary App"))
+
+        let preflight = PlayCoverRuntimeClientError.remoteError(
+            code: "frida_engine_missing",
+            message: "missing",
+            details: nil
+        )
+        XCTAssertFalse(IOSUseCLI.debugMutationMayHaveApplied(preflight))
+        XCTAssertFalse(
+            IOSUseCLI.debugFailureMessage(
+                preflight,
+                mutationMayHaveApplied: false
+            ).contains("debug --reset")
+        )
+
+        let invalidQuery = PlayCoverRuntimeClientError.remoteError(
+            code: "frida_invalid_query",
+            message: "invalid query",
+            details: PlayCoverRuntimeErrorDetails(
+                category: "action",
+                phase: "debug_eval",
+                retryable: true,
+                fatal: false,
+                target: nil,
+                candidateCount: 0,
+                candidates: [],
+                suggestions: [
+                    "Swift resolver queries require functions:<module-pattern>!<symbol-pattern>.",
+                    "Run ios-use debug --reset before continuing.",
+                ]
+            )
+        )
+        let invalidQueryMessage = IOSUseCLI.debugFailureMessage(
+            invalidQuery,
+            mutationMayHaveApplied: true
+        )
+        XCTAssertTrue(
+            invalidQueryMessage.contains(
+                "Suggestion: Swift resolver queries require functions:"
+            )
+        )
+        XCTAssertEqual(
+            invalidQueryMessage.components(
+                separatedBy: "debug --reset"
+            ).count - 1,
+            1
+        )
+
+        XCTAssertTrue(
+            IOSUseCLI.debugMutationMayHaveApplied(
+                PlayCoverRuntimeClientError.timeout(
+                    operation: "response header read"
+                )
+            )
+        )
+        XCTAssertFalse(
+            IOSUseCLI.debugMutationMayHaveApplied(
+                PlayCoverRuntimeClientError.timeout(
+                    operation: "connect"
+                )
+            )
+        )
     }
 
     func testTapResolutionPreservesSemanticPlacementIntent() throws {
@@ -361,7 +479,13 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     func testAppLifecycleHelpIsHostSide() {
-        let result = IOSUseCLI().run(arguments: ["activateApp", "--help"])
+        let result = IOSUseCLI().run(
+            arguments: ["activateApp", "--help"]
+        )
+        let terminate = IOSUseCLI().run(
+            arguments: ["terminateApp", "--help"]
+        )
+        let home = IOSUseCLI().run(arguments: ["home", "--help"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Usage: ios-use activateApp <bundleId> [--udid <udid>]"))
@@ -370,6 +494,21 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("--terminateExisting"))
         XCTAssertTrue(result.stdout.contains("--log"))
         XCTAssertFalse(result.stdout.contains("Requires an active driver.lock"))
+        XCTAssertTrue(
+            result.stdout.contains(
+                "Mac backend supports lifecycle through start/status/stop only"
+            )
+        )
+        XCTAssertTrue(
+            terminate.stdout.contains(
+                "Mac backend supports lifecycle through start/status/stop only"
+            )
+        )
+        XCTAssertTrue(
+            home.stdout.contains(
+                "restart it with stop, then start --mac --reuse"
+            )
+        )
     }
 
     func testAllDocumentedCommandsReturnPerCommandHelp() {
@@ -445,6 +584,15 @@ final class IOSUseCLITests: XCTestCase {
                 "`start --mac` never initializes or repairs this identity"
             )
         )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "altsign-cli list --apple-id '<Apple ID>'"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains("ios-use never accepts a password")
+        )
+        XCTAssertFalse(result.stdout.contains("--password <password>"))
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
@@ -2305,84 +2453,6 @@ final class IOSUseCLITests: XCTestCase {
         let data = try XCTUnwrap(envelope["data"] as? [String: Any])
         XCTAssertEqual((data["element"] as? [String: Any])?["label"] as? String, "Continue")
         XCTAssertEqual((data["postDom"] as? [String: Any])?["app"] as? String, "com.example")
-    }
-
-    func testDomOCRReturnsFreshDomAndRunsAccurateOCRAlongsideDomFetch() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ios-use-dom-ocr-\(UUID().uuidString)")
-            .path
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try writeDriverLock(udid: "SIM-DOM-OCR", deviceType: "simulator", paths: paths)
-        let ocrStarted = DispatchSemaphore(value: 0)
-        let domStarted = DispatchSemaphore(value: 0)
-        var calls: [String] = []
-
-        ScreenshotArtifactService.ocrRecognizerForTesting = { _, logicalSize, scale, recognitionLevel in
-            XCTAssertEqual(recognitionLevel, .accurate)
-            XCTAssertEqual(logicalSize, CGSize(width: 100, height: 200))
-            XCTAssertEqual(scale, 3)
-            ocrStarted.signal()
-            guard domStarted.wait(timeout: .now() + 1) == .success else {
-                throw CLIParseError.invalidValue("DOM did not overlap OCR")
-            }
-            return OCRService.Result(
-                imageWidth: 300,
-                imageHeight: 600,
-                logicalSize: logicalSize,
-                scale: scale,
-                observations: [
-                    OCRService.Observation(
-                        text: "视觉横幅",
-                        confidence: 1,
-                        boundingBox: CGRect(x: 0.1, y: 0.8, width: 0.5, height: 0.1)
-                    )
-                ]
-            )
-        }
-        IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(
-                domHandler: { raw, fresh, waitQuiescence in
-                    XCTAssertFalse(raw)
-                    XCTAssertTrue(fresh)
-                    XCTAssertFalse(waitQuiescence)
-                    guard ocrStarted.wait(timeout: .now() + 1) == .success else {
-                        throw CLIParseError.invalidValue("OCR did not start before DOM")
-                    }
-                    calls.append("dom")
-                    domStarted.signal()
-                    return ForyDomPayload(
-                        app: "com.example",
-                        elements: [ForyDomElement(traits: ["Text"], label: "AX 文本", rect: ForyRect(x: 1, y: 2, w: 3, h: 4))]
-                    )
-                },
-                screenshotHandler: {
-                    calls.append("screenshot")
-                    return ScreenshotCapture(
-                        jpeg: Data("fixture-jpeg".utf8),
-                        logicalSize: ForyPoint(x: 100, y: 200),
-                        scale: 3
-                    )
-                }
-            )
-        }
-        addTeardownBlock {
-            IOSUseCLI.driverClientFactoryForTesting = nil
-            ScreenshotArtifactService.ocrRecognizerForTesting = nil
-            try? FileManager.default.removeItem(atPath: root)
-        }
-
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom", "--ocr"])
-
-        XCTAssertEqual(result.exitCode, 0, result.stderr)
-        XCTAssertEqual(calls, ["screenshot", "dom"])
-        XCTAssertTrue(result.stdout.contains("App: com.example"))
-        XCTAssertTrue(result.stdout.contains("- AX 文本 [Text] (1,2,3,4)"))
-        XCTAssertTrue(result.stdout.contains("Visual evidence"))
-        XCTAssertTrue(result.stdout.contains("Screenshot saved: \(root)/artifacts/dom.jpg"))
-        XCTAssertTrue(result.stdout.contains("OCR (accurate):"))
-        XCTAssertTrue(result.stdout.contains("视觉横幅 [10.0000,20.0000,50.0000,20.0000]"))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/artifacts/dom.jpg"))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/artifacts/dom.ocr.json"))
     }
 
     func testMutatingCommandBareDomWaitsForQuiescence() throws {

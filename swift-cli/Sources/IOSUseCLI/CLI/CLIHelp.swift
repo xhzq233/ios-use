@@ -74,7 +74,8 @@ enum CLIHelp {
             return """
             Usage: ios-use status [--verbose] [--json]
 
-            Show connected devices, capture processes, proxy state, and config state.
+            Show connected devices, capture processes, proxy state, config state,
+            and read-only Mac backend resource/signer/session readiness.
 
             Options:
               --verbose    Enable verbose device output
@@ -83,7 +84,7 @@ enum CLIHelp {
             """
         case "config":
             return """
-            Usage: ios-use config [--udid <udid>] [--simulator] [--list] [--apple-id <email>] [--password <password>] [--verbose]
+            Usage: ios-use config [--udid <udid>] [--simulator] [--list] [--verbose] [--json]
                    ios-use config --mac [--verbose] [--json]
 
             Configure a device or Simulator, or explicitly initialize the
@@ -93,16 +94,18 @@ enum CLIHelp {
             created and trusted. If you cancel, safely retry the same command;
             the retry resumes the same signing identity instead of replacing it.
             `start --mac` never initializes or repairs this identity.
+            Before first real-device signing, run this in a terminal:
+              ~/.ios-use/altsign-cli/altsign-cli list --apple-id '<Apple ID>'
+            Then run `ios-use config --udid <udid>`.
+            ios-use never accepts a password.
 
             Options:
               --udid <udid>          Target device or Simulator UDID
               --simulator            Configure a Simulator
               --list                 List configured devices
-              --apple-id <email>     Free Apple Developer account email for first-time real-device signing
-              --password <password>  Developer account login password (prompted securely if omitted; 2FA code prompted separately if needed)
               --mac                  Initialize the dedicated stable Mac-backend signing identity
               --verbose              Enable verbose output
-              --json                 Print the common machine-readable envelope (with --mac only)
+              --json                 Print the common machine-readable envelope
 
             """
         case "start":
@@ -138,18 +141,46 @@ enum CLIHelp {
             """
         case "debug":
             return """
-            Usage: ios-use debug [--stream] '<js>'
-                   ios-use debug [--stream] -
-                   ios-use debug --reset
+            Usage: ios-use debug [--stream] [--json] '<js>'
+                   ios-use debug [--stream] [--json] -
+                   ios-use debug --reset [--json]
 
             Evaluate JavaScript through the authenticated Runtime socket of the
             active Frida-enabled Mac App. Events are written to stderr and the
-            final display value is written to stdout. The script is never
-            persisted by ios-use.
+            final display value is written to stdout. Script source is not saved
+            to disk, but Agent globals, hooks, and completed native mutations can
+            remain active until debug --reset or App exit. A failed eval may have
+            applied work before throwing; use debug --reset when a clean Agent is
+            required. Reset clears Agent globals and hooks, not arbitrary App
+            object or native-memory changes already made by the script.
 
             Options:
-              --stream       Keep the event subscription semantics for this eval
+              --stream       Keep this connection open for events emitted after eval
               --reset        Clear the active Eval Agent globals and hooks
+              --json         Print the common machine-readable envelope
+
+            Read a multi-line script from stdin without placing it in argv:
+
+              ios-use debug - <<'JS'
+              console.log('ready');
+              ({ pid: Process.id });
+              JS
+
+            Keep receiving callbacks installed by an eval until interrupted:
+
+              ios-use debug --stream - <<'JS'
+              const open = Module.getExportByName(null, 'open');
+              Interceptor.attach(open, {
+                onEnter(args) { console.log(args[0].readUtf8String()); }
+              });
+              'streaming';
+              JS
+
+            Terminate a stream to stop observing it, then run debug --reset to
+            remove Agent-owned hooks before retrying or leaving the workflow.
+            Keep explicit semicolons before a final object or parenthesized
+            expression; otherwise JavaScript ASI can install a hook and then
+            throw before its handle is saved.
 
             """
         case "stop":
@@ -216,13 +247,12 @@ enum CLIHelp {
             """
         case "dom":
             return driverHelp(
-                usage: "ios-use dom [--raw] [--fresh] [--wait-quiescence] [--ocr]",
+                usage: "ios-use dom [--raw] [--fresh] [--wait-quiescence]",
                 summary: "Print the current UI element tree.",
                 options: [
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
                     "--fresh             Ignore cached snapshot and rebuild",
                     "--wait-quiescence   Wait until the UI is idle before returning a fresh DOM",
-                    "--ocr               Also save a screenshot and return accurate OCR; implies a fresh DOM",
                 ]
             )
         case "waitFor":
@@ -333,6 +363,8 @@ enum CLIHelp {
             Activate an app by bundle ID using host-side device services.
             By default, waits for the app to reach foreground and for one fresh UI snapshot.
             With --log, starts a background app stdio capture and returns a log file path.
+            The Mac backend supports lifecycle through start/status/stop only;
+            restart it with stop, then start --mac --reuse.
 
             Options:
               --udid <udid>          Target USB real device or booted Simulator UDID; overrides active driver.lock
@@ -350,6 +382,8 @@ enum CLIHelp {
 
             Terminate an app by bundle ID using host-side device services.
             Defaults to the active driver.lock UDID when --udid is omitted.
+            The Mac backend supports lifecycle through start/status/stop only;
+            stop the active Mac session instead.
 
             Options:
               --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
@@ -360,7 +394,8 @@ enum CLIHelp {
         case "home":
             return driverHelp(
                 usage: "ios-use home",
-                summary: "Press the Home button."
+                summary: "Press the Home button.",
+                footer: "The Mac backend has no Home action. Use start/status/stop; restart it with stop, then start --mac --reuse."
             )
         case "open":
             return """

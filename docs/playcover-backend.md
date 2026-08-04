@@ -426,6 +426,17 @@ lane; the Engine's ten-second Promise deadline fits inside the CLI's
 fifteen-second Runtime deadline, so a slow script neither steals the UI lane
 nor continues after a shorter client timeout.
 
+Swift symbol discovery stays inside the current Runtime whenever possible.
+Call `ApiResolver('swift')` first. If it misses a known method, enumerate only
+the owning loaded Module, filter mangled identifiers before demangling with
+`DebugSymbol.fromAddress()`, and retain both the live address and the
+module-relative offset as evidence. Host `nm`/dSYM inspection is a last resort
+for a stripped Runtime or a loaded Module whose enumeration is empty or exceeds
+the fixed eval deadline, and its UUID must match the exact executable being
+debugged. Raw addresses and offsets are never reused after a rebuild. The
+backend does not persist a symbol cache or automatically attach to a candidate
+Swift thunk.
+
 ## Runtime Commands
 
 DOM snapshots enumerate foreground scenes, z-ordered windows, UIView
@@ -436,15 +447,20 @@ match, ambiguity, traits, and `cindex` rules. SwiftUI and WKWebView use their
 accessibility bridges; custom Metal/Unity content is reported as opaque when
 it has no semantic nodes.
 
-Tap, long press, and swipe use the directly ported PlayTools fake-touch
+Tap, long press, and direct swipe use the directly ported PlayTools fake-touch
 backend with begin/move/end/cancel phases and monotonic timing. The Runtime
-resolves selectors against one fresh snapshot, performs a UIKit hit test in
+resolves selectors against a fresh snapshot, performs a UIKit hit test in
 430 x 932 logical coordinates, and proves that the expected touch phases were
-delivered. Absolute `tap x,y` points are already in that fixed logical space
-and are never reinterpreted as an element-relative ratio. A valid no-op control
-or a swipe already at its boundary is still a successful delivery; callers use
-`--dom`, `waitFor`, or an explicit screenshot when they require a visible
-result. Text input separately verifies the exact first responder and final
+delivered. A semantic `swipe --to` instead walks the target scrollable in
+bounded steps and rebuilds the DOM until the target is interactable. A target
+missing from the DOM requires a visible `--from` anchor so the Runtime never
+guesses a container. Repeated offsets, a reached boundary, or a delivered
+fixed-distance swipe whose content offset did not change return typed scroll
+errors instead of success. Absolute `tap x,y` points are already in the fixed
+logical space and are never reinterpreted as an element-relative ratio. A
+valid no-op control remains a successful delivery; callers use `--dom`,
+`waitFor`, or an explicit screenshot when they require a visible result. Text
+input separately verifies the exact first responder and final
 text; secure, custom, or unsupported input returns a structured error. Native
 AppKit alert panels are projected into the same logical canvas, but their
 buttons are invoked through the panel's real target/action rather than falling

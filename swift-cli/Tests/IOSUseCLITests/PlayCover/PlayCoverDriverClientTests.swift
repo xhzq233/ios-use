@@ -235,7 +235,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             return XCTFail("missing swipe arguments")
         }
         XCTAssertEqual(swipeArgs.toTarget?.label, "Developer")
-        XCTAssertEqual(swipeArgs.fromTarget.label, "Bluetooth")
+        XCTAssertEqual(swipeArgs.fromTarget?.label, "Bluetooth")
         XCTAssertEqual(swipeArgs.distance, 300)
         XCTAssertEqual(
             swipeArgs.direction,
@@ -395,7 +395,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertNil(captured?.ratio)
     }
 
-    func testFixedDistanceSwipeUsesNoDestinationAndScreenCenterAnchor()
+    func testFixedDistanceSwipeLeavesDestinationAndAnchorAbsent()
         throws
     {
         var captured: PlayCoverRuntimeSwipeArguments?
@@ -430,15 +430,44 @@ final class PlayCoverDriverClientTests: XCTestCase {
         )
 
         XCTAssertNil(captured?.toTarget)
-        XCTAssertEqual(
-            captured?.fromTarget.point?.x,
-            Double(IOSUsePlayDeviceLogicalWidth) / 2
-        )
-        XCTAssertEqual(
-            captured?.fromTarget.point?.y,
-            Double(IOSUsePlayDeviceLogicalHeight) / 2
-        )
+        XCTAssertNil(captured?.fromTarget)
         XCTAssertEqual(captured?.distance, 240)
+    }
+
+    func testSemanticSwipeWithoutAnchorKeepsAnchorAbsent() throws {
+        var captured: PlayCoverRuntimeSwipeArguments?
+        let client = PlayCoverDriverClient(
+            session: makeSession()
+        ) { command, arguments, _ in
+            XCTAssertEqual(command, .swipe)
+            guard case .swipe(let swipe) = arguments else {
+                throw PlayCoverDriverClientError
+                    .malformedRuntimePayload("swipe arguments")
+            }
+            captured = swipe
+            return self.makePayload(
+                capability: .swipe,
+                swipe: .init(
+                    element: self.makeSummary(generation: 21),
+                    hitView: self.makeHitView(),
+                    finalState: self.makeFinalState(),
+                    scrolls: 0,
+                    direction: ""
+                )
+            )
+        }
+
+        _ = try client.swipe(
+            to: ForyTarget(label: "Later Cell"),
+            from: ForyTarget(),
+            distance: nil,
+            dir: nil,
+            traits: nil,
+            cindex: nil
+        )
+
+        XCTAssertEqual(captured?.toTarget?.label, "Later Cell")
+        XCTAssertNil(captured?.fromTarget)
     }
 
     func testScreenshotRequiresCompleteFullFrameAndGeneration()

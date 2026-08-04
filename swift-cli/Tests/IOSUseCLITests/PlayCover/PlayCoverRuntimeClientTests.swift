@@ -45,6 +45,28 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         )
     }
 
+    func testSwipeEncodingOmitsAbsentAnchor() throws {
+        let arguments = PlayCoverRuntimeSwipeArguments(
+            toTarget: .init(label: "Later Cell"),
+            fromTarget: nil,
+            distance: 0,
+            direction: -1,
+            durationMs: nil
+        )
+
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(arguments)
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(
+            (object["toTarget"] as? [String: Any])?["label"]
+                as? String,
+            "Later Cell"
+        )
+        XCTAssertNil(object["fromTarget"])
+    }
+
     func testEveryCommandUsesExactSingleSessionEnvelopeAndTypedPayload()
         throws
     {

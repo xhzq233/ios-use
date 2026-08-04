@@ -13,12 +13,8 @@ extension DriverCommandResult {
 
     private func baseMachineValue(for action: DriverAction) -> MachineValue {
         switch (action, payload) {
-        case (.dom, .dom(let dom)), (.inspect, .dom(let dom)):
-            var value = machineDom(dom)
-            if let artifact {
-                value = merging(value, key: "visualEvidence", value: machineArtifact(artifact))
-            }
-            return value
+        case (.dom, .dom(let dom)):
+            return machineDom(dom)
         case (.waitFor(_, _, _, _, let gone, _), .waitFor(let wait)):
             return .object([
                 "gone": .boolean(gone),

@@ -309,6 +309,8 @@ public enum IOSUseErrorCode {
     public static let gestureFailed = "gesture_failed"
     public static let inputFailed = "input_failed"
     public static let scrollBoundary = "scroll_boundary"
+    public static let scrollAnchorRequired = "scroll_anchor_required"
+    public static let scrollNoEffect = "scroll_no_effect"
     public static let scrollUnavailable = "scroll_unavailable"
     public static let scrollLimitReached = "scroll_limit_reached"
     public static let waitTimedOut = "wait_timed_out"

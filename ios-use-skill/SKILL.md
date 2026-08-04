@@ -10,6 +10,7 @@ description: "Operate iOS devices, Simulators, and the experimental Mac backend 
 - Read `references/simulator.md` before operating or troubleshooting a Simulator.
 - Read `references/proxy.md` before configuring HTTP/HTTPS capture or certificates.
 - Read `references/nslog.md` only when the target App already integrates NSLogger.
+- Read `references/frida-debug.md` before using `start --mac --frida` or `debug`.
 - Read `references/report.md` before creating or updating a GitHub issue.
 
 Do not load unrelated references preemptively.
@@ -58,23 +59,27 @@ Run ordinary `ios-use stop` before switching backends.
 - Treat the Mac backend selected by `start --mac` the same way: subsequent
   session-bound commands route to the active Mac Runtime and cannot fall
   back to XCTest.
+- Mac lifecycle is only `start`, `status`, and `stop`. Do not use `home`,
+  `activateApp`, or `terminateApp` for a Mac session. Restart it with
+  `ios-use stop`, then `ios-use start --mac --reuse`.
 - Use `ios-use help <command>` for the complete option contract instead of guessing
   whether an individual command accepts `--udid`.
 
 For first-time real-device signing, ask the user to run:
 
 ```bash
-ios-use config --udid <udid> --apple-id <email>
+~/.ios-use/altsign-cli/altsign-cli list --apple-id '<Apple ID>'
+ios-use config --udid <udid>
 ```
 
-Omit `--password`; let the CLI request the Apple Developer account password and
-two-factor code interactively. A free Personal Team is sufficient.
+AltSign reads the password privately from the foreground terminal and requests
+the two-factor code there when needed. ios-use never accepts either secret. A
+free Personal Team is sufficient.
 
 After the first successful login, ios-use normally reuses the cached Apple
 Developer authentication for up to one year. Routine `config` renewals therefore
 usually do not require the Apple ID, password, or two-factor code again. Ask the
-user to authenticate only when the cache is missing or expired, or when the CLI
-explicitly requests interactive authentication.
+user to run the AltSign command only when ios-use reports `altsign_auth_required`.
 
 Renew real-device signing with `config` within each seven-day signing window. If
 signing is allowed to expire, installing the newly signed driver requires the
@@ -172,6 +177,9 @@ ios-use input --tap "搜索" --content "蓝牙"
 
 ## 5. Control Apps and inspect their logs
 
+The commands in this section are for real devices and Simulators. For the Mac
+backend, use only `start`, `status`, and `stop` for lifecycle.
+
 ```bash
 ios-use activateApp com.example.app
 ios-use activateApp com.example.app --dom
@@ -204,12 +212,27 @@ tail -f <log-file>
 
 Do not echo signed URLs, tokens, credentials, or unrelated private log content.
 
+### Debug a Frida-enabled Mac App
+
+Read `references/frida-debug.md` first. Prefer stdin for multi-line GumJS and
+use an explicit reset when a failed script may have installed hooks:
+
+```bash
+ios-use start --mac --frida --app /path/to/App.app
+ios-use debug - < probe.js
+ios-use debug --reset
+```
+
+Script source is not saved, but Agent globals and hooks persist until reset or
+App exit. Reset cannot undo arbitrary changes already made to App objects or
+native memory.
+
 ## 6. Collect visual evidence only when needed
 
 Use a screenshot when the DOM cannot describe visual state:
 
 ```bash
-ios-use dom --ocr
+ios-use dom
 ios-use screenshot --name result
 ios-use screenshot --no-ocr --name pixels-only
 ```

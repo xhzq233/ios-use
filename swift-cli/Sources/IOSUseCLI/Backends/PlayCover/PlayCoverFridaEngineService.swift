@@ -16,9 +16,9 @@ enum PlayCoverFridaEngineService {
     static let descriptorEngineABI =
         "ios-use-frida-engine-cabi-v2"
     static let descriptorAgentSHA256 =
-        "caea6087cd5d346f9cf7a258248306f607348475f992fc08f7a55eddc9e93a1d"
+        "665d78f59fbc5141f0bd77567271a9725ba1d12d109183c262e08880f289c084"
     static let descriptorSourceClosureSHA256 =
-        "a865265e7ffffb83ef1101fb921a5d8ea7f7c4734d724f802088bd1aa979988e"
+        "51d84ebb8f9740da4300a24ac7e4f480d99ae424be3d105a69d164894cb40198"
 
     private struct FrameworkEvidence {
         let sha256: String

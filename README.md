@@ -51,7 +51,7 @@ Modern multimodal models do not usually allocate tokens linearly with every scre
 1. **DOM-first targeting** - Most actions use label/value text. The driver resolves coordinates internally, so the LLM does not need to guess pixel positions for standard UI.
 2. **Vision fallback** - When AX is incomplete (for example, a custom-drawn icon), the LLM can inspect a screenshot and pass raw coordinates.
 3. **Offset hybrid** — Combine both: anchor on a known label, then apply a relative offset to hit an adjacent unlabeled control.
-4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom`, use `dom` / `waitFor` to confirm semantic state, or use `dom --ocr` to collect a fresh tree and near-contemporaneous visual evidence in one command. Failed UI mutations return a stable error code; actionable lookup/action failures also print one `Evidence:` manifest path that references the captured screenshot, fast OCR, and fresh DOM when available.
+4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom` and use `dom` / `waitFor` to confirm semantic state. Capture explicitly named screenshots when visual evidence is needed. Failed UI mutations return a stable error code; actionable lookup/action failures also print one `Evidence:` manifest path that references the captured screenshot, fast OCR, and fresh DOM when available.
 
 This means:
 
@@ -111,8 +111,9 @@ Choose the environment you want to drive.
 ios-use status
 
 # First run: sign with a free Apple Developer account (Personal Team; no paid $99 program).
-# Omit --password so the CLI prompts securely for the developer account login.
-ios-use config --udid <device-udid> --apple-id <email>
+# Authenticate once in a terminal, then let ios-use consume the selected session.
+~/.ios-use/altsign-cli/altsign-cli list --apple-id '<Apple ID>'
+ios-use config --udid <device-udid>
 
 # Later runs: cached signing state is reused.
 ios-use config --udid <device-udid>
@@ -137,9 +138,9 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | --- | --- |
 | `status` / `config --list` | Show connected real devices and configured device/Simulator state. |
 | `config` | Install or update the on-device driver; use `config --mac` once before the first local Mac-backend start. |
-| `start` / `stop` | Select or release the current automation target; use `start --mac --app <App.app>` or `start --mac --reuse` for the Mac backend. |
-| `activateApp` / `terminateApp` | Open or close an app by bundle ID; activation is UI-ready by default. |
-| `dom` | Print the current UI tree; add `--ocr` for a fresh DOM plus screenshot and accurate OCR. |
+| `start` / `status` / `stop` | Select, inspect, or release the current target. These are the only Mac-backend lifecycle commands; restart Mac with `stop`, then `start --mac --reuse`. |
+| `activateApp` / `terminateApp` | Open or close an app by bundle ID on a real device or Simulator; activation is UI-ready by default. |
+| `dom` | Print the current semantic UI tree. |
 | `tap` / `longpress` | Act on a label or coordinate. |
 | `swipe` | Scroll by direction/distance or toward a target label. |
 | `input` | Type into the current keyboard focus, optionally tapping a target first. |
@@ -159,7 +160,7 @@ ios-use tap "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
 ios-use input --tap "搜索" --content "蓝牙"
 ios-use screenshot --name settings-home
-ios-use dom --ocr  # one-shot AX + visual inspection when the channels disagree
+ios-use screenshot --name channels-disagree  # explicit visual evidence when AX is insufficient
 
 # Coordinate fallback for a visual-only control; semantic targets remain preferred.
 ios-use tap 67 269

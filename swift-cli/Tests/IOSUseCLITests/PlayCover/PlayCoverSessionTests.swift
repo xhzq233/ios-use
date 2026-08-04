@@ -10,6 +10,15 @@ final class PlayCoverSessionTests: XCTestCase {
         PlayCoverService.signingIdentityResolverOverrideForTesting = {
             _ in makePlayCoverTestSigningIdentity()
         }
+        StatusService.macSigningResolutionForTesting = {
+            PlayCoverSigningIdentityResolution(
+                health: .healthy,
+                evidence: nil
+            )
+        }
+        StatusService.macRuntimeResolutionForTesting = { _ in
+            "/test/IOSUsePlayRuntime.framework"
+        }
     }
 
     override func tearDown() {
@@ -36,10 +45,73 @@ final class PlayCoverSessionTests: XCTestCase {
         IOSUseCLI.driverClientFactoryForTesting = nil
         IOSUseCLI.playCoverDriverClientFactoryForTesting = nil
         StatusService.playCoverDiagnosticsForTesting = nil
+        StatusService.macSigningResolutionForTesting = nil
+        StatusService.macRuntimeResolutionForTesting = nil
         DeviceService.listDevicesOverrideForTesting = nil
         SessionService.readDriverLockObserverForTesting = nil
         PlayCoverService.signingIdentityResolverOverrideForTesting = nil
         super.tearDown()
+    }
+
+    func testStoppedStatusReportsReadOnlyMacReadinessWithoutCreatingHome()
+        throws
+    {
+        let root = "/tmp/ios-use-status-readiness-"
+            + UUID().uuidString
+        let paths = resolvePlayCoverTestPaths(
+            environment: ["IOS_USE_HOME": root]
+        )
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
+        var signerReads = 0
+        var runtimeReads = 0
+        StatusService.macSigningResolutionForTesting = {
+            signerReads += 1
+            return PlayCoverSigningIdentityResolution(
+                health: .healthy,
+                evidence: nil
+            )
+        }
+        StatusService.macRuntimeResolutionForTesting = { receivedPaths in
+            runtimeReads += 1
+            XCTAssertEqual(receivedPaths.root, paths.root)
+            return "/opt/ios-use/IOSUsePlayRuntime.framework"
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.root))
+        let human = try StatusService.status(paths: paths)
+        let snapshot = StatusService.machineSnapshot(paths: paths)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.root))
+
+        XCTAssertTrue(
+            human.contains(
+                "Mac Backend: ready | resources: ready | signer: healthy | session: notRunning"
+            ),
+            human
+        )
+        XCTAssertTrue(
+            human.contains(
+                "next: Run `ios-use start --mac --app <App.app>`."
+            ),
+            human
+        )
+        guard case .object(let rootObject) = snapshot.data,
+              case .object(let mac)? = rootObject["macBackend"],
+              case .object(let resources)? = mac["resources"],
+              case .object(let signer)? = mac["signer"],
+              case .object(let session)? = mac["session"] else {
+            return XCTFail("machine status omitted Mac readiness")
+        }
+        XCTAssertEqual(mac["status"], .string("ready"))
+        XCTAssertEqual(resources["status"], .string("ready"))
+        XCTAssertEqual(
+            resources["runtimePath"],
+            .string("/opt/ios-use/IOSUsePlayRuntime.framework")
+        )
+        XCTAssertEqual(signer["status"], .string("healthy"))
+        XCTAssertEqual(session["status"], .string("notRunning"))
+        XCTAssertEqual(signerReads, 2)
+        XCTAssertEqual(runtimeReads, 2)
     }
 
     func testExplicitStartWithoutSignerFailsBeforeAnyHomeMutation()

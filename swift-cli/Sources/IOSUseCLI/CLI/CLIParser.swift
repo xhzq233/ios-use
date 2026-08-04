@@ -83,9 +83,8 @@ public enum CLIParser {
         if json {
             switch parsed {
             case .du, .start, .stop, .status, .install, .apps, .open,
-                    .appLifecycle, .driver, .mediaImport, .debug:
-                break
-            case .config(let options) where options.playCover:
+                    .config, .appLifecycle, .driver, .mediaImport,
+                    .debug:
                 break
             default:
                 throw CLIParseError.unknownOption("--json")
@@ -96,7 +95,7 @@ public enum CLIParser {
 
     static func extractGlobalJSONFlag(_ arguments: [String]) -> ([String], Bool) {
         let valueOptions: Set<String> = [
-            "--apple-id", "--password", "--udid", "--path", "--name", "--pattern",
+            "--udid", "--path", "--name", "--pattern",
             "--flags", "--timeout", "--last", "--capture-mode", "--filter", "--interface",
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
@@ -142,8 +141,6 @@ public enum CLIParser {
             case "--udid": options.udid = try parser.value(for: arg)
             case "--list": options.list = true
             case "--simulator": options.simulator = true
-            case "--apple-id": options.appleId = try parser.value(for: arg)
-            case "--password": options.password = try parser.value(for: arg)
             case "--verbose": options.verbose = true
             case "--mac": options.playCover = true
             default: throw CLIParseError.unknownOption(arg)
@@ -152,12 +149,10 @@ public enum CLIParser {
         if options.playCover,
            options.udid != nil
                 || options.list
-                || options.simulator
-                || options.appleId != nil
-                || options.password != nil {
+                || options.simulator {
             throw CLIParseError.invalidValue(
                 "--mac cannot be combined with --udid, --simulator, "
-                    + "--list, --apple-id, or --password"
+                    + "or --list"
             )
         }
         return options
@@ -598,21 +593,18 @@ public enum CLIParser {
         var raw = false
         var fresh = false
         var waitQuiescence = false
-        var ocr = false
         while let arg = parser.consume() {
             switch arg {
             case "--raw": raw = true
             case "--fresh": fresh = true
             case "--wait-quiescence": waitQuiescence = true
-            case "--ocr": ocr = true
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        if raw && (fresh || waitQuiescence || ocr) {
-            throw CLIParseError.invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr")
-        }
-        if ocr {
-            return .inspect(waitQuiescence: waitQuiescence)
+        if raw && (fresh || waitQuiescence) {
+            throw CLIParseError.invalidValue(
+                "dom --raw cannot be combined with --fresh or --wait-quiescence"
+            )
         }
         return .dom(raw: raw, fresh: fresh || waitQuiescence, waitQuiescence: waitQuiescence)
     }

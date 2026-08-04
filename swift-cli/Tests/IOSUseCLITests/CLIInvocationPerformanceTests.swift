@@ -4,9 +4,24 @@ import XCTest
 @testable import IOSUseCLI
 
 final class CLIInvocationPerformanceTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        StatusService.macSigningResolutionForTesting = {
+            PlayCoverSigningIdentityResolution(
+                health: .healthy,
+                evidence: nil
+            )
+        }
+        StatusService.macRuntimeResolutionForTesting = { _ in
+            "/test/IOSUsePlayRuntime.framework"
+        }
+    }
+
     override func tearDown() {
         DeviceService.listDevicesOverrideForTesting = nil
         DeviceService.resetCacheForTesting()
+        StatusService.macSigningResolutionForTesting = nil
+        StatusService.macRuntimeResolutionForTesting = nil
         super.tearDown()
     }
 

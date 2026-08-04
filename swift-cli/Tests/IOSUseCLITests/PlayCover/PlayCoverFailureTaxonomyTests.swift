@@ -259,4 +259,64 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
             "/tmp/stdio-session.log"
         )
     }
+
+    func testFridaRemoteFailurePreservesRuntimeTaxonomyAndMutation() {
+        let details = PlayCoverRuntimeErrorDetails(
+            category: "action",
+            phase: "debug_eval",
+            retryable: true,
+            fatal: false,
+            target: nil,
+            candidateCount: 0,
+            candidates: [],
+            suggestions: ["Run ios-use debug --reset"]
+        )
+        let classified = MachineOutput.classify(
+            PlayCoverRuntimeClientError.remoteError(
+                code: "frida_eval_failed",
+                message: "boom\nstack",
+                details: details
+            )
+        )
+
+        XCTAssertEqual(classified.message, "boom\nstack")
+        XCTAssertEqual(classified.category, "action")
+        XCTAssertEqual(classified.code, "frida_eval_failed")
+        XCTAssertEqual(classified.phase, "debug_eval")
+        XCTAssertTrue(classified.retryable)
+        XCTAssertFalse(classified.fatal)
+        XCTAssertTrue(classified.mutationMayHaveApplied)
+
+        for code in ["frida_eval_timeout", "frida_invalid_query"] {
+            let typed = MachineOutput.classify(
+                PlayCoverRuntimeClientError.remoteError(
+                    code: code,
+                    message: code,
+                    details: details
+                )
+            )
+            XCTAssertEqual(typed.code, code)
+            XCTAssertTrue(typed.mutationMayHaveApplied)
+        }
+
+        let preflight = MachineOutput.classify(
+            PlayCoverRuntimeClientError.remoteError(
+                code: "frida_engine_missing",
+                message: "missing",
+                details: PlayCoverRuntimeErrorDetails(
+                    category: "internal",
+                    phase: "debug_engine",
+                    retryable: false,
+                    fatal: false,
+                    target: nil,
+                    candidateCount: 0,
+                    candidates: [],
+                    suggestions: []
+                )
+            )
+        )
+        XCTAssertEqual(preflight.code, "frida_engine_missing")
+        XCTAssertEqual(preflight.category, "internal")
+        XCTAssertFalse(preflight.mutationMayHaveApplied)
+    }
 }

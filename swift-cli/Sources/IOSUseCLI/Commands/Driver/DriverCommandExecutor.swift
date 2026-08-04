@@ -49,38 +49,6 @@ enum DriverCommandExecutor {
             ok = true
             return DriverCommandResult(stdout: DriverOutput.formatDom(payload), payload: .dom(payload))
 
-        case .inspect(let waitQuiescence):
-            let capture = try ScreenshotCaptureCoordinator.capture(paths: paths) {
-                try requiredPayload(
-                    clientRunner { .screenshotCapture(try $0.screenshotCapture()) },
-                    as: ScreenshotCapture.self
-                )
-            }
-            let artifactWork = try ScreenshotArtifactService.start(
-                capture: capture,
-                paths: paths,
-                name: nil,
-                defaultName: "dom",
-                ocr: true
-            )
-            let payload: ForyDomPayload
-            do {
-                payload = try requiredPayload(
-                    clientRunner { .dom(try $0.dom(raw: false, fresh: true, waitQuiescence: waitQuiescence)) },
-                    as: ForyDomPayload.self
-                )
-            } catch {
-                _ = try? artifactWork.finish()
-                throw error
-            }
-            let evidence = try artifactWork.finish()
-            ok = true
-            return DriverCommandResult(
-                stdout: DriverOutput.formatDom(payload) + "\nVisual evidence\n" + evidence.stdout,
-                payload: .dom(payload),
-                artifact: evidence
-            )
-
         case .waitFor(let label, let timeout, let traits, let cindex, let gone, let matchMode):
             let payload = try requiredPayload(clientRunner {
                 .waitFor(try $0.waitFor(
@@ -239,8 +207,6 @@ enum DriverCommandExecutor {
             _ = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
         case .swipe(let to, let from, _, _, let traits, let cindex, _):
             _ = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
-        case .inspect:
-            break
         default:
             break
         }

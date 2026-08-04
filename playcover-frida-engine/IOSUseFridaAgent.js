@@ -14,13 +14,11 @@ const handle = (message) => {
     Promise.resolve(result).then(value => send({ iosUse: 'result', id, display: format(value) }), error => {
       const message = String(error && error.message || error);
       const stack = String(error && error.stack || '');
-      send({ iosUse: 'event', kind: 'error', display: stack ? `${message}\n${stack}` : message });
       send({ iosUse: 'error', id, message, stack });
     });
   } catch (error) {
     const message = String(error && error.message || error);
     const stack = String(error && error.stack || '');
-    send({ iosUse: 'event', kind: 'error', display: stack ? `${message}\n${stack}` : message });
     send({ iosUse: 'error', id, message, stack });
   }
   recv('ios_use_eval', handle);
