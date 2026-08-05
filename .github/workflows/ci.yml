@@ -6,17 +6,46 @@ on:
       - "swift-cli/**"
       - "shared/**"
       - "driver/**"
+      - "playcover-runtime/**"
+      - "playcover-fixtures/**"
+      - "ThirdParty/**"
       - "scripts/**"
+      - "README.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - "release-notes/**"
   push:
     branches: [main]
     paths:
       - "swift-cli/**"
       - "shared/**"
       - "driver/**"
+      - "playcover-runtime/**"
+      - "playcover-fixtures/**"
+      - "ThirdParty/**"
       - "scripts/**"
+      - "README.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - "release-notes/**"
   workflow_dispatch:
+    inputs:
+      run_playcover_non_live:
+        description: "Run the account-mutating non-live integration gate on its dedicated self-hosted runner."
+        required: false
+        default: false
+        type: boolean
+      run_playcover_live:
+        description: "Run the core pending-launch and Runtime crash/stress gate on its dedicated self-hosted runner."
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -40,13 +69,21 @@ jobs:
           for script in scripts/*.sh; do
             bash -n "$script"
           done
+          python3 -m py_compile scripts/frida_distribution.py
           bash scripts/test_install.sh
+          bash scripts/test_playcover_packaging_contract.sh
+          bash scripts/test_playcover_live_workflow_contract.sh
           node --check scripts/benchmark.js
           node --check scripts/ios_use_test_simulator.js
           node --check scripts/test_simulator_commands.mjs
 
   swift-cli-tests:
     runs-on: macos-26
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        scope: [general, mac]
     steps:
       - uses: actions/checkout@v4
 
@@ -54,12 +91,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: swift-cli/.build
-          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'swift-cli/Sources/**/*.swift', 'swift-cli/Tests/**/*.swift', 'shared/IOSUseProtocol/Package.swift', 'shared/IOSUseProtocol/Sources/**/*.swift') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'swift-cli/Sources/**/*.swift', 'swift-cli/Tests/**/*.swift', 'shared/IOSUseProtocol/Package.swift', 'shared/IOSUseProtocol/Sources/**/*.swift', 'ThirdParty/PlayCover/Package.swift', 'ThirdParty/PlayCover/Package.resolved', 'ThirdParty/PlayCover/PlayCover/**/*.swift', 'ThirdParty/PlayCover/PlayCover/Rules/default.yaml', 'ThirdParty/inject/Package.swift', 'ThirdParty/inject/Injection/Injection/**/*.swift') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-swift-cli-
 
       - name: Run Swift CLI tests and smoke checks
-        run: bash scripts/test_swift_cli.sh
+        run: bash scripts/test_swift_cli.sh "${{ matrix.scope }}"
 
   driver-unit-tests:
     runs-on: macos-26
@@ -85,3 +122,65 @@ jobs:
 
       - name: Run Swift driver unit tests
         run: bash scripts/test_driver_unit.sh
+
+  playcover-non-live:
+    name: PlayCover non-live build and installed-layout gate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_playcover_non_live }}
+    # Installed execution performs a real launch. This label must resolve to a
+    # host with the stable signer initialized and a launch-capable GUI session.
+    runs-on: [self-hosted, macOS, arm64, playcover-live]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Cache pinned upstream audit checkouts
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ios-use-playcover-upstream-audit
+          key: ${{ runner.os }}-${{ runner.arch }}-playcover-upstreams-7190cc9-d688f6-e6d3aa-yams3036ba
+
+      - name: Audit pinned upstream sources and local patches
+        env:
+          IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
+        run: bash scripts/audit_playcover_upstreams.sh --cache-dir "$IOS_USE_PLAYCOVER_UPSTREAM_CACHE"
+
+      - name: Build, analyze, fixture, compositor, vendored Swift, and installed-layout checks
+        env:
+          IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
+          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
+          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
+        run: bash scripts/test_playcover_backend.sh --non-live
+
+  playcover-live-and-stress:
+    name: Core pending-launch and Runtime live gate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_playcover_live }}
+    # The two public-fixture gates also require the initialized stable signer
+    # and an unlocked, launch-capable GUI session.
+    runs-on: [self-hosted, macOS, arm64, playcover-live]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare runner-temporary live log directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/ios-use-playcover-live-run-$GITHUB_RUN_ID"
+
+      - name: Run core PlayCover live gate
+        shell: bash
+        env:
+          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
+          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
+        run: |
+          set -o pipefail
+          bash scripts/test_playcover_backend.sh --live 2>&1 |
+            tee "$RUNNER_TEMP/ios-use-playcover-live-run-$GITHUB_RUN_ID/run.log"
+
+      - name: Upload core live gate log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playcover-live-run-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ios-use-playcover-live-run-${{ github.run_id }}/run.log
+          if-no-files-found: error
+          retention-days: 30

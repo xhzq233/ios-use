@@ -7,6 +7,15 @@ import IOSUseProtocol
 final class IOSUseCLITests: XCTestCase {
     override func setUp() {
         super.setUp()
+        StatusService.macSigningResolutionForTesting = {
+            PlayCoverSigningIdentityResolution(
+                health: .healthy,
+                evidence: nil
+            )
+        }
+        StatusService.macRuntimeResolutionForTesting = { _ in
+            "/test/IOSUsePlayRuntime.framework"
+        }
     }
 
     override func tearDown() {
@@ -16,6 +25,7 @@ final class IOSUseCLITests: XCTestCase {
         DeviceService.resetCacheForTesting()
         DriverClient.usbmuxConnectorForTesting = nil
         IOSUseCLI.driverClientFactoryForTesting = nil
+        IOSUseCLI.playCoverDriverClientFactoryForTesting = nil
         ScreenshotArtifactService.ocrRecognizerForTesting = nil
         AppLifecycleService.realDeviceRunnerForTesting = nil
         AppLifecycleService.simulatorRunnerForTesting = nil
@@ -48,6 +58,8 @@ final class IOSUseCLITests: XCTestCase {
         Shell.runOverrideForTesting = nil
         Shell.runResultOverrideForTesting = nil
         ConfigService.nowProviderForTesting = nil
+        StatusService.macSigningResolutionForTesting = nil
+        StatusService.macRuntimeResolutionForTesting = nil
         super.tearDown()
     }
 
@@ -91,6 +103,146 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(swipe.stdout.contains("Use coordinate anchors or --dir/--distance only"))
         XCTAssertTrue(tap.stderr.isEmpty)
         XCTAssertTrue(swipe.stderr.isEmpty)
+    }
+
+    func testDebugHelpExplainsExistingInputStreamJSONAndResetContract() {
+        let result = IOSUseCLI().run(arguments: ["debug", "--help"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("[--stream] [--json] -"))
+        XCTAssertTrue(result.stdout.contains("ios-use debug - <<'JS'"))
+        XCTAssertTrue(result.stdout.contains("ios-use debug --stream - <<'JS'"))
+        XCTAssertTrue(result.stdout.contains("Agent globals, hooks, and completed native mutations"))
+        XCTAssertTrue(result.stdout.contains("Reset clears Agent globals and hooks, not arbitrary App"))
+        XCTAssertTrue(result.stdout.contains("JavaScript ASI can install a hook"))
+        XCTAssertTrue(result.stderr.isEmpty)
+    }
+
+    func testDebugFailureRecoveryOnlyWarnsAfterPossibleExecution() {
+        let evaluation = PlayCoverRuntimeClientError.remoteError(
+            code: "frida_eval_failed",
+            message: "boom\nstack",
+            details: nil
+        )
+        XCTAssertTrue(IOSUseCLI.debugMutationMayHaveApplied(evaluation))
+        XCTAssertTrue(
+            IOSUseCLI.debugMutationMayHaveApplied(
+                PlayCoverRuntimeClientError.remoteError(
+                    code: "frida_eval_timeout",
+                    message: "timed out",
+                    details: nil
+                )
+            )
+        )
+        XCTAssertTrue(
+            IOSUseCLI.debugMutationMayHaveApplied(
+                PlayCoverRuntimeClientError.remoteError(
+                    code: "frida_invalid_query",
+                    message: "invalid query",
+                    details: nil
+                )
+            )
+        )
+        let message = IOSUseCLI.debugFailureMessage(
+            evaluation,
+            mutationMayHaveApplied: true
+        )
+        XCTAssertTrue(message.contains("ios-use debug --reset"))
+        XCTAssertTrue(message.contains("does not undo arbitrary App"))
+
+        let preflight = PlayCoverRuntimeClientError.remoteError(
+            code: "frida_engine_missing",
+            message: "missing",
+            details: nil
+        )
+        XCTAssertFalse(IOSUseCLI.debugMutationMayHaveApplied(preflight))
+        XCTAssertFalse(
+            IOSUseCLI.debugFailureMessage(
+                preflight,
+                mutationMayHaveApplied: false
+            ).contains("debug --reset")
+        )
+
+        let invalidQuery = PlayCoverRuntimeClientError.remoteError(
+            code: "frida_invalid_query",
+            message: "invalid query",
+            details: PlayCoverRuntimeErrorDetails(
+                category: "action",
+                phase: "debug_eval",
+                retryable: true,
+                fatal: false,
+                target: nil,
+                candidateCount: 0,
+                candidates: [],
+                suggestions: [
+                    "Swift resolver queries require functions:<module-pattern>!<symbol-pattern>.",
+                    "Run ios-use debug --reset before continuing.",
+                ]
+            )
+        )
+        let invalidQueryMessage = IOSUseCLI.debugFailureMessage(
+            invalidQuery,
+            mutationMayHaveApplied: true
+        )
+        XCTAssertTrue(
+            invalidQueryMessage.contains(
+                "Suggestion: Swift resolver queries require functions:"
+            )
+        )
+        XCTAssertEqual(
+            invalidQueryMessage.components(
+                separatedBy: "debug --reset"
+            ).count - 1,
+            1
+        )
+
+        XCTAssertTrue(
+            IOSUseCLI.debugMutationMayHaveApplied(
+                PlayCoverRuntimeClientError.timeout(
+                    operation: "response header read"
+                )
+            )
+        )
+        XCTAssertFalse(
+            IOSUseCLI.debugMutationMayHaveApplied(
+                PlayCoverRuntimeClientError.timeout(
+                    operation: "connect"
+                )
+            )
+        )
+    }
+
+    func testTapResolutionPreservesSemanticPlacementIntent() throws {
+        let bare = try DriverCommandExecutor.resolveTapParams(
+            "Continue",
+            offset: nil,
+            offsetRatio: nil,
+            traits: nil,
+            cindex: nil
+        )
+        XCTAssertNil(bare.offset)
+        XCTAssertNil(bare.ratio)
+
+        let explicitCenter = try DriverCommandExecutor.resolveTapParams(
+            "Continue",
+            offset: nil,
+            offsetRatio: "0.5,0.5",
+            traits: nil,
+            cindex: nil
+        )
+        XCTAssertEqual(explicitCenter.ratio?.x, 0.5)
+        XCTAssertEqual(explicitCenter.ratio?.y, 0.5)
+
+        let offset = try DriverCommandExecutor.resolveTapParams(
+            "Continue",
+            offset: "4,5",
+            offsetRatio: nil,
+            traits: nil,
+            cindex: nil
+        )
+        XCTAssertEqual(offset.offset?.x, 4)
+        XCTAssertEqual(offset.offset?.y, 5)
+        XCTAssertNil(offset.ratio)
     }
 
     func testUnknownOptionFailsBeforeAnySessionWork() {
@@ -327,7 +479,13 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     func testAppLifecycleHelpIsHostSide() {
-        let result = IOSUseCLI().run(arguments: ["activateApp", "--help"])
+        let result = IOSUseCLI().run(
+            arguments: ["activateApp", "--help"]
+        )
+        let terminate = IOSUseCLI().run(
+            arguments: ["terminateApp", "--help"]
+        )
+        let home = IOSUseCLI().run(arguments: ["home", "--help"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Usage: ios-use activateApp <bundleId> [--udid <udid>]"))
@@ -336,6 +494,21 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("--terminateExisting"))
         XCTAssertTrue(result.stdout.contains("--log"))
         XCTAssertFalse(result.stdout.contains("Requires an active driver.lock"))
+        XCTAssertTrue(
+            result.stdout.contains(
+                "Mac backend supports lifecycle through start/status/stop only"
+            )
+        )
+        XCTAssertTrue(
+            terminate.stdout.contains(
+                "Mac backend supports lifecycle through start/status/stop only"
+            )
+        )
+        XCTAssertTrue(
+            home.stdout.contains(
+                "restart it with stop, then start --mac --reuse"
+            )
+        )
     }
 
     func testAllDocumentedCommandsReturnPerCommandHelp() {
@@ -378,6 +551,313 @@ final class IOSUseCLITests: XCTestCase {
             XCTAssertFalse(result.stdout.contains("Usage: ios-use [--help]"), entry.arguments.joined(separator: " "))
             XCTAssertTrue(result.stderr.isEmpty, entry.arguments.joined(separator: " "))
         }
+    }
+
+    func testMacConfigHelpDocumentsExplicitAuthenticationAndSafeRetry() {
+        let result = IOSUseCLI().run(
+            arguments: ["config", "--help"]
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(
+            result.stdout.contains(
+                "ios-use config --mac [--verbose] [--json]"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "macOS will show user authentication dialogs"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "safely retry the same command"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "resumes the same signing identity instead of replacing it"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "`start --mac` never initializes or repairs this identity"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "altsign-cli list --apple-id '<Apple ID>'"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "AltSign reads the password and any two-factor code"
+            )
+        )
+        XCTAssertTrue(result.stdout.contains("input and stores one cached session"))
+        XCTAssertTrue(
+            result.stdout.contains(
+                "ios-use never reads credentials or inspects login state"
+            )
+        )
+        XCTAssertFalse(result.stdout.contains("--password <password>"))
+        XCTAssertTrue(result.stderr.isEmpty)
+    }
+
+    func testPlayCoverConfigDispatchFormatsNonSecretIdentityEvidence() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-config-\(UUID().uuidString)"
+            )
+            .path
+        let evidence = makePlayCoverTestSigningIdentity()
+        let cli = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root],
+            playCoverSignerInitializer: { evidence }
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = cli.run(
+            arguments: ["config", "--mac"]
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(
+            result.stdout,
+            """
+            Mac backend signing identity is ready.
+            Certificate SHA-256: \(evidence.certificateSHA256)
+            Expires: 2050-01-01T00:00:00Z
+
+            """
+        )
+        XCTAssertFalse(
+            result.stdout.localizedCaseInsensitiveContains(
+                "private key"
+            )
+        )
+        XCTAssertTrue(result.stderr.isEmpty)
+    }
+
+    func testPlayCoverConfigJSONUsesCommonMinimalSuccessEnvelope()
+        throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-config-json-\(UUID().uuidString)"
+            )
+            .path
+        let evidence = makePlayCoverTestSigningIdentity()
+        let cli = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root],
+            playCoverSignerInitializer: { evidence }
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = cli.run(
+            arguments: ["config", "--mac", "--json"]
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stderr.isEmpty)
+        let envelope = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(result.stdout.utf8)
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(envelope["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(envelope["ok"] as? Bool, true)
+        XCTAssertEqual(envelope["command"] as? String, "config")
+        let data = try XCTUnwrap(
+            envelope["data"] as? [String: Any]
+        )
+        XCTAssertEqual(
+            Set(data.keys),
+            Set([
+                "backend",
+                "status",
+                "certificateSHA256",
+                "expiresAt",
+            ])
+        )
+        XCTAssertEqual(data["backend"] as? String, "mac")
+        XCTAssertEqual(data["status"] as? String, "ready")
+        XCTAssertEqual(
+            data["certificateSHA256"] as? String,
+            evidence.certificateSHA256
+        )
+        XCTAssertEqual(
+            data["expiresAt"] as? String,
+            "2050-01-01T00:00:00Z"
+        )
+    }
+
+    func testPlayCoverConfigJSONUsesCommonFailureEnvelope() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-config-failure-\(UUID().uuidString)"
+            )
+            .path
+        let cli = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root],
+            playCoverSignerInitializer: {
+                throw PlayCoverSigningIdentityServiceError
+                    .bindingUnavailable
+            }
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = cli.run(
+            arguments: ["config", "--mac", "--json"]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stdout.isEmpty)
+        let envelope = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(result.stderr.utf8)
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(envelope["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(envelope["ok"] as? Bool, false)
+        XCTAssertEqual(envelope["command"] as? String, "config")
+        let error = try XCTUnwrap(
+            envelope["error"] as? [String: Any]
+        )
+        XCTAssertEqual(
+            error["code"] as? String,
+            "mac_signing_identity_binding_unavailable"
+        )
+        XCTAssertEqual(
+            error["phase"] as? String,
+            "mac_signing_identity"
+        )
+        XCTAssertEqual(
+            error["mutationMayHaveApplied"] as? Bool,
+            true
+        )
+    }
+
+    func testPlayCoverConfigJSONMarksEverySignerFailureAsPossiblyMutating()
+        throws
+    {
+        let failures: [PlayCoverSigningIdentityServiceError] = [
+            .identityCreationUnavailable,
+            .invalidCreatedIdentity,
+            .bindingUnavailable,
+            .trustConfigurationFailed(errSecAuthFailed),
+            .signingProbeFailed("denied"),
+            .unhealthy(.missing),
+            .unhealthy(.trustRequired),
+            .unhealthy(.unavailable),
+        ]
+
+        for failure in failures {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "ios-use-playcover-config-failure-\(UUID().uuidString)"
+                )
+                .path
+            let cli = IOSUseCLI(
+                environment: ["IOS_USE_HOME": root],
+                playCoverSignerInitializer: { throw failure }
+            )
+            defer { try? FileManager.default.removeItem(atPath: root) }
+
+            let result = cli.run(
+                arguments: ["config", "--mac", "--json"]
+            )
+            let envelope = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: Data(result.stderr.utf8)
+                ) as? [String: Any]
+            )
+            let error = try XCTUnwrap(
+                envelope["error"] as? [String: Any]
+            )
+
+            XCTAssertEqual(result.exitCode, 1, "\(failure)")
+            XCTAssertEqual(
+                error["mutationMayHaveApplied"] as? Bool,
+                true,
+                "\(failure)"
+            )
+        }
+    }
+
+    func testReadOnlySignerFailureRemainsNonMutating() throws {
+        for health in [
+            PlayCoverSigningIdentityHealth.missing,
+            .trustRequired,
+            .unavailable,
+        ] {
+            let result = MachineOutput.failure(
+                command: "start",
+                error: PlayCoverSigningIdentityServiceError
+                    .unhealthy(health)
+            )
+            let envelope = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: Data(result.stderr.utf8)
+                ) as? [String: Any]
+            )
+            let error = try XCTUnwrap(
+                envelope["error"] as? [String: Any]
+            )
+
+            XCTAssertEqual(
+                error["mutationMayHaveApplied"] as? Bool,
+                false,
+                health.rawValue
+            )
+        }
+    }
+
+    func testOrdinaryStartNeverCallsPlayCoverConfigInitializer() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-start-no-signer-init-\(UUID().uuidString)"
+            )
+            .path
+        DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
+        let cli = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root],
+            playCoverSignerInitializer: {
+                XCTFail(
+                    "ordinary start must not initialize Mac backend signing"
+                )
+                return makePlayCoverTestSigningIdentity()
+            }
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = cli.run(arguments: ["start"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(
+            result.stderr.contains(
+                "No --udid and no USB real devices detected"
+            )
+        )
+    }
+
+    func testPlayCoverStartHelpDocumentsDirectSourceLaunch() {
+        let result = IOSUseCLI().run(arguments: ["start", "--help"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("--app <source-or-prepared.app>"))
+        XCTAssertTrue(result.stdout.contains("--log"))
+        XCTAssertTrue(result.stdout.contains("retained after stop"))
+        XCTAssertTrue(result.stdout.contains("automatically prepares"))
+        XCTAssertFalse(result.stdout.contains("--app <prepared.app>"))
     }
 
     func testDriverDeploymentTargetsStayAtIOS17() throws {
@@ -1443,6 +1923,252 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(clientSessions.map(\.holderPid), [333, 555])
     }
 
+    func testDriverRecoveryRejectsChangedLifecycleIdentity() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-stale-recovery-identity-\(UUID().uuidString)"
+            )
+            .path
+        try FileManager.default.createDirectory(
+            atPath: root,
+            withIntermediateDirectories: true
+        )
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root]
+        )
+        try """
+        {"devices":{"REAL-STALE-RECOVERY":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(
+            toFile: "\(root)/config.json",
+            atomically: true,
+            encoding: .utf8
+        )
+        let original = SessionService.Info(
+            udid: "REAL-STALE-RECOVERY",
+            deviceName: "Phone",
+            deviceVersion: "26.0",
+            deviceType: "real",
+            startedAt: 1,
+            holderPid: 101,
+            runnerPid: 102,
+            startMode: "full-xctest",
+            sessionIdentifier: "ORIGINAL",
+            bundleId: "com.example.driver",
+            controlSocketPath: "\(root)/state/original.sock"
+        )
+        let replacement = SessionService.Info(
+            udid: original.udid,
+            deviceName: original.deviceName,
+            deviceVersion: original.deviceVersion,
+            deviceType: original.deviceType,
+            startedAt: 2,
+            holderPid: 201,
+            runnerPid: 202,
+            startMode: nil,
+            sessionIdentifier: "REPLACEMENT",
+            bundleId: original.bundleId,
+            controlSocketPath: "\(root)/state/replacement.sock"
+        )
+        try SessionService.writeDriverLock(
+            info: original,
+            paths: paths
+        )
+        DriverLifecycleService.holderTerminatorForTesting = { _, _ in
+            XCTFail("stale recovery must not terminate any holder")
+            return .failed
+        }
+        DriverLifecycleService.holderLauncherForTesting = {
+            _, _, _, _ in
+            XCTFail("stale recovery must not launch a holder")
+            throw CLIParseError.invalidValue("unexpected launch")
+        }
+        var attempts = 0
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            attempts += 1
+            return FakeDriverCommandClient(
+                domHandler: { _, _, _ in
+                    try SessionService.writeDriverLock(
+                        info: replacement,
+                        paths: paths
+                    )
+                    throw DriverClientError.connectFailed(61)
+                }
+            )
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root]
+        ).run(arguments: ["dom"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(
+            result.stderr.contains(
+                "Driver lifecycle changed before connection recovery"
+            ),
+            result.stderr
+        )
+        XCTAssertEqual(attempts, 1)
+        XCTAssertEqual(
+            try SessionService.readDriverLockInfo(paths: paths),
+            replacement
+        )
+    }
+
+    func testDriverRecoveryAndStopShareLifecycleLock() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-recovery-stop-lock-\(UUID().uuidString)"
+            )
+            .path
+        try FileManager.default.createDirectory(
+            atPath: root,
+            withIntermediateDirectories: true
+        )
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root]
+        )
+        try """
+        {"devices":{"REAL-RECOVERY-STOP":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(
+            toFile: "\(root)/config.json",
+            atomically: true,
+            encoding: .utf8
+        )
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "REAL-RECOVERY-STOP",
+                deviceName: "Phone",
+                deviceVersion: "26.0",
+                deviceType: "real",
+                startedAt: 1,
+                holderPid: 301,
+                runnerPid: 302,
+                startMode: "full-xctest",
+                sessionIdentifier: "BEFORE-RECOVERY",
+                bundleId: "com.example.driver",
+                controlSocketPath: "\(root)/state/before.sock"
+            ),
+            paths: paths
+        )
+
+        let firstOldTermination = DispatchSemaphore(value: 1)
+        defer { firstOldTermination.signal() }
+        let recoveryEnteredTermination = DispatchSemaphore(value: 0)
+        let concurrentStopEnteredOldTermination =
+            DispatchSemaphore(value: 0)
+        let releaseRecoveryTermination = DispatchSemaphore(value: 0)
+        let stopTerminatedRecoveredIdentity =
+            DispatchSemaphore(value: 0)
+        DriverLifecycleService.holderTerminatorForTesting = {
+            info, _ in
+            if info.sessionIdentifier == "BEFORE-RECOVERY" {
+                if firstOldTermination.wait(timeout: .now())
+                    == .success {
+                    recoveryEnteredTermination.signal()
+                } else {
+                    concurrentStopEnteredOldTermination.signal()
+                }
+                _ = releaseRecoveryTermination.wait(
+                    timeout: .now() + 5
+                )
+                return .terminated
+            }
+            XCTAssertEqual(
+                info.sessionIdentifier,
+                "AFTER-RECOVERY"
+            )
+            stopTerminatedRecoveredIdentity.signal()
+            return .terminated
+        }
+        DriverLifecycleService.holderLauncherForTesting = {
+            udid, bundleID, _, _ in
+            XCTAssertEqual(udid, "REAL-RECOVERY-STOP")
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 401,
+                runnerPid: 402,
+                sessionIdentifier: "AFTER-RECOVERY",
+                bundleId: bundleID,
+                controlSocketPath: "\(root)/state/after.sock"
+            )
+        }
+        var attempts = 0
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            attempts += 1
+            if attempts == 1 {
+                return FakeDriverCommandClient(
+                    domHandler: { _, _, _ in
+                        throw DriverClientError.connectFailed(61)
+                    }
+                )
+            }
+            return FakeDriverCommandClient(
+                domHandler: { _, _, _ in
+                    ForyDomPayload(
+                        app: "com.example.app",
+                        windowSize: ForyPoint(x: 100, y: 200)
+                    )
+                }
+            )
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let recoveryFinished = expectation(
+            description: "driver recovery finished"
+        )
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = IOSUseCLI(
+                environment: ["IOS_USE_HOME": root]
+            ).run(arguments: ["dom"])
+            XCTAssertEqual(result.exitCode, 0, result.stderr)
+            recoveryFinished.fulfill()
+        }
+        XCTAssertEqual(
+            recoveryEnteredTermination.wait(timeout: .now() + 5),
+            .success
+        )
+
+        let stopFinished = expectation(
+            description: "stop finished after recovery"
+        )
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                _ = try SessionService.stop(paths: paths)
+            } catch {
+                XCTFail("stop failed: \(error)")
+            }
+            stopFinished.fulfill()
+        }
+        XCTAssertEqual(
+            concurrentStopEnteredOldTermination.wait(
+                timeout: .now() + 0.2
+            ),
+            .timedOut,
+            "stop entered stale-holder termination while recovery "
+                + "owned the lifecycle lock"
+        )
+
+        releaseRecoveryTermination.signal()
+        releaseRecoveryTermination.signal()
+        wait(
+            for: [recoveryFinished, stopFinished],
+            timeout: 5
+        )
+        XCTAssertEqual(
+            stopTerminatedRecoveredIdentity.wait(timeout: .now()),
+            .success
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: paths.driverLock
+            )
+        )
+    }
+
     func testDriverCommandDoesNotRelaunchWhenStaleHolderCannotBeStopped() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-stuck-xctest-recover-\(UUID().uuidString)")
@@ -1735,84 +2461,6 @@ final class IOSUseCLITests: XCTestCase {
         let data = try XCTUnwrap(envelope["data"] as? [String: Any])
         XCTAssertEqual((data["element"] as? [String: Any])?["label"] as? String, "Continue")
         XCTAssertEqual((data["postDom"] as? [String: Any])?["app"] as? String, "com.example")
-    }
-
-    func testDomOCRReturnsFreshDomAndRunsAccurateOCRAlongsideDomFetch() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ios-use-dom-ocr-\(UUID().uuidString)")
-            .path
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try writeDriverLock(udid: "SIM-DOM-OCR", deviceType: "simulator", paths: paths)
-        let ocrStarted = DispatchSemaphore(value: 0)
-        let domStarted = DispatchSemaphore(value: 0)
-        var calls: [String] = []
-
-        ScreenshotArtifactService.ocrRecognizerForTesting = { _, logicalSize, scale, recognitionLevel in
-            XCTAssertEqual(recognitionLevel, .accurate)
-            XCTAssertEqual(logicalSize, CGSize(width: 100, height: 200))
-            XCTAssertEqual(scale, 3)
-            ocrStarted.signal()
-            guard domStarted.wait(timeout: .now() + 1) == .success else {
-                throw CLIParseError.invalidValue("DOM did not overlap OCR")
-            }
-            return OCRService.Result(
-                imageWidth: 300,
-                imageHeight: 600,
-                logicalSize: logicalSize,
-                scale: scale,
-                observations: [
-                    OCRService.Observation(
-                        text: "视觉横幅",
-                        confidence: 1,
-                        boundingBox: CGRect(x: 0.1, y: 0.8, width: 0.5, height: 0.1)
-                    )
-                ]
-            )
-        }
-        IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(
-                domHandler: { raw, fresh, waitQuiescence in
-                    XCTAssertFalse(raw)
-                    XCTAssertTrue(fresh)
-                    XCTAssertFalse(waitQuiescence)
-                    guard ocrStarted.wait(timeout: .now() + 1) == .success else {
-                        throw CLIParseError.invalidValue("OCR did not start before DOM")
-                    }
-                    calls.append("dom")
-                    domStarted.signal()
-                    return ForyDomPayload(
-                        app: "com.example",
-                        elements: [ForyDomElement(traits: ["Text"], label: "AX 文本", rect: ForyRect(x: 1, y: 2, w: 3, h: 4))]
-                    )
-                },
-                screenshotHandler: {
-                    calls.append("screenshot")
-                    return ScreenshotCapture(
-                        jpeg: Data("fixture-jpeg".utf8),
-                        logicalSize: ForyPoint(x: 100, y: 200),
-                        scale: 3
-                    )
-                }
-            )
-        }
-        addTeardownBlock {
-            IOSUseCLI.driverClientFactoryForTesting = nil
-            ScreenshotArtifactService.ocrRecognizerForTesting = nil
-            try? FileManager.default.removeItem(atPath: root)
-        }
-
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom", "--ocr"])
-
-        XCTAssertEqual(result.exitCode, 0, result.stderr)
-        XCTAssertEqual(calls, ["screenshot", "dom"])
-        XCTAssertTrue(result.stdout.contains("App: com.example"))
-        XCTAssertTrue(result.stdout.contains("- AX 文本 [Text] (1,2,3,4)"))
-        XCTAssertTrue(result.stdout.contains("Visual evidence"))
-        XCTAssertTrue(result.stdout.contains("Screenshot saved: \(root)/artifacts/dom.jpg"))
-        XCTAssertTrue(result.stdout.contains("OCR (accurate):"))
-        XCTAssertTrue(result.stdout.contains("视觉横幅 [10.0000,20.0000,50.0000,20.0000]"))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/artifacts/dom.jpg"))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/artifacts/dom.ocr.json"))
     }
 
     func testMutatingCommandBareDomWaitsForQuiescence() throws {
@@ -2219,7 +2867,14 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(shellCalls.first?.1, ["simctl", "openurl", simulatorUdid, "https://example.com"])
     }
 
-    func testOpenURLInvalidURLFailsBeforeDriverOrShell() {
+    func testOpenURLInvalidURLFailsBeforeDriverOrShell() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-invalid-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(
+            atPath: root,
+            withIntermediateDirectories: true
+        )
         Shell.runOverrideForTesting = { _, _, _, _ in
             XCTFail("invalid URL should fail before shell")
             return ""
@@ -2229,11 +2884,14 @@ final class IOSUseCLITests: XCTestCase {
             return FakeDriverCommandClient()
         }
         addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
             Shell.runOverrideForTesting = nil
             IOSUseCLI.driverClientFactoryForTesting = nil
         }
 
-        let result = IOSUseCLI().run(arguments: ["open", "://missing"])
+        let result = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root]
+        ).run(arguments: ["open", "://missing"])
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(result.stderr.contains("Invalid URL: ://missing"))
@@ -2566,10 +3224,11 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(commands.contains("dom"))
         XCTAssertTrue(commands.contains("waitFor"))
         XCTAssertTrue(commands.contains("dismissAlert"))
+        XCTAssertTrue(commands.contains("dismissAlertByLabel"))
         XCTAssertTrue(commands.contains("waitAppForeground"))
         XCTAssertTrue(commands.contains("mediaImport"))
         XCTAssertFalse(commands.contains("health"))
-        XCTAssertEqual(commands.count, 14)
+        XCTAssertEqual(commands.count, 15)
     }
 
     func testDriverCommandMetadataBindsArgsAndPayloadTypes() {
@@ -2754,6 +3413,109 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(received.allSatisfy { $0.originalFilename == "fixture.png" })
         XCTAssertTrue(received.allSatisfy { $0.uniformTypeIdentifier == "public.png" })
         XCTAssertTrue(received.allSatisfy { $0.byteCount == 4 && $0.data == bytes })
+    }
+
+    func testMediaImportRoutesActivePlayCoverSessionToHostClient()
+        throws
+    {
+        let root =
+            "/tmp/iu-pcm-\(UUID().uuidString.prefix(8).lowercased())"
+        try FileManager.default.createDirectory(
+            atPath: root,
+            withIntermediateDirectories: true
+        )
+        let source = URL(fileURLWithPath: root)
+            .appendingPathComponent("fixture.png")
+        let bytes = Data([0x89, 0x50, 0x4e, 0x47])
+        try bytes.write(to: source)
+        let accountRoot = "\(root)/account"
+        let socketRoot = "\(root)/socket"
+        try FileManager.default.createDirectory(
+            atPath: accountRoot,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.createDirectory(
+            atPath: socketRoot,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root],
+            accountHomeDirectoryOverrideForTesting: accountRoot,
+            socketRootOverrideForTesting: socketRoot
+        )
+        let sessionID = "media-session"
+        let generationKey = "generation"
+        let appPath =
+            "\(paths.playcoverGlobalObjects)/\(generationKey)/App.app"
+        try FileManager.default.createDirectory(
+            atPath: appPath,
+            withIntermediateDirectories: true
+        )
+        let executablePath = "\(appPath)/Media"
+        XCTAssertTrue(
+            FileManager.default.createFile(
+                atPath: executablePath,
+                contents: Data()
+            )
+        )
+        try FileManager.default.createDirectory(
+            atPath: paths.playcoverRun,
+            withIntermediateDirectories: true
+        )
+        XCTAssertEqual(Darwin.chmod(paths.playcoverRun, 0o700), 0)
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "mac",
+                deviceName: "iPhone16,2",
+                deviceVersion: "18.7",
+                deviceType: PlayCoverSessionService.deviceType,
+                startedAt: 1,
+                runnerPid: 42,
+                startMode: PlayCoverSessionService.deviceType,
+                sessionIdentifier: sessionID,
+                bundleId: "com.example.media",
+                macAppPath: appPath,
+                macExecutablePath: executablePath,
+                macGenerationKey: generationKey,
+                macRuntimeSocketPath:
+                    try paths.macRuntimeSocketPath(
+                        sessionID: sessionID
+                    )
+            ),
+            paths: paths
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        var received: ForyMediaImportArgs?
+        IOSUseCLI.playCoverDriverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(mediaImportHandler: {
+                received = $0
+                return ForyMediaImportPayload(
+                    kind: $0.kind,
+                    originalFilename: $0.originalFilename,
+                    byteCount: $0.byteCount,
+                    assetLocalIdentifier: "playcover/asset",
+                    permissionPromptHandled: false
+                )
+            })
+        }
+
+        let result = IOSUseCLI(pathsForTesting: paths).run(
+            arguments: ["media", "import", source.path]
+        )
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertEqual(
+            result.stdout,
+            "Imported photo fixture.png "
+                + "(4 bytes, asset playcover/asset)\n"
+        )
+        XCTAssertEqual(received?.data, bytes)
+        XCTAssertEqual(received?.uniformTypeIdentifier, "public.png")
     }
 
     func testMediaImportValidationUsesClassifiedJSONAndMediaHelp() throws {
@@ -3011,7 +3773,7 @@ final class IOSUseCLITests: XCTestCase {
 
 private final class FakeDriverCommandClient: DriverCommandClient {
     private let domHandler: (Bool, Bool, Bool) throws -> ForyDomPayload
-    private let tapHandler: (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint) throws -> ForyElementPayload
+    private let tapHandler: (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint?) throws -> ForyElementPayload
     private let activateHandler: (String) throws -> Void
     private let terminateHandler: (String) throws -> Void
     private let screenshotHandler: () throws -> ScreenshotCapture
@@ -3023,7 +3785,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         domHandler: @escaping (Bool, Bool, Bool) throws -> ForyDomPayload = { _, _, _ in
             throw CLIParseError.invalidValue("unexpected dom")
         },
-        tapHandler: @escaping (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint) throws -> ForyElementPayload = { _, _, _, _, _ in
+        tapHandler: @escaping (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint?) throws -> ForyElementPayload = { _, _, _, _, _ in
             throw CLIParseError.invalidValue("unexpected tap")
         },
         activateHandler: @escaping (String) throws -> Void = { _ in
@@ -3073,7 +3835,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         try screenshotHandler()
     }
 
-    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
+    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint?) throws -> ForyElementPayload {
         try tapHandler(target, traits, cindex, offset, ratio)
     }
 
@@ -3081,7 +3843,10 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         throw CLIParseError.invalidValue("unexpected longPress")
     }
 
-    func input(tap: ForyTarget?, content: String) throws {
+    func input(
+        tap: ForyTarget?,
+        content: String
+    ) throws -> ForyElementPayload {
         throw CLIParseError.invalidValue("unexpected input")
     }
 

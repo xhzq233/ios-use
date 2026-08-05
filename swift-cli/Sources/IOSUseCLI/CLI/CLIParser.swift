@@ -19,6 +19,9 @@ public enum CLIParser {
 
         let parsed: ParsedCommand
         switch command {
+        case "du":
+            try parser.requireEnd()
+            parsed = .du
         case "status":
             parsed = .status(try parseStatus(&parser))
         case "config":
@@ -72,12 +75,16 @@ public enum CLIParser {
             parsed = .driver(try parseDismissAlert(&parser))
         case "oslog":
             parsed = .oslog(try parseOSLog(&parser))
+        case "debug":
+            parsed = .debug(try parseDebug(&parser))
         default:
             throw CLIParseError.unknownCommand(command)
         }
         if json {
             switch parsed {
-            case .status, .install, .apps, .open, .appLifecycle, .driver, .mediaImport:
+            case .du, .start, .stop, .status, .install, .apps, .open,
+                    .config, .appLifecycle, .driver, .mediaImport,
+                    .debug:
                 break
             default:
                 throw CLIParseError.unknownOption("--json")
@@ -88,11 +95,12 @@ public enum CLIParser {
 
     static func extractGlobalJSONFlag(_ arguments: [String]) -> ([String], Bool) {
         let valueOptions: Set<String> = [
-            "--apple-id", "--password", "--udid", "--path", "--name", "--pattern",
+            "--udid", "--path", "--name", "--pattern",
             "--flags", "--timeout", "--last", "--capture-mode", "--filter", "--interface",
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
-            "--match", "--fps", "--index", "--process", "--pid", "-i"
+            "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
+            "--app", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -133,20 +141,66 @@ public enum CLIParser {
             case "--udid": options.udid = try parser.value(for: arg)
             case "--list": options.list = true
             case "--simulator": options.simulator = true
-            case "--apple-id": options.appleId = try parser.value(for: arg)
-            case "--password": options.password = try parser.value(for: arg)
             case "--verbose": options.verbose = true
+            case "--mac": options.playCover = true
             default: throw CLIParseError.unknownOption(arg)
             }
+        }
+        if options.playCover,
+           options.udid != nil
+                || options.list
+                || options.simulator {
+            throw CLIParseError.invalidValue(
+                "--mac cannot be combined with --udid, --simulator, "
+                    + "or --list"
+            )
         }
         return options
     }
 
     private static func parseStart(_ parser: inout ArgumentParser) throws -> StartOptions {
         var options = StartOptions()
+        var timeoutWasProvided = false
         while let arg = parser.consume() {
             switch arg {
             case "--verbose": options.verbose = true
+            case "--mac":
+                guard !options.mac else {
+                    throw CLIParseError.invalidValue("--mac may only be provided once")
+                }
+                options.mac = true
+            case "--app":
+                guard options.appPath == nil else {
+                    throw CLIParseError.invalidValue("--app may only be provided once")
+                }
+                let appPath = try parser.value(for: arg)
+                guard !appPath.isEmpty else {
+                    throw CLIParseError.invalidValue(
+                        "--app requires a non-empty App path"
+                    )
+                }
+                options.appPath = appPath
+            case "--reuse":
+                guard !options.reuse else {
+                    throw CLIParseError.invalidValue("--reuse may only be provided once")
+                }
+                options.reuse = true
+            case "--log":
+                options.log = true
+            case "--frida":
+                guard !options.frida else {
+                    throw CLIParseError.invalidValue("--frida may only be provided once")
+                }
+                options.frida = true
+            case "--timeout":
+                options.timeout = try parsePositiveDurationSecondsStrict(
+                    try parser.value(for: arg),
+                    label: "--timeout"
+                )
+                timeoutWasProvided = true
+                guard options.timeout <= 60 else {
+                    throw CLIParseError.invalidValue("--timeout must be at most 60 seconds")
+                }
             default:
                 if arg.hasPrefix("-") {
                     throw CLIParseError.unknownOption(arg)
@@ -157,7 +211,93 @@ public enum CLIParser {
                 options.udid = arg
             }
         }
+        if options.mac {
+            guard options.udid == nil else {
+                throw CLIParseError.invalidValue("a device UDID cannot be used with --mac")
+            }
+            guard !options.verbose else {
+                throw CLIParseError.invalidValue("--verbose cannot be used with --mac")
+            }
+            guard (options.appPath != nil) != options.reuse else {
+                throw CLIParseError.invalidValue(
+                    "--mac requires exactly one of --app <app> or --reuse"
+                )
+            }
+            if options.frida, options.appPath == nil, !options.reuse {
+                throw CLIParseError.invalidValue(
+                    "--frida requires --app or --reuse"
+                )
+            }
+        } else if options.appPath != nil
+                    || options.reuse
+                    || options.log
+                    || options.frida
+                    || timeoutWasProvided {
+            throw CLIParseError.invalidValue(
+                "--app, --reuse, --log, and --timeout require --mac"
+            )
+        }
         return options
+    }
+
+    private static func parseDebug(
+        _ parser: inout ArgumentParser
+    ) throws -> DebugOptions {
+        var stream = false
+        var reset = false
+        var script: String?
+        while let arg = parser.consume() {
+            switch arg {
+            case "--stream":
+                guard !stream else {
+                    throw CLIParseError.invalidValue(
+                        "--stream may only be provided once"
+                    )
+                }
+                stream = true
+            case "--reset":
+                guard !reset else {
+                    throw CLIParseError.invalidValue(
+                        "--reset may only be provided once"
+                    )
+                }
+                reset = true
+            case "-":
+                guard script == nil else {
+                    throw CLIParseError.unexpectedArgument(arg)
+                }
+                script = "-"
+            default:
+                if arg.hasPrefix("-") {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                guard script == nil else {
+                    throw CLIParseError.unexpectedArgument(arg)
+                }
+                script = arg
+            }
+        }
+        if reset {
+            guard script == nil, !stream else {
+                throw CLIParseError.invalidValue(
+                    "--reset cannot be combined with a script or --stream"
+                )
+            }
+        } else {
+            guard let script else {
+                throw CLIParseError.missingRequiredArgument("script")
+            }
+            if script == "-" {
+                let input = String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                guard !input.isEmpty else {
+                    throw CLIParseError.invalidValue(
+                        "debug stdin is empty"
+                    )
+                }
+                return DebugOptions(script: input, stream: stream)
+            }
+        }
+        return DebugOptions(script: script, stream: stream, reset: reset)
     }
 
     private static func parseInstall(_ parser: inout ArgumentParser) throws -> AppInstallOptions {
@@ -402,7 +542,16 @@ public enum CLIParser {
             case "--tap": tap = try parser.value(for: arg)
             case "--label": throw CLIParseError.invalidValue("input --label was replaced by --tap <target>")
             case "--content": content = try parser.valueAllowingLeadingDash(for: arg)
-            case "--delete": delete = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--delete":
+                delete = try parseNonNegativeIntStrict(
+                    parser.valueAllowingLeadingDash(for: arg),
+                    label: arg
+                )
+                guard delete <= 1_048_576 else {
+                    throw CLIParseError.invalidValue(
+                        "\(arg) must not exceed 1048576"
+                    )
+                }
             case "--enter": enter = true
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
@@ -444,21 +593,18 @@ public enum CLIParser {
         var raw = false
         var fresh = false
         var waitQuiescence = false
-        var ocr = false
         while let arg = parser.consume() {
             switch arg {
             case "--raw": raw = true
             case "--fresh": fresh = true
             case "--wait-quiescence": waitQuiescence = true
-            case "--ocr": ocr = true
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        if raw && (fresh || waitQuiescence || ocr) {
-            throw CLIParseError.invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr")
-        }
-        if ocr {
-            return .inspect(waitQuiescence: waitQuiescence)
+        if raw && (fresh || waitQuiescence) {
+            throw CLIParseError.invalidValue(
+                "dom --raw cannot be combined with --fresh or --wait-quiescence"
+            )
         }
         return .dom(raw: raw, fresh: fresh || waitQuiescence, waitQuiescence: waitQuiescence)
     }

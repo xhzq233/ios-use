@@ -15,6 +15,10 @@ enum ScreenshotArtifactService {
         let scale: Double?
         let geometrySource: String?
         let performance: ScreenshotCapturePerformance?
+        let snapshotGeneration: Int64?
+        let captureGeneration: Int64?
+        let runtimeEvidence:
+            [String: PlayCoverRuntimeJSONValue]?
     }
 
     final class Work {
@@ -110,7 +114,10 @@ enum ScreenshotArtifactService {
                 logicalSize: capture.logicalSize,
                 scale: capture.scale,
                 geometrySource: capture.geometrySource,
-                performance: capture.performance
+                performance: capture.performance,
+                snapshotGeneration: capture.snapshotGeneration,
+                captureGeneration: capture.captureGeneration,
+                runtimeEvidence: capture.runtimeEvidence
             )
         }
     }

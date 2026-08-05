@@ -49,9 +49,17 @@ protocol DriverCommandClient: AnyObject {
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode) throws -> ForyWaitForPayload
     func screenshot() throws -> Data
     func screenshotCapture() throws -> ScreenshotCapture
-    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
+    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint?) throws -> ForyElementPayload
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload
-    func input(tap: ForyTarget?, content: String) throws
+    func input(tap: ForyTarget?, content: String) throws -> ForyElementPayload
+    func input(
+        tap: ForyTarget?,
+        content: String,
+        deleteCount: Int,
+        enter: Bool,
+        traits: String?,
+        cindex: Int32?
+    ) throws -> ForyElementPayload
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload
     func activateApp(bundleId: String) throws
     func terminateApp(bundleId: String) throws
@@ -61,6 +69,7 @@ protocol DriverCommandClient: AnyObject {
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload
+    func evidenceSnapshot() throws -> DriverEvidenceSnapshot
 }
 
 struct ScreenshotCapture {
@@ -71,6 +80,9 @@ struct ScreenshotCapture {
     let geometrySource: String?
     let warning: String?
     let performance: ScreenshotCapturePerformance?
+    let snapshotGeneration: Int64?
+    let captureGeneration: Int64?
+    let runtimeEvidence: [String: PlayCoverRuntimeJSONValue]?
 
     init(
         jpeg: Data,
@@ -79,7 +91,11 @@ struct ScreenshotCapture {
         scale: Double? = nil,
         geometrySource: String? = nil,
         warning: String? = nil,
-        performance: ScreenshotCapturePerformance? = nil
+        performance: ScreenshotCapturePerformance? = nil,
+        snapshotGeneration: Int64? = nil,
+        captureGeneration: Int64? = nil,
+        runtimeEvidence:
+            [String: PlayCoverRuntimeJSONValue]? = nil
     ) {
         self.jpeg = jpeg
         self.pixelSize = pixelSize
@@ -88,7 +104,15 @@ struct ScreenshotCapture {
         self.geometrySource = geometrySource
         self.warning = warning
         self.performance = performance
+        self.snapshotGeneration = snapshotGeneration
+        self.captureGeneration = captureGeneration
+        self.runtimeEvidence = runtimeEvidence
     }
+}
+
+struct DriverEvidenceSnapshot {
+    let screenshot: ScreenshotCapture
+    let dom: ForyDomPayload
 }
 
 struct ScreenshotCapturePerformance: Codable, Equatable {
@@ -100,6 +124,8 @@ struct ScreenshotCapturePerformance: Codable, Equatable {
 
 enum DriverCommandExecution {
     static var clientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)?
+    static var playCoverClientFactoryForTesting:
+        ((SessionService.Info) -> DriverCommandClient)?
 
     static func withLockedClient<T>(paths: IOSUsePaths, verbose: Bool = false, _ body: (DriverCommandClient) throws -> T) throws -> T {
         let session = LockedDriverClientSession(paths: paths, verbose: verbose)
@@ -109,6 +135,35 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
+    func input(
+        tap: ForyTarget?,
+        content: String,
+        deleteCount: Int,
+        enter: Bool,
+        traits: String?,
+        cindex: Int32?
+    ) throws -> ForyElementPayload {
+        _ = traits
+        _ = cindex
+        guard (0...1_048_576).contains(deleteCount) else {
+            throw CLIParseError.invalidValue(
+                "input delete count must be between 0 and 1048576"
+            )
+        }
+        let deletePrefix = String(repeating: "\u{7F}", count: deleteCount)
+        return try input(
+            tap: tap,
+            content: deletePrefix + content + (enter ? "\n" : "")
+        )
+    }
+
+    func evidenceSnapshot() throws -> DriverEvidenceSnapshot {
+        DriverEvidenceSnapshot(
+            screenshot: try screenshotCapture(),
+            dom: try dom(raw: false, fresh: true, waitQuiescence: false)
+        )
+    }
+
     func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload {
         throw CLIParseError.invalidValue("media import is not supported by this driver client")
     }
@@ -164,7 +219,8 @@ final class LockedDriverClientSession {
         do {
             return try body(currentClient(for: lock))
         } catch {
-            guard (error as? DriverClientError)?.isRecoverableConnectFailure == true,
+            guard lock.deviceType != PlayCoverSessionService.deviceType,
+                  (error as? DriverClientError)?.isRecoverableConnectFailure == true,
                   !didRecoverConnectFailure else {
                 throw error
             }
@@ -196,29 +252,74 @@ final class LockedDriverClientSession {
 
     private func replaceClient(for info: SessionService.Info) -> DriverCommandClient {
         closeClient()
-        let next = DriverCommandExecution.clientFactoryForTesting?(info) ?? DriverClient(session: info, paths: paths)
+        let next: DriverCommandClient
+        if info.deviceType == PlayCoverSessionService.deviceType {
+            next = DriverCommandExecution.playCoverClientFactoryForTesting?(info)
+                ?? PlayCoverDriverClient(
+                    session: info,
+                    paths: paths
+                )
+        } else {
+            next = DriverCommandExecution.clientFactoryForTesting?(info)
+                ?? DriverClient(session: info, paths: paths)
+        }
         client = next
         return next
     }
 
     private func relaunchDriver(for lock: SessionService.Info) throws -> SessionService.Info {
         closeClient()
-        let holderResult = DriverLifecycleService.terminateFullXCTestHolderIfNeeded(info: lock, paths: paths)
-        if holderResult != .notApplicable {
-            CLILogService.append(paths: paths, ["[cli-lifecycle] XCTest holder cleanup before relaunch: \(holderResult)"])
+        return try SessionOperationLock.withExclusiveLock(paths: paths) {
+            guard let current = try SessionService.readDriverLockInfo(
+                paths: paths
+            ),
+                  current == lock else {
+                throw CLIParseError.invalidValue(
+                    "Driver lifecycle changed before connection recovery; "
+                        + "refusing to relaunch a stale session."
+                )
+            }
+
+            let holderResult =
+                DriverLifecycleService
+                    .terminateFullXCTestHolderIfNeeded(
+                        info: current,
+                        paths: paths
+                    )
+            if holderResult != .notApplicable {
+                CLILogService.append(
+                    paths: paths,
+                    [
+                        "[cli-lifecycle] XCTest holder cleanup before "
+                            + "relaunch: \(holderResult)",
+                    ]
+                )
+            }
+            if let failure =
+                    DriverLifecycleService
+                        .holderTerminationFailureMessage(
+                            result: holderResult,
+                            info: current
+                        ) {
+                throw CLIParseError.invalidValue(failure)
+            }
+            let recoveredLock: SessionService.Info
+            if let metadata = try SessionService.launchDriver(
+                for: current,
+                paths: paths,
+                verbose: verbose
+            ) {
+                recoveredLock = current.applying(metadata)
+                try SessionService.writeDriverLock(
+                    info: recoveredLock,
+                    paths: paths
+                )
+            } else {
+                recoveredLock = current
+            }
+            info = recoveredLock
+            return recoveredLock
         }
-        if let failure = DriverLifecycleService.holderTerminationFailureMessage(result: holderResult, info: lock) {
-            throw CLIParseError.invalidValue(failure)
-        }
-        let recoveredLock: SessionService.Info
-        if let metadata = try SessionService.launchDriver(for: lock, paths: paths, verbose: verbose) {
-            recoveredLock = lock.applying(metadata)
-            try SessionService.writeDriverLock(info: recoveredLock, paths: paths)
-        } else {
-            recoveredLock = lock
-        }
-        info = recoveredLock
-        return recoveredLock
     }
 
     private func closeClient() {
@@ -341,8 +442,22 @@ final class DriverClient: DriverCommandClient {
         return ScreenshotCapture(jpeg: decoded.jpeg, logicalSize: logicalSize, scale: scale)
     }
 
-    func tap(target: ForyTarget, traits: String?, cindex: Int32? = nil, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
-        try send(TapCommand.self, args: ForyTapArgs(target: target.withLookup(traits: traits, cindex: cindex), offset: offset, ratio: ratio))
+    func tap(target: ForyTarget, traits: String?, cindex: Int32? = nil, offset: ForyPoint?, ratio: ForyPoint?) throws -> ForyElementPayload {
+        let deviceRatio = ratio ?? ForyPoint(
+            x: IOSUseProtocol.defaultTargetRatio,
+            y: IOSUseProtocol.defaultTargetRatio
+        )
+        return try send(
+            TapCommand.self,
+            args: ForyTapArgs(
+                target: target.withLookup(
+                    traits: traits,
+                    cindex: cindex
+                ),
+                offset: offset,
+                ratio: deviceRatio
+            )
+        )
     }
 
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32? = nil) throws -> ForyElementPayload {
@@ -350,8 +465,49 @@ final class DriverClient: DriverCommandClient {
         return try send(LongPressCommand.self, args: ForyLongPressArgs(target: target.withLookup(traits: traits, cindex: cindex), duration: durationSeconds))
     }
 
-    func input(tap: ForyTarget?, content: String) throws {
-        _ = try sendRaw(InputCommand.self, args: ForyInputArgs(target: tap ?? ForyTarget(), content: content))
+    func input(tap: ForyTarget?, content: String) throws -> ForyElementPayload {
+        try input(
+            tap: tap,
+            content: content,
+            deleteCount: 0,
+            enter: false,
+            traits: nil,
+            cindex: nil
+        )
+    }
+
+    func input(
+        tap: ForyTarget?,
+        content: String,
+        deleteCount: Int,
+        enter: Bool,
+        traits: String?,
+        cindex: Int32?
+    ) throws -> ForyElementPayload {
+        guard (0...1_048_576).contains(deleteCount) else {
+            throw CLIParseError.invalidValue(
+                "input delete count must be between 0 and 1048576"
+            )
+        }
+        let payload = try fory.serialize(
+            ForyInputArgs(
+                target: (tap ?? ForyTarget()).withLookup(
+                    traits: traits,
+                    cindex: cindex
+                ),
+                content: content,
+                deleteCount: Int32(deleteCount),
+                enter: enter
+            )
+        )
+        let response = try sendRawPayload(
+            command: InputCommand.command.rawValue,
+            payload: payload
+        )
+        return try fory.deserialize(
+            response,
+            as: ForyElementPayload.self
+        )
     }
 
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32? = nil) throws -> ForySwipePayload {
@@ -401,6 +557,42 @@ final class DriverClient: DriverCommandClient {
             responseTimeoutSeconds: IOSUseProtocol.dismissAlertSocketReadTimeoutSeconds(args.wait)
         )
         return try fory.deserialize(response, as: ForyAlertPayload.self)
+    }
+
+    // Compatibility for callers compiled against the branch's pre-1.3.4
+    // alert helpers. Public CLI requests use the unified args method above.
+    func dismissAlert(index: Int?) throws -> ForyAlertPayload {
+        try dismissAlert(index: index, label: nil)
+    }
+
+    func dismissAlert(
+        index: Int?,
+        label: String?
+    ) throws -> ForyAlertPayload {
+        if let label {
+            return try send(
+                DismissAlertByLabelCommand.self,
+                args: ForyDismissAlertByLabelArgs(label: label)
+            )
+        }
+        let wireIndex: Int32
+        let selection: IOSUseAlertSelectionMode
+        if let index {
+            guard let exactIndex = Int32(exactly: index) else {
+                throw CLIParseError.invalidValue(
+                    "dismissAlert --index is out of Int32 range for the active driver"
+                )
+            }
+            wireIndex = exactIndex
+            selection = .index
+        } else {
+            wireIndex = -1
+            selection = .onlyButton
+        }
+        return try dismissAlert(args: ForyDismissAlertArgs(
+            selection: selection.rawValue,
+            index: wireIndex
+        ))
     }
 
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {

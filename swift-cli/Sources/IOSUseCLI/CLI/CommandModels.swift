@@ -2,6 +2,7 @@ import Foundation
 import IOSUseProtocol
 
 public enum ParsedCommand: Equatable, Sendable {
+    case du
     case status(StatusOptions)
     case config(ConfigOptions)
     case start(StartOptions)
@@ -18,9 +19,11 @@ public enum ParsedCommand: Equatable, Sendable {
     case mediaImport(MediaImportOptions)
     case nslog(NSLogOptions)
     case proxy(ProxyCommand)
+    case debug(DebugOptions)
 
     public var commandName: String {
         switch self {
+        case .du: return "du"
         case .status: return "status"
         case .config: return "config"
         case .start: return "start"
@@ -37,6 +40,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .mediaImport: return "media import"
         case .nslog: return "nslog"
         case .proxy(let command): return "proxy \(command.subcommand)"
+        case .debug: return "debug"
         }
     }
 }
@@ -63,17 +67,21 @@ public struct ConfigOptions: Equatable, Sendable {
     public var udid: String?
     public var list = false
     public var simulator = false
-    public var appleId: String?
-    public var password: String?
     public var verbose = false
+    public var playCover = false
 
-    public init(udid: String? = nil, list: Bool = false, simulator: Bool = false, appleId: String? = nil, password: String? = nil, verbose: Bool = false) {
+    public init(
+        udid: String? = nil,
+        list: Bool = false,
+        simulator: Bool = false,
+        verbose: Bool = false,
+        playCover: Bool = false
+    ) {
         self.udid = udid
         self.list = list
         self.simulator = simulator
-        self.appleId = appleId
-        self.password = password
         self.verbose = verbose
+        self.playCover = playCover
     }
 }
 
@@ -90,10 +98,47 @@ public struct SessionOptions: Equatable, Sendable {
 public struct StartOptions: Equatable, Sendable {
     public var udid: String?
     public var verbose = false
+    public var mac = false
+    public var appPath: String?
+    public var reuse = false
+    public var log = false
+    public var timeout: Double = 15
+    public var frida = false
 
-    public init(udid: String? = nil, verbose: Bool = false) {
+    public init(
+        udid: String? = nil,
+        verbose: Bool = false,
+        mac: Bool = false,
+        appPath: String? = nil,
+        reuse: Bool = false,
+        log: Bool = false,
+        timeout: Double = 15,
+        frida: Bool = false
+    ) {
         self.udid = udid
         self.verbose = verbose
+        self.mac = mac
+        self.appPath = appPath
+        self.reuse = reuse
+        self.log = log
+        self.timeout = timeout
+        self.frida = frida
+    }
+}
+
+public struct DebugOptions: Equatable, Sendable {
+    public var script: String?
+    public var stream: Bool
+    public var reset: Bool
+
+    public init(
+        script: String? = nil,
+        stream: Bool = false,
+        reset: Bool = false
+    ) {
+        self.script = script
+        self.stream = stream
+        self.reset = reset
     }
 }
 
@@ -283,7 +328,6 @@ public enum DriverAction: Equatable, Sendable {
     case input(tap: String?, content: String, delete: Int, enter: Bool, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool)
-    case inspect(waitQuiescence: Bool)
     case screenshot(name: String?, ocr: Bool)
     case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode)
     case activateApp(bundleId: String)
@@ -298,7 +342,6 @@ public enum DriverAction: Equatable, Sendable {
         case .input: return "input"
         case .swipe: return "swipe"
         case .dom: return "dom"
-        case .inspect: return "dom"
         case .screenshot: return "screenshot"
         case .waitFor: return "waitFor"
         case .activateApp: return "activateApp"

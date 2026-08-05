@@ -3,19 +3,70 @@ import IOSUseProtocol
 
 public struct IOSUseCLI: Sendable {
     public typealias CLIOutputSink = @Sendable (String) -> Void
+    typealias PlayCoverSignerInitializer =
+        @Sendable () throws -> PlayCoverSigningIdentityEvidence
 
-    public static let version = "1.3.4"
+    public static let version = "2.0.0"
     static var driverClientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)? {
         get { DriverCommandExecution.clientFactoryForTesting }
         set { DriverCommandExecution.clientFactoryForTesting = newValue }
     }
+    static var playCoverDriverClientFactoryForTesting:
+        ((SessionService.Info) -> DriverCommandClient)? {
+        get { DriverCommandExecution.playCoverClientFactoryForTesting }
+        set { DriverCommandExecution.playCoverClientFactoryForTesting = newValue }
+    }
 
     public let paths: IOSUsePaths
     public let outputSink: CLIOutputSink?
+    private let playCoverSignerInitializer: PlayCoverSignerInitializer
+    private let registerHomesForDiskUsage: Bool
 
-    public init(environment: [String: String] = ProcessInfo.processInfo.environment, outputSink: CLIOutputSink? = nil) {
+    public init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        outputSink: CLIOutputSink? = nil,
+        registerHomesForDiskUsage: Bool = false
+    ) {
+        self.init(
+            environment: environment,
+            outputSink: outputSink,
+            registerHomesForDiskUsage: registerHomesForDiskUsage,
+            playCoverSignerInitializer: {
+                try PlayCoverSigningIdentityService()
+                    .initializeForConfiguration()
+            }
+        )
+    }
+
+    init(
+        environment: [String: String],
+        outputSink: CLIOutputSink? = nil,
+        registerHomesForDiskUsage: Bool = false,
+        playCoverSignerInitializer:
+            @escaping PlayCoverSignerInitializer
+    ) {
         self.paths = IOSUsePaths.resolve(environment: environment)
         self.outputSink = outputSink
+        self.registerHomesForDiskUsage = registerHomesForDiskUsage
+        self.playCoverSignerInitializer = playCoverSignerInitializer
+    }
+
+    /// Internal test-only construction keeps commands on the fixture's
+    /// explicitly isolated account-global/cache/socket namespace.
+    init(
+        pathsForTesting paths: IOSUsePaths,
+        outputSink: CLIOutputSink? = nil,
+        registerHomesForDiskUsage: Bool = false,
+        playCoverSignerInitializer:
+            @escaping PlayCoverSignerInitializer = {
+                try PlayCoverSigningIdentityService()
+                    .initializeForConfiguration()
+            }
+    ) {
+        self.paths = paths
+        self.outputSink = outputSink
+        self.registerHomesForDiskUsage = registerHomesForDiskUsage
+        self.playCoverSignerInitializer = playCoverSignerInitializer
     }
 
     public func run(arguments: [String]) -> CLIResult {
@@ -43,6 +94,57 @@ public struct IOSUseCLI: Sendable {
             }
         }
 
+        return runPublicInvocation(arguments: arguments)
+    }
+
+    private func runPublicInvocation(arguments: [String]) -> CLIResult {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let invocationState = CLIInvocationState()
+        let performanceCollector =
+            CLIInvocationPerformanceCollector(
+                startedAt: startedAt
+            )
+        return CLIInvocationContext.$current.withValue(
+            invocationState
+        ) {
+            CLIInvocationPerformanceContext.$current.withValue(
+                performanceCollector
+            ) {
+                let wantsJSON = CLIParser.requestsJSON(arguments)
+                let command = performanceCommandName(
+                    arguments: arguments
+                )
+                if command == "start" || command == "stop" {
+                    invocationState.suppressAlertRefresh()
+                }
+                let result = executePublicInvocation(
+                    arguments: arguments
+                )
+                let invocationSnapshot =
+                    invocationState.snapshot()
+                let finalized = MachineOutput.finalizeInvocation(
+                    result,
+                    expectsMachineOutput: wantsJSON,
+                    snapshot: invocationSnapshot
+                )
+                let totalElapsedMs =
+                    performanceCollector.freezeTotalElapsedMs()
+                if command != "du" {
+                    appendPerformanceLog(
+                        command: command,
+                        ok: finalized.exitCode == 0,
+                        totalElapsedMs: totalElapsedMs,
+                        snapshot: performanceCollector.snapshot()
+                    )
+                }
+                return finalized
+            }
+        }
+    }
+
+    private func executePublicInvocation(
+        arguments: [String]
+    ) -> CLIResult {
         let (machineArguments, wantsJSON) = CLIParser.extractGlobalJSONFlag(arguments)
         if let immediate = CLIHelp.immediateResult(arguments: machineArguments) {
             return immediate
@@ -89,12 +191,112 @@ public struct IOSUseCLI: Sendable {
                 }
                 return CLIErrorEnvelope(message: "\(error)").render()
             }
-            return execute(invocation.command, json: invocation.json)
+            let result = execute(
+                invocation.command,
+                json: invocation.json
+            )
+            if registerHomesForDiskUsage,
+               result.exitCode == 0,
+               case .start = invocation.command {
+                IOSUseHomeDiscoveryStore.registerIfExisting(paths: paths)
+            }
+            return result
         }
     }
 
+    private func performanceCommandName(arguments: [String]) -> String {
+        let normalized = CLIParser.extractGlobalJSONFlag(arguments).0
+        guard let first = normalized.first else {
+            return "help"
+        }
+        let command: String
+        switch first {
+        case "-h", "--help", "help":
+            command = "help"
+        case "-V", "--version":
+            command = "version"
+        case "media", "proxy":
+            if normalized.count > 1,
+               !normalized[1].hasPrefix("-") {
+                command = "\(first) \(normalized[1])"
+            } else {
+                command = first
+            }
+        default:
+            command = first
+        }
+        let allowed = CharacterSet.alphanumerics.union(
+            CharacterSet(charactersIn: "._-")
+        )
+        let safe = command.unicodeScalars.map {
+            allowed.contains($0) ? String($0) : "_"
+        }.joined()
+        return String(safe.prefix(80))
+    }
+
+    private func appendPerformanceLog(
+        command: String,
+        ok: Bool,
+        totalElapsedMs: Double,
+        snapshot: CLIInvocationPerformanceSnapshot
+    ) {
+        var fields = [
+            "[cli]",
+            "command=\(command)",
+            "ok=\(ok)",
+            "commandElapsedMs=\(totalElapsedMs)",
+        ]
+        if let alertRefreshElapsedMs =
+                snapshot.alertRefreshElapsedMs {
+            fields.append(
+                "alertRefreshElapsedMs=\(alertRefreshElapsedMs)"
+            )
+        }
+        CLILogService.append(
+            paths: paths,
+            [fields.joined(separator: " ")]
+        )
+    }
+
     private func execute(_ parsed: ParsedCommand, json: Bool) -> CLIResult {
+        // An explicit Mac App start must establish its read-only signer
+        // evidence before routing probes driver.lock. This keeps a missing
+        // configuration ahead of every Mac state/cache/source mutation and
+        // passes the exact same evidence into preparation.
+        let explicitMacSigningIdentity:
+            PlayCoverSigningIdentityEvidence?
+        if case .start(let options) = parsed,
+           options.mac,
+           let appPath = options.appPath,
+           !appPath.isEmpty {
+            do {
+                explicitMacSigningIdentity =
+                    try PlayCoverService
+                        .requireHealthySigningIdentityForStart()
+            } catch {
+                return commandFailure(
+                    command: parsed.commandName,
+                    error: error,
+                    json: json
+                )
+            }
+        } else {
+            explicitMacSigningIdentity = nil
+        }
+        if let routedFailure = playCoverRoutingFailure(for: parsed, json: json) {
+            return routedFailure
+        }
         switch parsed {
+        case .du:
+            let snapshot = DiskUsageService.snapshot(paths: paths)
+            if json {
+                return MachineOutput.success(
+                    command: parsed.commandName,
+                    data: snapshot.machineData,
+                    warnings: snapshot.warnings
+                )
+            }
+            return CLIResult(exitCode: 0, stdout: snapshot.formatted())
         case .status(let options):
             if json {
                 let snapshot = StatusService.machineSnapshot(paths: paths)
@@ -105,26 +307,100 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .config(let options) where options.playCover:
+            return executePlayCoverConfiguration(json: json)
         case .config(let options) where options.list:
-            return CLIResult(exitCode: 0, stdout: ConfigService.formatList(ConfigService.listEntries(paths: paths)))
+            let output = ConfigService.formatList(
+                ConfigService.listEntries(paths: paths)
+            )
+            if json {
+                return MachineOutput.success(
+                    command: parsed.commandName,
+                    data: .object(["display": .string(output)])
+                )
+            }
+            return CLIResult(exitCode: 0, stdout: output)
         case .config(let options) where options.simulator:
             do {
-                return CLIResult(exitCode: 0, stdout: try ConfigService.configureSimulator(udid: options.udid, paths: paths))
+                let output = try ConfigService.configureSimulator(
+                    udid: options.udid,
+                    paths: paths
+                )
+                if json {
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: .object(["display": .string(output)])
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: output)
             } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+                return commandFailure(
+                    command: parsed.commandName,
+                    error: error,
+                    json: json
+                )
             }
         case .config(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try ConfigService.configureDevice(options: options, paths: paths))
+                let output = try ConfigService.configureDevice(
+                    options: options,
+                    paths: paths
+                )
+                if json {
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: .object(["display": .string(output)])
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: output)
             } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+                return commandFailure(
+                    command: parsed.commandName,
+                    error: error,
+                    json: json
+                )
             }
         case .start(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try SessionService.start(udid: options.udid, paths: paths, verbose: options.verbose))
+                let output: String
+                if options.mac {
+                    output = try SessionService
+                        .startPlayCoverAfterPreflight(
+                        appPath: options.appPath,
+                        signingIdentity:
+                            explicitMacSigningIdentity,
+                        captureStdio: options.log,
+                        fridaEnabled: options.frida,
+                        timeout: options.timeout,
+                        paths: paths
+                    )
+                } else {
+                    output = try SessionService.start(
+                        udid: options.udid,
+                        paths: paths,
+                        verbose: options.verbose
+                    )
+                }
+                if json {
+                    let snapshot = StatusService.machineSnapshot(
+                        paths: paths
+                    )
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: snapshot.data,
+                        warnings: snapshot.warnings
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: output)
             } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+                return commandFailure(
+                    command: parsed.commandName,
+                    error: error,
+                    json: json
+                )
             }
+        case .debug(let options):
+            return executeDebug(options, json: json)
         case .install(let options):
             do {
                 let result = try AppManagementService.installResult(options: options, paths: paths)
@@ -191,9 +467,24 @@ public struct IOSUseCLI: Sendable {
             }
         case .stop:
             do {
-                return CLIResult(exitCode: 0, stdout: try SessionService.stop(paths: paths))
+                let output = try SessionService.stop(paths: paths)
+                if json {
+                    let snapshot = StatusService.machineSnapshot(
+                        paths: paths
+                    )
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: snapshot.data,
+                        warnings: snapshot.warnings
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: output)
             } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+                return commandFailure(
+                    command: parsed.commandName,
+                    error: error,
+                    json: json
+                )
             }
         case .proxy(.doctor):
             return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: paths))
@@ -250,6 +541,131 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return commandFailure(command: parsed.commandName, error: error, json: json)
             }
+        }
+    }
+
+    private func executePlayCoverConfiguration(
+        json: Bool
+    ) -> CLIResult {
+        do {
+            let evidence = try playCoverSignerInitializer()
+            if json {
+                return MachineOutput.success(
+                    command: "config",
+                    data: playCoverSignerMachineData(evidence)
+                )
+            }
+            let expiresAt = ISO8601DateFormatter().string(
+                from: evidence.notAfter
+            )
+            return CLIResult(
+                exitCode: 0,
+                stdout: """
+                Mac backend signing identity is ready.
+                Certificate SHA-256: \(evidence.certificateSHA256)
+                Expires: \(expiresAt)
+
+                """
+            )
+        } catch {
+            return commandFailure(
+                command: "config",
+                error: error,
+                json: json,
+                mutationMayHaveApplied: true
+            )
+        }
+    }
+
+    private func playCoverSignerMachineData(
+        _ evidence: PlayCoverSigningIdentityEvidence
+    ) -> MachineValue {
+        .object([
+            "backend": .string("mac"),
+            "status": .string("ready"),
+            "certificateSHA256":
+                .string(evidence.certificateSHA256),
+            "expiresAt": .string(
+                ISO8601DateFormatter().string(
+                    from: evidence.notAfter
+                )
+            ),
+        ])
+    }
+
+    private func playCoverRoutingFailure(
+        for command: ParsedCommand,
+        json: Bool
+    ) -> CLIResult? {
+        let active: SessionService.Info?
+        do {
+            active = try SessionService.readDriverLockInfo(
+                paths: paths
+            )
+        } catch {
+            switch command {
+            case .du, .status, .config, .start, .stop:
+                return nil
+            default:
+                return commandFailure(
+                    command: command.commandName,
+                    error: error,
+                    json: json
+                )
+            }
+        }
+        guard active?.deviceType
+                == PlayCoverSessionService.deviceType else {
+            return nil
+        }
+        switch command {
+        case .du, .status, .config, .start, .stop, .capture, .open, .oslog, .debug:
+            return nil
+        case .mediaImport:
+            return nil
+        case .appLifecycle(let options):
+            return commandFailure(
+                command: options.action.commandName,
+                error: PlayCoverDriverClientError
+                    .lifecycleCommandUnsupported(
+                        options.action.commandName
+                    ),
+                json: json
+            )
+        case .driver(let action):
+            switch action {
+            case .dom, .screenshot, .waitFor,
+                    .tap, .longPress, .swipe, .input,
+                    .dismissAlert:
+                return nil
+            case .activateApp:
+                return commandFailure(
+                    command: action.name,
+                    error: PlayCoverDriverClientError
+                        .lifecycleCommandUnsupported("activateApp"),
+                    json: json
+                )
+            case .terminateApp:
+                return commandFailure(
+                    command: action.name,
+                    error: PlayCoverDriverClientError
+                        .lifecycleCommandUnsupported("terminateApp"),
+                    json: json
+                )
+            case .home:
+                return commandFailure(
+                    command: action.name,
+                    error: PlayCoverDriverClientError
+                        .lifecycleCommandUnsupported("home"),
+                    json: json
+                )
+            }
+        default:
+            return commandFailure(
+                command: command.commandName,
+                error: PlayCoverBackendError.capabilityUnavailable(command.commandName),
+                json: json
+            )
         }
     }
 
@@ -359,13 +775,200 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    private func commandFailure(command: String, error: Error, json: Bool, exitCode: Int32 = 1) -> CLIResult {
+    private func executeDebug(
+        _ options: DebugOptions,
+        json: Bool
+    ) -> CLIResult {
+        do {
+            let session = try SessionService.requireDriverLock(paths: paths)
+            guard session.deviceType == PlayCoverSessionService.deviceType else {
+                throw PlayCoverBackendError.capabilityUnavailable("debug")
+            }
+            guard let sessionID = session.sessionIdentifier,
+                  !sessionID.isEmpty else {
+                throw PlayCoverDriverClientError.incompleteSessionIdentity(
+                    "sessionID"
+                )
+            }
+            let refreshAlertStatus =
+                CLIInvocationContext.current?.claimAlertRefresh() ?? true
+            let client = try PlayCoverDriverClient.runtimeClient(
+                for: session,
+                timeoutSeconds: PlayCoverRuntimeClient.debugTimeoutSeconds,
+                refreshAlertStatus: refreshAlertStatus
+            )
+            let liveOutputEnabled = outputSink != nil
+            var liveEvents: [String] = []
+            var finalWasWrittenLive = false
+            let payload = try client.debug(
+                PlayCoverRuntimeDebugArguments(
+                    script: options.script,
+                    reset: options.reset,
+                    stream: options.stream
+                ),
+                onEvent: { event in
+                    if liveOutputEnabled {
+                        FileHandle.standardError.write(
+                            Data((event + "\n").utf8)
+                        )
+                    } else {
+                        liveEvents.append(event)
+                    }
+                },
+                onFinal: { final in
+                    guard options.stream, liveOutputEnabled else {
+                        return
+                    }
+                    if json {
+                        let fields: [String: MachineValue] = [
+                            "display": .string(final.display),
+                            "agent": .string(final.agent),
+                            "events": .array(
+                                final.events.map(MachineValue.string)
+                            ),
+                        ]
+                        let result = MachineOutput.success(
+                            command: "debug",
+                            data: .object(fields)
+                        )
+                        outputSink?(result.stdout)
+                    } else if !final.display.isEmpty {
+                        outputSink?(final.display + "\n")
+                    }
+                    finalWasWrittenLive = true
+                }
+            )
+            if !liveOutputEnabled {
+                liveEvents.append(contentsOf: payload.events.dropFirst(liveEvents.count))
+            }
+            let eventText = liveEvents.joined(separator: "\n")
+            if finalWasWrittenLive {
+                return CLIResult(exitCode: 0)
+            }
+            if json {
+                var fields: [String: MachineValue] = [
+                    "display": .string(payload.display),
+                    "agent": .string(payload.agent),
+                ]
+                fields["events"] = .array(
+                    payload.events.map(MachineValue.string)
+                )
+                let result = MachineOutput.success(
+                    command: "debug",
+                    data: .object(fields)
+                )
+                return CLIResult(
+                    exitCode: result.exitCode,
+                    stdout: result.stdout,
+                    stderr: result.stderr
+                        + (eventText.isEmpty ? "" : eventText + "\n")
+                )
+            }
+            return CLIResult(
+                exitCode: 0,
+                stdout: payload.display.isEmpty
+                    ? ""
+                    : payload.display + "\n",
+                stderr: eventText.isEmpty ? "" : eventText + "\n"
+            )
+        } catch {
+            let mutationMayHaveApplied =
+                Self.debugMutationMayHaveApplied(error)
+            if json {
+                return commandFailure(
+                    command: "debug",
+                    error: error,
+                    json: true,
+                    mutationMayHaveApplied:
+                        mutationMayHaveApplied
+                )
+            }
+            return CLIErrorEnvelope(
+                message: Self.debugFailureMessage(
+                    error,
+                    mutationMayHaveApplied:
+                        mutationMayHaveApplied
+                ),
+                exitCode: 1
+            ).render()
+        }
+    }
+
+    static func debugMutationMayHaveApplied(
+        _ error: Error
+    ) -> Bool {
+        guard let runtimeError =
+                error as? PlayCoverRuntimeClientError else {
+            return false
+        }
+        switch runtimeError {
+        case .remoteError(let code, _, _):
+            return code == "frida_eval_failed"
+                || code == "frida_reset_failed"
+                || code == "frida_eval_timeout"
+                || code == "frida_invalid_query"
+        case .readFailed,
+             .unexpectedEOF,
+             .emptyResponseFrame,
+             .responseFrameTooLarge,
+             .responseIsNotUTF8,
+             .responseDecodingFailed,
+             .requestIDMismatch,
+             .sessionIDMismatch,
+             .responseIdentityMismatch,
+             .malformedResponse:
+            return true
+        case .timeout(let operation):
+            return operation.hasPrefix("response ")
+        default:
+            return false
+        }
+    }
+
+    static func debugFailureMessage(
+        _ error: Error,
+        mutationMayHaveApplied: Bool
+    ) -> String {
+        var lines = ["\(error)"]
+        if case PlayCoverRuntimeClientError.remoteError(
+            _, _, let details
+        ) = error {
+            lines.append(
+                contentsOf: (details?.suggestions ?? [])
+                    .filter {
+                        !$0.localizedCaseInsensitiveContains(
+                            "debug --reset"
+                        )
+                    }
+                    .map { "Suggestion: \($0)" }
+            )
+        }
+        if mutationMayHaveApplied {
+            lines.append(
+                "Debug execution may have installed hooks or changed "
+                    + "Agent/App state before failing. Run "
+                    + "`ios-use debug --reset` before continuing if you "
+                    + "need a clean Agent. Reset does not undo arbitrary "
+                    + "App object or native-memory changes."
+            )
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func commandFailure(
+        command: String,
+        error: Error,
+        json: Bool,
+        exitCode: Int32 = 1,
+        mutationMayHaveApplied: Bool? = nil
+    ) -> CLIResult {
         if json {
             return MachineOutput.failure(
                 command: command,
                 error: error,
                 data: machineDriverErrorData(error),
-                exitCode: exitCode
+                exitCode: exitCode,
+                mutationMayHaveApplied: mutationMayHaveApplied
             )
         }
         return CLIErrorEnvelope(message: "\(error)", exitCode: exitCode).render()

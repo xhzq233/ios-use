@@ -138,7 +138,7 @@ final class DriverFailureEvidenceTests: XCTestCase {
 
         let manifestURL = try evidenceManifestURL(from: result.stderr)
         let manifest = try jsonObject(at: manifestURL)
-        XCTAssertEqual(manifest["schemaVersion"] as? Int, 2)
+        XCTAssertEqual(manifest["schemaVersion"] as? Int, 3)
         XCTAssertEqual(manifest["command"] as? String, "tap")
         XCTAssertEqual(manifest["profile"] as? String, "ui-snapshot")
 
@@ -378,7 +378,7 @@ private extension NSLock {
 private final class EvidenceDriverClient: DriverCommandClient {
     typealias DomHandler = (Bool, Bool, Bool) throws -> ForyDomPayload
     typealias ScreenshotHandler = () throws -> ScreenshotCapture
-    typealias TapHandler = (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint) throws -> ForyElementPayload
+    typealias TapHandler = (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint?) throws -> ForyElementPayload
 
     private let domHandler: DomHandler
     private let screenshotHandler: ScreenshotHandler
@@ -412,7 +412,7 @@ private final class EvidenceDriverClient: DriverCommandClient {
         try screenshotHandler()
     }
 
-    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
+    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint?) throws -> ForyElementPayload {
         try tapHandler(target, traits, cindex, offset, ratio)
     }
 
@@ -420,7 +420,10 @@ private final class EvidenceDriverClient: DriverCommandClient {
         throw CLIParseError.invalidValue("unexpected longPress")
     }
 
-    func input(tap: ForyTarget?, content: String) throws {
+    func input(
+        tap: ForyTarget?,
+        content: String
+    ) throws -> ForyElementPayload {
         throw CLIParseError.invalidValue("unexpected input")
     }
 

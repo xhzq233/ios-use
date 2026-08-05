@@ -24,7 +24,9 @@ permissions:
 jobs:
   release:
     name: Build and upload release assets
-    runs-on: macos-26
+    # Installed execution requires a preconfigured stable signer, disposable
+    # account contract, and launch-capable GUI session.
+    runs-on: [self-hosted, macOS, arm64, playcover-live]
     steps:
       - name: Resolve release tag
         id: resolve_tag
@@ -101,10 +103,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-
 
+      - name: Cache pinned upstream audit checkouts
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ios-use-playcover-upstream-audit
+          key: ${{ runner.os }}-${{ runner.arch }}-playcover-upstreams-7190cc9-d688f6-e6d3aa-yams3036ba
+
       - name: Build release assets
         env:
           IOS_USE_RELEASE_VERSION: ${{ steps.resolve_tag.outputs.tag }}
+          IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
         run: bash scripts/release_build.sh
+
+      - name: Build the installed-layout fixture
+        run: bash playcover-fixtures/build.sh
+
+      - name: Verify the exact release assets through install and execution
+        env:
+          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
+          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
+        run: bash scripts/test_playcover_installed_layout.sh --release-dir release
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3

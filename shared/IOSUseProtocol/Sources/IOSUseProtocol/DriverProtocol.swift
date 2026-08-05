@@ -309,6 +309,8 @@ public enum IOSUseErrorCode {
     public static let gestureFailed = "gesture_failed"
     public static let inputFailed = "input_failed"
     public static let scrollBoundary = "scroll_boundary"
+    public static let scrollAnchorRequired = "scroll_anchor_required"
+    public static let scrollNoEffect = "scroll_no_effect"
     public static let scrollUnavailable = "scroll_unavailable"
     public static let scrollLimitReached = "scroll_limit_reached"
     public static let waitTimedOut = "wait_timed_out"
@@ -375,6 +377,7 @@ public enum DriverCommand: String, CaseIterable, Sendable {
     case swipe
     case waitFor
     case dismissAlert
+    case dismissAlertByLabel
     case waitAppForeground
     case mediaImport
 }
@@ -454,6 +457,12 @@ public enum DismissAlertCommand: DriverCommandBinding {
     public static let command = DriverCommand.dismissAlert
 }
 
+public enum DismissAlertByLabelCommand: DriverCommandBinding {
+    public typealias Args = ForyDismissAlertByLabelArgs
+    public typealias Payload = ForyAlertPayload
+    public static let command = DriverCommand.dismissAlertByLabel
+}
+
 public enum WaitAppForegroundCommand: DriverCommandBinding {
     public typealias Args = ForyWaitAppForegroundArgs
     public typealias Payload = ForyWaitAppForegroundPayload
@@ -499,6 +508,8 @@ public extension DriverCommand {
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyWaitForArgs.self), payloadTypeName: String(describing: ForyWaitForPayload.self), mutatesUI: false)
         case .dismissAlert:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyDismissAlertArgs.self), payloadTypeName: String(describing: ForyAlertPayload.self), mutatesUI: true)
+        case .dismissAlertByLabel:
+            DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyDismissAlertByLabelArgs.self), payloadTypeName: String(describing: ForyAlertPayload.self), mutatesUI: true)
         case .waitAppForeground:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyWaitAppForegroundArgs.self), payloadTypeName: String(describing: ForyWaitAppForegroundPayload.self), mutatesUI: false)
         case .mediaImport:

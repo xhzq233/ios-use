@@ -4,6 +4,13 @@ import IOSUseProtocol
 public enum OSLogService {
     typealias SimulatorLogCollector = (_ udid: String, _ lastSec: Double, _ source: OSLogOptions.SourceFilter) throws -> [String]
     static var simulatorLogCollector: SimulatorLogCollector = collectSimulatorLog
+    typealias PlayCoverLogCollector = (
+        _ pid: Int32,
+        _ lastSec: Double,
+        _ predicate: String
+    ) throws -> [String]
+    static var playCoverLogCollector: PlayCoverLogCollector =
+        collectPlayCoverLog
 
     public static func fetchSimulator(
         udid: String,
@@ -102,6 +109,93 @@ public enum OSLogService {
         simulatorLogCollector = collectSimulatorLog
     }
 
+    static func resetPlayCoverLogCollectorForTesting() {
+        playCoverLogCollector = collectPlayCoverLog
+    }
+
+    static func fetchPlayCover(
+        session: SessionService.Info,
+        pattern: String?,
+        flags: String?,
+        source: OSLogOptions.SourceFilter,
+        timeout: Double?
+    ) throws -> String {
+        guard let runnerPID = session.runnerPid,
+              runnerPID > 0,
+              runnerPID <= Int(Int32.max),
+              let executablePath =
+                session.macExecutablePath,
+              !executablePath.isEmpty else {
+            throw CLIParseError.invalidValue(
+                "active Mac session has incomplete PID/executable identity"
+            )
+        }
+        let pid = Int32(runnerPID)
+        guard let actualExecutable =
+                PlayCoverRuntimeClient.executablePath(for: pid),
+              PlayCoverRuntimeClient.canonicalPath(
+                  actualExecutable
+              ) == PlayCoverRuntimeClient.canonicalPath(
+                  executablePath
+              ) else {
+            throw CLIParseError.invalidValue(
+                "active Mac PID no longer belongs to the exact App executable"
+            )
+        }
+        if let requestedPID = source.pid,
+           requestedPID != runnerPID {
+            throw CLIParseError.invalidValue(
+                "Mac oslog is scoped to active PID \(runnerPID)"
+            )
+        }
+        let executableName = URL(
+            fileURLWithPath: executablePath
+        ).lastPathComponent
+        if let requestedProcess = source.process,
+           requestedProcess != executableName {
+            throw CLIParseError.invalidValue(
+                "Mac oslog is scoped to active executable \(executableName)"
+            )
+        }
+
+        let lastSeconds = min(
+            max(
+                timeout
+                    ?? IOSUseProtocol
+                        .oslogDefaultSimulatorLastSeconds,
+                0.1
+            ),
+            60
+        )
+        let predicate = "processIdentifier == \(runnerPID)"
+        var lines = try playCoverLogCollector(
+            pid,
+            lastSeconds,
+            predicate
+        )
+        if let diagnostics = try boundedRuntimeDiagnostics(
+            session: session
+        ) {
+            lines.append(diagnostics)
+        }
+        let regex = try patternRegex(
+            pattern: pattern,
+            flags: flags
+        )
+        let filtered = try filter(lines, regex: regex)
+        let bounded = Array(filtered.prefix(2_000))
+        let output = formatLogOutput(bounded)
+        guard output.utf8.count <= 1_048_576 else {
+            let prefix = String(
+                decoding: output.utf8.prefix(1_048_000),
+                as: UTF8.self
+            )
+            return prefix
+                + "\n[ios-use] Mac log output truncated\n"
+        }
+        return output
+    }
+
     private static func filterBySource(_ lines: [String], source: OSLogOptions.SourceFilter) -> [String] {
         guard source.process != nil || source.pid != nil else { return lines }
         let processRegex = try? NSRegularExpression(pattern: #"^\S+\s+\d+\s+\d+:\d+:\d+(?:\.\d+)?\s+\S+\s+([\w.-]+)(?:\([^)]*\))?\[(\d+)\]"#)
@@ -173,6 +267,55 @@ public enum OSLogService {
             .filter { !$0.isEmpty }
     }
 
+    private static func collectPlayCoverLog(
+        pid: Int32,
+        lastSec: Double,
+        predicate: String
+    ) throws -> [String] {
+        _ = pid
+        let output = try Shell.run(
+            "/usr/bin/log",
+            arguments: [
+                "show",
+                "--style", "compact",
+                "--last", playCoverLogLastArgument(lastSec),
+                "--predicate", predicate,
+            ]
+        )
+        return output
+            .split(separator: "\n")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+    }
+
+    static func playCoverLogLastArgument(_ lastSec: Double) -> String {
+        // macOS `log show` only accepts minute/hour/day suffixes for --last.
+        // Round the bounded PlayCover interval up to the smallest supported
+        // window; exact PID and the caller's regex still constrain results.
+        let minutes = max(1, Int(ceil(lastSec / 60)))
+        return "\(minutes)m"
+    }
+
+    private static func boundedRuntimeDiagnostics(
+        session: SessionService.Info
+    ) throws -> String? {
+        let client = try PlayCoverDriverClient.runtimeClient(
+            for: session,
+            timeoutSeconds: 0.75,
+            refreshAlertStatus: false
+        )
+        let response = try client.diagnostics()
+        guard !response.diagnostics.isEmpty else {
+            return nil
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(response.diagnostics)
+        let bounded = data.prefix(64 * 1024)
+        return "[ios-use-runtime] "
+            + String(decoding: bounded, as: UTF8.self)
+    }
+
     private static func formatLogOutput(_ lines: [String]) -> String {
         guard !lines.isEmpty else { return "" }
         return lines.joined(separator: "\n") + "\n"
@@ -186,6 +329,29 @@ public enum OSLogService {
 enum OSLogCommandService {
     static func run(options: OSLogOptions, paths: IOSUsePaths, hostDeviceTypeHint: String? = nil, outputSink: ((String) -> Void)? = nil) throws -> String {
         let activeDriver = SessionService.read(paths: paths)
+        if let activeDriver,
+           activeDriver.deviceType
+            == PlayCoverSessionService.deviceType {
+            if let explicit = options.session.udid,
+               explicit != activeDriver.udid {
+                throw CLIParseError.invalidValue(
+                    "oslog target \(explicit) does not match active "
+                        + "Mac target \(activeDriver.udid)"
+                )
+            }
+            let output = try OSLogService.fetchPlayCover(
+                session: activeDriver,
+                pattern: options.pattern,
+                flags: options.flags,
+                source: options.source,
+                timeout: options.timeout
+            )
+            if let outputSink {
+                outputSink(output)
+                return ""
+            }
+            return output
+        }
         let udid = try SessionService.resolveTargetUdid(
             explicitUdid: options.session.udid,
             paths: paths,

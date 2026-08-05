@@ -118,16 +118,6 @@ final class ConfigServiceTests: XCTestCase {
         )
     }
 
-    func testReusableBundleIdIgnoresMissingSentinel() {
-        XCTAssertNil(ConfigService.reusableBundleId(from: nil))
-        XCTAssertNil(ConfigService.reusableBundleId(from: DeviceConfigEntry(udid: "A-UDID", bundleId: "")))
-        XCTAssertNil(ConfigService.reusableBundleId(from: DeviceConfigEntry(udid: "A-UDID", bundleId: "(missing)")))
-        XCTAssertEqual(
-            ConfigService.reusableBundleId(from: DeviceConfigEntry(udid: "A-UDID", bundleId: "com.example.runner")),
-            "com.example.runner"
-        )
-    }
-
     func testDriverAssetPathFollowsBuildConfiguration() throws {
         let explicitRoot = try temporaryRoot()
         let explicitPaths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": explicitRoot])
@@ -182,6 +172,10 @@ final class ConfigServiceTests: XCTestCase {
         try """
         {"udid":"LOCK-ONLY"}
         """.write(toFile: paths.driverLock, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: paths.driverLock
+        )
 
         XCTAssertThrowsError(try SessionService.requireDriverLock(paths: paths)) { error in
             XCTAssertTrue(String(describing: error).contains("Invalid driver.lock: missing udid/deviceType."))
@@ -242,11 +236,146 @@ final class ConfigServiceTests: XCTestCase {
           "bundleId": "com.example.driver.xctrunner"
         }
         """.write(toFile: paths.driverLock, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: paths.driverLock
+        )
 
         let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
 
         XCTAssertEqual(lock.startMode, "full-xctest")
         XCTAssertEqual(lock.holderPid, 456)
+    }
+
+    func testDriverLockSymlinkIsRejected() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root]
+        )
+        try writeDriverLock(
+            udid: "SIM-SYMLINK",
+            deviceType: "simulator",
+            paths: paths
+        )
+        let saved = URL(fileURLWithPath: paths.driverLock)
+            .deletingLastPathComponent()
+            .appendingPathComponent("saved-driver.lock")
+        try FileManager.default.moveItem(
+            atPath: paths.driverLock,
+            toPath: saved.path
+        )
+        try FileManager.default.createSymbolicLink(
+            atPath: paths.driverLock,
+            withDestinationPath: saved.path
+        )
+
+        XCTAssertThrowsError(
+            try SessionService.readDriverLockInfo(paths: paths)
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "cannot open private state without following links"
+                )
+            )
+        }
+        XCTAssertNil(SessionService.readDriverLock(paths: paths))
+    }
+
+    func testDriverLockFIFOIsRejectedWithoutBlocking() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root]
+        )
+        try FileManager.default.createDirectory(
+            at: URL(fileURLWithPath: paths.driverLock)
+                .deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertEqual(mkfifo(paths.driverLock, 0o600), 0)
+        let finished = DispatchSemaphore(value: 0)
+        let result = DriverLockReadResult()
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                result.set(
+                    .success(
+                        try SessionService.readDriverLockInfo(
+                            paths: paths
+                        )
+                    )
+                )
+            } catch {
+                result.set(.failure(error))
+            }
+            finished.signal()
+        }
+
+        let completedWithoutWriter =
+            finished.wait(timeout: .now() + 1) == .success
+        if !completedWithoutWriter {
+            let writer = Darwin.open(
+                paths.driverLock,
+                O_WRONLY | O_NONBLOCK | O_CLOEXEC
+            )
+            if writer >= 0 {
+                Darwin.close(writer)
+            }
+            _ = finished.wait(timeout: .now() + 1)
+        }
+
+        XCTAssertTrue(
+            completedWithoutWriter,
+            "opening hostile driver.lock FIFO blocked the state reader"
+        )
+        guard let resultValue = result.value else {
+            return XCTFail("driver.lock FIFO read did not finish")
+        }
+        guard case .failure(let error) = resultValue else {
+            return XCTFail("hostile driver.lock FIFO was accepted")
+        }
+        XCTAssertTrue(
+            String(describing: error).contains(
+                "owner-only bounded regular file"
+            )
+        )
+    }
+
+    func testOversizedDriverLockIsRejectedWithoutReadingPayload()
+        throws
+    {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root]
+        )
+        try writeDriverLock(
+            udid: "SIM-OVERSIZED",
+            deviceType: "simulator",
+            paths: paths
+        )
+        let handle = try FileHandle(
+            forWritingTo: URL(fileURLWithPath: paths.driverLock)
+        )
+        try handle.truncate(
+            atOffset: UInt64(
+                DriverSessionStore.maximumDriverLockBytes + 1
+            )
+        )
+        try handle.close()
+        let started = ProcessInfo.processInfo.systemUptime
+
+        XCTAssertThrowsError(
+            try SessionService.readDriverLockInfo(paths: paths)
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "owner-only bounded regular file"
+                )
+            )
+        }
+        XCTAssertLessThan(
+            ProcessInfo.processInfo.systemUptime - started,
+            1,
+            "oversized sparse driver.lock should be rejected by fstat"
+        )
     }
 
     func testStopWithoutDriverLockFailsWithoutDiscoveryOrStateCleanup() throws {
@@ -1259,6 +1388,81 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(result.stdout.contains("port:"))
     }
 
+    func testRealDeviceConfigDelegatesMissingSessionFailureToAltSign() throws {
+        let root = try temporaryRoot()
+        try FileManager.default.createDirectory(
+            atPath: "\(root)/altsign-cli",
+            withIntermediateDirectories: true
+        )
+        let altsign = "\(root)/altsign-cli/altsign-cli"
+        try "#!/bin/sh\nexit 1\n".write(
+            toFile: altsign,
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: altsign
+        )
+        try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
+        ConfigService.driverIPAPathProviderForTesting = {
+            _, _ in "\(root)/driver.ipa"
+        }
+        DeviceService.listDevicesOverrideForTesting = {
+            simulatorOnly, _ in
+            XCTAssertFalse(simulatorOnly)
+            return [
+                IOSDevice(
+                    name: "Phone",
+                    version: "26.2",
+                    udid: "REAL-AUTH",
+                    kind: .real
+                ),
+            ]
+        }
+        Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
+            if executable == altsign {
+                XCTFail("ios-use must not inspect AltSign login state")
+            }
+            return try self.runProcess(
+                executable: executable,
+                arguments: arguments,
+                cwd: cwd,
+                combineStderr: combineStderr
+            )
+        }
+        var signArguments: [String] = []
+        ConfigService.altsignRunnerForTesting = { executable, arguments in
+            XCTAssertEqual(executable, altsign)
+            signArguments = arguments
+            throw CLIParseError.invalidValue(
+                "No cached AltSign session. Run altsign-cli list --apple-id first."
+            )
+        }
+        ConfigService.realDeviceInstallerForTesting = { _, _, _ in
+            XCTFail("a failed AltSign invocation must not install the driver")
+        }
+
+        let result = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root]
+        ).run(arguments: ["config", "--udid", "REAL-AUTH"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stdout.isEmpty)
+        XCTAssertTrue(result.stderr.contains("No cached AltSign session"))
+        XCTAssertEqual(
+            Array(signArguments.prefix(4)),
+            ["sign", "--udid", "REAL-AUTH", "--ipa"]
+        )
+        XCTAssertFalse(signArguments.contains("--apple-id"))
+        XCTAssertFalse(signArguments.contains("--password"))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: "\(root)/driver-signed-REAL-AUTH.ipa"
+            )
+        )
+    }
+
     func testRealDeviceConfigUsesNativeInstallerWithoutDevicectlOnProductionPath() throws {
         let root = try temporaryRoot()
         let workspace = try temporaryRoot()
@@ -1284,12 +1488,11 @@ final class ConfigServiceTests: XCTestCase {
             if executable == "xcrun" {
                 XCTFail("real device config must not call xcrun/devicectl")
             }
-            if executable == altsign, arguments == ["list"] {
-                return "Using cached session for user@example.com\n"
-            }
             return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
         }
         ConfigService.altsignRunnerForTesting = { _, arguments in
+            XCTAssertFalse(arguments.contains("--apple-id"))
+            XCTAssertFalse(arguments.contains("--password"))
             guard let outputIndex = arguments.firstIndex(of: "--output"),
                   let inputIndex = arguments.firstIndex(of: "--ipa") else {
                 XCTFail("altsign args missing input or output")
@@ -1324,7 +1527,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(nativePackages.count, 1)
         XCTAssertEqual(nativePackages.first?.uploadMode, .file)
-        XCTAssertEqual(nativePackages.first?.remotePath, "PublicStaging/com.ios-use.driver.user-example-com.xctrunner")
+        XCTAssertEqual(nativePackages.first?.remotePath, "PublicStaging/com.ios-use.driver.real-config.xctrunner")
         XCTAssertTrue(result.stdout.contains("Driver installed to device"))
     }
 
@@ -1357,13 +1560,12 @@ final class ConfigServiceTests: XCTestCase {
             if executable == "xcrun" {
                 XCTFail("real device config must not call xcrun/devicectl")
             }
-            if executable == altsign, arguments == ["list"] {
-                return "Using cached session for user@example.com\n"
-            }
             return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
         }
         ConfigService.altsignRunnerForTesting = { executable, arguments in
             XCTAssertEqual(executable, altsign)
+            XCTAssertFalse(arguments.contains("--apple-id"))
+            XCTAssertFalse(arguments.contains("--password"))
             guard let outputIndex = arguments.firstIndex(of: "--output") else {
                 XCTFail("altsign args missing --output")
                 return
@@ -1386,7 +1588,7 @@ final class ConfigServiceTests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(installs.map(\.1), ["REAL-CONFIG"])
-        XCTAssertEqual(installs.map(\.2), ["com.ios-use.driver.user-example-com.xctrunner"])
+        XCTAssertEqual(installs.map(\.2), ["com.ios-use.driver.real-config.xctrunner"])
         XCTAssertTrue(result.stdout.contains("Driver signing warnings:"))
         XCTAssertTrue(result.stdout.contains("signed IPA preflight runner is missing embedded.mobileprovision"))
         XCTAssertTrue(result.stdout.contains("signed IPA preflight xctest is missing embedded.mobileprovision"))
@@ -1395,7 +1597,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(result.stdout.contains("activateApp"))
         XCTAssertEqual(
             ConfigService.listEntries(paths: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])),
-            [DeviceConfigEntry(udid: "REAL-CONFIG", bundleId: "com.ios-use.driver.user-example-com.xctrunner", driverVersion: IOSUseCLI.version)]
+            [DeviceConfigEntry(udid: "REAL-CONFIG", bundleId: "com.ios-use.driver.real-config.xctrunner", driverVersion: IOSUseCLI.version)]
         )
     }
 
@@ -1426,12 +1628,6 @@ final class ConfigServiceTests: XCTestCase {
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             simulatorOnly ? [] : [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-SIGNED", kind: .real)]
         }
-        Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
-            if executable == altsign, arguments == ["list"] {
-                return "Using cached session for user@example.com\n"
-            }
-            return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
-        }
         ConfigService.altsignRunnerForTesting = { _, arguments in
             let outputIndex = try XCTUnwrap(arguments.firstIndex(of: "--output"))
             let inputIndex = try XCTUnwrap(arguments.firstIndex(of: "--ipa"))
@@ -1450,7 +1646,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(entries, [
             DeviceConfigEntry(
                 udid: "REAL-SIGNED",
-                bundleId: "com.ios-use.driver.user-example-com.xctrunner",
+                bundleId: "com.ios-use.driver.real-signed.xctrunner",
                 driverVersion: IOSUseCLI.version,
                 signingExpiresAt: signingExpiresAt
             )
@@ -1484,12 +1680,6 @@ final class ConfigServiceTests: XCTestCase {
                 return []
             }
             return [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-CONFIG-FAIL", kind: .real)]
-        }
-        Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
-            if executable == altsign, arguments == ["list"] {
-                return "Using cached session for user@example.com\n"
-            }
-            return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
         }
         ConfigService.altsignRunnerForTesting = { _, arguments in
             let outputIndex = try XCTUnwrap(arguments.firstIndex(of: "--output"))
@@ -1576,4 +1766,22 @@ final class ConfigServiceTests: XCTestCase {
         return combineStderr ? stdout + stderr : stdout
     }
 
+}
+
+private final class DriverLockReadResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage:
+        Result<SessionService.Info?, Error>?
+
+    var value: Result<SessionService.Info?, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func set(_ value: Result<SessionService.Info?, Error>) {
+        lock.lock()
+        storage = value
+        lock.unlock()
+    }
 }

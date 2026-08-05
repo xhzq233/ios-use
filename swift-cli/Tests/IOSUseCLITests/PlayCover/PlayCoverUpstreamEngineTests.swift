@@ -1,0 +1,1289 @@
+import Foundation
+@testable import PlayCoverUpstream
+import XCTest
+
+final class PlayCoverUpstreamEngineTests: XCTestCase {
+    private func pinnedDefaultRulesData() throws -> Data {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 {
+            root.deleteLastPathComponent()
+        }
+        return try Data(
+            contentsOf: root.appendingPathComponent(
+                "ThirdParty/PlayCover/PlayCover/Rules/default.yaml"
+            )
+        )
+    }
+
+    override func tearDown() {
+        PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
+        PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
+        PlayCoverUpstreamEngine.machOInspectionObserverForTesting = nil
+        PlayCoverUpstreamEngine
+            .validatedTreeMetadataEnumerationObserverForTesting = nil
+        super.tearDown()
+    }
+
+    func testRuntimeInjectionPreflightPreservesPinnedFailureBoundaries()
+        throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverInjectionPreflight-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        let thin = root.appendingPathComponent("Thin")
+        try makeThinMachO(
+            cpuType: 0x0100_000c,
+            cpuSubtype: 0,
+            platform: 6
+        ).write(to: thin)
+        XCTAssertNoThrow(
+            try PlayTools.validateRuntimeInjectionInput(thin)
+        )
+
+        let short = root.appendingPathComponent("Short")
+        try Data(repeating: 0, count: 7).write(to: short)
+        XCTAssertThrowsError(
+            try PlayTools.validateRuntimeInjectionInput(short)
+        ) {
+            guard case PlayCoverError.failedToStripBinary = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+        }
+
+        let x86Only = root.appendingPathComponent("X86OnlyFat")
+        let x86 = makeThinMachO(
+            cpuType: 0x0100_0007,
+            cpuSubtype: 3,
+            platform: 7
+        )
+        try makeFatMachOWithoutArm64(x86_64: x86).write(to: x86Only)
+        XCTAssertThrowsError(
+            try PlayTools.validateRuntimeInjectionInput(x86Only)
+        ) {
+            guard case PlayCoverError.failedToStripBinary = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+        }
+    }
+
+    func testContentHashPreservesFramedContractAndPathSemantics() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverUpstreamHash-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let first = root.appendingPathComponent(
+            "First.app",
+            isDirectory: true
+        )
+        let second = root.appendingPathComponent(
+            "Second.app",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeHashFixture(at: first)
+        try makeHashFixture(at: second)
+
+        let firstHash = try PlayCoverUpstreamEngine.contentHash(appURL: first)
+        let secondHash = try PlayCoverUpstreamEngine.contentHash(appURL: second)
+
+        XCTAssertEqual(
+            firstHash,
+            "f4693b28619063e898421b59e2b571ec391c6a838e3dea858cc349ea9540ded2",
+            "the length-framed path/kind/mode/size/content contract is pinned"
+        )
+        XCTAssertEqual(
+            firstHash,
+            secondHash,
+            "the root source path must not participate in the content hash"
+        )
+
+        let secondA = second.appendingPathComponent("A.txt")
+        let secondRenamed = second.appendingPathComponent("Q.txt")
+        try FileManager.default.moveItem(at: secondA, to: secondRenamed)
+        XCTAssertNotEqual(
+            try PlayCoverUpstreamEngine.contentHash(appURL: second),
+            firstHash,
+            "relative paths must participate in the content hash"
+        )
+        try FileManager.default.moveItem(at: secondRenamed, to: secondA)
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: secondA.path
+        )
+        XCTAssertNotEqual(
+            try PlayCoverUpstreamEngine.contentHash(appURL: second),
+            firstHash,
+            "POSIX permissions must participate in the content hash"
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: secondA.path
+        )
+
+        let firstLink = first.appendingPathComponent("Alias")
+        let secondLink = second.appendingPathComponent("Alias")
+        try FileManager.default.createSymbolicLink(
+            atPath: firstLink.path,
+            withDestinationPath: "A.txt"
+        )
+        try FileManager.default.createSymbolicLink(
+            atPath: secondLink.path,
+            withDestinationPath: "A.txt"
+        )
+        XCTAssertEqual(
+            try PlayCoverUpstreamEngine.contentHash(appURL: first),
+            try PlayCoverUpstreamEngine.contentHash(appURL: second),
+            "identical relative symlinks must remain root-path independent"
+        )
+        try FileManager.default.removeItem(at: secondLink)
+        try FileManager.default.createSymbolicLink(
+            atPath: secondLink.path,
+            withDestinationPath: "z.bin"
+        )
+        XCTAssertNotEqual(
+            try PlayCoverUpstreamEngine.contentHash(appURL: first),
+            try PlayCoverUpstreamEngine.contentHash(appURL: second),
+            "the lexical symlink destination must participate in the hash"
+        )
+    }
+
+    func testAppInspectionMatchesDirectThinAndFatMachOEvidence() throws {
+        let fixture = try makeInspectionFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let thinURL = fixture.app.appendingPathComponent("Fixture")
+        let fatURL = fixture.app.appendingPathComponent(
+            "Frameworks/FatFixture"
+        )
+        let thinBytesBefore = try Data(contentsOf: thinURL)
+        let fatBytesBefore = try Data(contentsOf: fatURL)
+        let directThin = try PlayCoverUpstreamEngine.inspectMachO(
+            at: thinURL,
+            relativePath: "Fixture"
+        )
+        let directFat = try PlayCoverUpstreamEngine.inspectMachO(
+            at: fatURL,
+            relativePath: "Frameworks/FatFixture"
+        )
+
+        let appInspection = try PlayCoverUpstreamEngine.inspect(
+            appURL: fixture.app
+        )
+
+        XCTAssertEqual(
+            appInspection.machOs.first {
+                $0.relativePath == "Fixture"
+            },
+            directThin
+        )
+        XCTAssertEqual(
+            appInspection.machOs.first {
+                $0.relativePath == "Frameworks/FatFixture"
+            },
+            directFat
+        )
+        XCTAssertEqual(directThin.container, .thin)
+        XCTAssertEqual(directThin.allSlices.count, 1)
+        XCTAssertEqual(directFat.container, .fat)
+        XCTAssertEqual(directFat.allSlices.count, 2)
+        XCTAssertEqual(
+            appInspection.inventory.first {
+                $0.relativePath == "Fixture"
+            }?.sha256,
+            directThin.fileSHA256
+        )
+        XCTAssertEqual(
+            appInspection.inventory.first {
+                $0.relativePath == "Frameworks/FatFixture"
+            }?.sha256,
+            directFat.fileSHA256
+        )
+        XCTAssertEqual(try Data(contentsOf: thinURL), thinBytesBefore)
+        XCTAssertEqual(try Data(contentsOf: fatURL), fatBytesBefore)
+    }
+
+    func testAppInspectionEnumeratesValidatedTreeMetadataOnce() throws {
+        let fixture = try makeInspectionFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var enumeratedRoots: [URL] = []
+        PlayCoverUpstreamEngine
+            .validatedTreeMetadataEnumerationObserverForTesting = {
+                enumeratedRoots.append($0)
+            }
+
+        _ = try PlayCoverUpstreamEngine.inspect(appURL: fixture.app)
+
+        XCTAssertEqual(
+            enumeratedRoots.map(\.standardizedFileURL.path),
+            [fixture.app.standardizedFileURL.path]
+        )
+    }
+
+    func testSymlinkEscapePrecedesMissingOrCorruptInfoPlist() throws {
+        for infoState in ["missing", "corrupt"] {
+            let fixture = try makeInspectionFixture()
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+            let infoURL = fixture.app.appendingPathComponent("Info.plist")
+            if infoState == "missing" {
+                try FileManager.default.removeItem(at: infoURL)
+            } else {
+                try Data("not a plist".utf8).write(to: infoURL)
+            }
+            let external = fixture.root.appendingPathComponent("External")
+            try Data("external".utf8).write(to: external)
+            let link = fixture.app.appendingPathComponent("UnrelatedAlias")
+            try FileManager.default.createSymbolicLink(
+                atPath: link.path,
+                withDestinationPath: "../External"
+            )
+
+            XCTAssertThrowsError(
+                try PlayCoverUpstreamEngine.inspect(appURL: fixture.app),
+                infoState
+            ) { error in
+                guard case PlayCoverUpstreamError.invalidApp(let message) =
+                    error else {
+                    return XCTFail("unexpected error: \(error)")
+                }
+                XCTAssertTrue(
+                    message.hasPrefix(
+                        "source App symbolic-link escape: "
+                    ),
+                    message
+                )
+                XCTAssertTrue(
+                    message.hasSuffix(
+                        "/Fixture.app/\(link.lastPathComponent)"
+                    ),
+                    message
+                )
+            }
+        }
+    }
+
+    func testInspectAcceptsCodesignSelectedAlternateCodeDirectory()
+        throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverDualCodeDirectory-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let executable = root.appendingPathComponent("DualCodeDirectory")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        try FileManager.default.copyItem(
+            at: URL(fileURLWithPath: "/bin/echo"),
+            to: executable
+        )
+        let codesign = Process()
+        let output = Pipe()
+        codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        codesign.arguments = [
+            "--force",
+            "--sign",
+            "-",
+            "--digest-algorithm=sha1,sha256",
+            executable.path,
+        ]
+        codesign.standardOutput = output
+        codesign.standardError = output
+        try codesign.run()
+        let codesignOutput =
+            try output.fileHandleForReading.readToEnd() ?? Data()
+        codesign.waitUntilExit()
+        guard codesign.terminationStatus == 0 else {
+            return XCTFail(
+                String(data: codesignOutput, encoding: .utf8)
+                    ?? "codesign failed without UTF-8 output"
+            )
+        }
+
+        let inspection = try PlayCoverUpstreamEngine.inspectMachO(
+            at: executable,
+            relativePath: executable.lastPathComponent
+        )
+        let arm64 = try XCTUnwrap(
+            inspection.allSlices.first {
+                $0.cpuType == Int32(bitPattern: 0x0100_000c)
+            }
+        )
+        let primary = try XCTUnwrap(
+            arm64.signature.embeddedSlots.first {
+                $0.type == 0
+            }?.codeDirectory
+        )
+        let alternate = try XCTUnwrap(
+            arm64.signature.embeddedSlots.first {
+                $0.type == 0x1_000
+            }?.codeDirectory
+        )
+
+        XCTAssertEqual(primary.hashType, 1)
+        XCTAssertEqual(alternate.hashType, 2)
+        XCTAssertNotEqual(primary.cdHash, alternate.cdHash)
+        XCTAssertEqual(arm64.signature.cdHash, alternate.cdHash)
+    }
+
+    func testSignatureEvidenceUsesOneDisplayAndOneStrictVerifyPerThinTarget()
+        throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverSignatureDisplay-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        let template = root.appendingPathComponent("ThinTemplate")
+        _ = try Shell.run(
+            print: false,
+            "/usr/bin/lipo",
+            "/bin/echo",
+            "-thin",
+            "arm64e",
+            "-output",
+            template.path
+        )
+
+        let entitlements = root.appendingPathComponent("Entitlements.plist")
+        try PropertyListSerialization.data(
+            fromPropertyList: [
+                "com.apple.security.app-sandbox": true,
+                "com.iosuse.metadata-noise": "line1\nCDHash=evil",
+            ],
+            format: .xml,
+            options: 0
+        ).write(to: entitlements)
+
+        func signedCopy(
+            named name: String,
+            withEntitlements: Bool,
+            plistInPath: Bool = false
+        ) throws -> URL {
+            var parent = root
+            if plistInPath {
+                for component in [
+                    "Path<?xml version=\"1.0\"?>"
+                        + "<plist version=\"1.0\"><dict",
+                    "><",
+                    "plist>",
+                ] {
+                    parent.appendPathComponent(component, isDirectory: true)
+                    try FileManager.default.createDirectory(
+                        at: parent,
+                        withIntermediateDirectories: false
+                    )
+                }
+            }
+            let executable = parent.appendingPathComponent(name)
+            try FileManager.default.copyItem(
+                at: template,
+                to: executable
+            )
+            if withEntitlements {
+                _ = try Shell.run(
+                    print: false,
+                    "/usr/bin/codesign",
+                    "-fs-",
+                    executable.path,
+                    "--entitlements",
+                    entitlements.path,
+                    "--generate-entitlement-der"
+                )
+            } else {
+                try Shell.signMacho(executable)
+            }
+            return executable
+        }
+
+        func inspect(
+            _ executable: URL
+        ) throws -> PlayCoverUpstreamMachOInspection {
+            var observations:
+                [PlayCoverUpstreamEngine.CodeSignatureObservationKind] = []
+            PlayCoverUpstreamEngine.codeSignatureObserverForTesting = {
+                kind,
+                observedURL in
+                XCTAssertEqual(observedURL.path, executable.path)
+                observations.append(kind)
+            }
+            let inspection = try PlayCoverUpstreamEngine.inspectMachO(
+                at: executable,
+                relativePath: executable.lastPathComponent
+            )
+            XCTAssertEqual(
+                observations,
+                [.display, .strictVerify]
+            )
+            return inspection
+        }
+
+        let withoutEntitlements = try signedCopy(
+            named: "Without<?xmlEntitlements",
+            withEntitlements: false,
+            plistInPath: true
+        )
+        let withoutInspection = try inspect(withoutEntitlements)
+        XCTAssertTrue(withoutInspection.signature.isSigned)
+        XCTAssertTrue(withoutInspection.signature.isValid)
+        XCTAssertNotNil(withoutInspection.signature.cdHash)
+        XCTAssertNil(withoutInspection.signature.entitlementsPlist)
+
+        let withEntitlements = try signedCopy(
+            named: "With<?xmlEntitlements",
+            withEntitlements: true
+        )
+        let withInspection = try inspect(withEntitlements)
+        XCTAssertTrue(withInspection.signature.isSigned)
+        XCTAssertTrue(withInspection.signature.isValid)
+        XCTAssertNotNil(withInspection.signature.cdHash)
+        XCTAssertNotNil(withInspection.signature.entitlementsPlist)
+
+        let invalid = try signedCopy(
+            named: "InvalidSignature",
+            withEntitlements: false
+        )
+        let handle = try FileHandle(forUpdating: invalid)
+        try handle.seek(toOffset: 4_096)
+        let original = try XCTUnwrap(
+            try handle.read(upToCount: 1)?.first
+        )
+        try handle.seek(toOffset: 4_096)
+        try handle.write(contentsOf: Data([original ^ 0x01]))
+        try handle.close()
+        let invalidInspection = try inspect(invalid)
+        XCTAssertTrue(invalidInspection.signature.isSigned)
+        XCTAssertFalse(invalidInspection.signature.isValid)
+        XCTAssertNotNil(invalidInspection.signature.cdHash)
+    }
+
+    func testRuntimeBuildHashPreservesExistingFramedContract() throws {
+        let root = FileManager.default.temporaryDirectory
+            .resolvingSymlinksInPath()
+            .appendingPathComponent(
+                "IOSUsePlayCoverRuntimeHash-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let first = root.appendingPathComponent(
+            "First.framework",
+            isDirectory: true
+        )
+        let second = root.appendingPathComponent(
+            "Second.framework",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeHashFixture(at: first)
+        try makeHashFixture(at: second)
+
+        let firstHash = try PlayCoverUpstreamEngine.runtimeBuildHash(
+            frameworkURL: first
+        )
+        XCTAssertEqual(
+            firstHash,
+            "94382213f0d069d49c9e2850fa76171b9899c1391b6e18fd1144336a613f1814"
+        )
+        XCTAssertEqual(
+            firstHash,
+            try PlayCoverUpstreamEngine.runtimeBuildHash(
+                frameworkURL: second
+            ),
+            "the Runtime framework root path must not enter its build hash"
+        )
+    }
+
+    func testRuntimeBuildHashSurvivesCopyAcrossPathAliases() throws {
+        let lexicalRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverRuntimeCopy-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let canonicalRoot = lexicalRoot.resolvingSymlinksInPath()
+        let source = canonicalRoot.appendingPathComponent(
+            "Source.framework",
+            isDirectory: true
+        )
+        let copy = lexicalRoot.appendingPathComponent(
+            "Copy.framework",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: canonicalRoot) }
+        try makeHashFixture(at: source)
+        try FileManager.default.copyItem(at: source, to: copy)
+        let sourceHash = try PlayCoverUpstreamEngine.runtimeBuildHash(
+            frameworkURL: source
+        )
+        let copyHash = try PlayCoverUpstreamEngine.runtimeBuildHash(
+            frameworkURL: copy
+        )
+        XCTAssertEqual(
+            sourceHash,
+            copyHash,
+            "copying through /tmp or /var aliases must preserve build identity"
+        )
+    }
+
+    func testRuntimeBuildHashNormalizesRegeneratedSigningMaterial()
+        throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverRuntimeSigning-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        let runtime = try makeCatalystRuntimeFramework(in: root)
+        let executable = runtime.appendingPathComponent(
+            "IOSUsePlayRuntime"
+        )
+        let baseline = try PlayCoverUpstreamEngine.runtimeBuildHash(
+            frameworkURL: runtime
+        )
+
+        var bytes = try Data(contentsOf: executable)
+        let command = try thinCodeSignatureCommand(in: bytes)
+        let replacementSize = command.dataSize + 80
+        bytes.replaceSubrange(
+            (command.commandOffset + 12)..<(command.commandOffset + 16),
+            with: littleEndianBytes(UInt32(replacementSize))
+        )
+        let replacementFileSize =
+            UInt64(command.dataOffset + replacementSize)
+                - command.linkeditFileOffset
+        let replacementVMSize =
+            (replacementFileSize + 0x3fff) & ~UInt64(0x3fff)
+        bytes.replaceSubrange(
+            (command.linkeditOffset + 32)..<(command.linkeditOffset + 40),
+            with: littleEndianBytes(replacementVMSize)
+        )
+        bytes.replaceSubrange(
+            (command.linkeditOffset + 48)..<(command.linkeditOffset + 56),
+            with: littleEndianBytes(replacementFileSize)
+        )
+        bytes.replaceSubrange(
+            command.dataOffset..<bytes.count,
+            with: Data(repeating: 0xa5, count: replacementSize)
+        )
+        try bytes.write(to: executable)
+
+        XCTAssertEqual(
+            try PlayCoverUpstreamEngine.runtimeBuildHash(
+                frameworkURL: runtime
+            ),
+            baseline,
+            "re-signing must not create a different Runtime build identity"
+        )
+
+        var malformedEnvelope = bytes
+        malformedEnvelope.replaceSubrange(
+            (command.linkeditOffset + 48)..<(command.linkeditOffset + 56),
+            with: littleEndianBytes(replacementFileSize + 1)
+        )
+        try malformedEnvelope.write(to: executable)
+        XCTAssertThrowsError(
+            try PlayCoverUpstreamEngine.runtimeBuildHash(
+                frameworkURL: runtime
+            )
+        )
+
+        bytes[command.dataOffset - 1] ^= 0x01
+        try bytes.write(to: executable)
+        XCTAssertNotEqual(
+            try PlayCoverUpstreamEngine.runtimeBuildHash(
+                frameworkURL: runtime
+            ),
+            baseline,
+            "bytes outside generated signature material remain build input"
+        )
+    }
+
+    func testPrepareWithInspectionRejectsDifferentCanonicalSource() throws {
+        let fixture = try makeInspectionFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverUpstreamEngine.inspect(
+            appURL: fixture.app
+        )
+        let different = fixture.root.appendingPathComponent(
+            "Different.app",
+            isDirectory: true
+        )
+        try FileManager.default.copyItem(at: fixture.app, to: different)
+        let options = PlayCoverUpstreamPrepareOptions(
+            sourceApp: different,
+            stagingApp: fixture.root.appendingPathComponent(
+                "Staging.app",
+                isDirectory: true
+            ),
+            managedStagingRoot: fixture.root,
+            runtimeFramework: fixture.root.appendingPathComponent(
+                "Missing.framework",
+                isDirectory: true
+            ),
+            managedHome: fixture.root.appendingPathComponent(
+                "home",
+                isDirectory: true
+            ),
+            runtimeSocketRoot: fixture.root,
+            runtimeSocketPath: "/tmp/unused.sock",
+            runtimeLoadPath: "@rpath/Unused.framework/Unused",
+            defaultRulesData: try pinnedDefaultRulesData(),
+            codesignIdentity: "-"
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverUpstreamEngine.prepare(
+                options,
+                sourceInspection: inspection
+            )
+        ) { error in
+            guard case PlayCoverUpstreamError.invalidApp(let message) = error
+            else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(
+                message.contains("source inspection path"),
+                message
+            )
+        }
+    }
+
+    func testPrepareUsesRuntimeEvidenceOnceAndFinalVerifyRejectsMutation()
+        throws
+    {
+        let fixture = try makeSignedIOSAppFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = try makeCatalystRuntimeFramework(in: fixture.root)
+        let runtimeExecutable = runtime.appendingPathComponent(
+            "IOSUsePlayRuntime"
+        )
+        let managed = fixture.root.appendingPathComponent(
+            "managed",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: managed.appendingPathComponent(
+                "prepared",
+                isDirectory: true
+            ),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let staging = managed.appendingPathComponent(
+            "prepared/Fixture.app",
+            isDirectory: true
+        )
+        let socketRoot = try makeShortRuntimeSocketRoot()
+        defer { try? FileManager.default.removeItem(at: socketRoot) }
+        var originalRuntimeInspections = 0
+        PlayCoverUpstreamEngine.machOInspectionObserverForTesting = {
+            if $0.standardizedFileURL.path
+                == runtimeExecutable.standardizedFileURL.path {
+                originalRuntimeInspections += 1
+            }
+        }
+        var runtimeContentPasses = 0
+        var finalInspectionStarted = false
+        PlayCoverUpstreamEngine.fullContentPassObserverForTesting = {
+            kind,
+            url in
+            if kind == .runtimeBuildHash,
+               url.standardizedFileURL.path
+                == runtime.resolvingSymlinksInPath().path {
+                runtimeContentPasses += 1
+            }
+            if kind == .appInspection,
+               url.standardizedFileURL.path
+                == staging.standardizedFileURL.path {
+                finalInspectionStarted = true
+            }
+        }
+        let evidence = try PlayCoverUpstreamEngine.runtimeEvidence(
+            frameworkURL: runtime
+        )
+        XCTAssertEqual(evidence.buildHash.count, 64)
+        let source = try PlayCoverUpstreamEngine.inspect(appURL: fixture.app)
+        XCTAssertThrowsError(
+            try PlayCoverUpstreamEngine.prepare(
+                PlayCoverUpstreamPrepareOptions(
+                    sourceApp: fixture.app,
+                    stagingApp: staging,
+                    managedStagingRoot:
+                        staging.deletingLastPathComponent(),
+                    runtimeFramework: runtime,
+                    managedHome: managed,
+                    runtimeSocketRoot: socketRoot,
+                    runtimeSocketPath: socketRoot
+                        .appendingPathComponent("s-runtime.sock").path,
+                    runtimeLoadPath:
+                        "@executable_path/Frameworks/"
+                        + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+                    defaultRulesData: try pinnedDefaultRulesData(),
+                    codesignIdentity: "-",
+                    expectedRuntimeEvidence: evidence
+                ),
+                sourceInspection: source,
+                afterSourceCloneForTesting: { _ in
+                    try FileManager.default.removeItem(
+                        at: runtimeExecutable
+                    )
+                    try FileManager.default.copyItem(
+                        at: URL(fileURLWithPath: "/bin/echo"),
+                        to: runtimeExecutable
+                    )
+                }
+            )
+        ) { error in
+            guard case PlayCoverUpstreamError.verificationFailed(
+                let message
+            ) = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(
+                message.contains("embedded Runtime build hash"),
+                message
+            )
+        }
+        XCTAssertTrue(finalInspectionStarted)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: staging.path),
+            "invalid Runtime must roll private staging back"
+        )
+        XCTAssertEqual(originalRuntimeInspections, 1)
+        XCTAssertEqual(
+            runtimeContentPasses,
+            1,
+            "the plan and prepare must share one Runtime content pass"
+        )
+    }
+
+    func testPrepareAcceptsVersionedRuntimeExecutableSymlink() throws {
+        let fixture = try makeSignedIOSAppFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = try makeCatalystRuntimeFramework(
+            in: fixture.root,
+            versioned: true
+        )
+        let managed = fixture.root.appendingPathComponent(
+            "managed",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: managed.appendingPathComponent(
+                "prepared",
+                isDirectory: true
+            ),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let staging = managed.appendingPathComponent(
+            "prepared/Fixture.app",
+            isDirectory: true
+        )
+        let socketRoot = try makeShortRuntimeSocketRoot()
+        defer { try? FileManager.default.removeItem(at: socketRoot) }
+        let evidence = try PlayCoverUpstreamEngine.runtimeEvidence(
+            frameworkURL: runtime
+        )
+        let source = try PlayCoverUpstreamEngine.inspect(appURL: fixture.app)
+
+        let result = try PlayCoverUpstreamEngine.prepare(
+            PlayCoverUpstreamPrepareOptions(
+                sourceApp: fixture.app,
+                stagingApp: staging,
+                managedStagingRoot:
+                    staging.deletingLastPathComponent(),
+                runtimeFramework: runtime,
+                managedHome: managed,
+                runtimeSocketRoot: socketRoot,
+                runtimeSocketPath:
+                    socketRoot.appendingPathComponent(
+                        "s-runtime.sock"
+                    ).path,
+                runtimeLoadPath:
+                    "@executable_path/Frameworks/"
+                    + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+                defaultRulesData: try pinnedDefaultRulesData(),
+                codesignIdentity: "-",
+                expectedRuntimeEvidence: evidence
+            ),
+            sourceInspection: source
+        )
+
+        let runtimePrefix =
+            "Frameworks/IOSUsePlayRuntime.framework/"
+        let runtimeMachOs = result.prepared.machOs.filter {
+            $0.relativePath.hasPrefix(runtimePrefix)
+                && URL(
+                    fileURLWithPath: $0.relativePath
+                ).lastPathComponent == "IOSUsePlayRuntime"
+        }
+        XCTAssertEqual(
+            runtimeMachOs.map(\.relativePath),
+            [
+                runtimePrefix
+                    + "Versions/A/IOSUsePlayRuntime",
+            ]
+        )
+    }
+
+    private struct InspectionFixture {
+        let root: URL
+        let app: URL
+    }
+
+    private func makeHashFixture(at root: URL) throws {
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        let a = root.appendingPathComponent("A.txt")
+        let z = root.appendingPathComponent("z.bin")
+        try Data("alpha".utf8).write(to: a)
+        try Data([0, 1, 2, 3]).write(to: z)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: a.path
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: z.path
+        )
+    }
+
+    private func thinCodeSignatureCommand(
+        in data: Data
+    ) throws -> (
+        commandOffset: Int,
+        linkeditOffset: Int,
+        linkeditFileOffset: UInt64,
+        dataOffset: Int,
+        dataSize: Int
+    ) {
+        func u32(_ offset: Int) throws -> UInt32 {
+            guard offset >= 0, offset + 4 <= data.count else {
+                throw NSError(domain: "RuntimeSigningFixture", code: 1)
+            }
+            return UInt32(data[offset])
+                | UInt32(data[offset + 1]) << 8
+                | UInt32(data[offset + 2]) << 16
+                | UInt32(data[offset + 3]) << 24
+        }
+        func u64(_ offset: Int) throws -> UInt64 {
+            guard offset >= 0, offset + 8 <= data.count else {
+                throw NSError(domain: "RuntimeSigningFixture", code: 6)
+            }
+            var value: UInt64 = 0
+            for index in 0..<8 {
+                value |= UInt64(data[offset + index])
+                    << UInt64(index * 8)
+            }
+            return value
+        }
+        guard try u32(0) == 0xfeed_facf else {
+            throw NSError(domain: "RuntimeSigningFixture", code: 2)
+        }
+        let count = Int(try u32(16))
+        let commandBytes = Int(try u32(20))
+        var cursor = 32
+        var linkeditOffset: Int?
+        for _ in 0..<count {
+            let command = try u32(cursor) & 0x7fff_ffff
+            let size = Int(try u32(cursor + 4))
+            guard size >= 8,
+                  cursor + size <= 32 + commandBytes else {
+                throw NSError(domain: "RuntimeSigningFixture", code: 3)
+            }
+            if command == 0x19, size >= 72 {
+                let nameBytes = data[
+                    (cursor + 8)..<(cursor + 24)
+                ].prefix { $0 != 0 }
+                if String(decoding: nameBytes, as: UTF8.self)
+                    == "__LINKEDIT" {
+                    linkeditOffset = cursor
+                }
+            }
+            if command == 0x1d {
+                let dataOffset = Int(try u32(cursor + 8))
+                let dataSize = Int(try u32(cursor + 12))
+                guard dataOffset + dataSize == data.count,
+                      let linkeditOffset else {
+                    throw NSError(
+                        domain: "RuntimeSigningFixture",
+                        code: 4
+                    )
+                }
+                return (
+                    cursor,
+                    linkeditOffset,
+                    try u64(linkeditOffset + 40),
+                    dataOffset,
+                    dataSize
+                )
+            }
+            cursor += size
+        }
+        throw NSError(domain: "RuntimeSigningFixture", code: 5)
+    }
+
+    private func littleEndianBytes(_ value: UInt32) -> [UInt8] {
+        [
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 24),
+        ]
+    }
+
+    private func littleEndianBytes(_ value: UInt64) -> [UInt8] {
+        (0..<8).map {
+            UInt8(truncatingIfNeeded: value >> UInt64($0 * 8))
+        }
+    }
+
+    private func makeInspectionFixture() throws -> InspectionFixture {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverUpstreamInspect-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let app = root.appendingPathComponent(
+            "Fixture.app",
+            isDirectory: true
+        )
+        let frameworks = app.appendingPathComponent(
+            "Frameworks",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: frameworks,
+            withIntermediateDirectories: true
+        )
+        let info: [String: Any] = [
+            "CFBundleIdentifier": "com.example.upstream-inspection",
+            "CFBundleExecutable": "Fixture",
+        ]
+        try PropertyListSerialization.data(
+            fromPropertyList: info,
+            format: .xml,
+            options: 0
+        ).write(to: app.appendingPathComponent("Info.plist"))
+
+        let arm64 = makeThinMachO(
+            cpuType: 0x0100_000c,
+            cpuSubtype: 0,
+            platform: 2
+        )
+        let x86 = makeThinMachO(
+            cpuType: 0x0100_0007,
+            cpuSubtype: 3,
+            platform: 7
+        )
+        let thin = app.appendingPathComponent("Fixture")
+        let fat = frameworks.appendingPathComponent("FatFixture")
+        try arm64.write(to: thin)
+        try makeFatMachO(arm64: arm64, x86_64: x86).write(to: fat)
+        for executable in [thin, fat] {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: executable.path
+            )
+        }
+        return InspectionFixture(root: root, app: app)
+    }
+
+    private func makeSignedIOSAppFixture() throws -> InspectionFixture {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverUpstreamPrepare-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let app = root.appendingPathComponent(
+            "Fixture.app",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: app,
+            withIntermediateDirectories: true
+        )
+        try PropertyListSerialization.data(
+            fromPropertyList: [
+                "CFBundleIdentifier": "com.example.upstream-prepare",
+                "CFBundleExecutable": "Fixture",
+                "CFBundlePackageType": "APPL",
+                "MinimumOSVersion": "17.0",
+            ],
+            format: .xml,
+            options: 0
+        ).write(to: app.appendingPathComponent("Info.plist"))
+        let source = root.appendingPathComponent("Fixture.c")
+        try Data("int main(void) { return 0; }\n".utf8).write(to: source)
+        let sdk = try Shell.run(
+            print: false,
+            "/usr/bin/xcrun",
+            "--sdk",
+            "iphoneos",
+            "--show-sdk-path"
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try Shell.run(
+            print: false,
+            "/usr/bin/xcrun",
+            "--sdk",
+            "iphoneos",
+            "clang",
+            "-target",
+            "arm64-apple-ios17.0",
+            "-isysroot",
+            sdk,
+            "-Wl,-headerpad,0x4000",
+            source.path,
+            "-o",
+            app.appendingPathComponent("Fixture").path
+        )
+        try Shell.signMacho(app)
+        return InspectionFixture(root: root, app: app)
+    }
+
+    private func makeShortRuntimeSocketRoot() throws -> URL {
+        let root = URL(
+            fileURLWithPath: "/private/tmp",
+            isDirectory: true
+        ).appendingPathComponent(
+            "ios-use-socket-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        return root
+    }
+
+    private func makeCatalystRuntimeFramework(
+        in root: URL,
+        versioned: Bool = false
+    ) throws -> URL {
+        let framework = root.appendingPathComponent(
+            "IOSUsePlayRuntime.framework",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: framework,
+            withIntermediateDirectories: true
+        )
+        let resources: URL
+        let output: URL
+        if versioned {
+            let version = framework.appendingPathComponent(
+                "Versions/A",
+                isDirectory: true
+            )
+            resources = version.appendingPathComponent(
+                "Resources",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: resources,
+                withIntermediateDirectories: true
+            )
+            output = version.appendingPathComponent(
+                "IOSUsePlayRuntime"
+            )
+        } else {
+            resources = framework
+            output = framework.appendingPathComponent(
+                "IOSUsePlayRuntime"
+            )
+        }
+        try PropertyListSerialization.data(
+            fromPropertyList: [
+                "CFBundleIdentifier": "com.example.IOSUsePlayRuntime",
+                "CFBundleExecutable": "IOSUsePlayRuntime",
+                "CFBundlePackageType": "FMWK",
+            ],
+            format: .xml,
+            options: 0
+        ).write(to: resources.appendingPathComponent("Info.plist"))
+        let source = root.appendingPathComponent("Runtime.c")
+        try Data(
+            "int ios_use_runtime_fixture(void) { return 1; }\n".utf8
+        ).write(to: source)
+        let sdk = try Shell.run(
+            print: false,
+            "/usr/bin/xcrun",
+            "--sdk",
+            "macosx",
+            "--show-sdk-path"
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try Shell.run(
+            print: false,
+            "/usr/bin/xcrun",
+            "--sdk",
+            "macosx",
+            "clang",
+            "-target",
+            "arm64-apple-ios17.0-macabi",
+            "-isysroot",
+            sdk,
+            "-dynamiclib",
+            "-Wl,-install_name,@rpath/IOSUsePlayRuntime.framework/"
+                + "IOSUsePlayRuntime",
+            source.path,
+            "-o",
+            output.path
+        )
+        if versioned {
+            try FileManager.default.createSymbolicLink(
+                atPath: framework.appendingPathComponent(
+                    "Versions/Current"
+                ).path,
+                withDestinationPath: "A"
+            )
+            try FileManager.default.createSymbolicLink(
+                atPath: framework.appendingPathComponent(
+                    "IOSUsePlayRuntime"
+                ).path,
+                withDestinationPath:
+                    "Versions/Current/IOSUsePlayRuntime"
+            )
+            try FileManager.default.createSymbolicLink(
+                atPath: framework.appendingPathComponent(
+                    "Resources"
+                ).path,
+                withDestinationPath: "Versions/Current/Resources"
+            )
+            try Shell.signMacho(framework)
+        } else {
+            try Shell.signMacho(output)
+        }
+        return framework
+    }
+
+    private func makeThinMachO(
+        cpuType: UInt32,
+        cpuSubtype: UInt32,
+        platform: UInt32
+    ) -> Data {
+        var segment = Data()
+        appendU32LE(0x19, to: &segment)
+        appendU32LE(152, to: &segment)
+        segment.append(Data(repeating: 0, count: 56))
+        appendU32LE(1, to: &segment)
+        appendU32LE(0, to: &segment)
+        segment.append(Data(repeating: 0, count: 48))
+        appendU32LE(512, to: &segment)
+        segment.append(Data(repeating: 0, count: 28))
+
+        var build = Data()
+        appendU32LE(0x32, to: &build)
+        appendU32LE(24, to: &build)
+        appendU32LE(platform, to: &build)
+        appendU32LE(0x0011_0000, to: &build)
+        appendU32LE(0x0011_0400, to: &build)
+        appendU32LE(0, to: &build)
+
+        let commands = [segment, build]
+        var result = Data([0xcf, 0xfa, 0xed, 0xfe])
+        appendU32LE(cpuType, to: &result)
+        appendU32LE(cpuSubtype, to: &result)
+        appendU32LE(2, to: &result)
+        appendU32LE(UInt32(commands.count), to: &result)
+        appendU32LE(
+            UInt32(commands.reduce(0) { $0 + $1.count }),
+            to: &result
+        )
+        appendU32LE(0, to: &result)
+        appendU32LE(0, to: &result)
+        for command in commands {
+            result.append(command)
+        }
+        result.append(
+            Data(repeating: 0, count: max(0, 512 - result.count))
+        )
+        result.append(Data(repeating: 0xab, count: 64))
+        return result
+    }
+
+    private func makeFatMachO(arm64: Data, x86_64: Data) -> Data {
+        let arm64Offset = 4_096
+        let x86Offset = aligned(arm64Offset + arm64.count, to: 4_096)
+        var result = Data([0xca, 0xfe, 0xba, 0xbe])
+        appendU32BE(2, to: &result)
+        appendU32BE(0x0100_000c, to: &result)
+        appendU32BE(0, to: &result)
+        appendU32BE(UInt32(arm64Offset), to: &result)
+        appendU32BE(UInt32(arm64.count), to: &result)
+        appendU32BE(12, to: &result)
+        appendU32BE(0x0100_0007, to: &result)
+        appendU32BE(3, to: &result)
+        appendU32BE(UInt32(x86Offset), to: &result)
+        appendU32BE(UInt32(x86_64.count), to: &result)
+        appendU32BE(12, to: &result)
+        result.append(
+            Data(repeating: 0, count: arm64Offset - result.count)
+        )
+        result.append(arm64)
+        result.append(
+            Data(repeating: 0, count: x86Offset - result.count)
+        )
+        result.append(x86_64)
+        return result
+    }
+
+    private func makeFatMachOWithoutArm64(x86_64: Data) -> Data {
+        let x86Offset = 4_096
+        var result = Data([0xca, 0xfe, 0xba, 0xbe])
+        appendU32BE(1, to: &result)
+        appendU32BE(0x0100_0007, to: &result)
+        appendU32BE(3, to: &result)
+        appendU32BE(UInt32(x86Offset), to: &result)
+        appendU32BE(UInt32(x86_64.count), to: &result)
+        appendU32BE(12, to: &result)
+        result.append(
+            Data(repeating: 0, count: x86Offset - result.count)
+        )
+        result.append(x86_64)
+        return result
+    }
+
+    private func aligned(_ value: Int, to alignment: Int) -> Int {
+        (value + alignment - 1) / alignment * alignment
+    }
+
+    private func appendU32LE(_ value: UInt32, to data: inout Data) {
+        data.append(contentsOf: [
+            UInt8(value & 0xff),
+            UInt8((value >> 8) & 0xff),
+            UInt8((value >> 16) & 0xff),
+            UInt8((value >> 24) & 0xff),
+        ])
+    }
+
+    private func appendU32BE(_ value: UInt32, to data: inout Data) {
+        data.append(contentsOf: [
+            UInt8((value >> 24) & 0xff),
+            UInt8((value >> 16) & 0xff),
+            UInt8((value >> 8) & 0xff),
+            UInt8(value & 0xff),
+        ])
+    }
+}

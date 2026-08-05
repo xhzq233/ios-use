@@ -1,0 +1,19 @@
+case	command	postcondition
+status	status --json	healthy identity diagnostics and 430x932@3 geometry
+logs	oslog --pid active --timeout 1s	exact active PID accepted and any other PID rejected
+screenshot-initial	screenshot --json	full uncropped App compositor with generation, identity mapping, and no synthetic chrome
+capture	capture --duration 500ms --fps 4	generations advance and every frame is complete 1290x2796@3
+dom-initial	dom --json	UIKit and four full-frame edge probes present
+tap	tap Increment --dom --json	count changes to 1
+longpress	longpress Long Press Target --dom --json	recognizer status changes
+uikit-popup	tap Open UIKit Popup then Confirm and Close by Runtime touch and global AppKit mouse --dom --json	both input paths hit the same full-frame UIKit button with DOM and pixel changes
+input	input Fixture Input then delete Unicode and enter --dom --json	UIKeyInput value editingChanged Return and grapheme deletion applied
+alert-tap	tap Show Alert; screenshot; tap Confirm --dom --json	native AppKit alert is composited mirrored into DOM and closes by semantic tap
+alert-default	tap Show Alert; dismissAlert --json	omitted index selects last visible Confirm button
+open	open iosusefixture://acceptance/v1 --dom --json	URL status and fresh DOM returned
+probes	tap full-frame corner probes --dom --json	probe status identifies target
+swipe	swipe --dir forth --distance 300 --dom --json	UIScrollView offset changes
+scene-replacement	tap Replace Scene Window --dom --json	new UIWindow in active UIWindowScene reaches Scene 2
+swiftui	tap SwiftUI increment and input --dom --json	SwiftUI state binding and onSubmit both change
+web	tap Web wait increment and input --dom --json	WKWebView DOM click and input event both change
+metal	tap Metal and overlay then screenshot --json	opaque blue Metal pixel and visible UIKit overlay are composited

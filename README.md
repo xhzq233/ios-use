@@ -51,7 +51,7 @@ Modern multimodal models do not usually allocate tokens linearly with every scre
 1. **DOM-first targeting** - Most actions use label/value text. The driver resolves coordinates internally, so the LLM does not need to guess pixel positions for standard UI.
 2. **Vision fallback** - When AX is incomplete (for example, a custom-drawn icon), the LLM can inspect a screenshot and pass raw coordinates.
 3. **Offset hybrid** — Combine both: anchor on a known label, then apply a relative offset to hit an adjacent unlabeled control.
-4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom`, use `dom` / `waitFor` to confirm semantic state, or use `dom --ocr` to collect a fresh tree and near-contemporaneous visual evidence in one command. Failed UI mutations return a stable error code; actionable lookup/action failures also print one `Evidence:` manifest path that references the captured screenshot, fast OCR, and fresh DOM when available.
+4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom` and use `dom` / `waitFor` to confirm semantic state. Capture explicitly named screenshots when visual evidence is needed. Failed UI mutations return a stable error code; actionable lookup/action failures also print one `Evidence:` manifest path that references the captured screenshot, fast OCR, and fresh DOM when available.
 
 This means:
 
@@ -77,15 +77,27 @@ Driving devices still requires Apple's tooling:
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
 ```
 
-The installer downloads the prebuilt Apple Silicon macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. To install a specific version:
+The installer verifies `SHA256SUMS`, downloads the prebuilt Apple Silicon macOS
+CLI, driver IPAs, and Mac backend resources from the latest GitHub Release, then
+installs `ios-use` into a user-writable bin directory. The Mac Runtime is an
+immutable resource at `<prefix>/share/ios-use/mac/`, next to the
+installed binary prefix rather than in mutable `IOS_USE_HOME`; this remains the
+fallback for both the default and custom `IOS_USE_HOME` values. The installed
+bundle is treated as a read-only source resource: preparation signs only its
+managed copy, and installed execution is tested not to mutate any source
+bytes. To install a
+specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.3.4
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.0.0
 ```
 
-Intel Macs should compile locally instead:
+Intel Macs are unsupported because the Mac Runtime and converted iPhone Apps
+are arm64-only. On Apple Silicon, a source build requires full Xcode,
+Swift, and `xcodegen`:
 
 ```bash
+brew install xcodegen
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
@@ -99,10 +111,11 @@ Choose the environment you want to drive.
 ios-use status
 
 # First run: sign with a free Apple Developer account (Personal Team; no paid $99 program).
-# Omit --password so the CLI prompts securely for the developer account login.
-ios-use config --udid <device-udid> --apple-id <email>
+# Authenticate once directly with AltSign; it reads credentials from stdin.
+~/.ios-use/altsign-cli/altsign-cli list --apple-id '<Apple ID>'
+ios-use config --udid <device-udid>
 
-# Later runs: cached signing state is reused.
+# Later runs: AltSign reuses its single cached session.
 ios-use config --udid <device-udid>
 ios-use start <device-udid>
 ```
@@ -124,16 +137,16 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | Command | Use it for |
 | --- | --- |
 | `status` / `config --list` | Show connected real devices and configured device/Simulator state. |
-| `config` | Install or update the on-device driver. |
-| `start` / `stop` | Select or release the current automation target. |
-| `activateApp` / `terminateApp` | Open or close an app by bundle ID; activation is UI-ready by default. |
-| `dom` | Print the current UI tree; add `--ocr` for a fresh DOM plus screenshot and accurate OCR. |
+| `config` | Install or update the on-device driver; use `config --mac` once before the first local Mac-backend start. |
+| `start` / `status` / `stop` | Select, inspect, or release the current target. These are the only Mac-backend lifecycle commands; restart Mac with `stop`, then `start --mac --reuse`. |
+| `activateApp` / `terminateApp` | Open or close an app by bundle ID on a real device or Simulator; activation is UI-ready by default. |
+| `dom` | Print the current semantic UI tree. |
 | `tap` / `longpress` | Act on a label or coordinate. |
 | `swipe` | Scroll by direction/distance or toward a target label. |
 | `input` | Type into the current keyboard focus, optionally tapping a target first. |
 | `screenshot` | Capture a native-resolution JPEG with accurate host OCR and Logical coordinates by default. |
 | `capture` | Capture a fixed-rate JPEG sequence plus `manifest.json`, with optional tolerant changed-frame filtering (max 10 FPS). |
-| `media import` | Add one local photo or video to the connected device Photos library through the active Driver. |
+| `media import` | Add one local photo or video to the Photos library used by the active backend. |
 | `oslog` / `nslog` | Capture system logs or app-side NSLogger output. |
 | `proxy` | Capture HTTP/HTTPS traffic through mitmproxy. |
 | `open` | Open a URL or custom scheme on a device. |
@@ -147,7 +160,7 @@ ios-use tap "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
 ios-use input --tap "搜索" --content "蓝牙"
 ios-use screenshot --name settings-home
-ios-use dom --ocr  # one-shot AX + visual inspection when the channels disagree
+ios-use screenshot --name channels-disagree  # explicit visual evidence when AX is insufficient
 
 # Coordinate fallback for a visual-only control; semantic targets remain preferred.
 ios-use tap 67 269
@@ -164,6 +177,12 @@ ios-use status --json
 ios-use activateApp com.apple.Preferences --dom --json
 ios-use tap "通用" --json
 ```
+
+When a blocking interaction exists, the machine envelope includes a top-level
+`interaction` summary and a warning. App-owned alerts must be handled with
+`dismissAlert`; external macOS permission prompts are left to the user or
+Computer Use. Bare `dismissAlert` accepts only an unambiguous one-button alert;
+choose `--label`, `--index`, or `--primary` for a multi-button alert.
 
 Repeatable sequences are ordinary shell scripts, so they can use variables, conditionals, and the same CLI commands without another DSL:
 
@@ -185,6 +204,70 @@ ios-use waitFor '优化身形线条中.*\d+%' --match regex --gone --timeout 55s
 Time options accept `s` and `ms` suffixes. Bare `waitFor`, `capture`, and log
 timeouts are seconds; bare long-press and post-mutation `--dom` durations are
 milliseconds.
+
+### Experimental Mac Backend
+
+The Mac backend runs a managed copy of an unencrypted
+arm64 iPhone App directly on Apple silicon. Its device
+contract is compiled into the Runtime and host from one header:
+`iPhone16,2`, 430 x 932 logical points, 3x scale, and 1290 x 2796 native
+pixels.
+
+```bash
+bash scripts/build_swift_cli.sh --debug
+
+./ios-use config --mac
+./ios-use start --mac --app /path/to/Source.app
+./ios-use status
+./ios-use dom
+./ios-use tap "A stable label" --dom
+./ios-use screenshot
+./ios-use stop
+```
+
+On Apple Silicon with full Xcode and `xcodegen` available, the local CLI build
+also builds the default injected runtime. Before the first Mac-backend start for
+your macOS account, run `config --mac`; macOS asks once for authentication
+to trust the dedicated signing identity. If you cancel, safely retry the same
+command: it resumes that identity instead of creating another one. The identity
+and immutable prepared Apps are shared by the macOS account, while each
+`IOS_USE_HOME` keeps its own session and most-recent-generation reference. Both
+`start --mac --app` and
+`start --mac --reuse` only check the existing identity and tell you to run
+`config --mac` if setup is missing or trust must be completed.
+
+`start --mac --app` accepts either an unmodified iPhoneOS App or a managed
+prepared App. A source App is cloned into the account-wide immutable generation
+cache, converted by the pinned preparation pipeline, injected, signed inside-out,
+fully verified, and launched. A later `start --mac --reuse` explicitly reuses the
+generation referenced by that same home after a bounded integrity check. After rebuilding
+the source App, pass `--app` again so the new iPhoneOS Mach-O content selects or
+prepares its generation; `--reuse` deliberately does not inspect the source
+build. The isolated live Runtime stress gate proves that launch `hello` carries
+only the fixed-geometry readiness snapshot while full window, screen, alert,
+resize, and mouse diagnostics remain on `status`.
+
+The CLI creates one random session ID and connects straight to the injected
+Runtime's owner-only Unix socket. `driver.lock` keeps the Mac backend selected until
+`ios-use stop`, so session commands cannot fall back to XCTest. `status`,
+screenshots, DOM/wait, touch/input, capture, URL delivery, logs, and evidence
+all use that exact PID, executable, session, and prepared generation.
+Lifecycle remains host-owned: `activateApp`, `terminateApp`, `home`, and DDI
+operations are explicitly unsupported while a Mac session is active.
+
+The Runtime presents the App in an opaque, rectangular Simulator-style host
+with the standard AppKit title bar, traffic lights, shadow, and four-edge
+proportional resize behavior. The scene-owning UIKitMacHelper window is kept
+instead of adding a second mirror window. There is no transparent gap or
+synthetic toolbar; one uniformly scaled render canvas fills the content area.
+The inner UIKit canvas remains fixed at 430 x 932 logical points regardless of
+host size. Host decoration is never a target coordinate or evidence.
+Screenshots capture only the target process's complete canvas compositor
+surfaces, including Metal, and always produce a strict 1290 x 2796 frame. The
+Runtime never draws synthetic time, battery, Dynamic Island, status glyphs, or
+Home Indicator. The path does not use ScreenCaptureKit or request Screen
+Recording permission.
+See the [Mac backend implementation notes](docs/playcover-backend.md).
 
 ## Performance Snapshot
 
@@ -233,6 +316,7 @@ See [examples/proxy/README.md](examples/proxy/README.md) for prerequisites and s
 swift-cli/             Swift CLI, command parsing, config, proxy, logs, and host tools
 shared/IOSUseProtocol/ Shared Swift RPC types and Fory frame models
 driver/                Swift XCTest driver
+playcover-runtime/     Injected Mac Catalyst Runtime plus pinned PlayTools sources
 examples/proxy/        Copyable shell recipes for proxy device setup
 scripts/               Install, build, test, and benchmark utilities
 docs/                  Public documentation
@@ -250,13 +334,25 @@ bash scripts/build_driver.sh
 bash scripts/ci_test.sh
 ```
 
-`bash scripts/build_swift_cli.sh` builds the local workspace CLI to repo-root `./ios-use`; use that binary for development instead of a global `ios-use`. `bash scripts/build_driver.sh` defaults to Debug and writes development IPAs under `IOS_USE_HOME`, or cwd `.ios-use/` when unset. `scripts/ci_test.sh` is the default CI/local Swift-only validation path. Full Simulator command matrix tests use `bash scripts/ci_full_simulator.sh --driver-ipa <driver-sim.ipa>`. See `scripts/README.md` for the script index.
+`bash scripts/build_swift_cli.sh` builds the local workspace CLI to repo-root
+`./ios-use`; on Apple Silicon development hosts with full Xcode and `xcodegen`
+it also keeps a local development Runtime under `.ios-use/playcover/` up to
+date. Release installs instead use the checksummed, read-only prefix share
+layout; release CI runs the exact staged archive through `install.sh` and a
+fixture `start/status/stop` before upload. Use that binary for development
+instead of a global `ios-use`.
+`bash scripts/build_driver.sh` defaults to Debug and writes development IPAs
+under `IOS_USE_HOME`, or cwd `.ios-use/` when unset. `scripts/ci_test.sh` is the
+default CI/local Swift-only validation path. Full Simulator command matrix
+tests use `bash scripts/ci_full_simulator.sh --driver-ipa <driver-sim.ipa>`.
+See `scripts/README.md` for the script index.
 
 ## Acknowledgments
 
 - **[WebDriverAgent](https://github.com/appium/WebDriverAgent)**: This project borrows heavily from the ideas and implementation patterns established by WebDriverAgent. Gesture synthesis, snapshot handling, scrolling behavior, and parts of the driver architecture were shaped by studying WDA's source.
 - **[appium-xcuitest-driver](https://github.com/appium/appium-xcuitest-driver)**: The CLI and session behavior were informed by how the Appium XCUITest ecosystem exposes XCTest automation to users.
 - **[Appium](https://github.com/appium/appium)**: Appium helped establish the mental model for cross-device automation workflows, including action-oriented commands and reusable sessions.
+- **[PlayCover](https://github.com/PlayCover/PlayCover)** and **[PlayTools](https://github.com/PlayCover/PlayTools)**: The experimental headless backend derives its verified Mach-O conversion, interposition, and UIKit/AppKit bridge approach from these projects. Exact source revisions and license provenance are recorded in [docs/playcover-backend.md](docs/playcover-backend.md).
 
 ## License
 

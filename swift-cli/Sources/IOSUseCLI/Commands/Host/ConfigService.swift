@@ -27,7 +27,6 @@ public enum ConfigService {
     private static let devRunnerBundleId = "com.iosuse.xcuidriver.xctrunner"
     private static let devXCTestBundleId = "com.iosuse.xcuidriver"
     private static let defaultDriverBundlePrefix = "com.ios-use.driver"
-    private static let cachedAppleIdPattern = #"Using cached session for ([^\s]+)"#
     private static let signingExpirationWarningInterval: TimeInterval = 24 * 60 * 60
     private static let secondsPerDay: TimeInterval = 24 * 60 * 60
     static var altsignRunnerForTesting: ((String, [String]) throws -> Void)?
@@ -56,8 +55,7 @@ public enum ConfigService {
             throw CLIParseError.invalidValue("altsign-cli not found at \(altsign). Run: cd altsign-cli && ./build.sh")
         }
 
-        let saved = listEntries(paths: paths).first { $0.udid == udid }
-        let bundleId = try reusableBundleId(from: saved) ?? dynamicBundleId(options: options, altsign: altsign)
+        let bundleId = driverBundleId(udid: udid)
         let xctestBundleId = bundleId.replacingOccurrences(of: #"\.xctrunner$"#, with: "", options: .regularExpression)
         let ipaPath = deviceIPAPath(paths: paths)
         guard FileManager.default.fileExists(atPath: ipaPath) else {
@@ -73,19 +71,6 @@ public enum ConfigService {
         let signedIpa = "\(paths.root)/driver-signed-\(udid).ipa"
         try? FileManager.default.removeItem(atPath: signedIpa)
         var signArgs = ["sign", "--udid", udid, "--ipa", rewritten, "--output", signedIpa]
-        if let appleId = options.appleId {
-            signArgs += ["--apple-id", appleId]
-            let password: String
-            if let p = options.password {
-                password = p
-            } else {
-                guard let p = Shell.readSecureInput(prompt: "Developer account password for \(appleId): "), !p.isEmpty else {
-                    throw CLIParseError.invalidValue("Password is required for signing. Provide via interactive prompt or --password.")
-                }
-                password = p
-            }
-            signArgs += ["--password", password]
-        }
         if options.verbose { signArgs.append("--verbose") }
         if let altsignRunnerForTesting {
             try altsignRunnerForTesting(altsign, signArgs)
@@ -218,19 +203,8 @@ public enum ConfigService {
         }
     }
 
-    private static func dynamicBundleId(options: ConfigOptions, altsign: String) throws -> String {
-        let appleId = try options.appleId ?? cachedAppleId(altsign: altsign)
-        guard let appleId, !appleId.isEmpty else {
-            throw CLIParseError.invalidValue("No signing config found for this device and no cached altsign session. Please run with --apple-id <email> --password <pwd> to log in.")
-        }
-        return "\(defaultDriverBundlePrefix).\(sanitizeForBundleId(appleId)).xctrunner"
-    }
-
-    static func reusableBundleId(from entry: DeviceConfigEntry?) -> String? {
-        guard let bundleId = entry?.bundleId.nonEmpty, bundleId != "(missing)" else {
-            return nil
-        }
-        return bundleId
+    private static func driverBundleId(udid: String) -> String {
+        "\(defaultDriverBundlePrefix).\(sanitizeForBundleId(udid)).xctrunner"
     }
 
     static func assertDriverInstallCurrent(udid: String, paths: IOSUsePaths) throws {
@@ -316,16 +290,6 @@ public enum ConfigService {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
-    }
-
-    private static func cachedAppleId(altsign: String) throws -> String? {
-        guard let output = try? Shell.runCombined(altsign, arguments: ["list"]) else { return nil }
-        guard let regex = try? NSRegularExpression(pattern: cachedAppleIdPattern),
-              let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..<output.endIndex, in: output)),
-              let range = Range(match.range(at: 1), in: output) else {
-            return nil
-        }
-        return String(output[range])
     }
 
     private static func sanitizeForBundleId(_ value: String) -> String {

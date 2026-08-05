@@ -17,11 +17,16 @@ assets/
 .trae/
 docs/private/
 driver/build/
+playcover-fixtures/.build/
+playcover-fixtures/IOSUsePlayFixture.xcodeproj/
 *.xcuserstate
 xcuserdata/
 DerivedData/
 swift-cli/.build/
 swift-cli/.swiftpm/
+shared/*/.build/
+ThirdParty/*/.build/
+ThirdParty/*/.swiftpm/
 .env
 .env.*
 *.log

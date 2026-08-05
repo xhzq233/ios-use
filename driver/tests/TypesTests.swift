@@ -129,7 +129,8 @@ final class TypesTests: XCTestCase {
         let cmds: [Command] = [
             .activateApp, .terminateApp, .screenshot,
             .home, .dom, .tap, .longPress, .input, .swipe, .waitFor,
-            .proxyCAPush, .dismissAlert, .waitAppForeground, .mediaImport,
+            .proxyCAPush, .dismissAlert, .dismissAlertByLabel,
+            .waitAppForeground, .mediaImport,
         ]
         for cmd in cmds {
             XCTAssertFalse(cmd.rawValue.isEmpty, "\(cmd) should have non-empty rawValue")

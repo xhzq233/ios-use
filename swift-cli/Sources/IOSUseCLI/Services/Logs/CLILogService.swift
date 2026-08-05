@@ -26,13 +26,38 @@ enum CLILogService {
         let content = lines.map { "\(timestamp) \($0)" }.joined(separator: "\n") + "\n"
         let url = URL(fileURLWithPath: logPath)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: logPath) {
-            FileManager.default.createFile(atPath: logPath, contents: nil)
+        let descriptor = Darwin.open(
+            logPath,
+            O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else { return }
+        defer { Darwin.close(descriptor) }
+        guard flock(descriptor, LOCK_EX) == 0 else {
+            return
         }
-        guard let handle = FileHandle(forWritingAtPath: logPath) else { return }
-        _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: Data(content.utf8))
-        try? handle.close()
+        defer { flock(descriptor, LOCK_UN) }
+        let data = Data(content.utf8)
+        data.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else {
+                return
+            }
+            var offset = 0
+            while offset < bytes.count {
+                let count = Darwin.write(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    bytes.count - offset
+                )
+                if count > 0 {
+                    offset += count
+                } else if count < 0, errno == EINTR {
+                    continue
+                } else {
+                    break
+                }
+            }
+        }
     }
 
     static func formatTimestamp(_ date: Date) -> String {

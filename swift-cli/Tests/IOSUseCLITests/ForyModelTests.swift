@@ -74,6 +74,48 @@ final class ForyModelTests: XCTestCase {
         XCTAssertTrue(decoded.waitQuiescence)
     }
 
+    func testForyInputArgsRoundTripDeleteEnterAndLookup() throws {
+        let fory = ForyRegistry.create()
+        let encoded = try fory.serialize(
+            ForyInputArgs(
+                target: ForyTarget(
+                    label: "Fixture Input",
+                    traits: "TextField",
+                    cindex: 2
+                ),
+                content: "replacement",
+                deleteCount: 17,
+                enter: true
+            )
+        )
+        let decoded = try fory.deserialize(
+            encoded,
+            as: ForyInputArgs.self
+        )
+
+        XCTAssertEqual(decoded.target.label, "Fixture Input")
+        XCTAssertEqual(decoded.target.traits, "TextField")
+        XCTAssertEqual(decoded.target.cindex, 2)
+        XCTAssertEqual(decoded.content, "replacement")
+        XCTAssertEqual(decoded.deleteCount, 17)
+        XCTAssertTrue(decoded.enter)
+    }
+
+    func testDismissAlertByLabelArgsRoundTripExactLabel() throws {
+        let fory = ForyRegistry.create()
+        let encoded = try fory.serialize(
+            ForyDismissAlertByLabelArgs(
+                label: "Allow Full Access"
+            )
+        )
+        let decoded = try fory.deserialize(
+            encoded,
+            as: ForyDismissAlertByLabelArgs.self
+        )
+
+        XCTAssertEqual(decoded.label, "Allow Full Access")
+    }
+
     func testForyRegistryCanSerializeProxyCAPushArgs() throws {
         let fory = ForyRegistry.create()
         let encoded = try fory.serialize(ForyProxyCAPushArgs(caBase64: "abc123"))

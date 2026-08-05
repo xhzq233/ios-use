@@ -13,6 +13,11 @@ public enum SessionService {
         public let sessionIdentifier: String?
         public let bundleId: String?
         public let controlSocketPath: String?
+        public let macAppPath: String?
+        public let macExecutablePath: String?
+        public let macGenerationKey: String?
+        public let macRuntimeSocketPath: String?
+        public let macLogPath: String?
 
         public init(
             udid: String,
@@ -25,7 +30,12 @@ public enum SessionService {
             startMode: String? = nil,
             sessionIdentifier: String? = nil,
             bundleId: String? = nil,
-            controlSocketPath: String? = nil
+            controlSocketPath: String? = nil,
+            macAppPath: String? = nil,
+            macExecutablePath: String? = nil,
+            macGenerationKey: String? = nil,
+            macRuntimeSocketPath: String? = nil,
+            macLogPath: String? = nil
         ) {
             self.udid = udid
             self.deviceName = deviceName
@@ -38,6 +48,11 @@ public enum SessionService {
             self.sessionIdentifier = sessionIdentifier
             self.bundleId = bundleId
             self.controlSocketPath = controlSocketPath
+            self.macAppPath = macAppPath
+            self.macExecutablePath = macExecutablePath
+            self.macGenerationKey = macGenerationKey
+            self.macRuntimeSocketPath = macRuntimeSocketPath
+            self.macLogPath = macLogPath
         }
 
         func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
@@ -52,7 +67,12 @@ public enum SessionService {
                 startMode: startMode,
                 sessionIdentifier: metadata.sessionIdentifier,
                 bundleId: metadata.bundleId ?? bundleId,
-                controlSocketPath: metadata.controlSocketPath ?? controlSocketPath
+                controlSocketPath: metadata.controlSocketPath ?? controlSocketPath,
+                macAppPath: macAppPath,
+                macExecutablePath: macExecutablePath,
+                macGenerationKey: macGenerationKey,
+                macRuntimeSocketPath: macRuntimeSocketPath,
+                macLogPath: macLogPath
             )
         }
     }
@@ -61,6 +81,7 @@ public enum SessionService {
     static var simulatorDriverLauncherForTesting: ((String) throws -> Void)?
     static var simulatorDriverTerminatorForTesting: ((String) throws -> Bool)?
     static var realDriverTerminatorForTesting: ((String) throws -> Bool)?
+    static var readDriverLockObserverForTesting: (() -> Void)?
 
     public static func clear(paths: IOSUsePaths) {
         DriverSessionStore.clear(paths: paths)
@@ -71,7 +92,8 @@ public enum SessionService {
     }
 
     public static func readDriverLockInfo(paths: IOSUsePaths) throws -> Info? {
-        try DriverSessionStore.readInfo(paths: paths)
+        readDriverLockObserverForTesting?()
+        return try DriverSessionStore.readInfo(paths: paths)
     }
 
     public static func requireDriverLock(paths: IOSUsePaths) throws -> Info {
@@ -105,13 +127,21 @@ public enum SessionService {
     }
 
     public static func start(udid requestedUdid: String?, paths: IOSUsePaths, verbose: Bool) throws -> String {
-        if let current = try readDriverLockInfo(paths: paths) {
-            if isIncompleteRealDriverLock(current) {
-                try cleanupIncompleteRealDriverLock(current, paths: paths)
-            } else {
-                throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")
-            }
+        try SessionOperationLock.withExclusiveLock(paths: paths) {
+            try startLocked(
+                udid: requestedUdid,
+                paths: paths,
+                verbose: verbose
+            )
         }
+    }
+
+    private static func startLocked(
+        udid requestedUdid: String?,
+        paths: IOSUsePaths,
+        verbose: Bool
+    ) throws -> String {
+        try prepareForDriverStart(paths: paths)
         let udid = try resolveStartUdid(requestedUdid, paths: paths)
         let info = try resolveDriverInfo(udid: udid, paths: paths)
         let signingWarning = ConfigService.startSigningWarning(udid: udid, paths: paths)
@@ -151,6 +181,180 @@ public enum SessionService {
         return (signingWarning ?? "") + "Driver started for \(udid)\n"
     }
 
+    public static func startPlayCover(
+        appPath: String?,
+        captureStdio: Bool = false,
+        fridaEnabled: Bool = false,
+        timeout: Double,
+        paths: IOSUsePaths
+    ) throws -> String {
+        // Explicit-App start must fail on an unavailable signing identity
+        // before acquiring the per-Home operation lock. Lock acquisition may
+        // create IOS_USE_HOME, so this preflight is intentionally read-only
+        // and outside every session/cache mutation boundary.
+        let signingIdentity: PlayCoverSigningIdentityEvidence?
+        if let appPath, !appPath.isEmpty {
+            signingIdentity = try PlayCoverService
+                .requireHealthySigningIdentityForStart()
+        } else {
+            signingIdentity = nil
+        }
+        return try startPlayCoverAfterPreflight(
+            appPath: appPath,
+            signingIdentity: signingIdentity,
+            captureStdio: captureStdio,
+            fridaEnabled: fridaEnabled,
+            timeout: timeout,
+            paths: paths
+        )
+    }
+
+    /// Module-internal handoff from the CLI's earlier routing preflight.
+    /// Public callers cannot inject signer evidence and therefore cannot
+    /// bypass the read-only configuration check above.
+    static func startPlayCoverAfterPreflight(
+        appPath: String?,
+        signingIdentity: PlayCoverSigningIdentityEvidence?,
+        captureStdio: Bool = false,
+        fridaEnabled: Bool = false,
+        timeout: Double,
+        paths: IOSUsePaths
+    ) throws -> String {
+        guard (appPath?.isEmpty == false)
+                == (signingIdentity != nil) else {
+            throw PlayCoverBackendError.codeSigningFailed(
+                "explicit Mac App start is missing preflight signer evidence"
+            )
+        }
+        return try SessionOperationLock.withExclusiveLock(paths: paths) {
+            try startPlayCoverLocked(
+                appPath: appPath,
+                signingIdentity: signingIdentity,
+                captureStdio: captureStdio,
+                fridaEnabled: fridaEnabled,
+                timeout: timeout,
+                paths: paths
+            )
+        }
+    }
+
+    private static func startPlayCoverLocked(
+        appPath: String?,
+        signingIdentity: PlayCoverSigningIdentityEvidence?,
+        captureStdio: Bool,
+        fridaEnabled: Bool,
+        timeout: Double,
+        paths: IOSUsePaths
+    ) throws -> String {
+        try prepareForDriverStart(paths: paths)
+        try PlayCoverSessionService.requireNoPendingLaunch(
+            paths: paths
+        )
+        var launch: PlayCoverSessionService.LaunchResult?
+        do {
+            let result = try PlayCoverSessionService.launch(
+                explicitAppPath: appPath,
+                signingIdentity: signingIdentity,
+                captureStdio: captureStdio,
+                fridaEnabled: fridaEnabled,
+                timeout: timeout,
+                paths: paths
+            )
+            launch = result
+            try writeDriverLock(
+                info: PlayCoverSessionService.makeSessionInfo(from: result),
+                paths: paths
+            )
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(.afterDriverLockDurable)
+            #endif
+            do {
+                try PlayCoverSessionService
+                    .retirePendingLaunchJournalAfterDriverCommit(
+                        result: result,
+                        paths: paths
+                    )
+            } catch {
+                throw PlayCoverSessionJournalHandoffError(
+                    result: result,
+                    underlying: error
+                )
+            }
+            let cacheDisposition = result.reused ? "reused" : "prepared"
+            var output = """
+            Mac session started for \(result.bundleIdentifier) (pid \(result.pid))
+            Mac generation \(cacheDisposition): \(result.generationKey)
+            IOS_USE_HOME: \(paths.root)
+
+            """
+            if let logPath = result.logPath {
+                output += "Mac log: \(logPath)\n"
+            }
+            return output
+        } catch let error as
+                PlayCoverSessionJournalHandoffError {
+            throw error
+        } catch let error as
+                PlayCoverSessionUnterminatedLaunchError {
+            // The ready gate did not complete, so driver.lock must not
+            // advertise an active backend. The durable owned journal is the
+            // sole recovery authority for `status`, `stop`, and the next
+            // `start`.
+            throw error
+        } catch {
+            if let launch {
+                let reportedError: Error
+                if let logPath = launch.logPath {
+                    reportedError =
+                        PlayCoverSessionLoggedLaunchError(
+                            logPath: logPath,
+                            underlying: error
+                        )
+                } else {
+                    reportedError = error
+                }
+                do {
+                    if launch.usesPendingLaunchJournal {
+                        try PlayCoverSessionService
+                            .rollbackAfterDriverCommitFailure(
+                                result: launch,
+                                paths: paths
+                            )
+                    } else {
+                        _ = try PlayCoverSessionService.terminate(
+                            result: launch,
+                            paths: paths
+                        )
+                        try DriverSessionStore.removeDriverLock(
+                            paths: paths
+                        )
+                    }
+                } catch let cleanupError {
+                    throw PlayCoverSessionCommitRollbackError(
+                        result: launch,
+                        originalError: reportedError,
+                        cleanupError: cleanupError
+                    )
+                }
+                throw reportedError
+            }
+            clearDriverLock(paths: paths)
+            throw error
+        }
+    }
+
+    private static func prepareForDriverStart(
+        paths: IOSUsePaths
+    ) throws {
+        if let current = try readDriverLockInfo(paths: paths) {
+            if isIncompleteRealDriverLock(current) {
+                try cleanupIncompleteRealDriverLock(current, paths: paths)
+            } else {
+                throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")
+            }
+        }
+    }
+
     private static func errorWithSigningWarning(_ warning: String?, error: Error) -> Error {
         guard let warning, !warning.isEmpty else {
             return error
@@ -183,7 +387,45 @@ public enum SessionService {
     }
 
     public static func stop(paths: IOSUsePaths) throws -> String {
-        let current = try requireDriverLock(paths: paths)
+        try SessionOperationLock.withExclusiveLock(paths: paths) {
+            try stopLocked(paths: paths)
+        }
+    }
+
+    private static func stopLocked(paths: IOSUsePaths) throws -> String {
+        guard let current = try readDriverLockInfo(paths: paths) else {
+            if let pid = try PlayCoverSessionService
+                .stopPendingWithoutDriverLock(paths: paths) {
+                return "Mac pending launch stopped (pid \(pid))\n"
+                    + "Mac session stopped\n"
+            }
+            _ = try requireDriverLock(paths: paths)
+            preconditionFailure(
+                "requireDriverLock must throw when driver.lock is absent"
+            )
+        }
+        if current.deviceType == PlayCoverSessionService.deviceType {
+            try PlayCoverSessionService
+                .retirePendingLaunchMatchingDriverLock(
+                    current,
+                    paths: paths
+                )
+            let pid = try PlayCoverSessionService.terminate(
+                session: current,
+                paths: paths
+            )
+            do {
+                try DriverSessionStore.removeDriverLock(paths: paths)
+            } catch {
+                throw CLIParseError.invalidValue(
+                    "Mac App stopped, but failed to remove "
+                        + "\(paths.driverLock): \(error)"
+                )
+            }
+            return "Mac App stopped (pid \(pid))\n"
+                + "Mac session stopped\n"
+        }
+        try PlayCoverSessionService.requireNoPendingLaunch(paths: paths)
         var output = try DriverLifecycleService.terminateDriver(
             for: current,
             paths: paths,

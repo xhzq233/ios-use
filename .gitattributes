@@ -1,0 +1,6 @@
+# Preserve pinned upstream source byte-for-byte.  These files carry historical
+# trailing whitespace/terminal blank lines, so repository whitespace checks must
+# not require local reformatting that would invalidate provenance hashes.
+ThirdParty/PlayCover/** whitespace=-trailing-space,-blank-at-eof
+ThirdParty/inject/** whitespace=-trailing-space,-blank-at-eof
+playcover-runtime/PlayTools/** whitespace=-trailing-space,-blank-at-eof

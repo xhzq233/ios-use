@@ -197,6 +197,91 @@ final class DriverClientTests: XCTestCase {
         XCTAssertTrue(args.waitQuiescence)
     }
 
+    func testClientUsesDistinctFailClosedCommandForAlertLabel()
+        throws
+    {
+        let fory = ForyRegistry.create()
+        let payload = try fory.serialize(
+            ForyAlertPayload(
+                dismissed: true,
+                text: "Photo Access",
+                button: "Allow Full Access",
+                reason: "label"
+            )
+        )
+        let server = try FakeDriverServer(
+            responses: [
+                ForyResponseFrame(ok: true, payload: payload),
+            ]
+        )
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+
+        _ = try client.dismissAlert(
+            index: nil,
+            label: "Allow Full Access"
+        )
+
+        let request = try XCTUnwrap(server.requestFrames.first)
+        XCTAssertEqual(
+            request.command,
+            DriverCommand.dismissAlertByLabel.rawValue
+        )
+        let args = try fory.deserialize(
+            request.payload,
+            as: ForyDismissAlertByLabelArgs.self
+        )
+        XCTAssertEqual(args.label, "Allow Full Access")
+    }
+
+    func testRealDriverRejectsAlertIndexOutsideWireRangeBeforeIO() {
+        let client = DriverClient(port: 1)
+        defer { client.close() }
+
+        XCTAssertThrowsError(
+            try client.dismissAlert(
+                index: Int(Int32.max) + 1,
+                label: nil
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue(
+                    "dismissAlert --index is out of Int32 range for the active driver"
+                )
+            )
+        }
+    }
+
+    func testDeviceTapMaterializesAbsentRatioAtForyBoundary() throws {
+        let fory = ForyRegistry.create()
+        let payload = try fory.serialize(ForyElementPayload())
+        let server = try FakeDriverServer(
+            responses: [ForyResponseFrame(ok: true, payload: payload)]
+        )
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+
+        _ = try client.tap(
+            target: ForyTarget(label: "Continue"),
+            traits: nil,
+            cindex: nil,
+            offset: nil,
+            ratio: nil
+        )
+
+        let request = try XCTUnwrap(server.requestFrames.first)
+        XCTAssertEqual(request.command, DriverCommand.tap.rawValue)
+        let args = try fory.deserialize(
+            request.payload,
+            as: ForyTapArgs.self
+        )
+        XCTAssertEqual(args.ratio.x, 0.5)
+        XCTAssertEqual(args.ratio.y, 0.5)
+    }
+
     func testClientSerializesWaitAppForegroundAndUsesSharedDeadlineBudget() throws {
         let fory = ForyRegistry.create()
         let responsePayload = try fory.serialize(ForyWaitAppForegroundPayload(

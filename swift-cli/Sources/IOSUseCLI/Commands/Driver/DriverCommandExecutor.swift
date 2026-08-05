@@ -49,38 +49,6 @@ enum DriverCommandExecutor {
             ok = true
             return DriverCommandResult(stdout: DriverOutput.formatDom(payload), payload: .dom(payload))
 
-        case .inspect(let waitQuiescence):
-            let capture = try ScreenshotCaptureCoordinator.capture(paths: paths) {
-                try requiredPayload(
-                    clientRunner { .screenshotCapture(try $0.screenshotCapture()) },
-                    as: ScreenshotCapture.self
-                )
-            }
-            let artifactWork = try ScreenshotArtifactService.start(
-                capture: capture,
-                paths: paths,
-                name: nil,
-                defaultName: "dom",
-                ocr: true
-            )
-            let payload: ForyDomPayload
-            do {
-                payload = try requiredPayload(
-                    clientRunner { .dom(try $0.dom(raw: false, fresh: true, waitQuiescence: waitQuiescence)) },
-                    as: ForyDomPayload.self
-                )
-            } catch {
-                _ = try? artifactWork.finish()
-                throw error
-            }
-            let evidence = try artifactWork.finish()
-            ok = true
-            return DriverCommandResult(
-                stdout: DriverOutput.formatDom(payload) + "\nVisual evidence\n" + evidence.stdout,
-                payload: .dom(payload),
-                artifact: evidence
-            )
-
         case .waitFor(let label, let timeout, let traits, let cindex, let gone, let matchMode):
             let payload = try requiredPayload(clientRunner {
                 .waitFor(try $0.waitFor(
@@ -145,15 +113,28 @@ enum DriverCommandExecutor {
 
         case .input(let tap, let content, let delete, let enter, let traits, let cindex, let postDom):
             let tapTarget = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
-            let deletePrefix = String(repeating: "\u{7F}", count: delete)
-            let effectiveContent = deletePrefix + content + (enter ? "\n" : "")
-            _ = try clientRunner {
-                try $0.input(tap: tapTarget, content: effectiveContent)
-                return nil
-            }
+            let payload = try requiredPayload(
+                clientRunner {
+                    .element(
+                        try $0.input(
+                            tap: tapTarget,
+                            content: content,
+                            deleteCount: delete,
+                            enter: enter,
+                            traits: traits,
+                            cindex: cindex
+                        )
+                    )
+                },
+                as: ForyElementPayload.self
+            )
             let targetDescription = tap.map { " after tapping \"\($0)\"" } ?? ""
             let result = try appendPostDomIfNeeded(
-                DriverCommandResult(stdout: "Input \"\(effectiveContent)\"\(targetDescription)\n", payload: nil),
+                DriverCommandResult(
+                    stdout: "Input \"\(content)\"\(targetDescription)"
+                        + " delete=\(delete) enter=\(enter)\n",
+                    payload: .element(payload)
+                ),
                 postDom: postDom,
                 clientRunner: clientRunner
             )
@@ -226,8 +207,6 @@ enum DriverCommandExecutor {
             _ = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
         case .swipe(let to, let from, _, _, let traits, let cindex, _):
             _ = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
-        case .inspect:
-            break
         default:
             break
         }
@@ -343,16 +322,20 @@ enum DriverCommandExecutor {
         offsetRatio: String?,
         traits: String?,
         cindex: Int32?
-    ) throws -> (target: ForyTarget, offset: ForyPoint?, ratio: ForyPoint) {
+    ) throws -> (target: ForyTarget, offset: ForyPoint?, ratio: ForyPoint?) {
         let foryTarget = try resolveTarget(target, traits: traits, cindex: cindex)
         if foryTarget.point != nil && (offset != nil || offsetRatio != nil) {
             throw CLIParseError.invalidValue("offset requires element label, not absolute point")
         }
         let offsetPoint = try offset.map { try pointPair($0, emptyDefault: 0) }
         let ratioPoint = try offsetPoint == nil
-            ? (offsetRatio.map { try pointPair($0, emptyDefault: IOSUseProtocol.defaultTargetRatio) }
-                ?? ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio))
-            : ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)
+            ? offsetRatio.map {
+                try pointPair(
+                    $0,
+                    emptyDefault: IOSUseProtocol.defaultTargetRatio
+                )
+            }
+            : nil
         return (foryTarget, offsetPoint, ratioPoint)
     }
 

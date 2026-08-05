@@ -1,0 +1,84 @@
+name: IOSUsePlayRuntime
+options:
+  bundleIdPrefix: io.ios-use
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "13.0"
+settings:
+  base:
+    ARCHS: arm64
+    BUILD_LIBRARY_FOR_DISTRIBUTION: false
+    CLANG_ENABLE_MODULES: true
+    CLANG_ENABLE_OBJC_ARC: true
+    CLANG_WARN_DOCUMENTATION_COMMENTS: true
+    CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: false
+    CODE_SIGNING_ALLOWED: false
+    DEFINES_MODULE: true
+    ENABLE_BITCODE: false
+    GCC_C_LANGUAGE_STANDARD: gnu17
+    GCC_TREAT_WARNINGS_AS_ERRORS: true
+    IPHONEOS_DEPLOYMENT_TARGET: "13.0"
+    MACOSX_DEPLOYMENT_TARGET: "11.0"
+    PRODUCT_BUNDLE_IDENTIFIER: io.ios-use.play-runtime
+    SKIP_INSTALL: true
+    SUPPORTS_MACCATALYST: true
+    SWIFT_OBJC_INTERFACE_HEADER_NAME: IOSUsePlayRuntime-Swift.h
+    SWIFT_INSTALL_OBJC_HEADER: true
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: true
+    SWIFT_VERSION: "5.9"
+    OTHER_SWIFT_FLAGS: "$(inherited) -warnings-as-errors"
+    HEADER_SEARCH_PATHS:
+      - "$(inherited)"
+      - "$(IOS_USE_RUNTIME_SOURCE_ROOT)"
+      - "$(IOS_USE_RUNTIME_SOURCE_ROOT)/../swift-cli/Sources/IOSUsePlayDevice/include"
+      - "$(IOS_USE_RUNTIME_SOURCE_ROOT)/PlayTools/PlayTools"
+      - "$(IOS_USE_RUNTIME_SOURCE_ROOT)/PlayTools/PlayTools/Controls/PTFakeTouch"
+      - "$(IOS_USE_RUNTIME_SOURCE_ROOT)/PlayTools/PlayTools/Controls/PTFakeTouch/Additions"
+targets:
+  IOSUsePlayRuntime:
+    type: framework
+    platform: iOS
+    supportsMacCatalyst: true
+    sources:
+      - path: "${IOS_USE_RUNTIME_SOURCE_ROOT}"
+        excludes:
+          - Info.plist
+          - project.yml
+          - IOSUsePlayRuntime-Bridging-Header.h
+          - IOSUsePlayRuntime.h
+          - IOSUsePlayAppKitBridge.h
+          - tests
+          - PlayTools/PlayTools/Controls/PTFakeTouch/PTFakeMetaTouch.h
+          - PlayTools/LICENSE
+        headerVisibility: private
+      - path: "${IOS_USE_RUNTIME_SOURCE_ROOT}/IOSUsePlayRuntime.h"
+        headerVisibility: public
+      - path: "${IOS_USE_RUNTIME_SOURCE_ROOT}/IOSUsePlayAppKitBridge.h"
+        headerVisibility: public
+      - path: "${IOS_USE_RUNTIME_SOURCE_ROOT}/PlayTools/PlayTools/Controls/PTFakeTouch/PTFakeMetaTouch.h"
+        headerVisibility: public
+      - path: "${IOS_USE_RUNTIME_SOURCE_ROOT}/../swift-cli/Sources/IOSUsePlayDevice/include/IOSUsePlayDevice.h"
+        headerVisibility: public
+    info:
+      path: "${IOS_USE_RUNTIME_SOURCE_ROOT}/Info.plist"
+    settings:
+      base:
+        PRODUCT_NAME: IOSUsePlayRuntime
+        PRODUCT_MODULE_NAME: IOSUsePlayRuntime
+        PUBLIC_HEADERS_FOLDER_PATH: Headers
+        INSTALL_PATH: "@rpath"
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@loader_path/Frameworks"
+          - "@executable_path/Frameworks"
+    dependencies:
+      - sdk: UIKit.framework
+      - sdk: Photos.framework
+      - sdk: Security.framework
+      - sdk: libsqlite3.tbd
+      - sdk: AVFoundation.framework
+      - sdk: CoreMotion.framework
+      - sdk: GameController.framework
+      - sdk: VideoSubscriberAccount.framework
+    scheme:
+      gatherCoverageData: false

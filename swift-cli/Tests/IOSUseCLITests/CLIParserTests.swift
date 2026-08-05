@@ -9,8 +9,8 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["config", "--simulator", "--udid", "SIM-1", "--apple-id", "user@example.com", "--password", "secret", "--verbose"]),
-            .config(ConfigOptions(udid: "SIM-1", list: false, simulator: true, appleId: "user@example.com", password: "secret", verbose: true))
+            try CLIParser.parse(["config", "--simulator", "--udid", "SIM-1", "--verbose"]),
+            .config(ConfigOptions(udid: "SIM-1", list: false, simulator: true, verbose: true))
         )
 
         XCTAssertEqual(
@@ -79,6 +79,289 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
+    func testParsesMacStartWithExplicitAppOrReuse()
+        throws
+    {
+        XCTAssertEqual(
+            try CLIParser.parse([
+                "start",
+                "--mac",
+                "--app",
+                "/fixtures/Demo.app",
+            ]),
+            .start(
+                StartOptions(
+                    mac: true,
+                    appPath: "/fixtures/Demo.app"
+                )
+            )
+        )
+        XCTAssertEqual(
+            try CLIParser.parse([
+                "start",
+                "--mac",
+                "--reuse",
+                "--log",
+                "--timeout",
+                "800ms",
+            ]),
+            .start(
+                StartOptions(
+                    mac: true,
+                    reuse: true,
+                    log: true,
+                    timeout: 0.8
+                )
+            )
+        )
+    }
+
+    func testParsesExplicitMacSignerConfiguration() throws {
+        XCTAssertEqual(
+            try CLIParser.parse(["config", "--mac"]),
+            .config(ConfigOptions(playCover: true))
+        )
+        XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "--json",
+                "config",
+                "--mac",
+                "--verbose",
+            ]),
+            ParsedInvocation(
+                command: .config(
+                    ConfigOptions(
+                        verbose: true,
+                        playCover: true
+                    )
+                ),
+                json: true
+            )
+        )
+    }
+
+    func testRejectsMacSignerConfigurationMixedWithDeviceOptions() {
+        let conflictingArguments: [[String]] = [
+            ["--udid", "REAL-1"],
+            ["--simulator"],
+            ["--list"],
+        ]
+
+        for arguments in conflictingArguments {
+            XCTAssertThrowsError(
+                try CLIParser.parse(
+                    ["config", "--mac"] + arguments
+                ),
+                arguments.joined(separator: " ")
+            ) { error in
+                XCTAssertEqual(
+                    error as? CLIParseError,
+                    .invalidValue(
+                        "--mac cannot be combined with --udid, "
+                            + "--simulator, or --list"
+                    )
+                )
+            }
+        }
+
+        for option in ["--apple-id", "--password"] {
+            XCTAssertThrowsError(
+                try CLIParser.parse(["config", option, "secret"])
+            ) { error in
+                XCTAssertEqual(
+                    error as? CLIParseError,
+                    .unknownOption(option)
+                )
+            }
+        }
+    }
+
+    func testRejectsInvalidMacStartArguments() {
+        XCTAssertThrowsError(
+            try CLIParser.parse(["config", "--playcover"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .unknownOption("--playcover")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["playcover"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .unknownCommand("playcover")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--playcover"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .unknownOption("--playcover")
+            )
+        }
+        for command in ["status", "stop"] {
+            XCTAssertThrowsError(
+                try CLIParser.parse([command, "--mac"])
+            ) { error in
+                XCTAssertEqual(
+                    error as? CLIParseError,
+                    .unknownOption("--mac")
+                )
+            }
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "start",
+                "--mac",
+                "--reuse",
+                "--timeout",
+                "61s",
+            ])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--timeout must be at most 60 seconds")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "SIM-1", "--mac", "--reuse"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("a device UDID cannot be used with --mac")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--mac"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--mac requires exactly one of --app <app> or --reuse")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--mac", "--app", ""])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--app requires a non-empty App path")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "start",
+                "--mac",
+                "--app",
+                "/work/Demo.app",
+                "--reuse",
+            ])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--mac requires exactly one of --app <app> or --reuse")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--app", "/work/Demo.app"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--reuse"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--log"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--timeout", "1s"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--mac", "--reuse", "--verbose"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--verbose cannot be used with --mac")
+            )
+        }
+    }
+
+    func testRejectsDuplicateMacStartSelectors() {
+        let duplicateArguments: [([String], CLIParseError)] = [
+            (
+                ["start", "--mac", "--mac", "--reuse"],
+                .invalidValue("--mac may only be provided once")
+            ),
+            (
+                ["start", "--mac", "--reuse", "--reuse"],
+                .invalidValue("--reuse may only be provided once")
+            ),
+            (
+                [
+                    "start",
+                    "--mac",
+                    "--app",
+                    "/work/A.app",
+                    "--app",
+                    "/work/B.app",
+                ],
+                .invalidValue("--app may only be provided once")
+            ),
+        ]
+
+        for (arguments, expectedError) in duplicateArguments {
+            XCTAssertThrowsError(try CLIParser.parse(arguments)) { error in
+                XCTAssertEqual(error as? CLIParseError, expectedError)
+            }
+        }
+    }
+
+    func testMacStartHelpDocumentsExplicitSourceAndReuseModes() {
+        let result = IOSUseCLI().run(arguments: ["start", "--help"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(
+            result.stdout.contains(
+                "ios-use start --mac --app <source-or-prepared.app>"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains("ios-use start --mac --reuse")
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "Use --app after every Debug rebuild"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "Use --reuse only to explicitly launch"
+            )
+        )
+        XCTAssertFalse(
+            result.stdout.contains("start --playcover")
+        )
+    }
+
     func testParsesDriverReadCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["dom", "--wait-quiescence"]),
@@ -88,16 +371,6 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parse(["dom", "--fresh", "--wait-quiescence"]),
             .driver(.dom(raw: false, fresh: true, waitQuiescence: true))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["dom", "--ocr"]),
-            .driver(.inspect(waitQuiescence: false))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["dom", "--ocr", "--wait-quiescence"]),
-            .driver(.inspect(waitQuiescence: true))
         )
 
         XCTAssertEqual(
@@ -229,9 +502,32 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["dismissAlert"]),
+            .driver(.dismissAlert(DismissAlertOptions()))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["swipe", "--dir", "forth", "--distance", "200", "--dom", "--traits", "Cell"]),
             .driver(.swipe(to: nil, from: nil, dir: "forth", distance: 200, traits: "Cell", cindex: nil, postDom: .afterQuiescence))
         )
+    }
+
+    func testInputDeleteRejectsValuesOutsideWireRange() {
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "input",
+                "--content",
+                "x",
+                "--delete",
+                "1048577",
+            ])
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "--delete must not exceed 1048576"
+                )
+            )
+        }
     }
 
     func testParsesAppAndUtilityDriverCommands() throws {
@@ -470,15 +766,15 @@ final class CLIParserTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--fresh"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--wait-quiescence"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence"))
         }
 
-        XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--ocr"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr"))
+        XCTAssertThrowsError(try CLIParser.parse(["dom", "--ocr"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--ocr"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["find", "General"])) { error in
@@ -615,12 +911,35 @@ final class CLIParserTests: XCTestCase {
 
     func testParsesGlobalJSONWithoutStealingOptionValues() throws {
         XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "start",
+                "--mac",
+                "--reuse",
+                "--log",
+                "--json",
+            ]),
+            ParsedInvocation(
+                command: .start(
+                    StartOptions(
+                        mac: true,
+                        reuse: true,
+                        log: true
+                    )
+                ),
+                json: true
+            )
+        )
+        XCTAssertEqual(
             try CLIParser.parseInvocation(["--json", "status"]),
             ParsedInvocation(command: .status(StatusOptions()), json: true)
         )
         XCTAssertEqual(
             try CLIParser.parseInvocation(["status", "--json"]),
             ParsedInvocation(command: .status(StatusOptions()), json: true)
+        )
+        XCTAssertEqual(
+            try CLIParser.parseInvocation(["stop", "--json"]),
+            ParsedInvocation(command: .stop, json: true)
         )
         XCTAssertEqual(
             try CLIParser.parseInvocation(["tap", "General", "--json"]),
@@ -640,8 +959,9 @@ final class CLIParserTests: XCTestCase {
         XCTAssertThrowsError(try CLIParser.parseInvocation(["proxy", "start", "-i", "--json"])) { error in
             XCTAssertEqual(error as? CLIParseError, .missingOptionValue("-i"))
         }
-        XCTAssertThrowsError(try CLIParser.parseInvocation(["config", "--list", "--json"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .unknownOption("--json"))
-        }
+        XCTAssertEqual(
+            try CLIParser.parseInvocation(["config", "--list", "--json"]),
+            ParsedInvocation(command: .config(ConfigOptions(list: true)), json: true)
+        )
     }
 }

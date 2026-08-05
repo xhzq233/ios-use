@@ -113,6 +113,18 @@ enum AlertCommands {
         }
     }
 
+    /// Compatibility for PlayCover generations that still send the dedicated
+    /// exact-label command while the public CLI uses the unified alert request.
+    static func dismissAlertByLabel(
+        _ args: ForyDismissAlertByLabelArgs
+    ) throws -> ForyResponseFrame {
+        try dismissAlert(ForyDismissAlertArgs(
+            selection: IOSUseAlertSelectionMode.label.rawValue,
+            label: args.label,
+            scope: IOSUseAlertScope.any.rawValue
+        ))
+    }
+
     static func handleTriggeredPhotosAddPermissionPrompt(
         deadline: Date,
         canTrigger: @escaping () -> Bool,

@@ -13,26 +13,65 @@ The release tag must match the binary version exactly, for example:
 
 ## 2. Build Release Assets Locally
 
+Use Apple-silicon macOS with full Xcode and `xcodegen` installed. Start from a
+clean Git tree: the script fails before building when tracked or untracked
+source differs from `HEAD`, and checks again after the build.
+
 Run the release build script with the intended tag:
 
 ```bash
 IOS_USE_RELEASE_VERSION=v1.2.0 bash scripts/release_build.sh
 ```
 
+Every release builds and verifies the pinned Frida Catalyst Engine together
+with the base Runtime. The installer keeps both as read-only resources; only
+`start --mac --frida` copies the Engine into a prepared App.
+The Engine embeds the complete notices for its statically linked GumJS
+closure. The same notice is published as a release asset, and the exact pinned
+Frida source closure is included in the corresponding-source archive.
+The Engine build normalizes compiler-visible source paths so local source,
+cache, and temporary build-root paths are not embedded in the binary. Frida's
+generated source maps may still vary between otherwise equivalent builds, so
+the release records the framework's actual digest and size in its build
+manifest and protects the complete resources archive with `SHA256SUMS`; it
+does not duplicate one toolchain-specific framework hash in source code.
+
 This script:
 
-1. Builds the Swift CLI.
-2. Verifies `./ios-use --version` matches `IOS_USE_RELEASE_VERSION` when provided.
-3. Builds the real-device and simulator driver IPAs.
-4. Stages release assets under `release/`.
-5. Stages the matching versioned changelog.
-6. Writes `release/SHA256SUMS` for every staged content asset.
+1. Refuses a dirty source tree and audits pinned PlayCover, PlayTools, `inject`,
+   Yams, and Frida closure metadata, commits, licenses, expected vendored
+   files, local patch sets, and SwiftPM resolutions.
+2. Hashes the complete tracked Runtime build-input set, then forces a fresh
+   Runtime build from a new derived-data directory.
+3. Builds the Swift CLI and verifies `./ios-use --version` matches
+   `IOS_USE_RELEASE_VERSION` when provided.
+4. Builds the real-device and simulator driver IPAs.
+5. Refuses any source-input change during the build and stages the Runtime and
+   pinned Engine as read-only source resources under `release/`; preparation
+   may sign only a managed copy.
+6. Builds corresponding source from the exact current `HEAD`, adds the complete
+   pinned Yams Git tree and Frida GumJS static source closure, and proves its
+   Runtime inputs have the same digest as the fresh binary build.
+7. Stages the versioned build digest manifest, licenses, upstream provenance,
+   and changelog.
+8. Verifies every source/archive file set and writes `release/SHA256SUMS` for
+   every content asset.
 
 Expected assets:
+
+The Mac resources archive contains the Runtime, pinned sandbox rules, and the
+optional-at-runtime Frida Engine under one installed resource root.
 
 - `release/ios-use-darwin-arm64`
 - `release/driver.ipa`
 - `release/driver-sim.ipa`
+- `release/ios-use-mac-resources.tar.gz`
+- `release/ios-use-v1.2.0-corresponding-source.tar.gz`
+- `release/LICENSE`, `release/*-LICENSE-*` (including Yams MIT), and
+  `release/THIRD-PARTY-LICENSES.md`
+- `release/FRIDA-STATIC-DEPENDENCY-NOTICES.txt`
+- `release/MAC-BACKEND-BUILD-MANIFEST-v1.2.0.txt`
+- `release/MAC-BACKEND-PROVENANCE-v1.2.0.md`
 - `release/CHANGELOG-v1.2.0.md`
 - `release/SHA256SUMS`
 
@@ -47,6 +86,11 @@ git diff --check
 ```
 
 `./ios-use --version` must print the same version as the tag you will publish.
+The tag workflow builds the fixture and runs the exact files under `release/`
+through checksum/build-manifest/source-manifest validation, `install.sh`, and
+installed `start/status/stop` before any upload. The manually dispatched
+non-live integration gate also exercises the same installed path with freshly
+built local assets.
 
 ## 4. Commit And Tag
 
@@ -84,6 +128,10 @@ The release workflow runs on tag pushes that match `v*` and uploads:
 - `ios-use-darwin-arm64`
 - `driver.ipa`
 - `driver-sim.ipa`
+- `ios-use-mac-resources.tar.gz`
+- `ios-use-vX.Y.Z-corresponding-source.tar.gz`
+- license, Frida static-dependency notices, upstream provenance, and versioned
+  Runtime/source digest assets
 - `CHANGELOG-vX.Y.Z.md`
 - `SHA256SUMS`
 
@@ -91,14 +139,32 @@ To watch it:
 
 1. Open the GitHub Actions run for the `Build & Release` workflow.
 2. Confirm `scripts/release_build.sh` passes its version check.
-3. Confirm the upload step publishes all five assets.
+3. Confirm the exact-release installed-layout step passes before upload.
 4. Open the GitHub Release page for the tag and verify the assets are attached.
 
 ## 7. Release Checklist
 
 - `IOSUseCLI.version` matches the release tag.
+- The checkout is clean before and after release builds.
+- `xcodegen` and full Xcode are present on Apple Silicon.
 - `scripts/release_build.sh` succeeds with `IOS_USE_RELEASE_VERSION=vX.Y.Z`.
+- `scripts/test_playcover_installed_layout.sh --release-dir release` succeeds
+  for those exact assets.
 - `release/` contains all expected assets.
 - `git diff --check` passes.
 - The tag is pushed to origin.
-- The GitHub Release has all five uploaded assets.
+- The GitHub Release has the Mac backend resources archive, corresponding source, license,
+  Frida static-dependency notices, provenance, build manifest, changelog, and
+  checksums in addition to the CLI and driver IPAs.
+
+The non-live integration and core PlayCover live gates are explicit
+`workflow_dispatch` entries because they mutate account-global state on the
+provisioned Apple-silicon runner. The release workflow uses that same runner for
+its installed-layout gate. That host must already have the stable signer
+initialized and an unlocked, launch-capable GUI session. A release still
+requires the core gate to pass for the exact release commit. The jobs need no
+operator App, private scenario/evidence directory, or external-App
+attestation; CI uploads its runner-temporary `run.log`. The two-display fixture
+and generic external-App workflows remain optional additive diagnostics. A
+queued or unavailable provisioned runner is an infrastructure gap, never a
+passing live result.
