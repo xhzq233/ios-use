@@ -1,6 +1,6 @@
 # ios-use Report / GitHub Issue
 
-Use this reference when an ios-use command fails and the user wants to report it upstream.
+Use this reference when reporting an ios-use failure upstream.
 
 ## Rules
 
@@ -9,73 +9,36 @@ Use this reference when an ios-use command fails and the user wants to report it
 - Prefer log tails over full logs. Start with 200-400 lines from the relevant files.
 - Before drafting a new issue, search existing GitHub Issues for similar symptoms and link useful matches in the final report.
 - Do not submit an issue until the user clearly asks to submit it; a short instruction such as "提交吧" is sufficient. Preparing a local draft is fine before that.
-- Use the `gh` CLI first for GitHub Issues operations. If `gh` is missing on macOS, install it with `brew install gh` before falling back to another GitHub tool.
+- Use the `gh` CLI first for GitHub Issues operations. If `gh` is missing, ask before installing it or use another available GitHub tool.
 - If the issue is about `start`, include `~/.ios-use/logs/xctest-holder.log` and `~/.ios-use/logs/cli.log`.
 - If the issue is about driver commands after `start`, include `~/.ios-use/logs/driver.log` if present.
 - If the issue is about proxy, include `ios-use proxy doctor` and proxy state, but do not include captured request bodies unless explicitly safe.
 
 ## Collect
 
-Create a local issue body draft:
+Collect the current environment and only the relevant log tails:
 
-````bash
-REPORT=/tmp/ios-use-report.md
-cat > "$REPORT" <<'EOF'
-## Summary
-
-<one sentence failure summary>
-
-## Commands Run
-
-```console
-<paste exact commands and output>
+```bash
+ios-use --version
+sw_vers
+ios-use status
+ios-use config --list
+tail -n 300 ~/.ios-use/logs/xctest-holder.log
+tail -n 300 ~/.ios-use/logs/cli.log
+tail -n 300 ~/.ios-use/logs/driver.log
 ```
 
-## Environment
+Create `/tmp/ios-use-report.md` with these sections:
 
-```console
-$(ios-use --version 2>&1)
-$(sw_vers 2>&1)
-```
+- Summary
+- Exact commands and full error output
+- ios-use and macOS versions
+- `ios-use status` and `ios-use config --list`
+- Relevant redacted log tails
+- Expected behavior
+- Actual behavior
 
-## ios-use Status
-
-```console
-$(ios-use status 2>&1)
-$(ios-use config --list 2>&1)
-```
-
-## Relevant Logs
-
-### xctest-holder.log
-
-```text
-$(tail -n 300 ~/.ios-use/logs/xctest-holder.log 2>&1)
-```
-
-### cli.log
-
-```text
-$(tail -n 300 ~/.ios-use/logs/cli.log 2>&1)
-```
-
-### driver.log
-
-```text
-$(tail -n 300 ~/.ios-use/logs/driver.log 2>&1)
-```
-
-## Expected
-
-<what should have happened>
-
-## Actual
-
-<what happened instead>
-EOF
-````
-
-The quoted heredoc above is intentionally literal. Replace the placeholder sections, then run the commands manually and paste their output. Before creating the issue, redact sensitive values such as:
+Before creating the issue, redact sensitive values such as:
 
 - full UDIDs: keep only prefix/suffix, for example `00008150-...401C`
 - Apple IDs: use `<apple-id>`
@@ -87,7 +50,7 @@ The quoted heredoc above is intentionally literal. Replace the placeholder secti
 Prefer `gh`:
 
 ```bash
-command -v gh >/dev/null || brew install gh
+command -v gh
 gh issue list --repo xhzq233/ios-use --search "<error keyword>" --state all
 ```
 

@@ -205,7 +205,7 @@ Time options accept `s` and `ms` suffixes. Bare `waitFor`, `capture`, and log
 timeouts are seconds; bare long-press and post-mutation `--dom` durations are
 milliseconds.
 
-### Experimental Mac Backend
+### Mac Backend
 
 The Mac backend runs a managed copy of an unencrypted
 arm64 iPhone App directly on Apple silicon. Its device
@@ -352,7 +352,7 @@ See `scripts/README.md` for the script index.
 - **[WebDriverAgent](https://github.com/appium/WebDriverAgent)**: This project borrows heavily from the ideas and implementation patterns established by WebDriverAgent. Gesture synthesis, snapshot handling, scrolling behavior, and parts of the driver architecture were shaped by studying WDA's source.
 - **[appium-xcuitest-driver](https://github.com/appium/appium-xcuitest-driver)**: The CLI and session behavior were informed by how the Appium XCUITest ecosystem exposes XCTest automation to users.
 - **[Appium](https://github.com/appium/appium)**: Appium helped establish the mental model for cross-device automation workflows, including action-oriented commands and reusable sessions.
-- **[PlayCover](https://github.com/PlayCover/PlayCover)** and **[PlayTools](https://github.com/PlayCover/PlayTools)**: The experimental headless backend derives its verified Mach-O conversion, interposition, and UIKit/AppKit bridge approach from these projects. Exact source revisions and license provenance are recorded in [docs/playcover-backend.md](docs/playcover-backend.md).
+- **[PlayCover](https://github.com/PlayCover/PlayCover)** and **[PlayTools](https://github.com/PlayCover/PlayTools)**: The Mac backend derives its verified Mach-O conversion, interposition, and UIKit/AppKit bridge approach from these projects. Exact source revisions and license provenance are recorded in [docs/playcover-backend.md](docs/playcover-backend.md).
 
 ## License
 

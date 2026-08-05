@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Operate iOS devices, Simulators, and the experimental Mac backend with ios-use for setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, and troubleshooting. Re-read after context compaction or resuming iOS work. Build shell workflows from stable semantic DOM labels."
+description: "Use when a task explicitly requires running, scripting, or troubleshooting the ios-use CLI on a real device, Simulator, or Mac backend, including setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, and Frida debugging."
 ---
 
 # ios-use Operational Playbook
@@ -25,27 +25,19 @@ ios-use config --udid <udid>
 ios-use start <udid>
 ```
 
-For the experimental Mac backend, configure its dedicated signing
-identity once, then pass either an unmodified iPhoneOS App or an already
-prepared App:
+For the Mac backend, complete its one-time setup and start an App:
 
 ```bash
 ios-use config --mac
-ios-use start --mac --app <source-or-prepared.app>
+ios-use start --mac --app <App.app>
 ```
 
-The first command asks for one macOS authentication to trust the Mac-backend
-signing identity. If the user cancels, safely retry the same command; it resumes
-the same identity instead of replacing it. This setup persists across
-`IOS_USE_HOME` values. `start --mac` never performs setup itself and
-directs the user back to `config --mac` when the identity is missing or
-needs attention.
+`config --mac` asks for macOS authentication. If authentication is cancelled,
+rerun the same command. This setup is shared across `IOS_USE_HOME` values.
 
-The source build supplies the default runtime. A source App is prepared into
-managed ios-use state and launched in the same command; a complete prepared App
-is verified and launched directly. Later, `ios-use start --mac --reuse`
-explicitly reuses the most recent successful generation from the current `IOS_USE_HOME`.
-Run ordinary `ios-use stop` before switching backends.
+The first start for an App requires `--app`. Later,
+`ios-use start --mac --reuse` restarts the last successfully started App for the
+current `IOS_USE_HOME`. Run `ios-use stop` before switching backends.
 
 - Connect real devices over USB and use iOS 17.4 or later.
 - Run `config` on first use, after upgrading ios-use, when `status` reports
@@ -56,16 +48,15 @@ Run ordinary `ios-use stop` before switching backends.
   `open --dom`, or device-backed proxy commands.
 - Treat the device selected by `start` as the target for all UI commands. To switch
   devices, run `ios-use stop`, then `ios-use start <new-udid>`.
-- Treat the Mac backend selected by `start --mac` the same way: subsequent
-  session-bound commands route to the active Mac Runtime and cannot fall
-  back to XCTest.
+- After `start --mac`, supported commands continue using that Mac session until
+  `ios-use stop`.
 - Mac lifecycle is only `start`, `status`, and `stop`. Do not use `home`,
   `activateApp`, or `terminateApp` for a Mac session. Restart it with
   `ios-use stop`, then `ios-use start --mac --reuse`.
 - Use `ios-use help <command>` for the complete option contract instead of guessing
   whether an individual command accepts `--udid`.
 
-For first-time real-device signing, ask the user to run:
+For first-time real-device signing, run:
 
 ```bash
 ~/.ios-use/altsign-cli/altsign-cli list --apple-id '<Apple ID>'
@@ -147,7 +138,7 @@ ios-use tap "$target_label" --dom
 ```
 
 - After an exploratory route succeeds, preserve its displayed labels and waits in
-  a project-owned `.sh` script. Keep App-specific routes out of this playbook.
+  a reusable `.sh` script for that App.
 - Join short dependent command sequences with `&&`; in scripts, use fail-fast
   behavior so a later mutation does not run after an earlier failure.
 - Use `waitFor` for loading and action `--dom` output for current state. Keep
@@ -225,9 +216,9 @@ ios-use debug - < probe.js
 ios-use debug --reset
 ```
 
-Script source is not saved, but Agent globals and hooks persist until reset or
-App exit. Reset cannot undo arbitrary changes already made to App objects or
-native memory.
+Script source is not saved, but variables and hooks created by a script persist
+until reset or App exit. Reset does not undo changes the script already made
+inside the App.
 
 ## 6. Collect visual evidence only when needed
 
@@ -282,18 +273,19 @@ Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
   label/value, then add `--traits` or `--cindex` only if needed.
 - DDI missing or mismatched: use `ddi-mount`, the fallback archive above, and an
   exact device-version match.
-- The Mac backend reports that no default runtime was found: rebuild the source CLI
-  with `bash scripts/build_swift_cli.sh --debug` on Apple silicon with the
-  iPhoneOS SDK available, then retry the same `start --mac --app` command.
-- The Mac backend reports that its signing identity is missing or needs trust:
-  run `ios-use config --mac`. If macOS authentication was cancelled, safely
-  retry that same command.
+- The Mac backend reports missing or incomplete installed resources: reinstall or
+  update ios-use from a complete release, then retry the same `start --mac --app`
+  command.
+- Mac setup is missing or macOS trust needs attention: run
+  `ios-use config --mac`. If macOS authentication was cancelled, safely retry
+  that same command.
 - altsign HTTP 4xx: verify Apple Developer account state and interactive
   authentication, then retry `config`.
 - altsign HTTP 5xx: check network, VPN, or proxy conditions and retry later; do not
   change device UI state to solve a signing-service failure.
-- Signing succeeded but launch still fails: check developer trust and CLI/driver
-  version alignment instead of assuming every failure is an altsign problem.
+- Signing succeeded but launch still fails: check developer trust and run
+  `ios-use status`. If it reports `driver update required`, rerun
+  `ios-use config --udid <udid>` before starting again.
 
 Never place passwords, two-factor codes, certificates, or complete provisioning
 profiles in commands, logs, artifacts, or reports. A full UDID is required in some
