@@ -96,8 +96,10 @@ enum CLIHelp {
             `start --mac` never initializes or repairs this identity.
             Before first real-device signing, run this in a terminal:
               ~/.ios-use/altsign-cli/altsign-cli list --apple-id '<Apple ID>'
+            AltSign reads the password and any two-factor code from standard
+            input and stores one cached session.
             Then run `ios-use config --udid <udid>`.
-            ios-use never accepts a password.
+            ios-use never reads credentials or inspects login state.
 
             Options:
               --udid <udid>          Target device or Simulator UDID

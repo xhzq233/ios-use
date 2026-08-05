@@ -590,7 +590,15 @@ final class IOSUseCLITests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            result.stdout.contains("ios-use never accepts a password")
+            result.stdout.contains(
+                "AltSign reads the password and any two-factor code"
+            )
+        )
+        XCTAssertTrue(result.stdout.contains("input and stores one cached session"))
+        XCTAssertTrue(
+            result.stdout.contains(
+                "ios-use never reads credentials or inspects login state"
+            )
         )
         XCTAssertFalse(result.stdout.contains("--password <password>"))
         XCTAssertTrue(result.stderr.isEmpty)

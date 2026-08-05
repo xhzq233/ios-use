@@ -1,5 +1,4 @@
 import Foundation
-import IOSUseProtocol
 
 public struct DeviceConfigEntry: Equatable, Sendable {
     public let udid: String
@@ -12,40 +11,6 @@ public struct DeviceConfigEntry: Equatable, Sendable {
         self.bundleId = bundleId
         self.driverVersion = driverVersion
         self.signingExpiresAt = signingExpiresAt
-    }
-}
-
-enum ConfigServiceError:
-    Error,
-    Equatable,
-    CustomStringConvertible,
-    MachineErrorConvertible
-{
-    case altSignAuthenticationRequired(
-        executable: String,
-        udid: String
-    )
-
-    var description: String {
-        switch self {
-        case .altSignAuthenticationRequired(
-            let executable,
-            let udid
-        ):
-            return "No current AltSign account is selected. Run `\(executable) list --apple-id '<Apple ID>'` in a terminal, then retry `ios-use config --udid \(udid)`."
-        }
-    }
-
-    var machineError: MachineError {
-        MachineError(
-            message: description,
-            category: IOSUseErrorCategory.authorization,
-            code: "altsign_auth_required",
-            phase: "config_signing",
-            retryable: true,
-            fatal: false,
-            mutationMayHaveApplied: false
-        )
     }
 }
 
@@ -90,10 +55,7 @@ public enum ConfigService {
             throw CLIParseError.invalidValue("altsign-cli not found at \(altsign). Run: cd altsign-cli && ./build.sh")
         }
 
-        let bundleId = try dynamicBundleId(
-            altsign: altsign,
-            udid: udid
-        )
+        let bundleId = driverBundleId(udid: udid)
         let xctestBundleId = bundleId.replacingOccurrences(of: #"\.xctrunner$"#, with: "", options: .regularExpression)
         let ipaPath = deviceIPAPath(paths: paths)
         guard FileManager.default.fileExists(atPath: ipaPath) else {
@@ -241,17 +203,8 @@ public enum ConfigService {
         }
     }
 
-    private static func dynamicBundleId(
-        altsign: String,
-        udid: String
-    ) throws -> String {
-        guard let appleId = try currentAppleId(altsign: altsign) else {
-            throw ConfigServiceError.altSignAuthenticationRequired(
-                executable: altsign,
-                udid: udid
-            )
-        }
-        return "\(defaultDriverBundlePrefix).\(sanitizeForBundleId(appleId)).xctrunner"
+    private static func driverBundleId(udid: String) -> String {
+        "\(defaultDriverBundlePrefix).\(sanitizeForBundleId(udid)).xctrunner"
     }
 
     static func assertDriverInstallCurrent(udid: String, paths: IOSUsePaths) throws {
@@ -337,18 +290,6 @@ public enum ConfigService {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
-    }
-
-    private static func currentAppleId(altsign: String) throws -> String? {
-        guard let output = try? Shell.run(
-            altsign,
-            arguments: ["current-account"]
-        ) else {
-            return nil
-        }
-        return output.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        ).nonEmpty
     }
 
     private static func sanitizeForBundleId(_ value: String) -> String {

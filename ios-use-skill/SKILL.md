@@ -72,14 +72,16 @@ For first-time real-device signing, ask the user to run:
 ios-use config --udid <udid>
 ```
 
-AltSign reads the password privately from the foreground terminal and requests
-the two-factor code there when needed. ios-use never accepts either secret. A
+AltSign reads the password and any two-factor code from standard input. When
+standard input is a terminal, password echo is disabled and restored by
+AltSign. ios-use never reads either secret or inspects AltSign login state. A
 free Personal Team is sufficient.
 
 After the first successful login, ios-use normally reuses the cached Apple
 Developer authentication for up to one year. Routine `config` renewals therefore
-usually do not require the Apple ID, password, or two-factor code again. Ask the
-user to run the AltSign command only when ios-use reports `altsign_auth_required`.
+usually do not require the Apple ID, password, or two-factor code again. If the
+AltSign signing output says its single cached session is missing or expired, ask
+the user to run the login command above and then retry the same `config` command.
 
 Renew real-device signing with `config` within each seven-day signing window. If
 signing is allowed to expire, installing the newly signed driver requires the

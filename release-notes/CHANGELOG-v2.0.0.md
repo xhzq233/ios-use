@@ -33,9 +33,10 @@
   `ios-use config --udid <UDID>` after upgrading before using a real device.
 - Real-device authentication is now owned by AltSign. Run
   `~/.ios-use/altsign-cli/altsign-cli list --apple-id '<Apple ID>'` once in a
-  terminal, then run `ios-use config --udid <UDID>`. `ios-use config` no
-  longer accepts Apple ID or password arguments. The installer pairs this
-  release with AltSign CLI v0.2.0.
+  terminal, with password and two-factor input supplied on standard input, then
+  run `ios-use config --udid <UDID>`. `ios-use config` no longer accepts Apple
+  ID or password arguments and does not inspect AltSign login state. The
+  installer pairs this release with AltSign CLI v0.2.0.
 - `ios-use dom` now returns semantic DOM only. Capture named pixel/OCR evidence
   explicitly with `ios-use screenshot --name <evidence>`; use `--no-ocr` when
   OCR is not needed.

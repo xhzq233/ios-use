@@ -1388,9 +1388,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(result.stdout.contains("port:"))
     }
 
-    func testRealDeviceConfigWithoutCurrentAltSignAccountReturnsTypedRemediation()
-        throws
-    {
+    func testRealDeviceConfigDelegatesMissingSessionFailureToAltSign() throws {
         let root = try temporaryRoot()
         try FileManager.default.createDirectory(
             atPath: "\(root)/altsign-cli",
@@ -1406,6 +1404,10 @@ final class ConfigServiceTests: XCTestCase {
             [.posixPermissions: 0o755],
             ofItemAtPath: altsign
         )
+        try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
+        ConfigService.driverIPAPathProviderForTesting = {
+            _, _ in "\(root)/driver.ipa"
+        }
         DeviceService.listDevicesOverrideForTesting = {
             simulatorOnly, _ in
             XCTAssertFalse(simulatorOnly)
@@ -1418,39 +1420,42 @@ final class ConfigServiceTests: XCTestCase {
                 ),
             ]
         }
-        Shell.runOverrideForTesting = {
-            executable, arguments, _, _ in
+        Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
+            if executable == altsign {
+                XCTFail("ios-use must not inspect AltSign login state")
+            }
+            return try self.runProcess(
+                executable: executable,
+                arguments: arguments,
+                cwd: cwd,
+                combineStderr: combineStderr
+            )
+        }
+        var signArguments: [String] = []
+        ConfigService.altsignRunnerForTesting = { executable, arguments in
             XCTAssertEqual(executable, altsign)
-            XCTAssertEqual(arguments, ["current-account"])
-            throw CLIParseError.invalidValue("no current account")
+            signArguments = arguments
+            throw CLIParseError.invalidValue(
+                "No cached AltSign session. Run altsign-cli list --apple-id first."
+            )
+        }
+        ConfigService.realDeviceInstallerForTesting = { _, _, _ in
+            XCTFail("a failed AltSign invocation must not install the driver")
         }
 
         let result = IOSUseCLI(
             environment: ["IOS_USE_HOME": root]
-        ).run(arguments: [
-            "config", "--udid", "REAL-AUTH", "--json",
-        ])
+        ).run(arguments: ["config", "--udid", "REAL-AUTH"])
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(result.stdout.isEmpty)
-        let envelope = try XCTUnwrap(
-            try JSONSerialization.jsonObject(
-                with: Data(result.stderr.utf8)
-            ) as? [String: Any]
+        XCTAssertTrue(result.stderr.contains("No cached AltSign session"))
+        XCTAssertEqual(
+            Array(signArguments.prefix(4)),
+            ["sign", "--udid", "REAL-AUTH", "--ipa"]
         )
-        let error = try XCTUnwrap(
-            envelope["error"] as? [String: Any]
-        )
-        XCTAssertEqual(error["code"] as? String, "altsign_auth_required")
-        XCTAssertEqual(error["category"] as? String, "authorization")
-        XCTAssertEqual(error["phase"] as? String, "config_signing")
-        XCTAssertEqual(error["retryable"] as? Bool, true)
-        XCTAssertEqual(error["mutationMayHaveApplied"] as? Bool, false)
-        XCTAssertTrue(
-            (error["message"] as? String)?.contains(
-                "\(altsign) list --apple-id '<Apple ID>'"
-            ) == true
-        )
+        XCTAssertFalse(signArguments.contains("--apple-id"))
+        XCTAssertFalse(signArguments.contains("--password"))
         XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: "\(root)/driver-signed-REAL-AUTH.ipa"
@@ -1482,10 +1487,6 @@ final class ConfigServiceTests: XCTestCase {
         Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
             if executable == "xcrun" {
                 XCTFail("real device config must not call xcrun/devicectl")
-            }
-            if executable == altsign,
-               arguments == ["current-account"] {
-                return "user@example.com\n"
             }
             return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
         }
@@ -1526,7 +1527,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(nativePackages.count, 1)
         XCTAssertEqual(nativePackages.first?.uploadMode, .file)
-        XCTAssertEqual(nativePackages.first?.remotePath, "PublicStaging/com.ios-use.driver.user-example-com.xctrunner")
+        XCTAssertEqual(nativePackages.first?.remotePath, "PublicStaging/com.ios-use.driver.real-config.xctrunner")
         XCTAssertTrue(result.stdout.contains("Driver installed to device"))
     }
 
@@ -1559,10 +1560,6 @@ final class ConfigServiceTests: XCTestCase {
             if executable == "xcrun" {
                 XCTFail("real device config must not call xcrun/devicectl")
             }
-            if executable == altsign,
-               arguments == ["current-account"] {
-                return "user@example.com\n"
-            }
             return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
         }
         ConfigService.altsignRunnerForTesting = { executable, arguments in
@@ -1591,7 +1588,7 @@ final class ConfigServiceTests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(installs.map(\.1), ["REAL-CONFIG"])
-        XCTAssertEqual(installs.map(\.2), ["com.ios-use.driver.user-example-com.xctrunner"])
+        XCTAssertEqual(installs.map(\.2), ["com.ios-use.driver.real-config.xctrunner"])
         XCTAssertTrue(result.stdout.contains("Driver signing warnings:"))
         XCTAssertTrue(result.stdout.contains("signed IPA preflight runner is missing embedded.mobileprovision"))
         XCTAssertTrue(result.stdout.contains("signed IPA preflight xctest is missing embedded.mobileprovision"))
@@ -1600,7 +1597,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(result.stdout.contains("activateApp"))
         XCTAssertEqual(
             ConfigService.listEntries(paths: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])),
-            [DeviceConfigEntry(udid: "REAL-CONFIG", bundleId: "com.ios-use.driver.user-example-com.xctrunner", driverVersion: IOSUseCLI.version)]
+            [DeviceConfigEntry(udid: "REAL-CONFIG", bundleId: "com.ios-use.driver.real-config.xctrunner", driverVersion: IOSUseCLI.version)]
         )
     }
 
@@ -1631,13 +1628,6 @@ final class ConfigServiceTests: XCTestCase {
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             simulatorOnly ? [] : [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-SIGNED", kind: .real)]
         }
-        Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
-            if executable == altsign,
-               arguments == ["current-account"] {
-                return "user@example.com\n"
-            }
-            return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
-        }
         ConfigService.altsignRunnerForTesting = { _, arguments in
             let outputIndex = try XCTUnwrap(arguments.firstIndex(of: "--output"))
             let inputIndex = try XCTUnwrap(arguments.firstIndex(of: "--ipa"))
@@ -1656,7 +1646,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(entries, [
             DeviceConfigEntry(
                 udid: "REAL-SIGNED",
-                bundleId: "com.ios-use.driver.user-example-com.xctrunner",
+                bundleId: "com.ios-use.driver.real-signed.xctrunner",
                 driverVersion: IOSUseCLI.version,
                 signingExpiresAt: signingExpiresAt
             )
@@ -1690,13 +1680,6 @@ final class ConfigServiceTests: XCTestCase {
                 return []
             }
             return [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-CONFIG-FAIL", kind: .real)]
-        }
-        Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
-            if executable == altsign,
-               arguments == ["current-account"] {
-                return "user@example.com\n"
-            }
-            return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
         }
         ConfigService.altsignRunnerForTesting = { _, arguments in
             let outputIndex = try XCTUnwrap(arguments.firstIndex(of: "--output"))

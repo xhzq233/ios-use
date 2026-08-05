@@ -111,11 +111,11 @@ Choose the environment you want to drive.
 ios-use status
 
 # First run: sign with a free Apple Developer account (Personal Team; no paid $99 program).
-# Authenticate once in a terminal, then let ios-use consume the selected session.
+# Authenticate once directly with AltSign; it reads credentials from stdin.
 ~/.ios-use/altsign-cli/altsign-cli list --apple-id '<Apple ID>'
 ios-use config --udid <device-udid>
 
-# Later runs: cached signing state is reused.
+# Later runs: AltSign reuses its single cached session.
 ios-use config --udid <device-udid>
 ios-use start <device-udid>
 ```
