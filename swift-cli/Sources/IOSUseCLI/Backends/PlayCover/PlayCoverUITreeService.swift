@@ -78,7 +78,6 @@ enum PlayCoverUITreeService {
         _ payload: PlayCoverRuntimeUITreePayload
     ) -> MachineValue {
         .object([
-            "source": .string(payload.source),
             "target": payload.target.map(MachineValue.string) ?? .null,
             "maxDepth": .integer(payload.maxDepth),
             "nodeCount": .integer(payload.nodeCount),
@@ -96,7 +95,7 @@ enum PlayCoverUITreeService {
     ) {
         let branch = isLast ? "└─ " : "├─ "
         let frame = node.frame
-        var summary = "\(prefix)\(branch)\(node.class) \(node.nodeID)"
+        var summary = "\(prefix)\(branch)\(node.class)"
         summary += String(
             format: " frame=(%.1f,%.1f %.1fx%.1f)",
             frame.x,
@@ -158,10 +157,6 @@ enum PlayCoverUITreeService {
         _ node: PlayCoverRuntimeUITreeNode
     ) -> MachineValue {
         .object([
-            "nodeID": .string(node.nodeID),
-            "path": .array(node.path.map(MachineValue.integer)),
-            "depth": .integer(node.depth),
-            "index": .integer(node.index),
             "childCount": .integer(node.childCount),
             "class": .string(node.class),
             "viewControllerClass": node.viewControllerClass

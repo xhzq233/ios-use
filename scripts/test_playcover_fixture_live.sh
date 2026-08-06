@@ -2593,7 +2593,6 @@ assert_json dom_initial '
 record_case ui_tree_navigation ui-tree \
   --target 'fixture.uikit.navigation-bar' --depth 5 --json
 assert_json ui_tree_navigation '
-  .data.source == "uikit-view-hierarchy" and
   .data.target == "fixture.uikit.navigation-bar" and
   .data.nodeCount >= 1 and
   (.data.roots | length) == 1 and

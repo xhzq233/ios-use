@@ -58,23 +58,20 @@ int main(void) {
             IOSUseViewTreeFirstSubview(stackNode);
 
         passed &= IOSUseViewTreeRequire(
-            [snapshot[@"source"] isEqual:@"uikit-view-hierarchy"] &&
-                [snapshot[@"nodeCount"] integerValue] == 3 &&
+            [snapshot[@"nodeCount"] integerValue] == 3 &&
                 ![snapshot[@"truncated"] boolValue] &&
                 roots.count == 1,
             @"snapshot summary changed"
         );
         passed &= IOSUseViewTreeRequire(
-            [rootNode[@"nodeID"] isEqual:@"v0"] &&
-                [rootNode[@"class"] isEqual:@"UIView"] &&
+            [rootNode[@"class"] isEqual:@"UIView"] &&
                 [rootNode[@"accessibilityIdentifier"]
                     isEqual:@"fixture-root"] &&
                 [rootNode[@"frame"][@"width"] doubleValue] == 430,
             @"root identity or geometry changed"
         );
         passed &= IOSUseViewTreeRequire(
-            [stackNode[@"nodeID"] isEqual:@"v0.0"] &&
-                [stackNode[@"class"] isEqual:@"UIStackView"] &&
+            [stackNode[@"class"] isEqual:@"UIStackView"] &&
                 [stackNode[@"properties"][@"axis"]
                     isEqual:@"horizontal"] &&
                 [stackNode[@"properties"][@"alignment"]
@@ -87,8 +84,7 @@ int main(void) {
             @"stack-view properties changed"
         );
         passed &= IOSUseViewTreeRequire(
-            [labelNode[@"nodeID"] isEqual:@"v0.0.0"] &&
-                [labelNode[@"class"] isEqual:@"UILabel"] &&
+            [labelNode[@"class"] isEqual:@"UILabel"] &&
                 [labelNode[@"properties"][@"text"]
                     isEqual:@"Fixture title"] &&
                 [labelNode[@"properties"][@"fontSize"] doubleValue] == 19,

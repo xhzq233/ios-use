@@ -1365,16 +1365,11 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         case .uiTree:
             return [
                 "uiTree": [
-                    "source": "uikit-view-hierarchy",
                     "target": "Continue",
                     "maxDepth": 6,
                     "nodeCount": 1,
                     "truncated": false,
                     "roots": [[
-                        "nodeID": "v0",
-                        "path": [0],
-                        "depth": 0,
-                        "index": 0,
                         "childCount": 0,
                         "class": "UILabel",
                         "viewControllerClass": NSNull(),

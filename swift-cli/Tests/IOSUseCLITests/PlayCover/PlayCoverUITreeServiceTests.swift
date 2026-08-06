@@ -42,10 +42,6 @@ final class PlayCoverUITreeServiceTests: XCTestCase {
 
     func testHumanAndMachineOutputKeepHierarchyAndUsefulProperties() throws {
         let child = makeNode(
-            id: "v0.0",
-            path: [0, 0],
-            depth: 1,
-            index: 0,
             className: "UILabel",
             label: "导入照片",
             properties: [
@@ -54,25 +50,16 @@ final class PlayCoverUITreeServiceTests: XCTestCase {
             ]
         )
         let image = makeNode(
-            id: "v0.1",
-            path: [0, 1],
-            depth: 1,
-            index: 1,
             className: "UIImageView",
             clipsToBounds: true,
             contentMode: "scaleAspectFill",
             properties: ["image": .null]
         )
         let root = makeNode(
-            id: "v0",
-            path: [0],
-            depth: 0,
-            index: 0,
             className: "UIView",
             subviews: [child, image]
         )
         let payload = PlayCoverRuntimeUITreePayload(
-            source: "uikit-view-hierarchy",
             target: "导入照片",
             maxDepth: 8,
             nodeCount: 3,
@@ -83,8 +70,9 @@ final class PlayCoverUITreeServiceTests: XCTestCase {
         let text = PlayCoverUITreeService.format(payload)
         XCTAssertTrue(text.contains("UIKit view tree · 3 nodes"))
         XCTAssertTrue(text.contains("Target: 导入照片"))
-        XCTAssertTrue(text.contains("└─ UIView v0"))
-        XCTAssertTrue(text.contains("UILabel v0.0"))
+        XCTAssertTrue(text.contains("└─ UIView frame="))
+        XCTAssertTrue(text.contains("├─ UILabel frame="))
+        XCTAssertFalse(text.contains(" v0"))
         XCTAssertTrue(text.contains("fontSize=18"))
         XCTAssertTrue(text.contains("contentMode=scaleAspectFill"))
         XCTAssertTrue(text.contains(" clips"))
@@ -95,7 +83,6 @@ final class PlayCoverUITreeServiceTests: XCTestCase {
             JSONSerialization.jsonObject(with: encoded)
                 as? [String: Any]
         )
-        XCTAssertEqual(object["source"] as? String, "uikit-view-hierarchy")
         XCTAssertEqual(object["nodeCount"] as? Int, 3)
         let roots = try XCTUnwrap(object["roots"] as? [[String: Any]])
         let subviews = try XCTUnwrap(
@@ -108,7 +95,6 @@ final class PlayCoverUITreeServiceTests: XCTestCase {
 
     func testHumanOutputSurfacesTruncation() {
         let payload = PlayCoverRuntimeUITreePayload(
-            source: "uikit-view-hierarchy",
             target: nil,
             maxDepth: 0,
             nodeCount: 1,
@@ -124,9 +110,6 @@ final class PlayCoverUITreeServiceTests: XCTestCase {
 
     func testHumanOutputPrintsViewControllerOnlyWhenItChanges() {
         let child = makeNode(
-            id: "v0.0",
-            path: [0, 0],
-            depth: 1,
             viewControllerClass: "FixtureViewController"
         )
         let root = makeNode(
@@ -134,7 +117,6 @@ final class PlayCoverUITreeServiceTests: XCTestCase {
             subviews: [child]
         )
         let payload = PlayCoverRuntimeUITreePayload(
-            source: "uikit-view-hierarchy",
             target: nil,
             maxDepth: 8,
             nodeCount: 2,
@@ -150,10 +132,6 @@ final class PlayCoverUITreeServiceTests: XCTestCase {
     }
 
     private func makeNode(
-        id: String = "v0",
-        path: [Int] = [0],
-        depth: Int = 0,
-        index: Int = 0,
         className: String = "UIView",
         viewControllerClass: String? = nil,
         label: String? = nil,
@@ -163,10 +141,6 @@ final class PlayCoverUITreeServiceTests: XCTestCase {
         subviews: [PlayCoverRuntimeUITreeNode] = []
     ) -> PlayCoverRuntimeUITreeNode {
         PlayCoverRuntimeUITreeNode(
-            nodeID: id,
-            path: path,
-            depth: depth,
-            index: index,
             childCount: subviews.count,
             class: className,
             viewControllerClass: viewControllerClass,

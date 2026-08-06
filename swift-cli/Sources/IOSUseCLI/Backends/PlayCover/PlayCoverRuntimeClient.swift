@@ -406,10 +406,6 @@ struct PlayCoverRuntimeUITreeLayout: Codable, Equatable, Sendable {
 }
 
 struct PlayCoverRuntimeUITreeNode: Codable, Equatable, Sendable {
-    let nodeID: String
-    let path: [Int]
-    let depth: Int
-    let index: Int
     let childCount: Int
     let `class`: String
     let viewControllerClass: String?
@@ -428,7 +424,6 @@ struct PlayCoverRuntimeUITreeNode: Codable, Equatable, Sendable {
 }
 
 struct PlayCoverRuntimeUITreePayload: Codable, Equatable, Sendable {
-    let source: String
     let target: String?
     let maxDepth: Int
     let nodeCount: Int

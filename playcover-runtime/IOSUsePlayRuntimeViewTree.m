@@ -291,22 +291,10 @@ static NSDictionary<NSString *, id> *IOSUseViewTreeProperties(
     return properties;
 }
 
-static NSString *IOSUseViewTreeNodeID(NSArray<NSNumber *> *path) {
-    NSMutableArray<NSString *> *parts =
-        [NSMutableArray arrayWithCapacity:path.count];
-    for (NSNumber *component in path) {
-        [parts addObject:component.stringValue];
-    }
-    return [@"v" stringByAppendingString:
-        [parts componentsJoinedByString:@"."]];
-}
-
 static NSDictionary<NSString *, id> * _Nullable
 IOSUseViewTreeSerializeView(
     UIView *view,
-    NSArray<NSNumber *> *path,
     NSInteger depth,
-    NSInteger index,
     IOSUseViewTreeContext *context
 ) {
     if (context.nodeCount >= IOSUseViewTreeMaximumNodes) {
@@ -322,15 +310,10 @@ IOSUseViewTreeSerializeView(
             for (NSUInteger childIndex = 0;
                  childIndex < subviews.count;
                  childIndex += 1) {
-                NSMutableArray<NSNumber *> *childPath =
-                    [path mutableCopy];
-                [childPath addObject:@(childIndex)];
                 NSDictionary<NSString *, id> *child =
                     IOSUseViewTreeSerializeView(
                         subviews[childIndex],
-                        childPath,
                         depth + 1,
-                        (NSInteger)childIndex,
                         context
                     );
                 if (child != nil) {
@@ -346,10 +329,6 @@ IOSUseViewTreeSerializeView(
         }
         NSString *controllerClass = IOSUseViewTreeControllerClass(view);
         return @{
-            @"nodeID": IOSUseViewTreeNodeID(path),
-            @"path": path,
-            @"depth": @(depth),
-            @"index": @(index),
             @"childCount": @(subviews.count),
             @"class": NSStringFromClass(view.class) ?: @"UIView",
             @"viewControllerClass": controllerClass ?: NSNull.null,
@@ -398,9 +377,7 @@ static NSDictionary<NSString *, id> *IOSUseViewTreeSnapshot(
         NSDictionary<NSString *, id> *root =
             IOSUseViewTreeSerializeView(
                 roots[index],
-                @[@(index)],
                 0,
-                (NSInteger)index,
                 context
             );
         if (context.failureMessage != nil) {
@@ -420,7 +397,6 @@ static NSDictionary<NSString *, id> *IOSUseViewTreeSnapshot(
         }
     }
     return @{
-        @"source": @"uikit-view-hierarchy",
         @"target": target ?: NSNull.null,
         @"maxDepth": @(maximumDepth),
         @"nodeCount": @(context.nodeCount),

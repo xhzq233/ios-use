@@ -454,9 +454,8 @@ geometry, layout flags, and a small allowlist of public properties for common
 UIKit controls. An optional semantic target is first resolved through one
 fresh Runtime DOM snapshot, then inspected through its current backing view.
 The response is bounded by caller depth (0...20), a fixed 1,000-node limit,
-and bounded strings. Node IDs are snapshot-local paths; object addresses and
-live object registries are never serialized or retained. UI actions continue
-to use DOM rather than `ui-tree`.
+and bounded strings. The nested response exposes no object identity, address,
+or live object registry. UI actions continue to use DOM rather than `ui-tree`.
 
 Tap, long press, and direct swipe use the directly ported PlayTools fake-touch
 backend with begin/move/end/cancel phases and monotonic timing. The Runtime
