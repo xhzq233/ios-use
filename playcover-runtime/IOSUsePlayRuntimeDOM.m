@@ -223,6 +223,28 @@ typedef NS_ENUM(NSInteger, IOSUseDOMSelectorState) {
 @implementation IOSUseDOMSelectorResult
 @end
 
+static IOSUseDOMSnapshot * _Nullable IOSUseDOMFreshSnapshot(
+    NSTimeInterval queueBudget,
+    IOSUsePlayRuntimeCancellationCheck _Nullable cancellationCheck,
+    NSDictionary<NSString *, id> * _Nullable *commandError
+);
+static IOSUseDOMSelectorResult *IOSUseDOMSelect(
+    IOSUseDOMSnapshot *snapshot,
+    NSString *query,
+    NSString *traits,
+    NSNumber * _Nullable childIndex,
+    NSInteger matchMode,
+    NSRegularExpression * _Nullable expression
+);
+static NSDictionary<NSString *, id> *IOSUseDOMElementJSON(
+    IOSUseCleanNode *node
+);
+static NSArray<NSDictionary<NSString *, id> *> *
+IOSUseDOMCandidatesJSON(
+    NSArray<IOSUseCleanNode *> *matches,
+    NSString * _Nullable rejection
+);
+
 static BOOL IOSUseDOMIsBoolean(id value) {
     return [value isKindOfClass:NSNumber.class] &&
         CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID();
@@ -1879,6 +1901,124 @@ BOOL IOSUsePlayRuntimeDOMResolveLiveIdentity(
         *nativeAlertActionLabel = currentNativeActionLabel;
     }
     return YES;
+}
+
+UIView * _Nullable IOSUsePlayRuntimeDOMResolveTargetView(
+    NSString *target,
+    NSDictionary<NSString *, id> **commandError
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"DOM target view resolution is main-only"
+    );
+    NSString *query = [target stringByTrimmingCharactersInSet:
+        NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSDictionary<NSString *, id> *serializedTarget =
+        IOSUseDOMTargetJSON(query ?: @"", @"", nil);
+    if (query.length == 0) {
+        if (commandError != NULL) {
+            *commandError = IOSUseDOMValidationError(
+                @"ui-tree target cannot be empty",
+                serializedTarget
+            );
+        }
+        return nil;
+    }
+
+    NSDictionary<NSString *, id> *snapshotError = nil;
+    IOSUseDOMSnapshot *snapshot = IOSUseDOMFreshSnapshot(
+        IOSUseDOMMainThreadTimeoutSeconds,
+        nil,
+        &snapshotError
+    );
+    if (snapshot == nil) {
+        if (commandError != NULL) {
+            *commandError = snapshotError;
+        }
+        return nil;
+    }
+    IOSUseDOMSelectorResult *result = IOSUseDOMSelect(
+        snapshot,
+        query,
+        @"",
+        nil,
+        0,
+        nil
+    );
+    if (result.state != IOSUseDOMSelectorStateFound) {
+        if (commandError != NULL) {
+            BOOL ambiguous =
+                result.state == IOSUseDOMSelectorStateAmbiguous;
+            *commandError = IOSUseDOMError(
+                ambiguous ? @"element_ambiguous" : @"element_not_found",
+                ambiguous
+                    ? [NSString stringWithFormat:
+                        @"ui-tree target '%@' is ambiguous (%lu matches); "
+                         "use `ios-use dom` to choose a unique label or "
+                         "identifier, or omit --target to inspect the "
+                         "bounded full tree",
+                        query,
+                        (unsigned long)result.matches.count]
+                    : [NSString stringWithFormat:
+                        @"ui-tree target '%@' was not found in a fresh DOM; "
+                         "run `ios-use dom` and retry with a current label "
+                         "or identifier, or omit --target to inspect the "
+                         "bounded full tree",
+                        query],
+                @"lookup",
+                @"lookup",
+                YES,
+                serializedTarget,
+                result.matches.count,
+                IOSUseDOMCandidatesJSON(result.matches, nil)
+            );
+        }
+        return nil;
+    }
+
+    NSDictionary<NSString *, id> *serialized =
+        IOSUseDOMElementJSON(result.matches.firstObject);
+    id liveObject = nil;
+    UIView *interactionView = nil;
+    if (!IOSUsePlayRuntimeDOMResolveLiveIdentity(
+            serialized,
+            &liveObject,
+            &interactionView,
+            nil
+        )) {
+        if (commandError != NULL) {
+            *commandError = IOSUseDOMError(
+                @"element_stale",
+                @"ui-tree target changed after the fresh DOM snapshot",
+                @"lookup",
+                @"lookup",
+                YES,
+                serializedTarget,
+                1,
+                IOSUseDOMCandidatesJSON(result.matches, nil)
+            );
+        }
+        return nil;
+    }
+    UIView *view = [liveObject isKindOfClass:UIView.class]
+        ? (UIView *)liveObject
+        : interactionView;
+    if (view == nil) {
+        if (commandError != NULL) {
+            *commandError = IOSUseDOMError(
+                @"element_not_hittable",
+                @"ui-tree target has no current backing UIView",
+                @"lookup",
+                @"lookup",
+                YES,
+                serializedTarget,
+                1,
+                IOSUseDOMCandidatesJSON(result.matches, nil)
+            );
+        }
+        return nil;
+    }
+    return view;
 }
 
 static void IOSUseDOMRegisterWebBridgeElement(

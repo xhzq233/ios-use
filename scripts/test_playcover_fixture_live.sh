@@ -2590,6 +2590,21 @@ assert_json dom_initial '
   (($header.frame[3] - 129) | fabs) <= 0.5
 '
 
+record_case ui_tree_navigation ui-tree \
+  --target 'fixture.uikit.navigation-bar' --depth 5 --json
+assert_json ui_tree_navigation '
+  .data.source == "uikit-view-hierarchy" and
+  .data.target == "fixture.uikit.navigation-bar" and
+  .data.nodeCount >= 1 and
+  (.data.roots | length) == 1 and
+  .data.roots[0].class == "UINavigationBar" and
+  .data.roots[0].accessibilityIdentifier ==
+    "fixture.uikit.navigation-bar" and
+  ([.data.roots[0] | .. | objects |
+    select(.class? == "UILabel")] | length) >= 1 and
+  ([.data | .. | objects | select(has("address"))] | length) == 0
+'
+
 absolute_tap_x="$(
   jq -er '
     [.data.elements[] |

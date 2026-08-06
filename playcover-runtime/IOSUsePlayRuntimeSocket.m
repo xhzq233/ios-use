@@ -2,6 +2,7 @@
 #import "IOSUsePlayRuntime.h"
 #import "IOSUsePlayRuntimeAutomation.h"
 #import "IOSUsePlayRuntimeDOM.h"
+#import "IOSUsePlayRuntimeViewTree.h"
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayHookRegistry.h"
 #import "IOSUsePlayRuntimeScreenshot.h"
@@ -363,6 +364,7 @@ static NSArray<NSString *> *IOSUseCapabilities(
         @"diagnostics",
         @"screenshot",
         @"dom",
+        @"uiTree",
         @"waitFor",
         @"tap",
         @"longPress",
@@ -1804,6 +1806,7 @@ static BOOL IOSUseRuntimeIsUICommand(NSString *command) {
         commands = [NSSet setWithArray:@[
             @"screenshot",
             @"dom",
+            @"uiTree",
             @"waitFor",
             @"tap",
             @"longPress",
@@ -2345,6 +2348,23 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             );
         }
         payload[@"dom"] = dom;
+    } else if ([command isEqualToString:@"uiTree"]) {
+        NSDictionary<NSString *, id> *commandError = nil;
+        NSDictionary<NSString *, id> *uiTree =
+            IOSUsePlayRuntimeViewTreeCommand(arguments, &commandError);
+        if (uiTree == nil) {
+            return IOSUseErrorEnvelope(
+                requestID,
+                commandError ?: IOSUseErrorObject(
+                    @"ui_tree_snapshot_failed",
+                    @"Runtime UIKit view hierarchy snapshot failed",
+                    @"lookup",
+                    @"snapshot",
+                    YES
+                )
+            );
+        }
+        payload[@"uiTree"] = uiTree;
     } else if ([command isEqualToString:@"waitFor"]) {
         NSDictionary<NSString *, id> *commandError = nil;
         NSDictionary<NSString *, id> *waitFor =

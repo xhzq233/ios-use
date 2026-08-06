@@ -518,6 +518,7 @@ final class IOSUseCLITests: XCTestCase {
             (["start", "--help"], "Usage: ios-use start"),
             (["stop", "--help"], "Usage: ios-use stop"),
             (["dom", "--help"], "Usage: ios-use dom"),
+            (["ui-tree", "--help"], "Usage: ios-use ui-tree"),
             (["waitFor", "--help"], "Usage: ios-use waitFor"),
             (["screenshot", "--help"], "Usage: ios-use screenshot"),
             (["capture", "--help"], "Usage: ios-use capture"),

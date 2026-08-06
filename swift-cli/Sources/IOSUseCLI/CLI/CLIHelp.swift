@@ -21,7 +21,7 @@ enum CLIHelp {
           -V, --version    Show version
 
         Commands:
-          du, status, config, start, stop, dom, waitFor, screenshot, capture, tap, longpress, input, swipe
+          du, status, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
           activateApp, terminateApp, home, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
@@ -257,6 +257,25 @@ enum CLIHelp {
                     "--wait-quiescence   Wait until the UI is idle before returning a fresh DOM",
                 ]
             )
+        case "ui-tree":
+            return """
+            Usage: ios-use ui-tree [--target <semantic-target>] [--depth <0...20>] [--json]
+
+            Inspect the current UIKit view hierarchy of the active Mac App.
+            This is a read-only Mac-backend diagnostic for relating runtime
+            views to source code. Use `dom` for stable UI interaction.
+            Frames use each view's superview coordinate space; use `dom` for
+            screen-level semantic geometry.
+
+            Options:
+              --target <semantic-target>  Inspect the UIView subtree backing one fresh DOM match
+              --depth <0...20>            Maximum descendant depth; default 8
+              --json                      Print the common machine-readable envelope
+
+            Requires an active Mac session. It is not available for real
+            devices or Simulators and never falls back to XCTest.
+
+            """
         case "waitFor":
             return driverHelp(
                 usage: "ios-use waitFor <target> [--timeout <duration>] [--match <mode>] [--traits <traits>] [--cindex <index>] [--gone]",

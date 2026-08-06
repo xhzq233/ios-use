@@ -20,6 +20,7 @@ public enum ParsedCommand: Equatable, Sendable {
     case nslog(NSLogOptions)
     case proxy(ProxyCommand)
     case debug(DebugOptions)
+    case uiTree(UITreeOptions)
 
     public var commandName: String {
         switch self {
@@ -41,6 +42,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .nslog: return "nslog"
         case .proxy(let command): return "proxy \(command.subcommand)"
         case .debug: return "debug"
+        case .uiTree: return "ui-tree"
         }
     }
 }
@@ -139,6 +141,16 @@ public struct DebugOptions: Equatable, Sendable {
         self.script = script
         self.stream = stream
         self.reset = reset
+    }
+}
+
+public struct UITreeOptions: Equatable, Sendable {
+    public var target: String?
+    public var depth: Int
+
+    public init(target: String? = nil, depth: Int = 8) {
+        self.target = target
+        self.depth = depth
     }
 }
 

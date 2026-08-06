@@ -141,6 +141,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | `start` / `status` / `stop` | Select, inspect, or release the current target. These are the only Mac-backend lifecycle commands; restart Mac with `stop`, then `start --mac --reuse`. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID on a real device or Simulator; activation is UI-ready by default. |
 | `dom` | Print the current semantic UI tree. |
+| `ui-tree` | Inspect UIKit view classes and layout details for the active Mac App; use `dom` for interaction. |
 | `tap` / `longpress` | Act on a label or coordinate. |
 | `swipe` | Scroll by direction/distance or toward a target label. |
 | `input` | Type into the current keyboard focus, optionally tapping a target first. |
@@ -252,6 +253,9 @@ Runtime's owner-only Unix socket. `driver.lock` keeps the Mac backend selected u
 `ios-use stop`, so session commands cannot fall back to XCTest. `status`,
 screenshots, DOM/wait, touch/input, capture, URL delivery, logs, and evidence
 all use that exact PID, executable, session, and prepared generation.
+`ui-tree` is a read-only Mac-only diagnostic that relates a fresh semantic DOM
+target to its current UIKit view subtree. It does not replace `dom`, does not
+act on views, and is unavailable for device and Simulator sessions.
 Lifecycle remains host-owned: `activateApp`, `terminateApp`, `home`, and DDI
 operations are explicitly unsupported while a Mac session is active.
 
