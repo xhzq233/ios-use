@@ -24,9 +24,7 @@ permissions:
 jobs:
   release:
     name: Build and upload release assets
-    # Installed execution requires a preconfigured stable signer, disposable
-    # account contract, and launch-capable GUI session.
-    runs-on: [self-hosted, macOS, arm64, playcover-live]
+    runs-on: macos-26
     steps:
       - name: Resolve release tag
         id: resolve_tag
@@ -78,8 +76,8 @@ jobs:
             exit 1
           fi
 
-      - name: Install xcodegen
-        run: brew install xcodegen
+      - name: Install release build tools
+        run: brew install xcodegen meson ninja
 
       - name: Resolve Xcode cache key
         id: xcode-cache
@@ -115,14 +113,8 @@ jobs:
           IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
         run: bash scripts/release_build.sh
 
-      - name: Build the installed-layout fixture
-        run: bash playcover-fixtures/build.sh
-
-      - name: Verify the exact release assets through install and execution
-        env:
-          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
-          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
-        run: bash scripts/test_playcover_installed_layout.sh --release-dir release
+      - name: Verify the exact release assets through an isolated install
+        run: bash scripts/test_playcover_installed_layout.sh --release-dir release --verify-only
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3

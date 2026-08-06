@@ -15,9 +15,9 @@
 - Mac semantic swipes can reveal virtualized or initially off-screen targets
   from a visible anchor and now report a classified no-effect/boundary error
   instead of claiming success when content did not move.
-- Frida debugging now documents stdin, streaming, JSON, reset, safe Swift
-  symbol discovery, and partial-mutation recovery; invalid resolver queries
-  and evaluation timeouts have distinct machine-readable errors.
+- Frida debugging keeps a raw JavaScript channel and now documents narrow
+  Swift, module, and Objective-C resolver queries alongside stdin, streaming,
+  JSON, reset, partial-mutation recovery, and classified query failures.
 - Mac releases now include the Runtime and optional Frida Engine resources
   required by the backend, the Engine's static-dependency notices, and the
   complete pinned Frida source closure in the corresponding-source archive.

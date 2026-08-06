@@ -426,16 +426,17 @@ lane; the Engine's ten-second Promise deadline fits inside the CLI's
 fifteen-second Runtime deadline, so a slow script neither steals the UI lane
 nor continues after a shorter client timeout.
 
-Swift symbol discovery stays inside the current Runtime whenever possible.
-Call `ApiResolver('swift')` first. If it misses a known method, enumerate only
-the owning loaded Module, filter mangled identifiers before demangling with
-`DebugSymbol.fromAddress()`, and retain both the live address and the
-module-relative offset as evidence. Host `nm`/dSYM inspection is a last resort
-for a stripped Runtime or a loaded Module whose enumeration is empty or exceeds
-the fixed eval deadline, and its UUID must match the exact executable being
-debugged. Raw addresses and offsets are never reused after a rebuild. The
-backend does not persist a symbol cache or automatically attach to a candidate
-Swift thunk.
+Symbol discovery deliberately remains part of the raw GumJS channel. Callers
+compose `ApiResolver`, `Module`, `DebugSymbol`, and `Interceptor` inside
+`ios-use debug`; the CLI does not add a symbol command, dSYM registry, symbol
+cache, demangling wrapper, or automatic attachment policy. Queries stay narrow
+and bounded, and raw addresses are never reused after a rebuild or new session.
+
+The installed product does not inspect Engine exports with a host tool.
+Release builds gate the exported C ABI, while Runtime loading resolves all five
+required Engine functions with `dlsym` and reports the exact missing symbol.
+This keeps the installed Mac path independent of developer command-line tools
+without duplicating its symbol parser.
 
 ## Runtime Commands
 

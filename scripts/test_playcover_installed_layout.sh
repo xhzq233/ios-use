@@ -8,16 +8,19 @@ RUNTIME_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
 ENGINE_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUseFridaEngine.framework"
 RULES_SOURCE="$ROOT_DIR/ThirdParty/PlayCover/PlayCover/Rules/default.yaml"
 RELEASE_ASSET_DIR=""
+VERIFY_ONLY=0
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/test_playcover_installed_layout.sh [--release-dir <directory>]
+Usage: scripts/test_playcover_installed_layout.sh [--release-dir <directory>] [--verify-only]
 
 Without --release-dir, constructs checksummed assets from the current freshly
 built CLI and PlayCover resources. With --release-dir, consumes the exact assets created by
 scripts/release_build.sh and validates their checksum/build/source manifests
-before exercising install and the installed start/status/stop path. Both modes
-require the documented disposable-account ACK and expected passwd Home.
+before exercising an isolated temporary-prefix install. By default it also runs the installed
+start/status/stop path and therefore requires the documented disposable-account
+ACK and expected passwd Home. --verify-only stops after the isolated installed
+layout checks; it neither launches an App nor touches account-global Mac state.
 USAGE
 }
 
@@ -27,6 +30,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { usage >&2; exit 64; }
       RELEASE_ASSET_DIR="$2"
       shift 2
+      ;;
+    --verify-only)
+      VERIFY_ONLY=1
+      shift
       ;;
     --help|-h)
       usage
@@ -39,21 +46,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
-  echo \
-    "[installed-layout] EX_CONFIG: the account-global PlayCover safety guard is unavailable" \
-    >&2
-  exit 78
+if [[ "$VERIFY_ONLY" -eq 0 ]]; then
+  if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
+    echo \
+      "[installed-layout] EX_CONFIG: the account-global PlayCover safety guard is unavailable" \
+      >&2
+    exit 78
+  fi
+  # shellcheck source=scripts/test_playcover_global_state_guard.sh
+  source "$GLOBAL_STATE_GUARD"
+  playcover_require_disposable_account_contract "installed-layout"
 fi
-# shellcheck source=scripts/test_playcover_global_state_guard.sh
-source "$GLOBAL_STATE_GUARD"
-playcover_require_disposable_account_contract "installed-layout"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
-  echo "[installed-layout] ERROR: release-installed PlayCover execution requires Apple-silicon macOS" >&2
+  echo "[installed-layout] ERROR: release-installed Mac resources require Apple-silicon macOS" >&2
   exit 69
 fi
-if [[ ! -d "$FIXTURE_APP" ]]; then
+if [[ "$VERIFY_ONLY" -eq 0 && ! -d "$FIXTURE_APP" ]]; then
   echo "[installed-layout] ERROR: PlayCover fixture is missing; the owning gate must rebuild it first" >&2
   exit 1
 fi
@@ -84,10 +93,13 @@ else
   RELEASE_ASSET_DIR="$(cd "$RELEASE_ASSET_DIR" && pwd -P)"
 fi
 
-# Keep the canonical test home short enough for the Runtime's sockaddr_un
-# safety limit and avoid /tmp -> /private/tmp aliasing.
-CANONICAL_HOME="$PLAYCOVER_ACCOUNT_HOME"
-TEMP_ROOT="$(mktemp -d "$CANONICAL_HOME/.iur.XXXXXX")"
+# A live run keeps the Home short enough for Runtime sockaddr_un. Verification
+# alone never creates a Runtime socket and can stay in the runner temp root.
+if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+  TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/iur.XXXXXX")"
+else
+  TEMP_ROOT="$(mktemp -d "$PLAYCOVER_ACCOUNT_HOME/.iur.XXXXXX")"
+fi
 ASSET_DIR="$TEMP_ROOT/a"
 SOURCE_PARENT="$TEMP_ROOT/s"
 SOURCE_ROOT="$SOURCE_PARENT/ios-use-release-source"
@@ -512,6 +524,15 @@ if [[ -e "$CUSTOM_HOME/mac/IOSUsePlayRuntime.framework" ]] ||
   exit 1
 fi
 
+if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+  if [[ -n "$RELEASE_ASSET_DIR" ]]; then
+    echo "[installed-layout] exact release assets + digests + isolated install PASS"
+  else
+    echo "[installed-layout] real CLI/Runtime tar + checksum + isolated install PASS"
+  fi
+  exit 0
+fi
+
 START_ATTEMPTED=1
 set +e
 (
@@ -565,7 +586,7 @@ if ! cmp -s "$TEMP_ROOT/engine.installed.before" "$TEMP_ROOT/engine.installed.af
 fi
 
 if [[ -n "$RELEASE_ASSET_DIR" ]]; then
-  echo "[installed-layout] exact release assets + digests + read-only install + installed execution PASS"
+  echo "[installed-layout] exact release assets + digests + isolated install + installed execution PASS"
 else
-  echo "[installed-layout] real CLI/Runtime tar + checksum + read-only install + installed execution PASS"
+  echo "[installed-layout] real CLI/Runtime tar + checksum + isolated install + installed execution PASS"
 fi

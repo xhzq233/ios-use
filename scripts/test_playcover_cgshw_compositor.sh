@@ -27,6 +27,22 @@ cleanup_cgshw_smoke() {
 trap cleanup_cgshw_smoke EXIT
 
 xcrun clang \
+  -D IOS_USE_PLAY_RUNTIME_FRIDA_TESTING \
+  -fobjc-arc \
+  -fblocks \
+  -fmodules \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -framework Foundation \
+  -I "$IOS_USE_REPO_ROOT/playcover-runtime" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeFrida.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/FridaEngineLoaderContractTests.m" \
+  -o "$IOS_USE_SMOKE_TEMP/FridaEngineLoaderContractTests"
+
+"$IOS_USE_SMOKE_TEMP/FridaEngineLoaderContractTests"
+
+xcrun clang \
   -fobjc-arc \
   -fmodules \
   -Wall \

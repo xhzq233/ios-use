@@ -16,19 +16,23 @@ final class PlayCoverFridaReferenceContractTests: XCTestCase {
 
         XCTAssertTrue(
             reference.contains(
-                "functions:*IOSUsePlayFixture*!*FixtureHostingController.overrides*"
+                "functions:ExampleApp!*Feature*"
             )
         )
+        XCTAssertTrue(
+            reference.contains(
+                "functions:<module-glob>!<symbol-glob>"
+            )
+        )
+        XCTAssertTrue(reference.contains("exports:<module-glob>!<name-glob>"))
+        XCTAssertTrue(reference.contains("-[<class-glob> <selector-glob>]"))
+        XCTAssertTrue(reference.contains("Append `/i` to a whole query"))
+        XCTAssertTrue(reference.contains("reuse one resolver"))
+        XCTAssertTrue(reference.contains("Own the restore path"))
         XCTAssertFalse(reference.contains("functions:*recordProbe*"))
         XCTAssertTrue(reference.contains("state.handle?.detach();"))
         XCTAssertTrue(reference.contains("Module.getExportByName(null, 'open')"))
         XCTAssertTrue(reference.contains("});\n({ attached: true"))
-        XCTAssertTrue(reference.contains("handle.detach();"))
-        XCTAssertTrue(
-            reference.contains(
-                "functions:<module>!<symbol>"
-            )
-        )
         XCTAssertTrue(
             reference.contains(
                 "ios-use debug --stream - < probe.js"
