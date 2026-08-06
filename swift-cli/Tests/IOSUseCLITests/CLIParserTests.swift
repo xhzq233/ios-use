@@ -140,6 +140,55 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
+    func testParsesMacUITreeOptionsAndGlobalJSON() throws {
+        XCTAssertEqual(
+            try CLIParser.parse(["ui-tree"]),
+            .uiTree(UITreeOptions())
+        )
+        XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "ui-tree",
+                "--target",
+                "导入照片",
+                "--depth",
+                "12",
+                "--json",
+            ]),
+            ParsedInvocation(
+                command: .uiTree(
+                    UITreeOptions(target: "导入照片", depth: 12)
+                ),
+                json: true
+            )
+        )
+    }
+
+    func testRejectsInvalidMacUITreeOptions() {
+        let invalidCases: [([String], CLIParseError)] = [
+            (
+                ["ui-tree", "--depth", "-1"],
+                .invalidValue("--depth must be between 0 and 20")
+            ),
+            (
+                ["ui-tree", "--depth", "21"],
+                .invalidValue("--depth must be between 0 and 20")
+            ),
+            (
+                ["ui-tree", "--target", "   "],
+                .invalidValue("--target cannot be empty")
+            ),
+            (
+                ["ui-tree", "unexpected"],
+                .unknownOption("unexpected")
+            ),
+        ]
+        for (arguments, expected) in invalidCases {
+            XCTAssertThrowsError(try CLIParser.parse(arguments)) { error in
+                XCTAssertEqual(error as? CLIParseError, expected)
+            }
+        }
+    }
+
     func testRejectsMacSignerConfigurationMixedWithDeviceOptions() {
         let conflictingArguments: [[String]] = [
             ["--udid", "REAL-1"],

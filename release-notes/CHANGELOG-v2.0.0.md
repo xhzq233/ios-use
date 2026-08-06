@@ -12,6 +12,9 @@
   update time without deleting data.
 - `ios-use status` now reports Mac Runtime resources, signing readiness, and
   session state even when no Mac App is running.
+- Added `ios-use ui-tree`, a read-only Mac-only diagnostic that maps an
+  optional fresh semantic target to its current UIKit view subtree, including
+  class, hierarchy, geometry, and common public view properties.
 - Mac semantic swipes can reveal virtualized or initially off-screen targets
   from a visible anchor and now report a classified no-effect/boundary error
   instead of claiming success when content did not move.

@@ -57,6 +57,8 @@ public enum CLIParser {
             parsed = .driver(try parseSwipe(&parser))
         case "dom":
             parsed = .driver(try parseDom(&parser))
+        case "ui-tree":
+            parsed = .uiTree(try parseUITree(&parser))
         case "screenshot":
             parsed = .driver(try parseScreenshot(&parser))
         case "capture":
@@ -84,7 +86,7 @@ public enum CLIParser {
             switch parsed {
             case .du, .start, .stop, .status, .install, .apps, .open,
                     .config, .appLifecycle, .driver, .mediaImport,
-                    .debug:
+                    .debug, .uiTree:
                 break
             default:
                 throw CLIParseError.unknownOption("--json")
@@ -100,7 +102,7 @@ public enum CLIParser {
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "-i"
+            "--app", "--target", "--depth", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -298,6 +300,51 @@ public enum CLIParser {
             }
         }
         return DebugOptions(script: script, stream: stream, reset: reset)
+    }
+
+    private static func parseUITree(
+        _ parser: inout ArgumentParser
+    ) throws -> UITreeOptions {
+        var target: String?
+        var depth = 8
+        var depthWasProvided = false
+        while let arg = parser.consume() {
+            switch arg {
+            case "--target":
+                guard target == nil else {
+                    throw CLIParseError.invalidValue(
+                        "--target may only be provided once"
+                    )
+                }
+                let value = try parser.value(for: arg)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !value.isEmpty else {
+                    throw CLIParseError.invalidValue(
+                        "--target cannot be empty"
+                    )
+                }
+                target = value
+            case "--depth":
+                guard !depthWasProvided else {
+                    throw CLIParseError.invalidValue(
+                        "--depth may only be provided once"
+                    )
+                }
+                depthWasProvided = true
+                depth = try parseIntStrict(
+                    parser.valueAllowingLeadingDash(for: arg),
+                    label: arg
+                )
+                guard (0...20).contains(depth) else {
+                    throw CLIParseError.invalidValue(
+                        "--depth must be between 0 and 20"
+                    )
+                }
+            default:
+                throw CLIParseError.unknownOption(arg)
+            }
+        }
+        return UITreeOptions(target: target, depth: depth)
     }
 
     private static func parseInstall(_ parser: inout ArgumentParser) throws -> AppInstallOptions {

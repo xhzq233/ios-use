@@ -67,6 +67,22 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         XCTAssertNil(object["fromTarget"])
     }
 
+    func testUITreeEncodingKeepsExplicitNullTarget() throws {
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(
+                    PlayCoverRuntimeUITreeArguments(
+                        target: nil,
+                        depth: 8
+                    )
+                )
+            ) as? [String: Any]
+        )
+
+        XCTAssertTrue(object["target"] is NSNull)
+        XCTAssertEqual(object["depth"] as? Int, 8)
+    }
+
     func testEveryCommandUsesExactSingleSessionEnvelopeAndTypedPayload()
         throws
     {
@@ -93,6 +109,14 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                         $0["waitQuiescence"] as? Bool,
                         true
                     )
+                }
+            ),
+            (
+                .uiTree,
+                .uiTree(.init(target: "Continue", depth: 6)),
+                {
+                    XCTAssertEqual($0["target"] as? String, "Continue")
+                    XCTAssertEqual($0["depth"] as? Int, 6)
                 }
             ),
             (
@@ -1338,6 +1362,46 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             ]
         case .dom:
             return ["dom": domPayload(generation: 1)]
+        case .uiTree:
+            return [
+                "uiTree": [
+                    "target": "Continue",
+                    "maxDepth": 6,
+                    "nodeCount": 1,
+                    "truncated": false,
+                    "roots": [[
+                        "childCount": 0,
+                        "class": "UILabel",
+                        "viewControllerClass": NSNull(),
+                        "frame": [
+                            "x": 1,
+                            "y": 2,
+                            "width": 100,
+                            "height": 30,
+                        ],
+                        "bounds": [
+                            "x": 0,
+                            "y": 0,
+                            "width": 100,
+                            "height": 30,
+                        ],
+                        "hidden": false,
+                        "alpha": 1,
+                        "userInteractionEnabled": false,
+                        "clipsToBounds": false,
+                        "contentMode": "scaleToFill",
+                        "accessibilityIdentifier": NSNull(),
+                        "accessibilityLabel": "Continue",
+                        "layout": [
+                            "ambiguous": false,
+                            "translatesAutoresizingMaskIntoConstraints": false,
+                            "constraintCount": 1,
+                        ],
+                        "properties": ["text": "Continue"],
+                        "subviews": [],
+                    ]],
+                ],
+            ]
         case .waitFor:
             return [
                 "waitFor": [
@@ -1607,6 +1671,7 @@ private extension PlayCoverRuntimeCommand {
         .diagnostics,
         .screenshot,
         .dom,
+        .uiTree,
         .waitFor,
         .tap,
         .longPress,

@@ -43,7 +43,7 @@ current `IOS_USE_HOME`. Run `ios-use stop` before switching backends.
 - Run `config` on first use, after upgrading ios-use, when `status` reports
   `driver update required`, when signing expires soon, or when signing has
   expired. Refresh before expiry instead of deferring renewal across sessions.
-- Run `start` before `dom`, `tap`, `longpress`, `swipe`, `input`, `waitFor`,
+- Run `start` before `dom`, `ui-tree`, `tap`, `longpress`, `swipe`, `input`, `waitFor`,
   `screenshot`, `capture`, `home`, `dismissAlert`, default `activateApp`,
   `open --dom`, or device-backed proxy commands.
 - Treat the device selected by `start` as the target for all UI commands. To switch
@@ -206,6 +206,19 @@ tail -f <log-file>
 Do not echo signed URLs, tokens, credentials, or unrelated private log content.
 
 ### Debug a Frida-enabled Mac App
+
+When runtime implementation details matter, use semantic DOM to name the
+current UI and `ui-tree` to relate one label to its UIKit subtree:
+
+```bash
+ios-use dom
+ios-use ui-tree --target "导入照片" --depth 6
+```
+
+`ui-tree` is read-only and Mac-only. It shows current view classes, hierarchy,
+geometry, and common public properties; continue to use `dom` labels for UI
+actions. View frames use their parent's coordinates; use DOM geometry for the
+screen position. Request a fresh tree after the UI changes.
 
 Read `references/frida-debug.md` first. Prefer stdin for multi-line GumJS and
 use an explicit reset when a failed script may have installed hooks:

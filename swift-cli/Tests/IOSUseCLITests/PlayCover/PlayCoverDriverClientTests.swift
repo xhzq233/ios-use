@@ -2386,6 +2386,10 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 preconditionFailure("missing DOM test payload")
             }
             return .dom(dom)
+        case .uiTree:
+            preconditionFailure(
+                "uiTree is not routed through DriverCommandClient"
+            )
         case .waitFor:
             guard let waitFor else {
                 preconditionFailure("missing waitFor test payload")

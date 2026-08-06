@@ -401,6 +401,8 @@ public struct IOSUseCLI: Sendable {
             }
         case .debug(let options):
             return executeDebug(options, json: json)
+        case .uiTree(let options):
+            return executeUITree(options, json: json)
         case .install(let options):
             do {
                 let result = try AppManagementService.installResult(options: options, paths: paths)
@@ -619,7 +621,7 @@ public struct IOSUseCLI: Sendable {
             return nil
         }
         switch command {
-        case .du, .status, .config, .start, .stop, .capture, .open, .oslog, .debug:
+        case .du, .status, .config, .start, .stop, .capture, .open, .oslog, .debug, .uiTree:
             return nil
         case .mediaImport:
             return nil
@@ -891,6 +893,34 @@ public struct IOSUseCLI: Sendable {
                 ),
                 exitCode: 1
             ).render()
+        }
+    }
+
+    private func executeUITree(
+        _ options: UITreeOptions,
+        json: Bool
+    ) -> CLIResult {
+        do {
+            let payload = try PlayCoverUITreeService.run(
+                options: options,
+                paths: paths
+            )
+            if json {
+                return MachineOutput.success(
+                    command: "ui-tree",
+                    data: PlayCoverUITreeService.machineData(payload)
+                )
+            }
+            return CLIResult(
+                exitCode: 0,
+                stdout: PlayCoverUITreeService.format(payload)
+            )
+        } catch {
+            return commandFailure(
+                command: "ui-tree",
+                error: error,
+                json: json
+            )
         }
     }
 

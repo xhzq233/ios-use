@@ -2077,7 +2077,7 @@ public enum PlayCoverService {
             )
         }
         var expectedCapabilities: Set<String> = [
-            "hello", "ping", "diagnostics", "screenshot", "dom",
+            "hello", "ping", "diagnostics", "screenshot", "dom", "uiTree",
             "waitFor", "tap", "longPress", "swipe", "input",
             "dismissAlert", "dismissAlertByLabel", "open",
         ]

@@ -161,6 +161,26 @@ xcrun --sdk macosx clang \
 
 "$IOS_USE_SMOKE_TEMP/DeviceIdentityContractTests"
 
+xcrun --sdk macosx clang \
+  -target arm64-apple-ios13.1-macabi \
+  -D IOS_USE_PLAY_RUNTIME_VIEW_TREE_TESTING \
+  -fobjc-arc \
+  -fblocks \
+  -fmodules \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -iframework "$IOS_USE_MACOS_SDK/System/iOSSupport/System/Library/Frameworks" \
+  -F "$IOS_USE_MACOS_SDK/System/iOSSupport/System/Library/Frameworks" \
+  -framework Foundation \
+  -framework UIKit \
+  -I "$IOS_USE_REPO_ROOT/playcover-runtime" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeViewTree.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/ViewTreeContractTests.m" \
+  -o "$IOS_USE_SMOKE_TEMP/ViewTreeContractTests"
+
+"$IOS_USE_SMOKE_TEMP/ViewTreeContractTests"
+
 if rg -n \
   '\[\[[^]]*(UIWindow|UIView)[^]]*alloc|DynamicIsland|HomeIndicator|NSTimer|drawRect:|additionalSafeAreaInsets[[:space:]]*=' \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlaySafeAreaCompatibility.m"

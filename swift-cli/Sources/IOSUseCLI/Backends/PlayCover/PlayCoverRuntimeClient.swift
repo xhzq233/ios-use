@@ -7,6 +7,7 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case diagnostics
     case screenshot
     case dom
+    case uiTree
     case waitFor
     case tap
     case longPress
@@ -184,6 +185,37 @@ struct PlayCoverRuntimeDOMArguments: Codable, Equatable, Sendable {
     let waitQuiescence: Bool
 }
 
+struct PlayCoverRuntimeUITreeArguments: Codable, Equatable, Sendable {
+    let target: String?
+    let depth: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case target
+        case depth
+    }
+
+    init(target: String?, depth: Int) {
+        self.target = target
+        self.depth = depth
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        target = try container.decodeIfPresent(String.self, forKey: .target)
+        depth = try container.decode(Int.self, forKey: .depth)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let target {
+            try container.encode(target, forKey: .target)
+        } else {
+            try container.encodeNil(forKey: .target)
+        }
+        try container.encode(depth, forKey: .depth)
+    }
+}
+
 typealias PlayCoverRuntimeWaitTarget = PlayCoverRuntimeTarget
 
 struct PlayCoverRuntimeWaitForArguments: Codable, Equatable, Sendable {
@@ -277,6 +309,7 @@ struct PlayCoverRuntimeDebugArguments: Codable, Equatable, Sendable {
 enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
     case empty(PlayCoverRuntimeEmptyArguments = .init())
     case dom(PlayCoverRuntimeDOMArguments)
+    case uiTree(PlayCoverRuntimeUITreeArguments)
     case waitFor(PlayCoverRuntimeWaitForArguments)
     case tap(PlayCoverRuntimeTapArguments)
     case longPress(PlayCoverRuntimeLongPressArguments)
@@ -294,6 +327,8 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
         case .empty(let arguments):
             try arguments.encode(to: encoder)
         case .dom(let arguments):
+            try arguments.encode(to: encoder)
+        case .uiTree(let arguments):
             try arguments.encode(to: encoder)
         case .waitFor(let arguments):
             try arguments.encode(to: encoder)
@@ -362,6 +397,38 @@ struct PlayCoverRuntimeDOMPayload: Codable, Equatable, Sendable {
     let raw: String
     let snapshotGeneration: Int64
     let elements: [PlayCoverRuntimeDOMElement]
+}
+
+struct PlayCoverRuntimeUITreeLayout: Codable, Equatable, Sendable {
+    let ambiguous: Bool
+    let translatesAutoresizingMaskIntoConstraints: Bool
+    let constraintCount: Int
+}
+
+struct PlayCoverRuntimeUITreeNode: Codable, Equatable, Sendable {
+    let childCount: Int
+    let `class`: String
+    let viewControllerClass: String?
+    let frame: PlayCoverRuntimeFrame
+    let bounds: PlayCoverRuntimeFrame
+    let hidden: Bool
+    let alpha: Double
+    let userInteractionEnabled: Bool
+    let clipsToBounds: Bool
+    let contentMode: String
+    let accessibilityIdentifier: String?
+    let accessibilityLabel: String?
+    let layout: PlayCoverRuntimeUITreeLayout
+    let properties: [String: PlayCoverRuntimeJSONValue]
+    let subviews: [PlayCoverRuntimeUITreeNode]
+}
+
+struct PlayCoverRuntimeUITreePayload: Codable, Equatable, Sendable {
+    let target: String?
+    let maxDepth: Int
+    let nodeCount: Int
+    let truncated: Bool
+    let roots: [PlayCoverRuntimeUITreeNode]
 }
 
 struct PlayCoverRuntimeElementSummary: Codable, Equatable, Sendable {
@@ -597,6 +664,10 @@ private struct PlayCoverRuntimeDOMResult: Codable {
     let dom: PlayCoverRuntimeDOMPayload
 }
 
+private struct PlayCoverRuntimeUITreeResult: Codable {
+    let uiTree: PlayCoverRuntimeUITreePayload
+}
+
 private struct PlayCoverRuntimeWaitForResult: Codable {
     let waitFor: PlayCoverRuntimeWaitForPayload
 }
@@ -639,6 +710,7 @@ enum PlayCoverRuntimeResponsePayload: Equatable, Sendable {
     case diagnostics(PlayCoverRuntimeDiagnosticsPayload)
     case screenshot(PlayCoverRuntimeScreenshotResult)
     case dom(PlayCoverRuntimeDOMPayload)
+    case uiTree(PlayCoverRuntimeUITreePayload)
     case waitFor(PlayCoverRuntimeWaitForPayload)
     case tap(PlayCoverRuntimeActionPayload)
     case longPress(PlayCoverRuntimeActionPayload)
@@ -1005,6 +1077,20 @@ final class PlayCoverRuntimeClient {
         return payload
     }
 
+    func uiTree(
+        _ arguments: PlayCoverRuntimeUITreeArguments
+    ) throws -> PlayCoverRuntimeUITreePayload {
+        guard case .uiTree(let payload) = try request(
+            .uiTree,
+            arguments: .uiTree(arguments)
+        ) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "ui-tree response type mismatch"
+            )
+        }
+        return payload
+    }
+
     func waitFor(
         _ arguments: PlayCoverRuntimeWaitForArguments
     ) throws -> PlayCoverRuntimeWaitForPayload {
@@ -1283,6 +1369,10 @@ final class PlayCoverRuntimeClient {
             let payload: PlayCoverRuntimeDOMResult =
                 try performRequest(command, arguments: arguments)
             return .dom(payload.dom)
+        case .uiTree:
+            let payload: PlayCoverRuntimeUITreeResult =
+                try performRequest(command, arguments: arguments)
+            return .uiTree(payload.uiTree)
         case .waitFor:
             let payload: PlayCoverRuntimeWaitForResult =
                 try performRequest(command, arguments: arguments)

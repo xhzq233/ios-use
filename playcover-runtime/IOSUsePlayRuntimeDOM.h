@@ -61,6 +61,16 @@ IOSUsePlayRuntimeDOMResolveLiveIdentity(
     NSString * _Nullable * _Nullable nativeAlertActionLabel
 );
 
+/// Builds one fresh semantic snapshot, resolves `target` with the standard
+/// visible-label selector, and returns its current backing UIView. This is a
+/// main-thread-only bridge for read-only Runtime diagnostics; no object
+/// identity is serialized or retained beyond the fresh DOM generation.
+FOUNDATION_EXPORT UIView * _Nullable
+IOSUsePlayRuntimeDOMResolveTargetView(
+    NSString *target,
+    NSDictionary<NSString *, id> * _Nullable * _Nullable commandError
+);
+
 /// Revalidates and performs one bounded accessibility action against the
 /// exact bridged element from a fresh Runtime DOM snapshot. The bridge owns
 /// its JavaScript and accepts neither caller scripts nor CSS/XPath selectors.

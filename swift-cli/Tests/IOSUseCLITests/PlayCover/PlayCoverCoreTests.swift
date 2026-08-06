@@ -1090,7 +1090,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         let pid: Int32 = 42
         let capabilities = [
-            "hello", "ping", "diagnostics", "screenshot", "dom",
+            "hello", "ping", "diagnostics", "screenshot", "dom", "uiTree",
             "waitFor", "tap", "longPress", "swipe", "input",
             "dismissAlert", "dismissAlertByLabel", "open",
         ]
