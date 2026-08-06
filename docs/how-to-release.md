@@ -86,11 +86,24 @@ git diff --check
 ```
 
 `./ios-use --version` must print the same version as the tag you will publish.
-The tag workflow builds the fixture and runs the exact files under `release/`
-through checksum/build-manifest/source-manifest validation, `install.sh`, and
-installed `start/status/stop` before any upload. The manually dispatched
-non-live integration gate also exercises the same installed path with freshly
-built local assets.
+The tag workflow runs the exact files under `release/` through
+checksum/build-manifest/source-manifest validation and `install.sh` before any
+upload. This verification installs only into an isolated temporary prefix and
+does not touch account-global Mac backend state, so the release can run on a
+GitHub-hosted macOS runner. The workflow explicitly installs `xcodegen`, Meson,
+and Ninja before the clean Runtime, Driver, CLI, and Frida Engine build.
+
+When a real installed launch is needed for a release candidate, run it
+explicitly on a launch-capable local Mac after building the fixture:
+
+```bash
+bash playcover-fixtures/build.sh
+bash scripts/test_playcover_installed_layout.sh --release-dir release
+```
+
+The live form requires the disposable-account acknowledgement documented by
+the script. It validates `start/status/stop`, but it is independent of asset
+publication and is not simulated by the hosted release job.
 
 ## 4. Commit And Tag
 
@@ -139,7 +152,7 @@ To watch it:
 
 1. Open the GitHub Actions run for the `Build & Release` workflow.
 2. Confirm `scripts/release_build.sh` passes its version check.
-3. Confirm the exact-release installed-layout step passes before upload.
+3. Confirm the exact-release isolated installed-layout step passes before upload.
 4. Open the GitHub Release page for the tag and verify the assets are attached.
 
 ## 7. Release Checklist
@@ -148,8 +161,8 @@ To watch it:
 - The checkout is clean before and after release builds.
 - `xcodegen` and full Xcode are present on Apple Silicon.
 - `scripts/release_build.sh` succeeds with `IOS_USE_RELEASE_VERSION=vX.Y.Z`.
-- `scripts/test_playcover_installed_layout.sh --release-dir release` succeeds
-  for those exact assets.
+- `scripts/test_playcover_installed_layout.sh --release-dir release --verify-only`
+  succeeds for those exact assets.
 - `release/` contains all expected assets.
 - `git diff --check` passes.
 - The tag is pushed to origin.
@@ -157,14 +170,12 @@ To watch it:
   Frida static-dependency notices, provenance, build manifest, changelog, and
   checksums in addition to the CLI and driver IPAs.
 
-The non-live integration and core PlayCover live gates are explicit
-`workflow_dispatch` entries because they mutate account-global state on the
-provisioned Apple-silicon runner. The release workflow uses that same runner for
-its installed-layout gate. That host must already have the stable signer
-initialized and an unlocked, launch-capable GUI session. A release still
-requires the core gate to pass for the exact release commit. The jobs need no
-operator App, private scenario/evidence directory, or external-App
-attestation; CI uploads its runner-temporary `run.log`. The two-display fixture
-and generic external-App workflows remain optional additive diagnostics. A
-queued or unavailable provisioned runner is an infrastructure gap, never a
-passing live result.
+The non-live integration and core PlayCover live gates remain explicit
+`workflow_dispatch` jobs because they mutate account-global state and require
+an unlocked GUI session. They are optional remote entry points for a dedicated
+Mac, not release infrastructure: the hosted release job builds, validates, and
+publishes without them. A maintainer can run the same live scripts locally when
+real launch coverage is needed. The jobs need no operator App, private
+scenario/evidence directory, or external-App attestation; a remote live run
+uploads only its runner-temporary `run.log`. The two-display fixture and generic
+external-App workflows remain optional additive diagnostics.

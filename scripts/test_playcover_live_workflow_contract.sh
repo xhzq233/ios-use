@@ -196,8 +196,13 @@ validate_release_workflow() {
   local file="$1"
   require_exact_line \
     "$file" \
-    '    runs-on: [self-hosted, macOS, arm64, playcover-live]' \
-    "the provisioned release runner binding" ||
+    '    runs-on: macos-26' \
+    "the hosted release runner binding" ||
+    return 1
+  require_exact_line \
+    "$file" \
+    '        run: brew install xcodegen meson ninja' \
+    "the clean hosted release build tools" ||
     return 1
   if [[ "$(
     count_pattern \
@@ -207,12 +212,25 @@ validate_release_workflow() {
     fail_contract "release runner context must not be evaluated from job-level env"
     return 1
   fi
-  validate_disposable_secret_bindings "$file" 1 ||
+  require_absent_fixed \
+    "$file" \
+    'IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK' \
+    "the release disposable-account acknowledgement" ||
+    return 1
+  require_absent_fixed \
+    "$file" \
+    'IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME' \
+    "the release account Home binding" ||
+    return 1
+  require_absent_fixed \
+    "$file" \
+    'bash playcover-fixtures/build.sh' \
+    "the release live fixture build" ||
     return 1
   require_exact_line \
     "$file" \
-    '        run: bash scripts/test_playcover_installed_layout.sh --release-dir release' \
-    "the release installed-layout execution" ||
+    '        run: bash scripts/test_playcover_installed_layout.sh --release-dir release --verify-only' \
+    "the release isolated installed-layout verification" ||
     return 1
 }
 
@@ -338,6 +356,17 @@ expect_workflow_rejected() {
   fi
 }
 
+expect_release_workflow_rejected() {
+  local file="$1"
+  local description="$2"
+  if validate_release_workflow "$file" >/dev/null 2>&1; then
+    echo \
+      "[playcover-live-workflow-contract] ERROR: accepted $description" \
+      >&2
+    exit 1
+  fi
+}
+
 expect_backend_rejected() {
   local file="$1"
   local description="$2"
@@ -380,6 +409,22 @@ sed \
 expect_workflow_rejected \
   "$hosted_non_live" \
   "PlayCover jobs on an unprovisioned hosted runner"
+
+self_hosted_release="$TEST_TEMP/self-hosted-release.yml"
+sed \
+  's/runs-on: macos-26/runs-on: [self-hosted, macOS, arm64, playcover-live]/' \
+  "$RELEASE_WORKFLOW" >"$self_hosted_release"
+expect_release_workflow_rejected \
+  "$self_hosted_release" \
+  "a release coupled to a provisioned GUI runner"
+
+launching_release="$TEST_TEMP/launching-release.yml"
+sed \
+  's/ --verify-only$//' \
+  "$RELEASE_WORKFLOW" >"$launching_release"
+expect_release_workflow_rejected \
+  "$launching_release" \
+  "a release that launches the installed App"
 
 run_data_in_checkout="$TEST_TEMP/run-data-in-checkout.yml"
 sed \
@@ -465,4 +510,4 @@ expect_backend_rejected \
   "the optional external-App display diagnostic in the core aggregate"
 
 echo \
-  "[playcover-live-workflow-contract] core live aggregate, two-secret disposable-account contract, provisioned runner, and run.log-only artifact negative cases PASS"
+  "[playcover-live-workflow-contract] hosted isolated-install release, optional provisioned live jobs, disposable-account contract, and run.log-only artifact negative cases PASS"
