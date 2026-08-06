@@ -158,7 +158,6 @@ enum PlayCoverFridaEngineService {
             )
         }
         try validateFrameworkMetadata(url)
-        try validateABISymbols(executable)
         let digest = try digestFramework(url)
         return FrameworkEvidence(
             sha256: digest.sha256,
@@ -188,32 +187,6 @@ enum PlayCoverFridaEngineService {
                 == descriptorSourceClosureSHA256 else {
             throw PlayCoverBackendError.capabilityUnavailable(
                 "frida-engine (framework metadata does not match the pinned ABI/agent)"
-            )
-        }
-    }
-
-    private static func validateABISymbols(_ executable: URL) throws {
-        let result: Shell.RunResult
-        do {
-            result = try Shell.runWithResult(
-                "/usr/bin/nm",
-                arguments: ["-gU", executable.path]
-            )
-        } catch {
-            throw PlayCoverBackendError.capabilityUnavailable(
-                "frida-engine (ABI symbol inspection failed: \(error))"
-            )
-        }
-        let symbols = result.stdout
-        for symbol in [
-            "_IOSUseFridaEngineCreate",
-            "_IOSUseFridaEngineReset",
-            "_IOSUseFridaEngineSetEventCallback",
-            "_IOSUseFridaEngineClearEventCallback",
-            "_IOSUseFridaEngineEvaluate",
-        ] where !symbols.contains(symbol) {
-            throw PlayCoverBackendError.capabilityUnavailable(
-                "frida-engine (missing pinned ABI symbol \(symbol))"
             )
         }
     }

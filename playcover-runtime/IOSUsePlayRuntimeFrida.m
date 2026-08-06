@@ -22,6 +22,10 @@ typedef NSDictionary<NSString *, id> *(*IOSUseFridaEngineEvaluateFunction)(
     BOOL stream,
     NSError * _Nullable *error
 );
+typedef void *(*IOSUseFridaSymbolLookupFunction)(
+    void *handle,
+    const char *name
+);
 
 static NSLock *IOSUseFridaLock(void) {
     static NSLock *lock;
@@ -71,10 +75,79 @@ static NSDictionary<NSString *, id> *IOSUseFridaError(
     };
 }
 
+static void IOSUseFridaClearResolvedSymbols(void) {
+    IOSUseFridaCreate = NULL;
+    IOSUseFridaReset = NULL;
+    IOSUseFridaSetEventCallback = NULL;
+    IOSUseFridaClearEventCallback = NULL;
+    IOSUseFridaEvaluate = NULL;
+}
+
+static NSString * _Nullable IOSUseFridaResolveEngineABI(
+    void *handle,
+    IOSUseFridaSymbolLookupFunction lookup
+) {
+    IOSUseFridaCreate = (IOSUseFridaEngineCreateFunction)lookup(
+        handle,
+        "IOSUseFridaEngineCreate"
+    );
+    IOSUseFridaReset = (IOSUseFridaEngineResetFunction)lookup(
+        handle,
+        "IOSUseFridaEngineReset"
+    );
+    IOSUseFridaSetEventCallback =
+        (IOSUseFridaEngineSetEventCallbackFunction)lookup(
+            handle,
+            "IOSUseFridaEngineSetEventCallback"
+        );
+    IOSUseFridaClearEventCallback =
+        (IOSUseFridaEngineClearEventCallbackFunction)lookup(
+            handle,
+            "IOSUseFridaEngineClearEventCallback"
+        );
+    IOSUseFridaEvaluate = (IOSUseFridaEngineEvaluateFunction)lookup(
+        handle,
+        "IOSUseFridaEngineEvaluate"
+    );
+
+    if (IOSUseFridaCreate == NULL) {
+        return @"IOSUseFridaEngineCreate";
+    }
+    if (IOSUseFridaReset == NULL) {
+        return @"IOSUseFridaEngineReset";
+    }
+    if (IOSUseFridaSetEventCallback == NULL) {
+        return @"IOSUseFridaEngineSetEventCallback";
+    }
+    if (IOSUseFridaClearEventCallback == NULL) {
+        return @"IOSUseFridaEngineClearEventCallback";
+    }
+    if (IOSUseFridaEvaluate == NULL) {
+        return @"IOSUseFridaEngineEvaluate";
+    }
+    return nil;
+}
+
+static NSDictionary<NSString *, id> *IOSUseFridaABIMismatchError(
+    NSString *missingSymbol
+) {
+    return IOSUseFridaError(
+        @"frida_engine_abi_mismatch",
+        [NSString stringWithFormat:
+            @"IOSUseFridaEngine.framework is missing required symbol %@",
+            missingSymbol],
+        @"internal",
+        @"debug_engine",
+        NO,
+        @[]
+    );
+}
+
 static BOOL IOSUseFridaResolveSymbols(void) {
     if (IOSUseFridaLoadAttempted) {
         return IOSUseFridaHandle != NULL &&
             IOSUseFridaCreate != NULL &&
+            IOSUseFridaReset != NULL &&
             IOSUseFridaSetEventCallback != NULL &&
             IOSUseFridaClearEventCallback != NULL &&
             IOSUseFridaEvaluate != NULL;
@@ -130,52 +203,32 @@ static BOOL IOSUseFridaResolveSymbols(void) {
         return NO;
     }
     IOSUseFridaHandle = handle;
-    IOSUseFridaCreate = (IOSUseFridaEngineCreateFunction)dlsym(
-        handle,
-        "IOSUseFridaEngineCreate"
-    );
-    IOSUseFridaReset = (IOSUseFridaEngineResetFunction)dlsym(
-        handle,
-        "IOSUseFridaEngineReset"
-    );
-    IOSUseFridaSetEventCallback =
-        (IOSUseFridaEngineSetEventCallbackFunction)dlsym(
-            handle,
-            "IOSUseFridaEngineSetEventCallback"
-        );
-    IOSUseFridaClearEventCallback =
-        (IOSUseFridaEngineClearEventCallbackFunction)dlsym(
-            handle,
-            "IOSUseFridaEngineClearEventCallback"
-        );
-    IOSUseFridaEvaluate = (IOSUseFridaEngineEvaluateFunction)dlsym(
-        handle,
-        "IOSUseFridaEngineEvaluate"
-    );
-    if (IOSUseFridaCreate == NULL ||
-        IOSUseFridaSetEventCallback == NULL ||
-        IOSUseFridaClearEventCallback == NULL ||
-        IOSUseFridaEvaluate == NULL) {
-        IOSUseFridaLoadError = IOSUseFridaError(
-            @"frida_engine_abi_mismatch",
-            @"IOSUseFridaEngine.framework does not expose the pinned Engine ABI",
-            @"internal",
-            @"debug_engine",
-            NO,
-            @[]
-        );
+    NSString *missingSymbol = IOSUseFridaResolveEngineABI(handle, dlsym);
+    if (missingSymbol != nil) {
+        IOSUseFridaLoadError = IOSUseFridaABIMismatchError(missingSymbol);
         dlclose(handle);
         IOSUseFridaHandle = NULL;
-        IOSUseFridaCreate = NULL;
-        IOSUseFridaReset = NULL;
-        IOSUseFridaSetEventCallback = NULL;
-        IOSUseFridaClearEventCallback = NULL;
-        IOSUseFridaEvaluate = NULL;
+        IOSUseFridaClearResolvedSymbols();
         IOSUseFridaSubscriptionContext = NULL;
         return NO;
     }
     return YES;
 }
+
+#if defined(IOS_USE_PLAY_RUNTIME_FRIDA_TESTING)
+NSDictionary<NSString *, id> * _Nullable
+IOSUsePlayRuntimeFridaTestResolveEngineABI(
+    void *handle,
+    IOSUseFridaSymbolLookupFunction lookup
+) {
+    NSString *missingSymbol = IOSUseFridaResolveEngineABI(handle, lookup);
+    NSDictionary<NSString *, id> *result = missingSymbol == nil
+        ? nil
+        : IOSUseFridaABIMismatchError(missingSymbol);
+    IOSUseFridaClearResolvedSymbols();
+    return result;
+}
+#endif
 
 NSDictionary<NSString *, id> * _Nullable
 IOSUsePlayRuntimeFridaDebugCommand(

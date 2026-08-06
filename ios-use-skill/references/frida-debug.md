@@ -50,6 +50,12 @@ ios-use debug --reset
 Reset starts a clean debug context and removes hooks installed through that
 context. It cannot undo changes already made inside the App.
 
+Own the restore path for every temporary App or native change. Before replacing
+an implementation, return value, or App object state, capture what must be
+restored and verify that restoration before leaving the workflow. If a safe
+restore step cannot be stated, do not apply the change; `debug --reset` is not a
+substitute for restoring App or native state.
+
 Always terminate statements explicitly before a final object or parenthesized
 expression. JavaScript automatic semicolon insertion can otherwise turn this:
 
@@ -86,17 +92,17 @@ Run it with `ios-use debug --stream - < probe.js`, exercise the App from a
 second terminal, interrupt the stream, then run `ios-use debug --reset`.
 Interrupting the stream closes observation; it does not remove the hook.
 
-## Find Swift symbols
+## Resolve APIs before attaching
 
-Try the Swift resolver first and keep the query narrow:
+Use Frida's resolver in the App and keep both the module and symbol patterns
+narrow. This example searches the ExampleApp main module and caps displayed
+matches:
 
 ```bash
 ios-use debug - <<'JS'
 const resolver = new ApiResolver('swift');
-const moduleName = Process.mainModule.name;
-const symbolPattern = '*targetMethod*'; // Replace with a reviewed substring.
 const matches = resolver.enumerateMatches(
-  `functions:${moduleName}!${symbolPattern}`
+  'functions:ExampleApp!*Feature*'
 );
 matches.slice(0, 20).map(match => ({
   name: match.name,
@@ -105,12 +111,27 @@ matches.slice(0, 20).map(match => ({
 JS
 ```
 
-Swift resolver queries always have the form `functions:<module>!<symbol>`.
-Replace `symbolPattern` with a narrow substring, inspect every candidate's
-signature, and do not automatically attach the first match.
-The resolver is fast but does not expose every Swift symbol. If it misses a
-known method, enumerate only the owning loaded Module, filter the mangled names,
-then ask `DebugSymbol` for readable names:
+Available resolver types and query shapes are:
+
+- `swift`: `functions:<module-glob>!<symbol-glob>` for Swift functions.
+- `module`: `exports:<module-glob>!<name-glob>`, `imports:...`, or
+  `sections:...` for loaded modules.
+- `objc`: `-[<class-glob> <selector-glob>]` or
+  `+[<class-glob> <selector-glob>]` for Objective-C methods.
+
+Append `/i` to a whole query for case-insensitive matching, for example
+`functions:ExampleApp!*Feature*/i`. A resolver loads data lazily: reuse one resolver
+instance for related queries in the same batch, and create a new instance for a
+later batch so its view is current. The Swift and Objective-C resolvers are only
+available when their runtimes are loaded; check `Swift.available` or
+`ObjC.available`, or handle resolver construction failure.
+
+Inspect every candidate's full name and signature before attaching; never
+attach the first broad match automatically. Addresses are valid only for the
+current App build and session.
+
+If a resolver does not expose a known symbol, enumerate only its known owning
+Module and use `DebugSymbol` to make the result readable:
 
 ```bash
 ios-use debug - <<'JS'
@@ -129,9 +150,8 @@ module.enumerateSymbols()
 JS
 ```
 
-Review a candidate's signature and interception safety before attaching. Live
-addresses and offsets are valid only for the current App build and session. If
-the loaded Module is large, even one-module enumeration can exceed the 10-second
-eval deadline; do not enumerate every process Module. If that Module is stripped
-or both in-App lookup methods miss, inspect the exact matching binary/dSYM with host
-tools; do not reuse symbols from another build.
+Review a candidate's signature and interception safety before attaching. If the
+loaded Module is large, even one-module enumeration can exceed the 10-second
+eval deadline; do not enumerate every process Module. If all three in-App paths
+miss, the installed workflow cannot safely identify that symbol. Do not guess
+an address or reuse symbols from another build.
