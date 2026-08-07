@@ -15,6 +15,10 @@ static const NSTimeInterval IOSUseAutomationMainTimeout = 40.0;
 static const NSUInteger IOSUseAutomationMaximumSemanticScrolls = 25;
 static const CGFloat IOSUseAutomationScrollProportion = 0.75;
 static const CGFloat IOSUseAutomationScrollEpsilon = 0.5;
+static const CGFloat IOSUseAutomationDeviceLogicalWidth =
+    (CGFloat)IOSUsePlayDeviceLogicalWidth;
+static const CGFloat IOSUseAutomationDeviceLogicalHeight =
+    (CGFloat)IOSUsePlayDeviceLogicalHeight;
 
 NSTimeInterval IOSUsePlayRuntimeAutomationMainThreadTimeout(void) {
     return IOSUseAutomationMainTimeout;
@@ -88,8 +92,8 @@ static BOOL IOSUseAutomationIsNumber(id value) {
 static BOOL IOSUseAutomationFinitePoint(CGPoint point) {
     return isfinite(point.x) && isfinite(point.y) &&
         point.x >= 0 && point.y >= 0 &&
-        point.x <= IOSUsePlayDeviceLogicalWidth &&
-        point.y <= IOSUsePlayDeviceLogicalHeight;
+        point.x <= IOSUseAutomationDeviceLogicalWidth &&
+        point.y <= IOSUseAutomationDeviceLogicalHeight;
 }
 
 static NSDictionary<NSString *, id> *
@@ -2488,8 +2492,8 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
             @"label": @"",
             @"traits": @"",
             @"point": @{
-                @"x": @(IOSUsePlayDeviceLogicalWidth / 2.0),
-                @"y": @(IOSUsePlayDeviceLogicalHeight / 2.0),
+                @"x": @(IOSUseAutomationDeviceLogicalWidth / 2.0),
+                @"y": @(IOSUseAutomationDeviceLogicalHeight / 2.0),
             },
         };
     }

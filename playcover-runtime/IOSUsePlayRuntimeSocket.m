@@ -30,6 +30,18 @@
 static const NSUInteger IOSUseMaximumRequestFrameSize = 64 * 1024;
 static const NSUInteger IOSUseMaximumResponseFrameSize = 16 * 1024 * 1024;
 static const NSTimeInterval IOSUseSocketIOTimeoutSeconds = 15;
+static const CGFloat IOSUseRuntimeDeviceLogicalWidth =
+    (CGFloat)IOSUsePlayDeviceLogicalWidth;
+static const CGFloat IOSUseRuntimeDeviceLogicalHeight =
+    (CGFloat)IOSUsePlayDeviceLogicalHeight;
+static const CGFloat IOSUseRuntimeDeviceNativeWidth =
+    (CGFloat)IOSUsePlayDeviceNativeWidth;
+static const CGFloat IOSUseRuntimeDeviceNativeHeight =
+    (CGFloat)IOSUsePlayDeviceNativeHeight;
+static const CGFloat IOSUseRuntimeDeviceScale =
+    (CGFloat)IOSUsePlayDeviceScale;
+static const CGFloat IOSUseRuntimeDeviceSafeAreaTop =
+    (CGFloat)IOSUsePlayDeviceSafeAreaTop;
 
 static NSString *IOSUseRuntimeSessionID;
 static NSString *IOSUseRuntimeSocketPath;
@@ -655,9 +667,9 @@ static BOOL IOSUseSocketMatchesFixedLogicalCanvas(
 ) {
     return fabs(rect.origin.x) <= originTolerance &&
         fabs(rect.origin.y) <= originTolerance &&
-        fabs(rect.size.width - IOSUsePlayDeviceLogicalWidth) <=
+        fabs(rect.size.width - IOSUseRuntimeDeviceLogicalWidth) <=
             sizeTolerance &&
-        fabs(rect.size.height - IOSUsePlayDeviceLogicalHeight) <=
+        fabs(rect.size.height - IOSUseRuntimeDeviceLogicalHeight) <=
             sizeTolerance;
 }
 
@@ -673,13 +685,13 @@ static BOOL IOSUseSocketMatchesPixelQuantizedPrivateCanvas(
     // host over a few millionths of one logical point.
     const CGFloat quantizationEpsilon = 0.00001;
     CGFloat widthDelta =
-        rect.size.width - IOSUsePlayDeviceLogicalWidth;
+        rect.size.width - IOSUseRuntimeDeviceLogicalWidth;
     CGFloat heightDelta =
-        rect.size.height - IOSUsePlayDeviceLogicalHeight;
+        rect.size.height - IOSUseRuntimeDeviceLogicalHeight;
     CGFloat maximumXDelta =
-        CGRectGetMaxX(rect) - IOSUsePlayDeviceLogicalWidth;
+        CGRectGetMaxX(rect) - IOSUseRuntimeDeviceLogicalWidth;
     CGFloat maximumYDelta =
-        CGRectGetMaxY(rect) - IOSUsePlayDeviceLogicalHeight;
+        CGRectGetMaxY(rect) - IOSUseRuntimeDeviceLogicalHeight;
     return fabs(rect.origin.x) <= originTolerance &&
         fabs(rect.origin.y) <= originTolerance &&
         widthDelta >= -originTolerance &&
@@ -854,9 +866,9 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         fabs(displayScale * inverseDisplayScale - 1.0) <= 0.01 &&
         fabs(canvasBounds.origin.x) <= logicalEdgeTolerance &&
         fabs(canvasBounds.origin.y) <= logicalEdgeTolerance &&
-        fabs(canvasBounds.size.width - IOSUsePlayDeviceLogicalWidth) <=
+        fabs(canvasBounds.size.width - IOSUseRuntimeDeviceLogicalWidth) <=
             logicalEdgeTolerance &&
-        fabs(canvasBounds.size.height - IOSUsePlayDeviceLogicalHeight) <=
+        fabs(canvasBounds.size.height - IOSUseRuntimeDeviceLogicalHeight) <=
             logicalEdgeTolerance &&
         IOSUseSocketMatchesFixedLogicalCanvas(
             renderViewBounds,
@@ -918,9 +930,9 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         fabs(leftMargin - rightMargin) <= halfPixelTolerance &&
         fabs(bottomMargin - topMargin) <= halfPixelTolerance &&
         fabs(canvasRect.size.width / displayScale -
-            IOSUsePlayDeviceLogicalWidth) <= logicalTolerance &&
+            IOSUseRuntimeDeviceLogicalWidth) <= logicalTolerance &&
         fabs(canvasRect.size.height / displayScale -
-            IOSUsePlayDeviceLogicalHeight) <= logicalTolerance &&
+            IOSUseRuntimeDeviceLogicalHeight) <= logicalTolerance &&
         IOSUseSocketRectFromJSON(
             capture[@"hostContentCGWindowRect"],
             &hostContentCGWindowRect
@@ -1049,10 +1061,10 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
             statusBarManager != nil &&
             isfinite(statusBarFrame.size.height) &&
             statusBarFrame.size.height ==
-                IOSUsePlayDeviceSafeAreaTop &&
+                IOSUseRuntimeDeviceSafeAreaTop &&
             isfinite(applicationStatusBarFrame.size.height) &&
             applicationStatusBarFrame.size.height ==
-                IOSUsePlayDeviceSafeAreaTop;
+                IOSUseRuntimeDeviceSafeAreaTop;
         NSString *deviceModel = device.model ?: @"";
         NSString *localizedDeviceModel = device.localizedModel ?: @"";
         BOOL deviceIdentityReady =
@@ -1071,7 +1083,7 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
             deviceOrientation ==
                 (UIDeviceOrientation)IOSUsePlayDeviceOrientation &&
             sceneOrientation == UIInterfaceOrientationPortrait &&
-            nativeScale == IOSUsePlayDeviceScale &&
+            nativeScale == IOSUseRuntimeDeviceScale &&
             statusBarReady;
         hooks = IOSUsePlayRuntimeHookDiagnostics(
             scope,
@@ -1180,19 +1192,19 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
         };
         BOOL exact =
             fabs(logical.size.width -
-                IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
+                IOSUseRuntimeDeviceLogicalWidth) <= 0.01 &&
             fabs(logical.size.height -
-                IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
+                IOSUseRuntimeDeviceLogicalHeight) <= 0.01 &&
             fabs(native.size.width -
-                IOSUsePlayDeviceNativeWidth) <= 0.01 &&
+                IOSUseRuntimeDeviceNativeWidth) <= 0.01 &&
             fabs(native.size.height -
-                IOSUsePlayDeviceNativeHeight) <= 0.01 &&
-            fabs(screenScale - IOSUsePlayDeviceScale) <= 0.01 &&
-            fabs(nativeScale - IOSUsePlayDeviceScale) <= 0.01 &&
+                IOSUseRuntimeDeviceNativeHeight) <= 0.01 &&
+            fabs(screenScale - IOSUseRuntimeDeviceScale) <= 0.01 &&
+            fabs(nativeScale - IOSUseRuntimeDeviceScale) <= 0.01 &&
             fabs(windowBounds.size.width -
-                IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
+                IOSUseRuntimeDeviceLogicalWidth) <= 0.01 &&
             fabs(windowBounds.size.height -
-                IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
+                IOSUseRuntimeDeviceLogicalHeight) <= 0.01 &&
             deviceIdentityReady &&
             requiredHooksReady &&
             [hooks[@"configurationStage"]

@@ -8,6 +8,16 @@
 typedef id (*IOSUseCompositorSendID)(id, SEL);
 
 static const CGFloat IOSUseCompositorGeometryTolerance = 0.01;
+static const CGFloat IOSUseCompositorDeviceLogicalWidth =
+    (CGFloat)IOSUsePlayDeviceLogicalWidth;
+static const CGFloat IOSUseCompositorDeviceLogicalHeight =
+    (CGFloat)IOSUsePlayDeviceLogicalHeight;
+static const CGFloat IOSUseCompositorDeviceScale =
+    (CGFloat)IOSUsePlayDeviceScale;
+static const CGBitmapInfo IOSUseCompositorBitmapInfo = (CGBitmapInfo)(
+    (uint32_t)kCGBitmapByteOrder32Little |
+    (uint32_t)kCGImageAlphaPremultipliedFirst
+);
 
 CGFloat const IOSUsePlayHostCanvasMinimumDisplayScale = 0.5;
 
@@ -194,10 +204,10 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
     CGFloat halfPixelTolerance =
         IOSUseCompositorHalfPixelTolerance(backingScaleFactor);
     CGFloat minimumWidth =
-        IOSUsePlayDeviceLogicalWidth *
+        IOSUseCompositorDeviceLogicalWidth *
         IOSUsePlayHostCanvasMinimumDisplayScale;
     CGFloat minimumHeight =
-        IOSUsePlayDeviceLogicalHeight *
+        IOSUseCompositorDeviceLogicalHeight *
         IOSUsePlayHostCanvasMinimumDisplayScale;
     if (hostContentBounds.size.width < minimumWidth ||
         hostContentBounds.size.height < minimumHeight) {
@@ -214,8 +224,8 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
         return NO;
     }
     CGFloat displayScale = MIN(
-        hostContentBounds.size.width / IOSUsePlayDeviceLogicalWidth,
-        hostContentBounds.size.height / IOSUsePlayDeviceLogicalHeight
+        hostContentBounds.size.width / IOSUseCompositorDeviceLogicalWidth,
+        hostContentBounds.size.height / IOSUseCompositorDeviceLogicalHeight
     );
     if (!isfinite(displayScale) ||
         displayScale < IOSUsePlayHostCanvasMinimumDisplayScale) {
@@ -225,8 +235,8 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
         return NO;
     }
     CGSize canvasSize = CGSizeMake(
-        IOSUsePlayDeviceLogicalWidth * displayScale,
-        IOSUsePlayDeviceLogicalHeight * displayScale
+        IOSUseCompositorDeviceLogicalWidth * displayScale,
+        IOSUseCompositorDeviceLogicalHeight * displayScale
     );
     CGRect canvasRect = CGRectMake(
         hostContentBounds.origin.x +
@@ -424,21 +434,21 @@ BOOL IOSUsePlayMapHostContentPointToCanvas(
     logical.x = IOSUseCompositorClampNearWithTolerance(
         logical.x,
         0,
-        IOSUsePlayDeviceLogicalWidth,
+        IOSUseCompositorDeviceLogicalWidth,
         logicalTolerance
     );
     logical.y = IOSUseCompositorClampNearWithTolerance(
         logical.y,
         0,
-        IOSUsePlayDeviceLogicalHeight,
+        IOSUseCompositorDeviceLogicalHeight,
         logicalTolerance
     );
     if (!IOSUseCompositorContainsPoint(
             CGRectMake(
                 0,
                 0,
-                IOSUsePlayDeviceLogicalWidth,
-                IOSUsePlayDeviceLogicalHeight
+                IOSUseCompositorDeviceLogicalWidth,
+                IOSUseCompositorDeviceLogicalHeight
             ),
             logical,
             YES
@@ -466,8 +476,8 @@ BOOL IOSUsePlayMapCanvasPointToHostContent(
     CGRect device = CGRectMake(
         0,
         0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
+        IOSUseCompositorDeviceLogicalWidth,
+        IOSUseCompositorDeviceLogicalHeight
     );
     if (!IOSUseCompositorFiniteRect(layout.hostContentBounds) ||
         !IOSUseCompositorFiniteRect(layout.canvasRect) ||
@@ -591,25 +601,25 @@ BOOL IOSUsePlayMapHostContentRectToCanvas(
     CGFloat logicalMaximumX = IOSUseCompositorClampNearWithTolerance(
         CGRectGetMaxX(logical),
         0,
-        IOSUsePlayDeviceLogicalWidth,
+        IOSUseCompositorDeviceLogicalWidth,
         logicalTolerance
     );
     CGFloat logicalMaximumY = IOSUseCompositorClampNearWithTolerance(
         CGRectGetMaxY(logical),
         0,
-        IOSUsePlayDeviceLogicalHeight,
+        IOSUseCompositorDeviceLogicalHeight,
         logicalTolerance
     );
     logical.origin.x = IOSUseCompositorClampNearWithTolerance(
         logical.origin.x,
         0,
-        IOSUsePlayDeviceLogicalWidth,
+        IOSUseCompositorDeviceLogicalWidth,
         logicalTolerance
     );
     logical.origin.y = IOSUseCompositorClampNearWithTolerance(
         logical.origin.y,
         0,
-        IOSUsePlayDeviceLogicalHeight,
+        IOSUseCompositorDeviceLogicalHeight,
         logicalTolerance
     );
     logical.size.width = logicalMaximumX - logical.origin.x;
@@ -619,8 +629,8 @@ BOOL IOSUsePlayMapHostContentRectToCanvas(
             CGRectMake(
                 0,
                 0,
-                IOSUsePlayDeviceLogicalWidth,
-                IOSUsePlayDeviceLogicalHeight
+                IOSUseCompositorDeviceLogicalWidth,
+                IOSUseCompositorDeviceLogicalHeight
             ),
             logical,
             logicalTolerance
@@ -759,12 +769,12 @@ BOOL IOSUsePlayResolveCGWindowRectInCanvas(
     if (
         !IOSUseCompositorApproximatelyEqualWithTolerance(
             canvasCGWindowRect.size.width / displayScale,
-            IOSUsePlayDeviceLogicalWidth,
+            IOSUseCompositorDeviceLogicalWidth,
             logicalExtentTolerance
         ) ||
         !IOSUseCompositorApproximatelyEqualWithTolerance(
             canvasCGWindowRect.size.height / displayScale,
-            IOSUsePlayDeviceLogicalHeight,
+            IOSUseCompositorDeviceLogicalHeight,
             logicalExtentTolerance
         )) {
         if (failure != NULL) {
@@ -828,18 +838,18 @@ BOOL IOSUsePlayResolveCGWindowRectInCanvas(
         logical.origin.y = 0;
     }
     if (reachesCanvasMaximumX) {
-        logicalMaximumX = IOSUsePlayDeviceLogicalWidth;
-    } else if (logicalMaximumX > IOSUsePlayDeviceLogicalWidth &&
+        logicalMaximumX = IOSUseCompositorDeviceLogicalWidth;
+    } else if (logicalMaximumX > IOSUseCompositorDeviceLogicalWidth &&
         logicalMaximumX <=
-            IOSUsePlayDeviceLogicalWidth + logicalEdgeTolerance) {
-        logicalMaximumX = IOSUsePlayDeviceLogicalWidth;
+            IOSUseCompositorDeviceLogicalWidth + logicalEdgeTolerance) {
+        logicalMaximumX = IOSUseCompositorDeviceLogicalWidth;
     }
     if (reachesCanvasMaximumY) {
-        logicalMaximumY = IOSUsePlayDeviceLogicalHeight;
-    } else if (logicalMaximumY > IOSUsePlayDeviceLogicalHeight &&
+        logicalMaximumY = IOSUseCompositorDeviceLogicalHeight;
+    } else if (logicalMaximumY > IOSUseCompositorDeviceLogicalHeight &&
         logicalMaximumY <=
-            IOSUsePlayDeviceLogicalHeight + logicalEdgeTolerance) {
-        logicalMaximumY = IOSUsePlayDeviceLogicalHeight;
+            IOSUseCompositorDeviceLogicalHeight + logicalEdgeTolerance) {
+        logicalMaximumY = IOSUseCompositorDeviceLogicalHeight;
     }
     logical.size.width = logicalMaximumX - logical.origin.x;
     logical.size.height = logicalMaximumY - logical.origin.y;
@@ -848,8 +858,8 @@ BOOL IOSUsePlayResolveCGWindowRectInCanvas(
             CGRectMake(
                 0,
                 0,
-                IOSUsePlayDeviceLogicalWidth,
-                IOSUsePlayDeviceLogicalHeight
+                IOSUseCompositorDeviceLogicalWidth,
+                IOSUseCompositorDeviceLogicalHeight
             ),
             logical,
             logicalExtentTolerance
@@ -996,10 +1006,10 @@ CGImageRef IOSUsePlayCropAndNormalizeCanvasCapture(
         return NULL;
     }
     size_t normalizedWidth = (size_t)llround(
-        logical.size.width * IOSUsePlayDeviceScale
+        logical.size.width * IOSUseCompositorDeviceScale
     );
     size_t normalizedHeight = (size_t)llround(
-        logical.size.height * IOSUsePlayDeviceScale
+        logical.size.height * IOSUseCompositorDeviceScale
     );
     size_t rowBytes = normalizedWidth * 4;
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
@@ -1010,8 +1020,7 @@ CGImageRef IOSUsePlayCropAndNormalizeCanvasCapture(
         8,
         rowBytes,
         colorSpace,
-        kCGBitmapByteOrder32Little |
-            kCGImageAlphaPremultipliedFirst
+        IOSUseCompositorBitmapInfo
     );
     if (colorSpace != NULL) {
         CGColorSpaceRelease(colorSpace);
@@ -1401,8 +1410,8 @@ BOOL IOSUsePlayResolveLocalAppKitRect(
     CGRect logicalDevice = CGRectMake(
         0,
         0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
+        IOSUseCompositorDeviceLogicalWidth,
+        IOSUseCompositorDeviceLogicalHeight
     );
     CGRect localWindow = CGRectMake(
         0,
@@ -1557,11 +1566,11 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
         ) ||
         !IOSUseCompositorApproximatelyEqual(
             deviceFrame.size.width,
-            IOSUsePlayDeviceLogicalWidth
+            IOSUseCompositorDeviceLogicalWidth
         ) ||
         !IOSUseCompositorApproximatelyEqual(
             deviceFrame.size.height,
-            IOSUsePlayDeviceLogicalHeight
+            IOSUseCompositorDeviceLogicalHeight
         )) {
         if (failure != NULL) {
             *failure = [NSString stringWithFormat:
@@ -1681,13 +1690,13 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
         }
         CGRect destinationNativeRect = CGRectMake(
             capture.deviceLogicalRect.origin.x *
-                IOSUsePlayDeviceScale,
+                IOSUseCompositorDeviceScale,
             capture.deviceLogicalRect.origin.y *
-                IOSUsePlayDeviceScale,
+                IOSUseCompositorDeviceScale,
             capture.deviceLogicalRect.size.width *
-                IOSUsePlayDeviceScale,
+                IOSUseCompositorDeviceScale,
             capture.deviceLogicalRect.size.height *
-                IOSUsePlayDeviceScale
+                IOSUseCompositorDeviceScale
         );
         [evidence addObject:@{
             @"windowNumber": number,
@@ -1760,8 +1769,7 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
         8,
         rowBytes,
         colorSpace,
-        kCGBitmapByteOrder32Little |
-            kCGImageAlphaPremultipliedFirst
+        IOSUseCompositorBitmapInfo
     );
     CGColorSpaceRelease(colorSpace);
     if (context == NULL) {
@@ -1779,16 +1787,16 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
          remaining -= 1) {
         IOSUsePlayWindowCapture capture = captures[remaining - 1];
         CGFloat relativeBottom =
-            IOSUsePlayDeviceLogicalHeight -
+            IOSUseCompositorDeviceLogicalHeight -
             CGRectGetMaxY(capture.deviceLogicalRect);
         CGRect destination = CGRectMake(
             capture.deviceLogicalRect.origin.x *
-                IOSUsePlayDeviceScale,
-            relativeBottom * IOSUsePlayDeviceScale,
+                IOSUseCompositorDeviceScale,
+            relativeBottom * IOSUseCompositorDeviceScale,
             capture.deviceLogicalRect.size.width *
-                IOSUsePlayDeviceScale,
+                IOSUseCompositorDeviceScale,
             capture.deviceLogicalRect.size.height *
-                IOSUsePlayDeviceScale
+                IOSUseCompositorDeviceScale
         );
         CGContextDrawImage(context, destination, capture.image);
     }
