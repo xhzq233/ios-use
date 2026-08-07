@@ -87,6 +87,10 @@ PYTHON="${PYTHON:-$(command -v python3)}"
 NINJA="${NINJA:-$(command -v ninja)}"
 [ -n "$PYTHON" ] || { echo "python3 is required" >&2; exit 69; }
 [ -n "$NINJA" ] || { echo "ninja is required" >&2; exit 69; }
+if ! "$PYTHON" -c 'import distutils.version' >/dev/null 2>&1; then
+  echo "the pinned Frida GLib code generator requires a Python interpreter with distutils; set PYTHON to a compatible interpreter" >&2
+  exit 69
+fi
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 TARGET="arm64-apple-ios17.0-macabi"
 PKG_CONFIG_WRAPPER="$ROOT_DIR/scripts/frida_pkg_config.py"
@@ -145,12 +149,12 @@ chmod 755 "$NATIVE_PKG_CONFIG"
 
 "$PYTHON" - "$CONFIG_ROOT" "$SDK_PATH" "$TARGET" \
     "$TARGET_PKG_CONFIG" "$NATIVE_PKG_CONFIG" \
-    "$SOURCE_ROOT" "$GUM_BUILD" <<'PY'
+    "$SOURCE_ROOT" "$GUM_BUILD" "$PYTHON" <<'PY'
 import os
 import pathlib
 import sys
 
-root, sdk, target, target_pkg, native_pkg, source, gum_build = sys.argv[1:]
+root, sdk, target, target_pkg, native_pkg, source, gum_build, python = sys.argv[1:]
 root = pathlib.Path(root)
 source_argument = os.path.relpath(
     os.path.realpath(source),
@@ -168,6 +172,7 @@ ar = 'ar'
 ranlib = 'ranlib'
 strip = 'strip'
 pkg-config = '{target_pkg}'
+python = {python!r}
 
 [host_machine]
 system = 'darwin'
@@ -185,6 +190,7 @@ objcpp_args = {reproducible_args!r}
 '''
 native_file = f'''[binaries]
 pkg-config = '{native_pkg}'
+python = {python!r}
 
 [built-in options]
 c_args = {reproducible_args!r}
@@ -194,6 +200,7 @@ objcpp_args = {reproducible_args!r}
 '''
 cross_native = f'''[binaries]
 pkg-config = '{native_pkg}'
+python = {python!r}
 
 [built-in options]
 c_args = {reproducible_args!r}
