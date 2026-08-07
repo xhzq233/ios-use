@@ -214,6 +214,11 @@ validate_release_workflow() {
     '        run: brew install xcodegen meson ninja' \
     "the clean hosted release build tools" ||
     return 1
+  require_exact_line \
+    "$file" \
+    '          PYTHON: /usr/bin/python3' \
+    "the compatible hosted Frida code-generation interpreter" ||
+    return 1
   if [[ "$(
     count_pattern \
       "$file" \

@@ -111,6 +111,7 @@ jobs:
         env:
           IOS_USE_RELEASE_VERSION: ${{ steps.resolve_tag.outputs.tag }}
           IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
+          PYTHON: /usr/bin/python3
         run: bash scripts/release_build.sh
 
       - name: Verify the exact release assets through an isolated install
