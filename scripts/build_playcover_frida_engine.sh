@@ -144,6 +144,11 @@ GUM_DEVKIT="$(cd "$GUM_DEVKIT" && pwd)"
 GUM_BUILD="${GUM_BUILD:-$(cd "$GUM_DEVKIT/../../.." && pwd)}"
 [ -f "$GUM_DEVKIT/frida-gumjs.h" ] || { echo "missing frida-gumjs.h" >&2; exit 65; }
 [ -f "$GUM_DEVKIT/libfrida-gumjs.a" ] || { echo "missing libfrida-gumjs.a" >&2; exit 65; }
+SQLITE_ARCHIVE="$GUM_BUILD/subprojects/sqlite/libsqlite3.a"
+[ -f "$SQLITE_ARCHIVE" ] || {
+  echo "missing pinned GumJS SQLite archive: $SQLITE_ARCHIVE" >&2
+  exit 65
+}
 
 if [ "$(basename "$OUTPUT")" != "IOSUseFridaEngine.framework" ]; then
   echo "output must end in IOSUseFridaEngine.framework" >&2
@@ -209,7 +214,7 @@ clang -target "$TARGET" -fobjc-arc -Wall -Wextra -Werror \
 clang -target "$TARGET" -fobjc-arc -Wall -Wextra -Werror \
   -isysroot "$SDK_PATH" -dynamiclib "$BUILD_TEMP/IOSUseFridaEngine.o" \
   -o "$BUILD_TEMP/IOSUseFridaEngine" \
-  -L"$GUM_DEVKIT" -lfrida-gumjs \
+  "$GUM_DEVKIT/libfrida-gumjs.a" "$SQLITE_ARCHIVE" \
   -framework Foundation -framework CoreFoundation -framework Security \
   -framework SystemConfiguration -lz -liconv -lresolv -lm \
   -install_name '@rpath/IOSUseFridaEngine.framework/IOSUseFridaEngine'
