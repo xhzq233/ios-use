@@ -14,6 +14,16 @@ static const NSUInteger IOSUseScreenshotMaximumJPEGBytes = 11 * 1024 * 1024;
 static const NSUInteger IOSUseScreenshotMaximumBase64Bytes =
     15 * 1024 * 1024;
 static const CGFloat IOSUseScreenshotGeometryTolerance = 0.01;
+static const CGFloat IOSUseScreenshotDeviceLogicalWidth =
+    (CGFloat)IOSUsePlayDeviceLogicalWidth;
+static const CGFloat IOSUseScreenshotDeviceLogicalHeight =
+    (CGFloat)IOSUsePlayDeviceLogicalHeight;
+static const CGFloat IOSUseScreenshotDeviceScale =
+    (CGFloat)IOSUsePlayDeviceScale;
+static const CGBitmapInfo IOSUseScreenshotBitmapInfo = (CGBitmapInfo)(
+    (uint32_t)kCGBitmapByteOrder32Little |
+    (uint32_t)kCGImageAlphaPremultipliedFirst
+);
 static atomic_bool IOSUseScreenshotInFlight = false;
 static atomic_ullong IOSUseScreenshotCaptureGeneration = 0;
 
@@ -96,8 +106,8 @@ static NSDictionary<NSString *, id> *IOSUseScreenshotFullFrameEvidence(
     CGRect deviceFrame = CGRectMake(
         0,
         0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
+        IOSUseScreenshotDeviceLogicalWidth,
+        IOSUseScreenshotDeviceLogicalHeight
     );
     return @{
         @"logicalRect": IOSUseScreenshotRectJSON(deviceFrame),
@@ -167,11 +177,11 @@ static BOOL IOSUseScreenshotRectIsDeviceSize(CGRect rect) {
     return IOSUseScreenshotFiniteRect(rect) &&
         IOSUseScreenshotApproximatelyEqual(
             rect.size.width,
-            IOSUsePlayDeviceLogicalWidth
+            IOSUseScreenshotDeviceLogicalWidth
         ) &&
         IOSUseScreenshotApproximatelyEqual(
             rect.size.height,
-            IOSUsePlayDeviceLogicalHeight
+            IOSUseScreenshotDeviceLogicalHeight
         );
 }
 
@@ -184,10 +194,10 @@ static BOOL IOSUseScreenshotLogicalRectIsInsideDevice(CGRect rect) {
         CGRectGetMinY(rect) >=
             -IOSUseScreenshotGeometryTolerance &&
         CGRectGetMaxX(rect) <=
-            IOSUsePlayDeviceLogicalWidth +
+            IOSUseScreenshotDeviceLogicalWidth +
                 IOSUseScreenshotGeometryTolerance &&
         CGRectGetMaxY(rect) <=
-            IOSUsePlayDeviceLogicalHeight +
+            IOSUseScreenshotDeviceLogicalHeight +
                 IOSUseScreenshotGeometryTolerance;
 }
 
@@ -1099,8 +1109,7 @@ static BOOL IOSUseScreenshotHasUsablePixels(CGImageRef image) {
         8,
         rowBytes,
         colorSpace,
-        kCGBitmapByteOrder32Little |
-            kCGImageAlphaPremultipliedFirst
+        IOSUseScreenshotBitmapInfo
     );
     CGColorSpaceRelease(colorSpace);
     if (context == NULL) {
@@ -1580,7 +1589,7 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
             .appKitFrame = window.deviceLogicalRect,
             .deviceLogicalRect =
                 window.deviceLogicalRect,
-            .backingScale = IOSUsePlayDeviceScale,
+            .backingScale = IOSUseScreenshotDeviceScale,
             .windowNumber = window.windowNumber,
         };
     }
@@ -1672,7 +1681,7 @@ IOSUseScreenshotPayloadOnMain(
         return nil;
     }
     UIImage *uiImage = [UIImage imageWithCGImage:image
-                                          scale:IOSUsePlayDeviceScale
+                                          scale:IOSUseScreenshotDeviceScale
                                     orientation:UIImageOrientationUp];
     CGImageRelease(image);
     NSData *jpeg = UIImageJPEGRepresentation(uiImage, 0.9);

@@ -77,6 +77,18 @@ jobs:
           node --check scripts/ios_use_test_simulator.js
           node --check scripts/test_simulator_commands.mjs
 
+  mac-runtime-build:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Build Mac Runtime
+        run: bash scripts/build_playcover_runtime.sh --output "$RUNNER_TEMP/IOSUsePlayRuntime.framework"
+
   swift-cli-tests:
     runs-on: macos-26
     timeout-minutes: 20

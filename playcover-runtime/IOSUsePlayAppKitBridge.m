@@ -12,6 +12,11 @@
 #import <string.h>
 #import <unistd.h>
 
+static const CGFloat IOSUseBridgeDeviceLogicalWidth =
+    (CGFloat)IOSUsePlayDeviceLogicalWidth;
+static const CGFloat IOSUseBridgeDeviceLogicalHeight =
+    (CGFloat)IOSUsePlayDeviceLogicalHeight;
+
 typedef id (*IOSUseBridgeSendID)(id, SEL);
 typedef id (*IOSUseBridgeSendIDInteger)(id, SEL, NSInteger);
 typedef BOOL (*IOSUseBridgeSendBool)(id, SEL);
@@ -654,9 +659,9 @@ static CGFloat IOSUseBridgeBackingScaleFactor(id window) {
 
 static CGSize IOSUseBridgeHostMinimumContentSize(void) {
     return CGSizeMake(
-        IOSUsePlayDeviceLogicalWidth *
+        IOSUseBridgeDeviceLogicalWidth *
             IOSUsePlayHostCanvasMinimumDisplayScale,
-        IOSUsePlayDeviceLogicalHeight *
+        IOSUseBridgeDeviceLogicalHeight *
             IOSUsePlayHostCanvasMinimumDisplayScale
     );
 }

@@ -88,6 +88,16 @@ validate_disposable_secret_bindings() {
 validate_workflow() {
   local file="$1"
 
+  require_exact_line \
+    "$file" \
+    '  mac-runtime-build:' \
+    "the hosted Mac Runtime compile job" ||
+    return 1
+  require_exact_line \
+    "$file" \
+    '        run: bash scripts/build_playcover_runtime.sh --output "$RUNNER_TEMP/IOSUsePlayRuntime.framework"' \
+    "the hosted Mac Runtime compile invocation" ||
+    return 1
   require_line_count \
     "$file" \
     '    runs-on: [self-hosted, macOS, arm64, playcover-live]' \
