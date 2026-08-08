@@ -155,3 +155,110 @@ loaded Module is large, even one-module enumeration can exceed the 10-second
 eval deadline; do not enumerate every process Module. If all three in-App paths
 miss, the installed workflow cannot safely identify that symbol. Do not guess
 an address or reuse symbols from another build.
+
+## Pair Frida with a native dylib for complex UI patches
+
+Keep the responsibility split simple:
+
+- Frida is the control plane: inspect the current App, locate a route or runtime
+  entry, load the native patch, invoke its lifecycle, and install only the small
+  hooks needed to redirect into it.
+- The dylib is the implementation plane: own substantial UIKit views, layout,
+  animation, state, routing, delegates, data sources, and interaction logic.
+
+Use GumJS alone for probes, observation, narrow return-value hooks, and changing
+existing object properties. Use a native dylib for a new or replacement page,
+regrouping tabs or tools, or any UI that is clearer as normal Swift or
+Objective-C. The dylib may be compiled locally or remotely; it is not built
+inside the running App and the Mac running ios-use does not need Xcode.
+
+### Choose load-time application or an explicit entry point
+
+Frida does not require a lifecycle protocol or any exported function. The
+smallest one-shot patch applies itself from a C/Objective-C constructor or
+Objective-C `+load`; `Module.load` runs those initializers while loading the
+image. The initializer must dispatch UIKit work to the main thread and handle a
+target page that may not exist yet. For a mostly Swift patch, use a tiny C or
+Objective-C constructor shim instead of assuming Swift global initialization
+runs eagerly.
+
+Expose an explicit C-compatible apply function only when the Agent needs to
+choose the application time, retry after navigation, or pass control separately
+from loading. Swift patches can use `@_cdecl`; Objective-C/C patches can export
+an ordinary C function:
+
+```c
+int32_t ios_use_patch_apply(void);
+```
+
+Make `apply` idempotent and perform UIKit mutation on the main thread. Add a
+`restore` export only when same-process before/after comparison is valuable;
+otherwise restart the App to discard the process-local patch. Add a `state`
+export only for native work whose asynchronous or lazy installation cannot be
+observed reliably through DOM and UI behavior. Do not turn either optional
+function into a requirement for every patch.
+
+Avoid UserDefaults, file, database, or remote writes in a runtime UI prototype.
+Restarting the App or restoring its view hierarchy does not undo them.
+
+Build the dylib for arm64 Mac Catalyst and make its native dependencies loadable
+by dyld. When using explicit entry points, expose them as unmangled C symbols.
+Dynamic lookup may resolve App or framework symbols already loaded in the
+process, but it does not replace the Swift interfaces or headers required when
+compiling the patch.
+
+### Load and control the dylib through the existing debug command
+
+`ios-use debug` already provides the required runtime primitive. Do not add a
+separate CLI command merely to hide a short GumJS loader from an Agent. Reuse the
+same loader template and load once per App process. For an auto-applying dylib,
+loading is the whole operation:
+
+```bash
+ios-use debug - <<'JS'
+(() => {
+  const patch = globalThis.__iosUseNativePatch ??= {};
+  patch.module ??= Module.load('/absolute/path/FeaturePatch.dylib');
+  return { loaded: patch.module.name, base: patch.module.base.toString() };
+})();
+JS
+```
+
+If the patch intentionally exposes an explicit apply entry, bind and call it
+after loading:
+
+```bash
+ios-use debug - <<'JS'
+(() => {
+  const patch = globalThis.__iosUseNativePatch ??= {};
+  if (!patch.module) {
+    patch.module = Module.load('/absolute/path/FeaturePatch.dylib');
+    patch.apply = new NativeFunction(
+      patch.module.getExportByName('ios_use_patch_apply'), 'int', []
+    );
+  }
+  return { applyResult: patch.apply() };
+})();
+JS
+```
+
+Verify the active UI with `dom`, `ui-tree`, normal interactions, and a screenshot.
+That UI evidence is the default state check.
+
+If the patch intentionally exports `ios_use_patch_restore`, bind and call it in
+the same way before resetting Frida. Otherwise restart the App to return to its
+original process state:
+
+```bash
+ios-use stop
+ios-use start --mac --frida --reuse
+```
+
+Do not model native patching as load/unload. `debug --reset` removes Frida hooks
+and the JS namespace, but it neither unloads the dylib nor reverses its native
+mutations. For a rebuilt dylib, use its optional restore when available, stop and
+restart the App, then apply the new build through the same `debug` workflow.
+
+Do not expose symbol addresses, hashes, compiler flags, `Module.load`, or process
+restart choreography to a non-RD user. The Agent owns those implementation
+details and the patch-producing service owns compilation.

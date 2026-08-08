@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Use when a task explicitly requires running, scripting, or troubleshooting the ios-use CLI on a real device, Simulator, or Mac backend, including setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, and Frida debugging."
+description: "Use when a task explicitly requires running, scripting, or troubleshooting the ios-use CLI on a real device, Simulator, or Mac backend, including setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, Frida debugging, and Frida-loaded native dylib patches."
 ---
 
 # ios-use Operational Playbook
@@ -10,7 +10,8 @@ description: "Use when a task explicitly requires running, scripting, or trouble
 - Read `references/simulator.md` before operating or troubleshooting a Simulator.
 - Read `references/proxy.md` before configuring HTTP/HTTPS capture or certificates.
 - Read `references/nslog.md` only when the target App already integrates NSLogger.
-- Read `references/frida-debug.md` before using `start --mac --frida` or `debug`.
+- Read `references/frida-debug.md` before using `start --mac --frida`, `debug`,
+  or a Frida-loaded native dylib patch.
 - Read `references/report.md` before creating or updating a GitHub issue.
 
 Do not load unrelated references preemptively.
@@ -232,6 +233,14 @@ ios-use debug --reset
 Script source is not saved, but variables and hooks created by a script persist
 until reset or App exit. Reset does not undo changes the script already made
 inside the App.
+
+Use Frida JS directly for discovery, observation, small hooks, and changing
+existing App state. For a substantial new UIKit hierarchy, page replacement,
+animation, or interaction state machine, put the implementation in an arm64 Mac
+Catalyst dylib and use Frida as its loader and runtime control plane. Read
+`references/frida-debug.md` for the export contract and the required
+install-state-restore workflow. The dylib may be compiled locally or remotely;
+ios-use does not require the compiler to run on the same Mac as the App.
 
 ## 6. Collect visual evidence only when needed
 
