@@ -36,6 +36,12 @@ ios-use start --mac --app <App.app>
 `config --mac` asks for macOS authentication. If authentication is cancelled,
 rerun the same command. This setup is shared across `IOS_USE_HOME` values.
 
+Use a distinct `IOS_USE_HOME` for each concurrent ios-use session. This allows
+multiple Mac Apps with different bundle IDs (or independent device sessions) to
+run at the same time while sharing the one-time Mac signing setup and prepared
+App cache. The Mac backend intentionally rejects two concurrent copies of the
+same bundle ID.
+
 The first start for an App requires `--app`. Later,
 `ios-use start --mac --reuse` restarts the last successfully started App for the
 current `IOS_USE_HOME`. Run `ios-use stop` before switching backends.

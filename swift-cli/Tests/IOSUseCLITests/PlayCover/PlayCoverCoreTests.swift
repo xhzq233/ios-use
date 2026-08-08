@@ -122,7 +122,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         XCTAssertTrue(
             paths.playcoverLaunchFacades.hasSuffix(
-                "/Applications/ios-use"
+                "/Library/Caches/dev.ios-use/mac/launch-facades"
             ),
             paths.playcoverLaunchFacades
         )
@@ -138,6 +138,21 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         XCTAssertTrue(socket.hasSuffix(".sock"))
         XCTAssertFalse(socket.contains("ABC"))
+    }
+
+    func testProductionSessionLaunchAliasUsesAccountCacheRoot() {
+        let paths = IOSUsePaths.resolve()
+        let alias = PlayCoverService.sessionLaunchAlias(
+            sessionID: "path-contract"
+        )
+
+        XCTAssertEqual(alias.rootURL.path, paths.playcoverLaunchFacades)
+        XCTAssertTrue(
+            alias.rootURL.path.hasSuffix(
+                "/Library/Caches/dev.ios-use/mac/launch-facades"
+            )
+        )
+        XCTAssertFalse(alias.rootURL.path.contains("/Applications/"))
     }
 
     func testProductionAccountRootsIgnorePoisonedHOME() throws {

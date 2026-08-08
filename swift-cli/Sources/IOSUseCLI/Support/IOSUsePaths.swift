@@ -184,7 +184,7 @@ public struct IOSUsePaths: Equatable, Sendable {
             playcoverSigningBinding:
                 "\(accountApplicationSupportRoot)/mac-stable-signing-binding-v1.json",
             playcoverLaunchFacades:
-                "\(accountHome)/Applications/ios-use",
+                "\(accountCacheRoot)/mac/launch-facades",
             playcoverRuntime: "\(configured.root)/mac/IOSUsePlayRuntime.framework"
         )
     }

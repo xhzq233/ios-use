@@ -4034,18 +4034,18 @@ public enum PlayCoverService {
                     PlayCoverLaunchCrashCut.launchAliasRoot {
                 root = crashAliasRoot
             } else {
-                root = FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent(
-                        "Applications/ios-use",
-                        isDirectory: true
-                    )
+                root = URL(
+                    fileURLWithPath:
+                        IOSUsePaths.resolve().playcoverLaunchFacades,
+                    isDirectory: true
+                )
             }
             #else
-            root = FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent(
-                        "Applications/ios-use",
-                        isDirectory: true
-                    )
+            root = URL(
+                fileURLWithPath:
+                    IOSUsePaths.resolve().playcoverLaunchFacades,
+                isDirectory: true
+            )
             #endif
         }
         return SessionLaunchAlias(

@@ -129,7 +129,7 @@ ios-use start --mac (--app <source-or-prepared.app> | --reuse) [--log]
   -> PlayCoverService
      -> pinned PlayCover prepare graph and full verification
      -> one bounded integrity verification immediately before launch
-     -> pinned-shape session App facade under ~/Applications/ios-use
+     -> pinned-shape session App facade under the account cache
      -> NSWorkspace facade launch with exact environment and PID
   -> IOSUsePlayRuntime.framework
      -> pinned PlayTools platform/geometry/keychain hooks
@@ -156,7 +156,10 @@ that exact outcome, and start does not commit the session unless it matches.
 
 The launch facade is a real `.app` directory whose top-level children are
 symlinks to the immutable prepared App, matching pinned PlayCover's
-`createAlias` shape. Each random session gets a collision-free facade name.
+`createAlias` shape. It lives under
+`~/Library/Caches/dev.ios-use/mac/launch-facades`, outside the Applications
+directories indexed by Launchpad. Each random session gets a collision-free
+facade name.
 An NSWorkspace callback may establish rollback ownership only for a new process
 that reports the exact session facade and prepared executable; it cannot by
 itself commit a session. A newly observed PID grants no ownership. Polling may
