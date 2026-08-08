@@ -237,7 +237,7 @@ if ! jq -e '
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverFridaEngineService.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverHomeStore.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverLaunchCrashCut.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverManagedAppService.swift",
+      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSlotService.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverModels.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverService.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSigningCertificateBuilder.swift",
@@ -310,6 +310,7 @@ if ! jq -e '
     (
       .consumedBaselines | map(.id) | sort
     ) == [
+      "ios-use-frida-engine-input",
       "ios-use-runtime-input",
       "pinned-akinterface-input"
     ]

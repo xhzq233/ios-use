@@ -158,30 +158,6 @@ enum DiskUsageService {
             if let role = item.details["role"] {
                 values.append(role)
             }
-            if item.category == "prepared" {
-                let homeReferences = Int(
-                    item.details["homeReferences"] ?? "0"
-                ) ?? 0
-                let sessionReferences = Int(
-                    item.details["sessionReferences"] ?? "0"
-                ) ?? 0
-                if homeReferences == 0 && sessionReferences == 0 {
-                    values.append("unreferenced")
-                } else {
-                    if homeReferences > 0 {
-                        values.append(
-                            "\(homeReferences) Home ref"
-                                + (homeReferences == 1 ? "" : "s")
-                        )
-                    }
-                    if sessionReferences > 0 {
-                        values.append(
-                            "\(sessionReferences) live session"
-                                + (sessionReferences == 1 ? "" : "s")
-                        )
-                    }
-                }
-            }
             return values.isEmpty
                 ? ""
                 : "  [" + values.joined(separator: ", ") + "]"
@@ -258,7 +234,7 @@ enum DiskUsageService {
             allItems: [Item]
         ) -> [String] {
             var preparedNames: [String: String] = [:]
-            for item in allItems where item.category == "prepared" {
+            for item in allItems where item.category == "app-slot" {
                 guard let bundle = item.details["bundle"],
                       preparedNames[bundle] == nil else {
                     continue
@@ -348,9 +324,8 @@ enum DiskUsageService {
         private static func metadataTitle(_ items: [Item]) -> String {
             guard let item = items.first else { return "Residue" }
             switch item.category {
-            case "launch-facade": return "Launch facades"
             case "runtime-socket": return "Runtime sockets"
-            case "lock": return "Prepare locks"
+            case "lock": return "Bundle locks"
             default: return item.name
             }
         }
@@ -410,18 +385,6 @@ enum DiskUsageService {
         let root: String
         let current: Bool
         let discoveryRecord: String?
-        let generation: String?
-        let sessionGeneration: String?
-    }
-
-    private struct HomeReferences {
-        let generation: String?
-        let sessionGeneration: String?
-    }
-
-    private enum HomeReferenceSource {
-        case lastGeneration
-        case activeSession
     }
 
     static func snapshot(
@@ -433,41 +396,32 @@ enum DiskUsageService {
         var budget = WalkBudget(remaining: max(1, traversalEntryLimit))
 
         let homes = collectHomes(paths: paths, warnings: &warnings)
-        let homeGenerationReferences = Dictionary(
-            grouping: homes.compactMap { home -> String? in
-                home.generation
-            },
-            by: { $0 }
-        )
-        let sessionGenerationReferences = Dictionary(
-            grouping: homes.compactMap { home -> String? in
-                home.sessionGeneration
-            },
-            by: { $0 }
-        )
 
         appendChildren(
-            of: paths.playcoverGlobalObjects,
+            of: paths.playcoverApps,
             scope: "mac",
-            category: "prepared",
+            category: "app-slot",
             itemBuilder: { url, usage, warnings in
-                let generation = url.lastPathComponent
-                return preparedItem(
-                    url,
-                    usage,
-                    homeReferences:
-                        homeGenerationReferences[generation]?.count ?? 0,
-                    sessionReferences:
-                        sessionGenerationReferences[generation]?.count ?? 0,
-                    warnings: &warnings
-                )
+                slotItem(url, usage, warnings: &warnings)
             },
             items: &items,
             warnings: &warnings,
             budget: &budget
         )
+        appendPath(
+            paths.playcoverLegacyPrepared,
+            scope: "mac",
+            category: "legacy-cache",
+            storageClass: "rebuildable-cache",
+            name: "Legacy prepared cache",
+            details: ["role": "unused by v2.0.1"],
+            includeMissing: false,
+            items: &items,
+            warnings: &warnings,
+            budget: &budget
+        )
         appendChildren(
-            of: paths.playcoverGlobalLocks,
+            of: paths.playcoverLocks,
             scope: "mac",
             category: "lock",
             itemBuilder: { url, usage, _ in
@@ -477,7 +431,7 @@ enum DiskUsageService {
                     scope: "mac",
                     category: "lock",
                     storageClass: "metadata-residue",
-                    name: "prepare lock"
+                    name: "Bundle launch lock"
                 )
             },
             items: &items,
@@ -554,20 +508,14 @@ enum DiskUsageService {
             warnings: &warnings,
             budget: &budget
         )
-        appendChildren(
-            of: paths.playcoverLaunchFacades,
+        appendPath(
+            paths.playcoverLegacyLaunchFacades,
             scope: "mac",
-            category: "launch-facade",
-            itemBuilder: { url, usage, _ in
-                usageItem(
-                    url: url,
-                    usage: usage,
-                    scope: "mac",
-                    category: "launch-facade",
-                    storageClass: "metadata-residue",
-                    name: url.lastPathComponent
-                )
-            },
+            category: "legacy-cache",
+            storageClass: "rebuildable-cache",
+            name: "Legacy launch facades",
+            details: ["role": "unused by v2.0.1"],
+            includeMissing: false,
             items: &items,
             warnings: &warnings,
             budget: &budget
@@ -615,25 +563,65 @@ enum DiskUsageService {
         )
     }
 
-    private static func preparedItem(
+    private static func slotItem(
         _ url: URL,
         _ usage: Usage,
-        homeReferences: Int,
-        sessionReferences: Int,
         warnings: inout [String]
     ) -> Item {
-        let generation = url.lastPathComponent
-        var name = generation.hasPrefix(".staging-")
-            ? "incomplete \(generation)"
-            : generation
+        let directoryName = url.lastPathComponent
+        var name = directoryName.hasPrefix(".staging-")
+            ? "incomplete slot"
+            : directoryName
         var details: [String: String] = [
-            "generation": generation,
-            "homeReferences": String(homeReferences),
-            "sessionReferences": String(sessionReferences),
+            "bundle": directoryName,
         ]
-        let app = url.appendingPathComponent("App.app", isDirectory: true)
-        let plist = app.appendingPathComponent("Info.plist")
-        if let metadata = appMetadata(at: plist, warnings: &warnings) {
+        var slotComplete = usage.complete
+        let metadataURL = url.appendingPathComponent("slot.json")
+        var app: URL?
+        if let data = boundedRegularFileData(
+            at: metadataURL,
+            maximumBytes: 64 * 1_024,
+            warnings: &warnings
+        ),
+           let value = try? JSONSerialization.jsonObject(with: data)
+                as? [String: Any],
+           Set(value.keys) == Set([
+                "bundleIdentifier",
+                "appRelativePath",
+                "executableRelativePath",
+                "installRevision",
+           ]),
+           let bundle = value["bundleIdentifier"] as? String,
+           let appRelativePath = value["appRelativePath"] as? String,
+           let executable = value["executableRelativePath"] as? String,
+           let revision = value["installRevision"] as? String,
+           bundle == directoryName,
+           appRelativePath.hasSuffix(".app"),
+           appRelativePath != ".app",
+           !appRelativePath.contains("/"),
+           !executable.isEmpty,
+           !executable.hasPrefix("/"),
+           !executable.split(separator: "/").contains(".."),
+           isLowercaseSHA256(revision) {
+            details["bundle"] = bundle
+            details["appRelativePath"] = appRelativePath
+            details["executableRelativePath"] = executable
+            details["installRevision"] = revision
+            app = url.appendingPathComponent(
+                appRelativePath,
+                isDirectory: true
+            )
+        } else {
+            slotComplete = false
+            if !directoryName.hasPrefix(".staging-") {
+                warnings.append("cannot read Mac slot metadata: \(metadataURL.path)")
+            }
+        }
+        if let app,
+           let metadata = appMetadata(
+                at: app.appendingPathComponent("Info.plist"),
+                warnings: &warnings
+           ) {
             if let displayName = metadata.displayName {
                 name = displayName
             }
@@ -646,33 +634,19 @@ enum DiskUsageService {
             if let build = metadata.build {
                 details["build"] = build
             }
-        }
-        let manifest = url.appendingPathComponent("manifest.json")
-        if let data = boundedRegularFileData(
-            at: manifest,
-            maximumBytes: 8 * 1_024 * 1_024,
-            warnings: &warnings
-        ),
-           let value = try? JSONSerialization.jsonObject(with: data)
-                as? [String: Any] {
-            if value["fridaEnabled"] as? Bool == true {
-                details["capability"] = "frida"
-            } else {
-                details["capability"] = "base"
-            }
-        } else if !generation.hasPrefix(".staging-") {
-            warnings.append("cannot read prepared manifest: \(manifest.path)")
+        } else if app != nil {
+            slotComplete = false
         }
         return Item(
             scope: "mac",
-            category: "prepared",
+            category: "app-slot",
             storageClass: "rebuildable-cache",
             name: name,
             path: url.path,
             bytes: usage.bytes,
             modifiedAt: usage.modifiedAt,
             exists: usage.exists,
-            complete: usage.complete,
+            complete: slotComplete,
             details: details
         )
     }
@@ -739,17 +713,11 @@ enum DiskUsageService {
             }
         }
         return candidates.map { root, value in
-            let references = readHomeReferences(
-                root: root,
-                warnings: &warnings
-            )
             return HomeInfo(
                 id: value.id,
                 root: root,
                 current: value.current,
-                discoveryRecord: value.discoveryRecord,
-                generation: references.generation,
-                sessionGeneration: references.sessionGeneration
+                discoveryRecord: value.discoveryRecord
             )
         }.sorted {
             if $0.current != $1.current { return $0.current }
@@ -848,12 +816,6 @@ enum DiskUsageService {
         ]
         if let discoveryRecord = home.discoveryRecord {
             details["discoveryRecord"] = discoveryRecord
-        }
-        if let generation = home.generation {
-            details["generation"] = generation
-        }
-        if let sessionGeneration = home.sessionGeneration {
-            details["sessionGeneration"] = sessionGeneration
         }
         return details
     }
@@ -1126,155 +1088,6 @@ enum DiskUsageService {
             value["CFBundleShortVersionString"] as? String,
             value["CFBundleVersion"] as? String
         )
-    }
-
-    private static func readHomeReferences(
-        root: String,
-        warnings: inout [String]
-    ) -> HomeReferences {
-        let rootURL = URL(fileURLWithPath: root, isDirectory: true)
-        return HomeReferences(
-            generation: readHomeGeneration(
-                at: rootURL
-                    .appendingPathComponent("mac", isDirectory: true)
-                    .appendingPathComponent("last-generation.json").path,
-                maximumBytes: 32 * 1_024,
-                label: "Mac last-generation reference",
-                source: .lastGeneration,
-                warnings: &warnings
-            ),
-            sessionGeneration: readHomeGeneration(
-                at: rootURL
-                    .appendingPathComponent("state", isDirectory: true)
-                    .appendingPathComponent("driver.lock").path,
-                maximumBytes: DriverSessionStore.maximumDriverLockBytes,
-                label: "driver.lock",
-                source: .activeSession,
-                warnings: &warnings
-            )
-        )
-    }
-
-    private static func readHomeGeneration(
-        at path: String,
-        maximumBytes: Int,
-        label: String,
-        source: HomeReferenceSource,
-        warnings: inout [String]
-    ) -> String? {
-        let requireOwnerOnlyPermissions: Bool
-        switch source {
-        case .lastGeneration:
-            requireOwnerOnlyPermissions = true
-        case .activeSession:
-            requireOwnerOnlyPermissions = false
-        }
-        guard let data = ownedRegularFileData(
-            at: path,
-            maximumBytes: maximumBytes,
-            label: label,
-            requireOwnerOnlyPermissions: requireOwnerOnlyPermissions,
-            warnings: &warnings
-        ) else {
-            return nil
-        }
-        guard let value = try? JSONSerialization.jsonObject(with: data)
-                as? [String: Any] else {
-            warnings.append("invalid \(label) JSON: \(path)")
-            return nil
-        }
-        let generation: String?
-        switch source {
-        case .lastGeneration:
-            guard Set(value.keys) == Set(["generationKey"]) else {
-                warnings.append("invalid Mac generation reference: \(path)")
-                return nil
-            }
-            generation = value["generationKey"] as? String
-        case .activeSession:
-            guard value["deviceType"] as? String == "mac" else {
-                return nil
-            }
-            generation = value["macGenerationKey"] as? String
-        }
-        guard let generation, isLowercaseSHA256(generation) else {
-            warnings.append("invalid Mac generation in \(label): \(path)")
-            return nil
-        }
-        return generation
-    }
-
-    private static func ownedRegularFileData(
-        at path: String,
-        maximumBytes: Int,
-        label: String,
-        requireOwnerOnlyPermissions: Bool,
-        warnings: inout [String]
-    ) -> Data? {
-        #if canImport(Darwin)
-        let descriptor = Darwin.open(
-            path,
-            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
-        )
-        guard descriptor >= 0 else {
-            if errno != ENOENT && errno != ENOTDIR {
-                warnings.append("cannot open \(label): \(path) (errno \(errno))")
-            }
-            return nil
-        }
-        defer { Darwin.close(descriptor) }
-        var status = stat()
-        guard fstat(descriptor, &status) == 0 else {
-            warnings.append("cannot inspect \(label): \(path)")
-            return nil
-        }
-        let permissionsAreSafe = requireOwnerOnlyPermissions
-            ? status.st_mode & 0o077 == 0
-            : status.st_mode & 0o022 == 0
-        guard status.st_mode & S_IFMT == S_IFREG,
-              status.st_uid == geteuid(),
-              permissionsAreSafe,
-              status.st_nlink == 1,
-              status.st_size >= 0,
-              status.st_size <= maximumBytes else {
-            warnings.append(
-                "ignored unsafe or oversized \(label): \(path)"
-            )
-            return nil
-        }
-        var data = Data(count: Int(status.st_size))
-        let succeeded = data.withUnsafeMutableBytes { buffer -> Bool in
-            guard let base = buffer.baseAddress else { return true }
-            var offset = 0
-            while offset < buffer.count {
-                let count = Darwin.read(
-                    descriptor,
-                    base.advanced(by: offset),
-                    buffer.count - offset
-                )
-                if count > 0 {
-                    offset += count
-                } else if count < 0 && errno == EINTR {
-                    continue
-                } else {
-                    return false
-                }
-            }
-            return true
-        }
-        guard succeeded else {
-            warnings.append("cannot read \(label): \(path)")
-            return nil
-        }
-        return data
-        #else
-        let url = URL(fileURLWithPath: path)
-        guard let data = try? Data(contentsOf: url),
-              data.count <= maximumBytes else {
-            return nil
-        }
-        return data
-        #endif
     }
 
     private static func isLowercaseSHA256(_ value: String) -> Bool {

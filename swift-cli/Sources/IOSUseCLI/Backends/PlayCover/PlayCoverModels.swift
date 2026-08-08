@@ -75,15 +75,10 @@ public struct PlayCoverMachOInspection: Codable, Equatable, Sendable {
         platform == PlayCoverMachO.platformMacCatalyst
     }
 
-    init(
-        _ upstream: PlayCoverUpstreamMachOInspection,
-        appPath: String
-    ) {
+    init(_ upstream: PlayCoverUpstreamMachOInspection, appPath: String) {
         relativePath = upstream.relativePath
-        path = URL(
-            fileURLWithPath: appPath,
-            isDirectory: true
-        ).appendingPathComponent(upstream.relativePath).path
+        path = URL(fileURLWithPath: appPath, isDirectory: true)
+            .appendingPathComponent(upstream.relativePath).path
         fileSHA256 = upstream.fileSHA256
         container = upstream.container.rawValue
         arm64SliceOffset = upstream.arm64SliceOffset
@@ -96,8 +91,8 @@ public struct PlayCoverMachOInspection: Codable, Equatable, Sendable {
         firstSectionOffset = upstream.firstSectionOffset
         if let firstSectionOffset,
            firstSectionOffset >= 32 + UInt64(upstream.commandBytes) {
-            availableCommandPadding =
-                firstSectionOffset - 32 - UInt64(upstream.commandBytes)
+            availableCommandPadding = firstSectionOffset
+                - 32 - UInt64(upstream.commandBytes)
         } else {
             availableCommandPadding = 0
         }
@@ -169,545 +164,43 @@ struct PlayCoverPreparationSource: Equatable, Sendable {
     }
 }
 
-/// Immutable evidence and content identity for one prepare attempt.
-///
-/// The original upstream inspection is retained alongside the public facade so
-/// the managed cache resolver, service facade, and upstream prepare engine all
-/// consume the same source snapshot without reconstructing or re-inspecting it.
+/// Immutable evidence for one always-Frida prepare attempt. It is transient;
+/// the installed slot persists only its compact `slot.json` contract.
 struct PlayCoverPreparationPlan: Equatable, Sendable {
     let source: PlayCoverPreparationSource
     let runtimeFrameworkPath: String
     let runtimeEvidence: PlayCoverUpstreamRuntimeEvidence
     let signingIdentity: PlayCoverSigningIdentityEvidence
-    let generationIdentity: PlayCoverGenerationIdentity
-    let fridaEnabled: Bool
-    let fridaEngineFrameworkPath: String?
-    let fridaEngineSHA256: String?
-
-    var runtimeBuildHash: String {
-        generationIdentity.runtimeBuildHash
-    }
-
-    var prepareRevision: String {
-        generationIdentity.prepareRevision
-    }
-
-    var accountNamespacePolicyHash: String {
-        generationIdentity.accountNamespacePolicyHash
-    }
-
-    var generationKey: String {
-        generationIdentity.generationKey
-    }
-
-    func withFridaEngine(
-        _ engine: PlayCoverFridaEngineService.Resolved
-    ) -> PlayCoverPreparationPlan {
-        PlayCoverPreparationPlan(
-            source: source,
-            runtimeFrameworkPath: runtimeFrameworkPath,
-            runtimeEvidence: runtimeEvidence,
-            signingIdentity: signingIdentity,
-            generationIdentity: generationIdentity,
-            fridaEnabled: fridaEnabled,
-            fridaEngineFrameworkPath: engine.path,
-            fridaEngineSHA256: engine.sha256
-        )
-    }
-
+    let runtimeBuildHash: String
+    let prepareRevision: String
+    let accountNamespacePolicyHash: String
+    let fridaEngineFrameworkPath: String
+    let fridaEngineSHA256: String
 }
 
-public struct PlayCoverEntitlementDiff: Codable, Equatable, Sendable {
-    public let original: [String: String]
-    public let playCoverBaseline: [String: String]
-    public let final: [String: String]
-    public let addedByPlayCover: [String]
-    public let addedByIOSUse: [String]
-    public let changedFromOriginal: [String]
-    public let removedFromOriginal: [String]
-
-    init(_ upstream: PlayCoverUpstreamEntitlementDiff) {
-        original = upstream.original
-        playCoverBaseline = upstream.playCoverBaseline
-        final = upstream.final
-        addedByPlayCover = upstream.addedByPlayCover
-        addedByIOSUse = upstream.addedByIOSUse
-        changedFromOriginal = upstream.changedFromOriginal
-        removedFromOriginal = upstream.removedFromOriginal
-    }
-
-    static let empty = PlayCoverEntitlementDiff(
-        PlayCoverUpstreamEntitlementDiff(
-            original: [:],
-            playCoverBaseline: [:],
-            final: [:],
-            addedByPlayCover: [],
-            addedByIOSUse: [],
-            changedFromOriginal: [],
-            removedFromOriginal: []
-        )
-    )
-}
-
-public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
-    public let backend: String
-    public let appBundleName: String
-    public let mainExecutableRelativePath: String
-    public let runtimeExecutableRelativePath: String
-    public let infoPlistSHA256: String
-    public let mainExecutableSHA256: String
-    public let runtimeExecutableSHA256: String
-    public let rootEntitlementsSHA256: String
-    public let codeObjects: [PlayCoverInventoryEntry]
-    /// Runtime-only resolution. These paths are never encoded.
-    public let sourceAppPath: String
-    public let preparedAppPath: String
+/// Detailed result for the current prepare call. This is never persisted in
+/// the App slot and is not a cache identity.
+public struct PlayCoverPreparedApp: Equatable, Sendable {
+    public let appPath: String
     public let bundleIdentifier: String
     public let executableName: String
+    public let executableRelativePath: String
     public let executablePath: String
     public let sourceContentHash: String
     public let sourceHashAfterPreparation: String
     public let runtimeBuildHash: String
     public let prepareRevision: String
-    /// Immutable capability bit persisted with the prepared generation. A
-    /// Frida-enabled generation embeds the optional Engine and can be reused
-    /// offline; the base generation never acquires it implicitly.
-    public let fridaEnabled: Bool
-    /// SHA-256 of the verified immutable Engine framework tree.  It is nil for
-    /// base generations and is persisted so the capability is auditable
-    /// without reopening the external Engine cache.
-    public let fridaEngineSHA256: String?
-    public let accountNamespacePolicyHash: String
-    public let generationKey: String
+    public let fridaEngineSHA256: String
     public let signingIdentity: PlayCoverSigningIdentityEvidence
-    public let rootCodeSignature:
-        PlayCoverRootCodeSignatureEvidence
-    public let runtimeLoadPath: String
-    public let runtimeFrameworkName: String
-    public let convertedMachOs: [String]
-    public let signingOrder: [String]
-    public let sourceInventory: [PlayCoverInventoryEntry]
-    public let sourceMachOs: [PlayCoverMachOInspection]
-    public let inventory: [PlayCoverInventoryEntry]
-    public let machOs: [PlayCoverMachOInspection]
-    public let entitlementDiff: PlayCoverEntitlementDiff
+    public let rootCodeSignature: PlayCoverRootCodeSignatureEvidence
+    public let inspection: PlayCoverAppInspection
     public let completedAt: String
-
-    public init(
-        backend: String = "mac",
-        sourceAppPath: String,
-        preparedAppPath: String,
-        bundleIdentifier: String,
-        executableName: String,
-        executablePath: String,
-        sourceContentHash: String,
-        sourceHashAfterPreparation: String,
-        runtimeBuildHash: String,
-        prepareRevision: String,
-        fridaEnabled: Bool = false,
-        fridaEngineSHA256: String? = nil,
-        accountNamespacePolicyHash: String,
-        generationKey: String,
-        signingIdentity: PlayCoverSigningIdentityEvidence,
-        rootCodeSignature: PlayCoverRootCodeSignatureEvidence,
-        runtimeLoadPath: String,
-        runtimeFrameworkName: String,
-        convertedMachOs: [String],
-        signingOrder: [String],
-        sourceInventory: [PlayCoverInventoryEntry],
-        sourceMachOs: [PlayCoverMachOInspection],
-        inventory: [PlayCoverInventoryEntry],
-        machOs: [PlayCoverMachOInspection],
-        entitlementDiff: PlayCoverEntitlementDiff,
-        completedAt: String,
-        appBundleName: String? = nil,
-        mainExecutableRelativePath: String? = nil,
-        runtimeExecutableRelativePath: String? = nil,
-        infoPlistSHA256: String? = nil,
-        mainExecutableSHA256: String? = nil,
-        runtimeExecutableSHA256: String? = nil,
-        rootEntitlementsSHA256: String = "",
-        codeObjects: [PlayCoverInventoryEntry]? = nil
-    ) {
-        self.backend = backend
-        let mainRelative =
-            mainExecutableRelativePath ?? executableName
-        let runtimeRelative = runtimeExecutableRelativePath
-            ?? "Frameworks/\(runtimeFrameworkName)/IOSUsePlayRuntime"
-        self.appBundleName = appBundleName
-            ?? URL(fileURLWithPath: preparedAppPath).lastPathComponent
-        self.mainExecutableRelativePath = mainRelative
-        self.runtimeExecutableRelativePath = runtimeRelative
-        self.infoPlistSHA256 = infoPlistSHA256
-            ?? inventory.first(where: {
-                $0.relativePath == "Info.plist"
-            })?.sha256
-            ?? ""
-        self.mainExecutableSHA256 = mainExecutableSHA256
-            ?? machOs.first(where: {
-                $0.relativePath == mainRelative
-            })?.fileSHA256
-            ?? ""
-        self.runtimeExecutableSHA256 = runtimeExecutableSHA256
-            ?? machOs.first(where: {
-                $0.relativePath == runtimeRelative
-            })?.fileSHA256
-            ?? ""
-        self.rootEntitlementsSHA256 =
-            rootEntitlementsSHA256
-        let criticalPaths: Set<String> = [
-            "Info.plist",
-            mainRelative,
-            runtimeRelative,
-        ]
-        self.codeObjects = codeObjects
-            ?? inventory.filter {
-                $0.codeObjectKind != nil
-                    || criticalPaths.contains($0.relativePath)
-            }
-        self.sourceAppPath = sourceAppPath
-        self.preparedAppPath = preparedAppPath
-        self.bundleIdentifier = bundleIdentifier
-        self.executableName = executableName
-        self.executablePath = executablePath
-        self.sourceContentHash = sourceContentHash
-        self.sourceHashAfterPreparation = sourceHashAfterPreparation
-        self.runtimeBuildHash = runtimeBuildHash
-        self.prepareRevision = prepareRevision
-        self.fridaEnabled = fridaEnabled
-        self.fridaEngineSHA256 = fridaEngineSHA256
-        self.accountNamespacePolicyHash =
-            accountNamespacePolicyHash
-        self.generationKey = generationKey
-        self.signingIdentity = signingIdentity
-        self.rootCodeSignature = rootCodeSignature
-        self.runtimeLoadPath = runtimeLoadPath
-        self.runtimeFrameworkName = runtimeFrameworkName
-        self.convertedMachOs = convertedMachOs
-        self.signingOrder = signingOrder
-        self.sourceInventory = sourceInventory
-        self.sourceMachOs = sourceMachOs
-        self.inventory = inventory
-        self.machOs = machOs
-        self.entitlementDiff = entitlementDiff
-        self.completedAt = completedAt
-    }
-
-    static let persistedKeys = Set(CodingKeys.allCases.map(\.rawValue))
-
-    private enum CodingKeys: String, CodingKey, CaseIterable {
-        case backend
-        case appBundleName
-        case mainExecutableRelativePath
-        case runtimeExecutableRelativePath
-        case infoPlistSHA256
-        case mainExecutableSHA256
-        case runtimeExecutableSHA256
-        case rootEntitlementsSHA256
-        case codeObjects
-        case bundleIdentifier
-        case executableName
-        case sourceContentHash
-        case runtimeBuildHash
-        case prepareRevision
-        case fridaEnabled
-        case fridaEngineSHA256
-        case accountNamespacePolicyHash
-        case generationKey
-        case signingIdentity
-        case rootCodeSignature
-        case runtimeLoadPath
-        case runtimeFrameworkName
-        case signingOrder
-        case completedAt
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(backend, forKey: .backend)
-        try container.encode(appBundleName, forKey: .appBundleName)
-        try container.encode(
-            mainExecutableRelativePath,
-            forKey: .mainExecutableRelativePath
-        )
-        try container.encode(
-            runtimeExecutableRelativePath,
-            forKey: .runtimeExecutableRelativePath
-        )
-        try container.encode(
-            infoPlistSHA256,
-            forKey: .infoPlistSHA256
-        )
-        try container.encode(
-            mainExecutableSHA256,
-            forKey: .mainExecutableSHA256
-        )
-        try container.encode(
-            runtimeExecutableSHA256,
-            forKey: .runtimeExecutableSHA256
-        )
-        try container.encode(
-            rootEntitlementsSHA256,
-            forKey: .rootEntitlementsSHA256
-        )
-        try container.encode(codeObjects, forKey: .codeObjects)
-        try container.encode(
-            bundleIdentifier,
-            forKey: .bundleIdentifier
-        )
-        try container.encode(executableName, forKey: .executableName)
-        try container.encode(
-            sourceContentHash,
-            forKey: .sourceContentHash
-        )
-        try container.encode(
-            runtimeBuildHash,
-            forKey: .runtimeBuildHash
-        )
-        try container.encode(prepareRevision, forKey: .prepareRevision)
-        try container.encode(fridaEnabled, forKey: .fridaEnabled)
-        try container.encode(
-            fridaEngineSHA256,
-            forKey: .fridaEngineSHA256
-        )
-        try container.encode(
-            accountNamespacePolicyHash,
-            forKey: .accountNamespacePolicyHash
-        )
-        try container.encode(generationKey, forKey: .generationKey)
-        try container.encode(signingIdentity, forKey: .signingIdentity)
-        try container.encode(
-            rootCodeSignature,
-            forKey: .rootCodeSignature
-        )
-        try container.encode(runtimeLoadPath, forKey: .runtimeLoadPath)
-        try container.encode(
-            runtimeFrameworkName,
-            forKey: .runtimeFrameworkName
-        )
-        try container.encode(signingOrder, forKey: .signingOrder)
-        try container.encode(completedAt, forKey: .completedAt)
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(
-            keyedBy: CodingKeys.self
-        )
-        backend = try container.decode(String.self, forKey: .backend)
-        appBundleName = try container.decode(
-            String.self,
-            forKey: .appBundleName
-        )
-        mainExecutableRelativePath = try container.decode(
-            String.self,
-            forKey: .mainExecutableRelativePath
-        )
-        runtimeExecutableRelativePath = try container.decode(
-            String.self,
-            forKey: .runtimeExecutableRelativePath
-        )
-        infoPlistSHA256 = try container.decode(
-            String.self,
-            forKey: .infoPlistSHA256
-        )
-        mainExecutableSHA256 = try container.decode(
-            String.self,
-            forKey: .mainExecutableSHA256
-        )
-        runtimeExecutableSHA256 = try container.decode(
-            String.self,
-            forKey: .runtimeExecutableSHA256
-        )
-        rootEntitlementsSHA256 = try container.decode(
-            String.self,
-            forKey: .rootEntitlementsSHA256
-        )
-        codeObjects = try container.decode(
-            [PlayCoverInventoryEntry].self,
-            forKey: .codeObjects
-        )
-        bundleIdentifier = try container.decode(
-            String.self,
-            forKey: .bundleIdentifier
-        )
-        executableName = try container.decode(
-            String.self,
-            forKey: .executableName
-        )
-        sourceContentHash = try container.decode(
-            String.self,
-            forKey: .sourceContentHash
-        )
-        sourceHashAfterPreparation = sourceContentHash
-        runtimeBuildHash = try container.decode(
-            String.self,
-            forKey: .runtimeBuildHash
-        )
-        prepareRevision = try container.decode(
-            String.self,
-            forKey: .prepareRevision
-        )
-        fridaEnabled = try container.decode(
-            Bool.self,
-            forKey: .fridaEnabled
-        )
-        guard container.contains(.fridaEngineSHA256) else {
-            throw DecodingError.keyNotFound(
-                CodingKeys.fridaEngineSHA256,
-                DecodingError.Context(
-                    codingPath: decoder.codingPath,
-                    debugDescription:
-                        "current manifest requires fridaEngineSHA256, including an explicit null"
-                )
-            )
-        }
-        fridaEngineSHA256 = try container.decodeNil(
-            forKey: .fridaEngineSHA256
-        )
-            ? nil
-            : try container.decode(
-                String.self,
-                forKey: .fridaEngineSHA256
-            )
-        accountNamespacePolicyHash = try container.decode(
-            String.self,
-            forKey: .accountNamespacePolicyHash
-        )
-        generationKey = try container.decode(
-            String.self,
-            forKey: .generationKey
-        )
-        signingIdentity = try container.decode(
-            PlayCoverSigningIdentityEvidence.self,
-            forKey: .signingIdentity
-        )
-        rootCodeSignature = try container.decode(
-            PlayCoverRootCodeSignatureEvidence.self,
-            forKey: .rootCodeSignature
-        )
-        runtimeLoadPath = try container.decode(
-            String.self,
-            forKey: .runtimeLoadPath
-        )
-        runtimeFrameworkName = try container.decode(
-            String.self,
-            forKey: .runtimeFrameworkName
-        )
-        signingOrder = try container.decode(
-            [String].self,
-            forKey: .signingOrder
-        )
-        entitlementDiff = .empty
-        completedAt = try container.decode(
-            String.self,
-            forKey: .completedAt
-        )
-        sourceAppPath = ""
-        preparedAppPath = ""
-        executablePath = ""
-        convertedMachOs = []
-        sourceInventory = []
-        sourceMachOs = []
-        inventory = codeObjects
-        machOs = []
-    }
-
-    func resolving(appURL: URL) -> PlayCoverPrepareManifest {
-        let app = URL(
-            fileURLWithPath: appURL.path,
-            isDirectory: true
-        )
-        return PlayCoverPrepareManifest(
-            backend: backend,
-            sourceAppPath: "",
-            preparedAppPath: app.path,
-            bundleIdentifier: bundleIdentifier,
-            executableName: executableName,
-            executablePath: app.appendingPathComponent(
-                mainExecutableRelativePath
-            ).path,
-            sourceContentHash: sourceContentHash,
-            sourceHashAfterPreparation: sourceContentHash,
-            runtimeBuildHash: runtimeBuildHash,
-            prepareRevision: prepareRevision,
-            fridaEnabled: fridaEnabled,
-            fridaEngineSHA256: fridaEngineSHA256,
-            accountNamespacePolicyHash:
-                accountNamespacePolicyHash,
-            generationKey: generationKey,
-            signingIdentity: signingIdentity,
-            rootCodeSignature: rootCodeSignature,
-            runtimeLoadPath: runtimeLoadPath,
-            runtimeFrameworkName: runtimeFrameworkName,
-            convertedMachOs: [],
-            signingOrder: signingOrder,
-            sourceInventory: [],
-            sourceMachOs: [],
-            inventory: codeObjects,
-            machOs: [],
-            entitlementDiff: entitlementDiff,
-            completedAt: completedAt,
-            appBundleName: appBundleName,
-            mainExecutableRelativePath:
-                mainExecutableRelativePath,
-            runtimeExecutableRelativePath:
-                runtimeExecutableRelativePath,
-            infoPlistSHA256: infoPlistSHA256,
-            mainExecutableSHA256: mainExecutableSHA256,
-            runtimeExecutableSHA256:
-                runtimeExecutableSHA256,
-            rootEntitlementsSHA256:
-                rootEntitlementsSHA256,
-            codeObjects: codeObjects
-        )
-    }
-
-    func hasSamePersistedSeal(
-        as other: PlayCoverPrepareManifest
-    ) throws -> Bool {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [
-            .sortedKeys,
-            .withoutEscapingSlashes,
-        ]
-        return try encoder.encode(self)
-            == encoder.encode(other)
-    }
 }
 
-struct PlayCoverValidatedPreparedManifest: Equatable, Sendable {
-    let manifest: PlayCoverPrepareManifest
-    let generationIdentity: PlayCoverGenerationIdentity
-}
-
-struct PlayCoverCompletedGeneration: Codable, Equatable, Sendable {
-    let generationKey: String
-    let manifestSHA256: String
-    let executableSHA256: String
-    let runtimeSHA256: String
-
-    static let persistedKeys = Set([
-        "generationKey",
-        "manifestSHA256",
-        "executableSHA256",
-        "runtimeSHA256",
-    ])
-}
-
-public struct PlayCoverVerification: Codable, Equatable, Sendable {
-    public let manifest: PlayCoverPrepareManifest
+public struct PlayCoverVerification: Equatable, Sendable {
+    public let inspection: PlayCoverAppInspection
     public let mainExecutable: PlayCoverMachOInspection
     public let signatureValid: Bool
-
-    public init(
-        manifest: PlayCoverPrepareManifest,
-        mainExecutable: PlayCoverMachOInspection,
-        signatureValid: Bool
-    ) {
-        self.manifest = manifest
-        self.mainExecutable = mainExecutable
-        self.signatureValid = signatureValid
-    }
 }
 
 public struct PlayCoverHello: Codable, Equatable, Sendable {
@@ -715,27 +208,41 @@ public struct PlayCoverHello: Codable, Equatable, Sendable {
     public let pid: Int32
     public let bundleIdentifier: String
     public let executablePath: String
-    public let generationKey: String
+    public let installRevision: String
     public let controlStage: String
     public let uiState: String
     public let uiStage: String
     public let uiFailure: String?
     public let capabilities: [String]
-}
 
-public struct PlayCoverLaunchIdentity: Codable, Equatable, Sendable {
-    public let sessionID: String
-    public let pid: Int32
-    public let bundleIdentifier: String
-    public let executablePath: String
-    public let appPath: String
-    public let generationKey: String
-    public let runtimeSocketPath: String
-    public let hello: PlayCoverHello
+    init(
+        sessionID: String,
+        pid: Int32,
+        bundleIdentifier: String,
+        executablePath: String,
+        installRevision: String,
+        controlStage: String,
+        uiState: String,
+        uiStage: String,
+        uiFailure: String?,
+        capabilities: [String]
+    ) {
+        self.sessionID = sessionID
+        self.pid = pid
+        self.bundleIdentifier = bundleIdentifier
+        self.executablePath = executablePath
+        self.installRevision = installRevision
+        self.controlStage = controlStage
+        self.uiState = uiState
+        self.uiStage = uiStage
+        self.uiFailure = uiFailure
+        self.capabilities = capabilities
+    }
 }
 
 public enum PlayCoverBackendError:
-    Error, Equatable, CustomStringConvertible, Sendable {
+    Error, Equatable, CustomStringConvertible, Sendable
+{
     case invalidApp(String)
     case unsupportedMachO(String)
     case malformedMachO(String)
@@ -755,7 +262,7 @@ public enum PlayCoverBackendError:
     case terminateFailed(String)
     case capabilityUnavailable(String)
     case bundleAlreadyRunning(bundleIdentifier: String, pid: Int32)
-    case pendingLaunchUnresolved(String)
+    case launchRecoveryUnresolved(String)
 
     public var description: String {
         switch self {
@@ -784,7 +291,7 @@ public enum PlayCoverBackendError:
         case .verificationFailed(let message):
             return "Mac verification failed: \(message)"
         case .cacheTampered(let message):
-            return "Mac prepared cache failed integrity checks: \(message)"
+            return "Mac App slot failed integrity checks: \(message)"
         case .stdioLogFailed(let message):
             return "Mac stdio log setup failed: \(message)"
         case .launchFailed(let message):
@@ -798,8 +305,8 @@ public enum PlayCoverBackendError:
         case .bundleAlreadyRunning(let bundleIdentifier, let pid):
             return "Mac bundle is already running: \(bundleIdentifier) "
                 + "(pid \(pid))"
-        case .pendingLaunchUnresolved(let message):
-            return "Mac pending launch is unresolved: \(message)"
+        case .launchRecoveryUnresolved(let message):
+            return "Mac launch is unresolved: \(message)"
         }
     }
 }

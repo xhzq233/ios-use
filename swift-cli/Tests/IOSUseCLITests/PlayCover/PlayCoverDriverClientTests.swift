@@ -1240,10 +1240,10 @@ final class PlayCoverDriverClientTests: XCTestCase {
             sessionIdentifier: "session-v3",
             bundleId: "com.example.runtime",
             macAppPath:
-                "/tmp/prepared/generation/com.example.runtime.app",
+                "/tmp/apps/com.example.runtime/Runtime.app",
             macExecutablePath:
-                "/tmp/prepared/generation/com.example.runtime.app/Demo",
-            macGenerationKey: "generation",
+                "/tmp/apps/com.example.runtime/Runtime.app/Demo",
+            macInstallRevision: String(repeating: "a", count: 64),
             macRuntimeSocketPath: "/tmp/run/s-sessionv3.sock"
         )
     }
@@ -2314,8 +2314,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
                     pid: 4_242,
                     bundleIdentifier: "com.example.runtime",
                     executablePath:
-                        "/tmp/prepared/generation/com.example.runtime.app/Demo",
-                    generationKey: String(repeating: "a", count: 64),
+                        "/tmp/apps/com.example.runtime/Runtime.app/Demo",
+                    installRevision: String(repeating: "a", count: 64),
                     capabilities: ["hello"],
                     controlStage: "ready",
                     controlFailure: nil,

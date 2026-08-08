@@ -27,7 +27,7 @@ SESSION_HOME=""
 SOURCE_EXECUTABLE=""
 SOURCE_HASH_BEFORE=""
 SOURCE_HASH_AFTER=""
-GENERATION_KEY=""
+INSTALL_REVISION=""
 GATE_PASSED=0
 MOUSE_SEQUENCE=0
 RETAINED_SCREENSHOT=""
@@ -178,7 +178,7 @@ DISPLAY_TOPOLOGY="$RUN_DIR/display-topology.json"
 DISPLAY_SELECTION="$RUN_DIR/display-selection.json"
 printf 'schema\tcase\tcommand\tstdout\tstderr\n' >"$MANIFEST"
 printf 'case\tsource\tretained\tsha256\n' >"$ARTIFACT_INDEX"
-printf 'cycle\tsessionIdentifier\trunnerPid\tgeneration\n' >"$CYCLE_INDEX"
+printf 'cycle\tsessionIdentifier\trunnerPid\tinstallRevision\n' >"$CYCLE_INDEX"
 cat >"$RUN_DIR/lifecycle-scope.txt" <<'SCOPE'
 This external-App gate exercises only clean start/status/screenshot/stop
 lifecycles against the real App process. Runtime endpoint loss, App crash/stale
@@ -354,11 +354,11 @@ expected_host_title_for_app() {
 assert_status() {
   local case_name="$1"
   if ! jq -e \
-      --arg generation "$GENERATION_KEY" \
+      --arg installRevision "$INSTALL_REVISION" \
       --arg sourceApp "$LIVE_APP" \
       --arg sourceExecutable "$SOURCE_EXECUTABLE" \
       --arg bundleIdentifier "$LIVE_BUNDLE_ID" \
-      --arg objectsRoot "$PLAYCOVER_GLOBAL_OBJECTS_ROOT" \
+      --arg appsRoot "$PLAYCOVER_APPS_ROOT" \
       --arg title "$EXPECTED_HOST_TITLE" '
       def scalar_max($lhs; $rhs):
         if $lhs > $rhs then $lhs else $rhs end;
@@ -431,14 +431,14 @@ assert_status() {
       $driver.macAppPath != $sourceApp and
       ($driver.macAppPath |
         startswith(
-          $objectsRoot + "/" + $generation + "/"
+          $appsRoot + "/" + $bundleIdentifier + "/"
         )) and
       $driver.macExecutablePath != $sourceExecutable and
       ($driver.macExecutablePath |
         startswith($driver.macAppPath + "/")) and
       .data.driver.status == "healthy" and
       .data.driver.bundleId == $bundleIdentifier and
-      .data.driver.macGenerationKey == $generation and
+      .data.driver.macInstallRevision == $installRevision and
       (.data.driver.sessionIdentifier | type) == "string" and
       (.data.driver.sessionIdentifier |
         test("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")) and
@@ -609,7 +609,7 @@ assert_cycle_identity() {
   fi
   if ! jq -e \
       --argjson cycle "$cycle" \
-      --arg generation "$GENERATION_KEY" \
+      --arg installRevision "$INSTALL_REVISION" \
       --slurpfile status "$status_file" '
         ($status[0].data.driver) as $driver |
         .deviceType == "mac" and
@@ -620,8 +620,8 @@ assert_cycle_identity() {
         .sessionIdentifier == $driver.sessionIdentifier and
         (.sessionIdentifier |
           test("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")) and
-        .macGenerationKey == $generation and
-        .macGenerationKey == $driver.macGenerationKey and
+        .macInstallRevision == $installRevision and
+        .macInstallRevision == $driver.macInstallRevision and
         .macAppPath == $driver.macAppPath and
         .macExecutablePath == $driver.macExecutablePath and
         .macRuntimeSocketPath ==
@@ -630,7 +630,7 @@ assert_cycle_identity() {
         $cycle >= 1
       ' "$lock_file" >/dev/null; then
     fail_gate \
-      "$case_name driver.lock does not match runner PID/session/generation"
+      "$case_name driver.lock does not match runner PID/session/install revision"
   fi
   local runner_pid
   runner_pid="$(jq -er '.data.driver.runnerPid' "$status_file")"
@@ -1258,7 +1258,7 @@ write_host_resize_plan() {
               },
               runnerPID: $driver.runnerPid,
               sessionIdentifier: $driver.sessionIdentifier,
-              generation: $driver.macGenerationKey
+              installRevision: $driver.macInstallRevision
             }
           end
         elif $phase == "second" then
@@ -1301,7 +1301,7 @@ write_host_resize_plan() {
               },
               runnerPID: $driver.runnerPid,
               sessionIdentifier: $driver.sessionIdentifier,
-              generation: $driver.macGenerationKey
+              installRevision: $driver.macInstallRevision
             }
           end
         else
@@ -1337,7 +1337,7 @@ wait_for_host_resize() {
         ($plan.targetHostSize) as $target |
         $driver.runnerPid == $plan.runnerPID and
         $driver.sessionIdentifier == $plan.sessionIdentifier and
-        $driver.macGenerationKey == $plan.generation and
+        $driver.macInstallRevision == $plan.installRevision and
         $window.status == "configured" and
         (($actual.width - $target.width) | abs) <= 10 and
         (($actual.height - $target.height) | abs) <= 10 and
@@ -1390,7 +1390,7 @@ resize_public_host() {
         canvasRect: $window.canvasRect,
         runnerPID: $driver.runnerPid,
         sessionIdentifier: $driver.sessionIdentifier,
-        generation: $driver.macGenerationKey
+        installRevision: $driver.macInstallRevision
       }
     ' "$RUN_DIR/${before_status_case}.stdout" \
       >"$RUN_DIR/host_resize_initial.json"
@@ -1499,8 +1499,8 @@ assert_two_uniform_host_resizes() {
         $secondDriver.runnerPid == $initial.runnerPID and
         $firstDriver.sessionIdentifier == $initial.sessionIdentifier and
         $secondDriver.sessionIdentifier == $initial.sessionIdentifier and
-        $firstDriver.macGenerationKey == $initial.generation and
-        $secondDriver.macGenerationKey == $initial.generation and
+        $firstDriver.macInstallRevision == $initial.installRevision and
+        $secondDriver.macInstallRevision == $initial.installRevision and
         $initial.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
         $first.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
         $second.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
@@ -1653,7 +1653,7 @@ write_display_move_plan() {
           expectedWindowNumber: $window.windowNumber,
           runnerPID: $driver.runnerPid,
           sessionIdentifier: $driver.sessionIdentifier,
-          generation: $driver.macGenerationKey,
+          installRevision: $driver.macInstallRevision,
           drag: {
             start: {
               x: ($host.x + ($host.width / 2)),
@@ -1695,7 +1695,7 @@ wait_for_display_phase_status() {
           ($driver.runtime.diagnostics.runtime.window) as $window |
           $driver.runnerPid == $plan.runnerPID and
           $driver.sessionIdentifier == $plan.sessionIdentifier and
-          $driver.macGenerationKey == $plan.generation and
+          $driver.macInstallRevision == $plan.installRevision and
           $window.windowNumber == $plan.expectedWindowNumber and
           $window.screenDisplayID ==
             $plan.targetScreen.screenDisplayID and
@@ -1715,7 +1715,7 @@ wait_for_display_phase_status() {
   done
   if [[ "$observed" != "1" ]]; then
     fail_gate \
-      "$case_name did not preserve exact PID/session/generation/window/display identity"
+      "$case_name did not preserve exact PID/session/revision/window/display identity"
   fi
   assert_status "$case_name"
 }
@@ -1953,8 +1953,8 @@ assert_display_matrix_identity() {
         $second.runnerPid == $third.runnerPid and
         $first.sessionIdentifier == $second.sessionIdentifier and
         $second.sessionIdentifier == $third.sessionIdentifier and
-        $first.macGenerationKey == $second.macGenerationKey and
-        $second.macGenerationKey == $third.macGenerationKey and
+        $first.macInstallRevision == $second.macInstallRevision and
+        $second.macInstallRevision == $third.macInstallRevision and
         $firstWindow.windowNumber == $secondWindow.windowNumber and
         $secondWindow.windowNumber == $thirdWindow.windowNumber and
         $firstWindow.screenDisplayID ==
@@ -1980,7 +1980,7 @@ assert_display_matrix_identity() {
         (($thirdWindow.displayScale - 0.875) | abs) <= 0.01
       ' >/dev/null; then
     fail_gate \
-      "v2 display matrix changed PID/session/generation/window identity"
+      "v2 display matrix changed PID/session/revision/window identity"
   fi
 }
 
@@ -2185,9 +2185,9 @@ write_redacted_attestation() {
       /usr/bin/shasum -a 256 |
       /usr/bin/awk '{print $1}'
   )"
-  local generation_digest
-  generation_digest="$(
-    printf '%s' "$GENERATION_KEY" |
+  local install_revision_digest
+  install_revision_digest="$(
+    printf '%s' "$INSTALL_REVISION" |
       /usr/bin/shasum -a 256 |
       /usr/bin/awk '{print $1}'
   )"
@@ -2229,7 +2229,7 @@ write_redacted_attestation() {
     --arg leafCommit "$leaf_commit" \
     --arg scenarioDigest "$SCENARIO_DIGEST" \
     --arg bundleDigest "$bundle_digest" \
-    --arg generationDigest "$generation_digest" \
+    --arg installRevisionDigest "$install_revision_digest" \
     --arg manifestDigest "$manifest_digest" \
     --arg artifactIndexDigest "$artifact_index_digest" \
     --arg cycleIndexDigest "$cycle_index_digest" \
@@ -2249,7 +2249,7 @@ write_redacted_attestation() {
         treeClean: $treeClean,
         scenarioDigest: $scenarioDigest,
         bundleIdentifierDigest: $bundleDigest,
-        generationDigest: $generationDigest,
+        installRevisionDigest: $installRevisionDigest,
         cycleCount: $cycleCount,
         uniqueSessionCount: $cycleCount,
         uniqueRunnerPIDCount: $uniqueRunnerPIDCount,
@@ -2260,7 +2260,7 @@ write_redacted_attestation() {
           eligibleExtendedDisplayCount: 1,
           backingScaleDiffers: true,
           exactWindowNumberRequired: true,
-          processSessionGenerationWindowIdentityPreserved: true,
+          processSessionRevisionWindowIdentityPreserved: true,
           phases: [
             {
               target: "main",
@@ -2499,28 +2499,19 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
       "${cycle_name}_start" \
       start --mac --app "$LIVE_APP"
     if ! rg -q -- \
-        'Mac generation prepared: [0-9a-f]{64}' \
+        '^Mac App slot installed: .+\.app$' \
         "$RUN_DIR/${cycle_name}_start.stdout"; then
-      fail_gate "the first external App start did not prepare a generation"
+      fail_gate "the first external App start did not install its Bundle slot"
     fi
-    GENERATION_KEY="$(
-      /usr/bin/sed -nE \
-        's/^Mac generation prepared: ([0-9a-f]{64})$/\1/p' \
-        "$RUN_DIR/${cycle_name}_start.stdout"
-    )"
-    if [[ ! "$GENERATION_KEY" =~ ^[0-9a-f]{64}$ ]]; then
-      fail_gate "could not read the prepared external App generation"
-    fi
-    printf '%s\n' "$GENERATION_KEY" >"$RUN_DIR/generation-key"
   else
     run_cli \
       "${cycle_name}_start" \
       start --mac --reuse
     if ! rg -q -- \
-        "Mac generation reused: $GENERATION_KEY" \
+        '^Mac App slot reused: .+\.app$' \
         "$RUN_DIR/${cycle_name}_start.stdout"; then
       fail_gate \
-        "$cycle_name did not reuse the exact prepared generation"
+        "$cycle_name did not reuse the current installed App slot"
     fi
   fi
   if ! rg -Fq -- \
@@ -2530,6 +2521,16 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
   fi
 
   run_cli "${cycle_name}_status" status --json
+  if [[ "$cycle" -eq 1 ]]; then
+    INSTALL_REVISION="$(
+      jq -er '.data.driver.macInstallRevision' \
+        "$RUN_DIR/${cycle_name}_status.stdout"
+    )"
+    if [[ ! "$INSTALL_REVISION" =~ ^[0-9a-f]{64}$ ]]; then
+      fail_gate "could not read the installed App revision"
+    fi
+    printf '%s\n' "$INSTALL_REVISION" >"$RUN_DIR/install-revision"
+  fi
   assert_status "${cycle_name}_status"
   assert_cycle_identity "${cycle_name}_status" "$cycle"
   cycle_session_identifier="$(
@@ -2557,7 +2558,7 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
         $cycle,
         .data.driver.sessionIdentifier,
         .data.driver.runnerPid,
-        .data.driver.macGenerationKey
+        .data.driver.macInstallRevision
       ] |
       @tsv
     ' "$RUN_DIR/${cycle_name}_status.stdout" >>"$CYCLE_INDEX" ||
@@ -2582,7 +2583,7 @@ done
 if ! cycle_pid_summary="$(
   /usr/bin/awk -F '\t' \
     -v expected="$CYCLE_COUNT" \
-    -v expectedGeneration="$GENERATION_KEY" '
+    -v expectedRevision="$INSTALL_REVISION" '
     NR == 1 { next }
     {
       if (
@@ -2590,14 +2591,14 @@ if ! cycle_pid_summary="$(
         length($2) != 36 ||
         $3 !~ /^[0-9]+$/ ||
         $3 <= 1 ||
-        $4 != expectedGeneration
+        $4 != expectedRevision
       ) {
         invalid = 1
       }
       rows += 1
       sessions[$2] = 1
       runners[$3] = 1
-      generations[$4] = 1
+      revisions[$4] = 1
     }
     END {
       if (invalid || rows != expected) {
@@ -2611,11 +2612,11 @@ if ! cycle_pid_summary="$(
       for (runner in runners) {
         runnerCount += 1
       }
-      generationCount = 0
-      for (generation in generations) {
-        generationCount += 1
+      revisionCount = 0
+      for (revision in revisions) {
+        revisionCount += 1
       }
-      if (sessionCount != expected || generationCount != 1) {
+      if (sessionCount != expected || revisionCount != 1) {
         exit 1
       }
       printf "%d\t%s\n", runnerCount,
@@ -2624,7 +2625,7 @@ if ! cycle_pid_summary="$(
   ' "$CYCLE_INDEX"
 )"; then
   fail_gate \
-    "the 20 cycles did not bind 20 unique sessions to one exact reused generation"
+    "the 20 cycles did not bind 20 unique sessions to one install revision"
 fi
 IFS=$'\t' read -r UNIQUE_RUNNER_PID_COUNT PID_REUSE_OBSERVED \
   <<<"$cycle_pid_summary"

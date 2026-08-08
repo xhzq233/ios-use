@@ -105,7 +105,6 @@ public struct StartOptions: Equatable, Sendable {
     public var reuse = false
     public var log = false
     public var timeout: Double = 15
-    public var frida = false
 
     public init(
         udid: String? = nil,
@@ -114,8 +113,7 @@ public struct StartOptions: Equatable, Sendable {
         appPath: String? = nil,
         reuse: Bool = false,
         log: Bool = false,
-        timeout: Double = 15,
-        frida: Bool = false
+        timeout: Double = 15
     ) {
         self.udid = udid
         self.verbose = verbose
@@ -124,7 +122,6 @@ public struct StartOptions: Equatable, Sendable {
         self.reuse = reuse
         self.log = log
         self.timeout = timeout
-        self.frida = frida
     }
 }
 

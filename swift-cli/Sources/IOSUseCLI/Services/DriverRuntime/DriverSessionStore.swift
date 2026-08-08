@@ -50,8 +50,8 @@ enum DriverSessionStore {
             macAppPath: raw["macAppPath"] as? String,
             macExecutablePath:
                 raw["macExecutablePath"] as? String,
-            macGenerationKey:
-                raw["macGenerationKey"] as? String,
+            macInstallRevision:
+                raw["macInstallRevision"] as? String,
             macRuntimeSocketPath:
                 raw["macRuntimeSocketPath"] as? String,
             macLogPath:
@@ -61,8 +61,8 @@ enum DriverSessionStore {
             guard let appPath = info.macAppPath, !appPath.isEmpty,
                   let executablePath = info.macExecutablePath,
                   !executablePath.isEmpty,
-                  let generationKey = info.macGenerationKey,
-                  !generationKey.isEmpty,
+                  let installRevision = info.macInstallRevision,
+                  !installRevision.isEmpty,
                   let bundleId = info.bundleId, !bundleId.isEmpty,
                   let sessionID = info.sessionIdentifier,
                   !sessionID.isEmpty,
@@ -98,14 +98,17 @@ enum DriverSessionStore {
                     paths: paths
                 )
             }
-            guard isManagedPreparedApp(
-                appPath,
-                generationKey: generationKey,
-                paths: paths
-            ) else {
+            guard let slot = try? PlayCoverSlotService.read(
+                    bundleIdentifier: bundleId,
+                    paths: paths,
+                    expectedInstallRevision: installRevision
+                  ),
+                  canonicalPath(slot.appPath) == canonicalPath(appPath),
+                  canonicalPath(slot.executablePath)
+                    == canonicalPath(executablePath) else {
                 throw CLIParseError.invalidValue(
-                    "Invalid driver.lock: Mac App is not the "
-                        + "recorded generation under this IOS_USE_HOME."
+                    "Invalid driver.lock: Mac App does not match the "
+                        + "recorded Bundle slot."
                 )
             }
             guard canonicalPath(executablePath).hasPrefix(
@@ -281,8 +284,8 @@ enum DriverSessionStore {
         if let executablePath = info.macExecutablePath {
             root["macExecutablePath"] = executablePath
         }
-        if let generationKey = info.macGenerationKey {
-            root["macGenerationKey"] = generationKey
+        if let installRevision = info.macInstallRevision {
+            root["macInstallRevision"] = installRevision
         }
         if let socketPath = info.macRuntimeSocketPath {
             root["macRuntimeSocketPath"] = socketPath
@@ -462,34 +465,6 @@ enum DriverSessionStore {
             .standardizedFileURL
             .resolvingSymlinksInPath()
             .path
-    }
-
-    private static func isManagedPreparedApp(
-        _ appPath: String,
-        generationKey: String,
-        paths: IOSUsePaths
-    ) -> Bool {
-        guard let canonicalApp = try?
-                PlayCoverManagedAppService
-                    .validatedManagedPreparedAppPath(
-                        appPath,
-                        paths: paths
-                    ) else {
-            return false
-        }
-        let canonicalRoot = URL(
-            fileURLWithPath: paths.playcoverGlobalObjects,
-            isDirectory: true
-        ).standardizedFileURL.path
-        let app = URL(
-            fileURLWithPath: canonicalApp,
-            isDirectory: true
-        )
-        return app.pathExtension == "app"
-            && app.deletingLastPathComponent().lastPathComponent
-                == generationKey
-            && app.deletingLastPathComponent()
-                .deletingLastPathComponent().path == canonicalRoot
     }
 
     private static func validateOwnedRunDirectory(

@@ -113,19 +113,20 @@ enum CLIHelp {
         case "start":
             return """
             Usage: ios-use start [udid] [--verbose]
-                   ios-use start --mac --app <source-or-prepared.app> [--frida] [--log] [--timeout <duration>]
-                   ios-use start --mac --reuse [--frida] [--log] [--timeout <duration>]
+                   ios-use start --mac --app <source.app> [--log] [--timeout <duration>]
+                   ios-use start --mac --reuse [--log] [--timeout <duration>]
 
             Start a configured XCTest driver or an iOS App on this Mac and
             record it as the active backend in driver.lock.
             Defaults to the first connected USB real device when udid is omitted.
             The Mac backend automatically prepares an unmodified iPhoneOS App
-            into the account-global immutable Mac cache, or verifies and
-            directly launches an already prepared App. The current IOS_USE_HOME
-            stores only its selected generation and session state.
+            into its account-global Bundle slot, or directly launches the
+            current slot. The current IOS_USE_HOME stores only its selected
+            Bundle ID and session state.
             Use --app after every Debug rebuild so the current source is
-            inspected. Use --reuse only to explicitly launch that Home's most
-            recent successful generation without checking its original source.
+            prepared and installed. Use --reuse only to launch that Home's
+            current installed App without reading its original source.
+            Every Mac App includes the resident Frida debug Engine.
             --log captures target-App stdout/stderr from the injected Runtime
             onward in an owner-only per-session file retained after stop,
             crash, or launch failure.
@@ -133,10 +134,8 @@ enum CLIHelp {
             Options:
               --verbose                    Enable verbose XCTest output
               --mac                        Select the Mac backend
-              --app <source-or-prepared.app>
-                                           Prepare if needed, then launch this App
-              --reuse                      Launch the most recent successful generation
-              --frida                      Select or assert a Frida-enabled generation
+              --app <source.app>            Install or update, then launch this App
+              --reuse                      Launch the current installed App slot
               --log                        Capture target-App stdout/stderr to a retained session log
               --timeout <duration>          Wait up to 60 seconds for direct Runtime socket hello; default 15s
 
@@ -148,7 +147,7 @@ enum CLIHelp {
                    ios-use debug --reset [--json]
 
             Evaluate JavaScript through the authenticated Runtime socket of the
-            active Frida-enabled Mac App. Events are written to stderr and the
+            active Mac App's resident Frida Engine. Events are written to stderr and the
             final display value is written to stdout. Script source is not saved
             to disk, but Agent globals, hooks, and completed native mutations can
             remain active until debug --reset or App exit. A failed eval may have

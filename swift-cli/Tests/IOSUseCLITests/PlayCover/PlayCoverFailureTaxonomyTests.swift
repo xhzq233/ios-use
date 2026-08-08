@@ -55,10 +55,10 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
                 true
             ),
             (
-                .pendingLaunchUnresolved("intent"),
+                .launchRecoveryUnresolved("intent"),
                 "session",
-                "mac_pending_launch_unresolved",
-                "mac_pending_launch",
+                "mac_launch_recovery_unresolved",
+                "mac_launch_recovery",
                 false
             ),
         ]
@@ -76,17 +76,7 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
 
     func testUnterminatedLaunchRemainsASeparateFatalRollbackFailure() {
         let classified = MachineOutput.classify(
-            PlayCoverUnterminatedLaunchError(
-                sessionID: "test-session",
-                pid: 42,
-                bundleIdentifier: "com.example.fixture",
-                executablePath: "/tmp/Fixture",
-                appPath: "/tmp/Fixture.app",
-                generationKey: "generation",
-                runtimeSocketPath: "/tmp/runtime.sock",
-                originalError: "dyld failed",
-                rollbackError: "SIGKILL failed"
-            )
+            unterminatedLaunchError(originalError: "dyld failed")
         )
 
         XCTAssertEqual(classified.category, "session")
@@ -124,32 +114,13 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
     }
 
     func testLoggedUnterminatedLaunchPreservesFatalRollbackTaxonomy() {
-        let underlying = PlayCoverUnterminatedLaunchError(
-            sessionID: "test-session",
-            pid: 42,
-            bundleIdentifier: "com.example.fixture",
-            executablePath: "/tmp/Fixture",
-            appPath: "/tmp/Fixture.app",
-            generationKey: "generation",
-            runtimeSocketPath: "/tmp/runtime.sock",
-            originalError: "hello timed out",
-            rollbackError: "SIGKILL failed"
+        let underlying = unterminatedLaunchError(
+            originalError: "hello timed out"
         )
         let classified = MachineOutput.classify(
             PlayCoverSessionUnterminatedLaunchError(
-                result: .init(
-                    sessionID: "test-session",
-                    appPath: "/tmp/Fixture.app",
-                    bundleIdentifier: "com.example.fixture",
-                    executablePath: "/tmp/Fixture",
-                    generationKey: "generation",
-                    productType: "iPhone16,2",
-                    pid: 42,
-                    runtimeSocketPath: "/tmp/runtime.sock",
-                    logPath: "/tmp/stdio-session.log",
-                    reused: false
-                ),
-                underlying: underlying
+                underlying: underlying,
+                logPath: "/tmp/stdio-session.log"
             )
         )
 
@@ -318,5 +289,36 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
         XCTAssertEqual(preflight.code, "frida_engine_missing")
         XCTAssertEqual(preflight.category, "internal")
         XCTAssertFalse(preflight.mutationMayHaveApplied)
+    }
+
+    private func unterminatedLaunchError(
+        originalError: String
+    ) -> PlayCoverSlotUnterminatedLaunchError {
+        let appPath = "/tmp/apps/com.example.fixture/Fixture.app"
+        let slot = PlayCoverInstalledSlot(
+            metadata: PlayCoverSlotMetadata(
+                bundleIdentifier: "com.example.fixture",
+                appRelativePath: "Fixture.app",
+                executableRelativePath: "Fixture",
+                installRevision: String(repeating: "a", count: 64)
+            ),
+            appPath: appPath,
+            executablePath: "\(appPath)/Fixture"
+        )
+        return PlayCoverSlotUnterminatedLaunchError(
+            identity: PlayCoverSlotLaunchIdentityCandidate(
+                pid: 42,
+                bundleIdentifier: "com.example.fixture",
+                bundleURLPath: appPath,
+                executablePath: "\(appPath)/Fixture",
+                processStartTimeMicroseconds: 1,
+                source: .workspaceCallback
+            ),
+            slot: slot,
+            sessionID: "test-session",
+            runtimeSocketPath: "/tmp/runtime.sock",
+            originalError: originalError,
+            rollbackError: "SIGKILL failed"
+        )
     }
 }

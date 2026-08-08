@@ -1024,7 +1024,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
 
     func testHelloRequiresTheCurrentControlPayload() throws {
         for missingKey in [
-            "generationKey",
+            "installRevision",
             "controlStage",
             "uiState",
             "stdio",
@@ -1464,7 +1464,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             "executablePath":
                 PlayCoverRuntimeClient.executablePath(for: getpid())
                 ?? ProcessInfo.processInfo.arguments[0],
-            "generationKey": String(repeating: "a", count: 64),
+            "installRevision": String(repeating: "a", count: 64),
             "capabilities":
                 PlayCoverRuntimeCommand.allCasesForTesting
                     .map(\.rawValue),

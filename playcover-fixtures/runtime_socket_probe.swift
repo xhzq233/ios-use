@@ -399,8 +399,8 @@ func run() throws {
               let executablePath =
                 payload["executablePath"] as? String,
               !executablePath.isEmpty,
-              let generationKey = payload["generationKey"] as? String,
-              generationKey.range(
+              let installRevision = payload["installRevision"] as? String,
+              installRevision.range(
                   of: "^[0-9a-f]{64}$",
                   options: .regularExpression
               ) != nil,
@@ -424,7 +424,7 @@ func run() throws {
             "pid",
             "bundleIdentifier",
             "executablePath",
-            "generationKey",
+            "installRevision",
             "capabilities",
             "controlStage",
             "controlFailure",

@@ -327,11 +327,7 @@ enum PlayCoverCodeSignatureInspector {
                 errno
             )
         }
-        let stableDirectoryURL =
-            try PlayCoverManagedAppService.ownedDirectoryDescriptorPath(
-                scratchDescriptor,
-                label: "signature-inspection scratch root"
-            )
+        let stableDirectoryURL = scratchRootURL.standardizedFileURL
         let inspectionResult: Result<T, Error>
         do {
             let value = try body(

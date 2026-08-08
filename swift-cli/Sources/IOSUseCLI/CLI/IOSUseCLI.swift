@@ -6,7 +6,7 @@ public struct IOSUseCLI: Sendable {
     typealias PlayCoverSignerInitializer =
         @Sendable () throws -> PlayCoverSigningIdentityEvidence
 
-    public static let version = "2.0.0"
+    public static let version = "2.0.1"
     static var driverClientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)? {
         get { DriverCommandExecution.clientFactoryForTesting }
         set { DriverCommandExecution.clientFactoryForTesting = newValue }
@@ -370,7 +370,6 @@ public struct IOSUseCLI: Sendable {
                         signingIdentity:
                             explicitMacSigningIdentity,
                         captureStdio: options.log,
-                        fridaEnabled: options.frida,
                         timeout: options.timeout,
                         paths: paths
                     )

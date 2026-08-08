@@ -1890,7 +1890,7 @@ write_display_move_plan() {
           expectedWindowNumber: $window.windowNumber,
           runnerPID: $driver.runnerPid,
           sessionIdentifier: $driver.sessionIdentifier,
-          generation: $driver.macGenerationKey,
+          installRevision: $driver.macInstallRevision,
           drag: {
             start: {
               x: ($host.x + ($host.width / 2)),
@@ -1932,7 +1932,7 @@ wait_for_display_phase_status() {
           ($driver.runtime.diagnostics.runtime.window) as $window |
           $driver.runnerPid == $plan.runnerPID and
           $driver.sessionIdentifier == $plan.sessionIdentifier and
-          $driver.macGenerationKey == $plan.generation and
+          $driver.macInstallRevision == $plan.installRevision and
           $window.windowNumber == $plan.expectedWindowNumber and
           $window.screenDisplayID ==
             $plan.targetScreen.screenDisplayID and
@@ -2157,8 +2157,8 @@ assert_display_matrix_identity() {
         $second.runnerPid == $third.runnerPid and
         $first.sessionIdentifier == $second.sessionIdentifier and
         $second.sessionIdentifier == $third.sessionIdentifier and
-        $first.macGenerationKey == $second.macGenerationKey and
-        $second.macGenerationKey == $third.macGenerationKey and
+        $first.macInstallRevision == $second.macInstallRevision and
+        $second.macInstallRevision == $third.macInstallRevision and
         $firstWindow.windowNumber == $secondWindow.windowNumber and
         $secondWindow.windowNumber == $thirdWindow.windowNumber and
         $firstWindow.screenDisplayID ==
@@ -2398,21 +2398,21 @@ assert_json status '
       .identityMapping == true))
 '
 if ! jq -e \
-    --arg objectsRoot "$PLAYCOVER_GLOBAL_OBJECTS_ROOT" '
+    --arg appsRoot "$PLAYCOVER_APPS_ROOT" '
       .data.driver as $driver |
-      $driver.macGenerationKey as $generation |
-      ($generation |
+      $driver.macInstallRevision as $revision |
+      ($revision |
         type == "string" and
         test("^[0-9a-f]{64}$")) and
       ($driver.macAppPath |
         startswith(
-          $objectsRoot + "/" + $generation + "/"
+          $appsRoot + "/" + $driver.bundleId + "/"
         )) and
       ($driver.macExecutablePath |
         startswith($driver.macAppPath + "/"))
     ' "$RUN_DIR/status.stdout" >/dev/null; then
   echo \
-    "[playcover-fixture-live] FAIL: status did not bind the account-global generation." \
+    "[playcover-fixture-live] FAIL: status did not bind the account-global Bundle slot." \
     >&2
   exit 1
 fi

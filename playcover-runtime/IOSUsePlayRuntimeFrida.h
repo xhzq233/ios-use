@@ -2,10 +2,9 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// Optional, capability-gated bridge for the separately pinned
-/// IOSUseFridaEngine.framework. The base Runtime deliberately does not embed
-/// a JavaScript VM or a substitute hook implementation; if the signed
-/// framework is absent, callers receive a stable capability error.
+/// Bridge for the separately pinned IOSUseFridaEngine.framework. Every
+/// prepared App supplies the Engine as a sibling framework; it is loaded on
+/// the first debug command and retained for the App process lifetime.
 FOUNDATION_EXPORT NSDictionary<NSString *, id> * _Nullable
 IOSUsePlayRuntimeFridaDebugCommand(
     NSDictionary<NSString *, id> *arguments,
@@ -23,7 +22,5 @@ IOSUsePlayRuntimeFridaDebugCommand(
 /// when a streaming Unix-socket connection closes or a non-streaming request
 /// has completed.
 FOUNDATION_EXPORT void IOSUsePlayRuntimeFridaClearEventSubscription(void);
-
-FOUNDATION_EXPORT BOOL IOSUsePlayRuntimeFridaEnabled(void);
 
 NS_ASSUME_NONNULL_END

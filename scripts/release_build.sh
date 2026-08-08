@@ -382,7 +382,7 @@ BUILD_MANIFEST_ASSET="MAC-BACKEND-BUILD-MANIFEST-v$ACTUAL_VERSION.txt"
 PROVENANCE_ASSET="MAC-BACKEND-PROVENANCE-v$ACTUAL_VERSION.md"
 {
   printf '# Mac backend release provenance\n\n'
-  printf 'This release packages `IOSUsePlayRuntime.framework`, the optional-at-runtime `IOSUseFridaEngine.framework`, and the pinned sandbox rules as read-only resources under `share/ios-use/mac/`.\n\n'
+  printf 'This release packages `IOSUsePlayRuntime.framework`, the always-available `IOSUseFridaEngine.framework`, and the pinned sandbox rules as read-only resources under `share/ios-use/mac/`.\n\n'
   printf 'The complete corresponding source for this exact release is `%s`; it includes the complete pinned Yams tree and the Frida GumJS static source closure.\n\n' "$SOURCE_ARCHIVE"
   printf 'Fresh Runtime/source/archive digests are recorded in `%s`.\n\n' "$BUILD_MANIFEST_ASSET"
   for provenance in \

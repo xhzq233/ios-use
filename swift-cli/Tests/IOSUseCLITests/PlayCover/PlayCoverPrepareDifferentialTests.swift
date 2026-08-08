@@ -204,9 +204,12 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
 
         let source = try makeSourceFixture(in: root)
         let runtime = try makeCatalystRuntimeFramework(in: root)
+        let fridaEngine = try makeCatalystFridaEngineFramework(in: root)
         let playTools = try makePinnedPlayToolsFramework(in: root)
         let runtimeRelativePath =
             "Frameworks/IOSUsePlayRuntime.framework/IOSUsePlayRuntime"
+        let fridaRelativePath =
+            "Frameworks/IOSUseFridaEngine.framework/IOSUseFridaEngine"
         let pluginRelativePath =
             "PlugIns/AKInterface.bundle/Contents/MacOS/AKInterface"
         let runtimeBaselineInspection =
@@ -220,6 +223,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "PlugIns/AKInterface.bundle/Contents/MacOS/AKInterface"
                 ),
                 relativePath: pluginRelativePath
+            )
+        let fridaBaselineInspection =
+            try PlayCoverUpstreamEngine.inspectMachO(
+                at: fridaEngine.appendingPathComponent("IOSUseFridaEngine"),
+                relativePath: fridaRelativePath
             )
         let baselines = [
             PlayCoverDifferentialObjectBaseline(
@@ -241,6 +249,16 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 sourceSHA256: runtimeBaselineInspection.fileSHA256,
                 provenance:
                     "generated fixture Runtime framework passed to "
+                    + "PlayCoverService.prepare"
+            ),
+            PlayCoverDifferentialObjectBaseline(
+                id: "ios-use-frida-engine-input",
+                side: .iosUse,
+                relativePath: fridaRelativePath,
+                inspection: fridaBaselineInspection,
+                sourceSHA256: fridaBaselineInspection.fileSHA256,
+                provenance:
+                    "generated fixture Frida Engine framework passed to "
                     + "PlayCoverService.prepare"
             ),
         ]
@@ -294,7 +312,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             )
         )
         let candidateParent = URL(
-            fileURLWithPath: paths.playcoverGlobalObjects,
+            fileURLWithPath: paths.playcoverApps,
             isDirectory: true
         ).appendingPathComponent("differential", isDirectory: true)
         try makePrivateDirectory(candidateParent)
@@ -307,14 +325,23 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 appPath: source.path
             ),
             runtimeFrameworkPath: runtime.path,
-            paths: paths
+            paths: paths,
+            fridaEngine: PlayCoverFridaEngineService.Resolved(
+                path: fridaEngine.path,
+                sha256: try PlayCoverUpstreamEngine.contentHash(
+                    appURL: fridaEngine
+                ),
+                size: 0,
+                platform: PlayCoverMachO.platformMacCatalyst,
+                cpuType: 0
+            )
         )
         let preparedArtifact = try PlayCoverService.prepareArtifact(
             plan: plan,
             outputAppPath: candidateOutput.path,
             paths: paths
         )
-        let manifest = preparedArtifact.manifest
+        let preparedApp = preparedArtifact.preparedApp
         let iosUseResult = try XCTUnwrap(
             preparedArtifact.upstreamResult
         )
@@ -388,18 +415,18 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         XCTAssertLessThan(composeIndex, rootSignIndex)
         XCTAssertEqual(pinned.signingOrder.last, ".")
         XCTAssertEqual(
-            manifest.signingOrder,
+            iosUseResult.signingOrder,
             [
                 "Frameworks/Fat64Fixture",
                 "Frameworks/libswiftUIKit.dylib",
                 "Frameworks/FixtureKit.framework",
+                "Frameworks/IOSUseFridaEngine.framework",
                 "Frameworks/IOSUsePlayRuntime.framework",
                 "PlugIns/FixtureExtension.appex",
                 ".",
             ],
             "ios-use must sign loose children and nested bundles before root"
         )
-        XCTAssertEqual(manifest.entitlementDiff, .empty)
         XCTAssertEqual(
             iosUseResult.entitlementDiff.removedFromOriginal,
             [
@@ -422,7 +449,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .adapterBoundaryEvidence.isEmpty
         )
         XCTAssertEqual(pinned.sourceHashAfterPrepare, sourceHash)
-        XCTAssertEqual(manifest.sourceHashAfterPreparation, sourceHash)
+        XCTAssertEqual(preparedApp.sourceHashAfterPreparation, sourceHash)
         XCTAssertEqual(
             try PlayCoverUpstreamEngine.contentHash(appURL: source),
             sourceHash
@@ -575,7 +602,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             [0x0100_000c, 0x0100_0007]
         )
         XCTAssertEqual(pinned.prepared.machOs.count, 6)
-        XCTAssertEqual(iosUse.machOs.count, 6)
+        XCTAssertEqual(iosUse.machOs.count, 7)
         XCTAssertEqual(
             pinned.prepared.machOs.first {
                 $0.relativePath == "Frameworks/Fat64Fixture"
@@ -673,6 +700,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         )
         let allowances = try makeAllowances(
             runtimeSHA256: runtimeBaselineInspection.fileSHA256,
+            fridaSHA256: fridaBaselineInspection.fileSHA256,
             pluginSHA256: pluginBaselineInspection.fileSHA256,
             observedDifferences: actual
         )
@@ -702,7 +730,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         XCTAssertFalse(report.differences.isEmpty)
         XCTAssertEqual(
             Set(report.consumedBaselineIDs),
-            ["pinned-akinterface-input", "ios-use-runtime-input"]
+            [
+                "pinned-akinterface-input",
+                "ios-use-runtime-input",
+                "ios-use-frida-engine-input",
+            ]
         )
         XCTAssertTrue(
             report.comparedSliceSelectors.contains {
@@ -712,6 +744,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         XCTAssertTrue(
             report.comparedSliceSelectors.contains {
                 $0.hasPrefix(runtimeRelativePath + "#cpu=")
+            }
+        )
+        XCTAssertTrue(
+            report.comparedSliceSelectors.contains {
+                $0.hasPrefix(fridaRelativePath + "#cpu=")
             }
         )
         XCTAssertTrue(
@@ -741,7 +778,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             commonObjectSelectors + [pluginRelativePath]
         ).sorted()
         let expectedIOSUseObjects = (
-            commonObjectSelectors + [runtimeRelativePath]
+            commonObjectSelectors + [runtimeRelativePath, fridaRelativePath]
         ).sorted()
         func arm64SliceSelectors(_ paths: [String]) -> [String] {
             paths.map {
@@ -818,7 +855,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverLaunchCrashCut.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverManagedAppService.swift",
+                    + "PlayCoverSlotService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverFridaEngineService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
@@ -909,7 +946,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         )
         XCTAssertEqual(
             attestation.iosUseOutput.consumedBaselineIDs,
-            ["ios-use-runtime-input"]
+            ["ios-use-frida-engine-input", "ios-use-runtime-input"]
         )
         XCTAssertEqual(
             attestation.selectorCoverage.pinnedObjectSelectors,
@@ -1038,7 +1075,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         }
         XCTAssertEqual(
             attestation.consumedBaselines.map(\.id),
-            ["ios-use-runtime-input", "pinned-akinterface-input"]
+            [
+                "ios-use-frida-engine-input",
+                "ios-use-runtime-input",
+                "pinned-akinterface-input",
+            ]
         )
         let attestedBaselines = Dictionary(
             uniqueKeysWithValues:
@@ -1310,7 +1351,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             XCTAssertTrue(
                 messages.contains(
                     "differential attestation requires constrained normalization"
-                )
+                ),
+                messages.joined(separator: "\n")
             )
         }
     }
@@ -1779,7 +1821,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             XCTAssertTrue(
                 messages.contains(
                     "pinned prepared App is outside its managed home"
-                )
+                ),
+                messages.joined(separator: "\n")
             )
         }
     }
@@ -1917,7 +1960,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             XCTAssertTrue(
                 messages.contains(
                     "slice selectors are not each covered exactly once"
-                )
+                ),
+                messages.joined(separator: "\n")
             )
         }
     }
@@ -2139,6 +2183,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
 
     private func makeAllowances(
         runtimeSHA256: String,
+        fridaSHA256: String,
         pluginSHA256: String,
         observedDifferences: [PlayCoverDifferentialDifference]
     ) throws -> [PlayCoverDifferentialAllowance] {
@@ -2387,6 +2432,82 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "PlayCoverUpstreamEngine.signInsideOut"
             ),
             allowance(
+                "inventory-frida-framework-directory",
+                "Frameworks/IOSUseFridaEngine.framework",
+                "inventory.presence",
+                .absent,
+                .exact(
+                    jsonStringArray([
+                        "present", "directory", "<absent>", "493",
+                        "<absent>", "<absent>", "frameworkBundle",
+                    ])
+                ),
+                "Every ios-use Mac App embeds the reviewed resident Frida "
+                    + "Engine framework.",
+                "PlayTools.playToolsPath",
+                "PlayCoverUpstreamEngine.prepare"
+            ),
+            try observedAllowance(
+                "inventory-frida-executable",
+                "Frameworks/IOSUseFridaEngine.framework/IOSUseFridaEngine",
+                "inventory.presence",
+                "The generated one-sided executable is compared against "
+                    + "its complete pre-transform Mach-O baseline.",
+                "PlayTools.playToolsPath",
+                "PlayCoverUpstreamEngine.prepare"
+            ),
+            allowance(
+                "inventory-frida-info",
+                "Frameworks/IOSUseFridaEngine.framework/Info.plist",
+                "inventory.presence",
+                .absent,
+                .exact(
+                    jsonStringArray([
+                        "present", "regularFile", "389", "420",
+                        "11271b0fc1e407838a992e119b7306e74efdb9315f1e1ef4"
+                            + "00134eac08bbabf8",
+                        "<absent>", "<absent>",
+                    ])
+                ),
+                "The fixture Frida Engine Info.plist is an exact reviewed "
+                    + "resource.",
+                "PlayTools.playToolsPath",
+                "makeCatalystFridaEngineFramework"
+            ),
+            allowance(
+                "inventory-frida-signature-directory",
+                "Frameworks/IOSUseFridaEngine.framework/_CodeSignature",
+                "inventory.presence",
+                .absent,
+                .exact(
+                    jsonStringArray([
+                        "present", "directory", "<absent>", "493",
+                        "<absent>", "<absent>", "<absent>",
+                    ])
+                ),
+                "Inside-out signing creates the resident Engine framework "
+                    + "signature directory.",
+                "Shell.signAppWith(--deep)",
+                "PlayCoverUpstreamEngine.signInsideOut"
+            ),
+            allowance(
+                "inventory-frida-code-resources",
+                "Frameworks/IOSUseFridaEngine.framework/_CodeSignature/"
+                    + "CodeResources",
+                "inventory.presence",
+                .absent,
+                .exact(
+                    jsonStringArray([
+                        "present", "regularFile", "1798", "420",
+                        "<SIGNATURE-COMPARATOR>", "<absent>", "<absent>",
+                    ])
+                ),
+                "The resident Engine framework seal is validated by the "
+                    + "signature comparator.",
+                "Shell.signAppWith(--deep)",
+                "PlayCoverUpstreamEngine.signInsideOut"
+            ),
+            allowance(
                 "inventory-plugin-directory",
                 "PlugIns/AKInterface.bundle",
                 "inventory.presence",
@@ -2499,9 +2620,10 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "_CodeSignature/CodeResources",
                 "inventory.size",
                 .exact("5747"),
-                .exact("5418"),
+                .exact("6320"),
                 "The root resource seals enumerate different reviewed "
-                    + "one-sided Runtime/plugin resource sets.",
+                    + "one-sided Runtime, resident Engine, and plugin "
+                    + "resource sets.",
                 pinnedSign,
                 iosUseSign
             ),
@@ -2815,6 +2937,20 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "PlayCoverUpstreamEngine.prepare"
             ),
             allowance(
+                "embedded-frida-engine-object",
+                "Frameworks/IOSUseFridaEngine.framework/IOSUseFridaEngine",
+                "object.presence",
+                .absent,
+                .exact(
+                    "present;baseline=ios-use-frida-engine-input;fileSHA256="
+                        + fridaSHA256
+                ),
+                "Every ios-use Mac App embeds and signs the reviewed "
+                    + "resident Frida Engine framework.",
+                "PlayTools.playToolsPath",
+                "PlayCoverUpstreamEngine.prepare"
+            ),
+            allowance(
                 "pinned-akinterface-plugin-object",
                 "PlugIns/AKInterface.bundle/Contents/MacOS/AKInterface",
                 "object.presence",
@@ -3107,6 +3243,48 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "-Wl,-headerpad,0x4000",
                 "-Wl,-install_name,@rpath/IOSUsePlayRuntime.framework/"
                     + "IOSUsePlayRuntime",
+                source.path,
+                "-o", output.path,
+            ]
+        )
+        try makeExecutable(output)
+        try codesign(framework, entitlements: nil)
+        return framework
+    }
+
+    private func makeCatalystFridaEngineFramework(in root: URL) throws -> URL {
+        let framework = root.appendingPathComponent(
+            "IOSUseFridaEngine.framework",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: framework,
+            withIntermediateDirectories: true
+        )
+        try plistData([
+            "CFBundleIdentifier": "com.example.IOSUseFridaEngine",
+            "CFBundleExecutable": "IOSUseFridaEngine",
+            "CFBundlePackageType": "FMWK",
+        ]).write(to: framework.appendingPathComponent("Info.plist"))
+        let source = root.appendingPathComponent("FridaEngine.c")
+        try Data(
+            "int ios_use_frida_engine_fixture(void) { return 1; }\n".utf8
+        ).write(to: source)
+        let output = framework.appendingPathComponent("IOSUseFridaEngine")
+        let sdk = try run(
+            "/usr/bin/xcrun",
+            ["--sdk", "macosx", "--show-sdk-path"]
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try run(
+            "/usr/bin/xcrun",
+            [
+                "--sdk", "macosx", "clang",
+                "-target", "arm64-apple-ios17.0-macabi",
+                "-isysroot", sdk,
+                "-dynamiclib",
+                "-Wl,-headerpad,0x4000",
+                "-Wl,-install_name,@rpath/IOSUseFridaEngine.framework/"
+                    + "IOSUseFridaEngine",
                 source.path,
                 "-o", output.path,
             ]

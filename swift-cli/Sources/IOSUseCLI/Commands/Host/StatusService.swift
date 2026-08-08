@@ -64,7 +64,7 @@ public enum StatusService {
                     "bundleId": info.bundleId.map(MachineValue.string) ?? .null,
                     "macAppPath": info.macAppPath.map(MachineValue.string) ?? .null,
                     "macExecutablePath": info.macExecutablePath.map(MachineValue.string) ?? .null,
-                    "macGenerationKey": info.macGenerationKey.map(MachineValue.string) ?? .null,
+                    "macInstallRevision": info.macInstallRevision.map(MachineValue.string) ?? .null,
                     "macRuntimeSocketPath": info.macRuntimeSocketPath.map(MachineValue.string) ?? .null,
                     "macLogPath": info.macLogPath.map(MachineValue.string) ?? .null,
                     "driverVersion": config.flatMap(\.driverVersion).map(MachineValue.string) ?? .null,
@@ -125,30 +125,25 @@ public enum StatusService {
                 driver = .object(fields)
             } else {
                 do {
-                    if let pending = try PlayCoverPendingLaunchStore
+                    if let launching = try PlayCoverLaunchingStore
                         .load(paths: paths) {
                         driver = .object([
                             "status": .string("unresolvedOpen"),
                             "deviceType": .string(
                                 PlayCoverSessionService.deviceType
                             ),
-                            "phase": .string(
-                                pending.phase.rawValue
-                            ),
                             "sessionIdentifier": .string(
-                                pending.sessionID
+                                launching.sessionID
                             ),
                             "bundleId": .string(
-                                pending.bundleIdentifier
+                                launching.bundleIdentifier
                             ),
-                            "macGenerationKey": .string(
-                                pending.generationKey
+                            "macRuntimeSocketPath": .string(
+                                launching.runtimeSocketPath
                             ),
-                            "ownerPid": (pending.owner?.pid).map {
-                                .integer(Int($0))
-                            } ?? .null,
                             "reason": .string(
-                                pendingLaunchReason(pending)
+                                "launch was submitted but active session "
+                                    + "commit did not finish"
                             ),
                         ])
                     } else {
@@ -158,7 +153,7 @@ public enum StatusService {
                     }
                 } catch {
                     driver = .object([
-                        "status": .string("invalidPendingLaunch"),
+                        "status": .string("invalidLaunching"),
                         "deviceType": .string(
                             PlayCoverSessionService.deviceType
                         ),
@@ -167,7 +162,7 @@ public enum StatusService {
                         ),
                     ])
                     warnings.append(
-                        "Mac pending launch is invalid: \(error)"
+                        "Mac launching record is invalid: \(error)"
                     )
                 }
             }
@@ -258,7 +253,7 @@ public enum StatusService {
             switch sessionStatus {
             case "notRunning":
                 return "Run `ios-use start --mac --app <App.app>`."
-            case "unresolvedOpen", "invalidPendingLaunch", "invalid":
+            case "unresolvedOpen", "invalidLaunching", "invalid":
                 return "Resolve the reported Mac session state before starting again."
             default:
                 return nil
@@ -274,10 +269,14 @@ public enum StatusService {
         let runtimePath: String?
         let resourceError: String?
         do {
-            runtimePath = try (
+            let resolvedRuntime = try (
                 macRuntimeResolutionForTesting
-                    ?? PlayCoverManagedAppService.resolveDefaultRuntime
+                    ?? PlayCoverSlotService.resolveDefaultRuntime
             )(paths)
+            if macRuntimeResolutionForTesting == nil {
+                _ = try PlayCoverFridaEngineService.ensureAvailable()
+            }
+            runtimePath = resolvedRuntime
             resourceError = nil
         } catch {
             runtimePath = nil
@@ -301,14 +300,14 @@ public enum StatusService {
             ), info.deviceType == PlayCoverSessionService.deviceType {
                 return "running"
             }
-            if try PlayCoverPendingLaunchStore.load(
+            if try PlayCoverLaunchingStore.load(
                 paths: paths
             ) != nil {
                 return "unresolvedOpen"
             }
             return "notRunning"
         } catch {
-            return "invalidPendingLaunch"
+            return "invalidLaunching"
         }
     }
 
@@ -356,19 +355,6 @@ public enum StatusService {
         return parts.joined(separator: " | ")
     }
 
-    private static func pendingLaunchReason(
-        _ record: PlayCoverPendingLaunchStore.Record
-    ) -> String {
-        switch record.phase {
-        case .intent:
-            return "launch intent has no authenticated process owner"
-        case .owned:
-            return "exact process owner is pending session handoff or stop"
-        case .driverLockCommitted:
-            return "driver.lock handoff journal was not retired"
-        }
-    }
-
     private static func deviceLines(simulatorOnly: Bool, paths: IOSUsePaths, configuredDevices: [String: DeviceService.ConfiguredDevice], verbose: Bool, emptyMessage: String) -> [String] {
         do {
             let devices = try DeviceService.listDevices(simulatorOnly: simulatorOnly, paths: paths)
@@ -386,30 +372,24 @@ public enum StatusService {
         do {
             guard let info = try SessionService.readDriverLockInfo(paths: paths) else {
                 do {
-                    guard let pending = try PlayCoverPendingLaunchStore
+                    guard let launching = try PlayCoverLaunchingStore
                         .load(paths: paths) else {
                         return ["  not running (no driver.lock)"]
                     }
-                    var parts = [
-                        "unresolved pending launch",
+                    let parts = [
+                        "unresolved Mac launch",
                         "device: \(PlayCoverSessionService.deviceType)",
-                        "phase: \(pending.phase.rawValue)",
-                        "session: \(pending.sessionID)",
-                        "bundle: \(pending.bundleIdentifier)",
-                        "generation: \(pending.generationKey)",
+                        "session: \(launching.sessionID)",
+                        "bundle: \(launching.bundleIdentifier)",
+                        "socket: \(launching.runtimeSocketPath)",
+                        "reason: launch submit was not committed",
                     ]
-                    if let ownerPID = pending.owner?.pid {
-                        parts.append("owner pid: \(ownerPID)")
-                    }
-                    parts.append(
-                        "reason: \(pendingLaunchReason(pending))"
-                    )
                     return [
                         "  - \(parts.joined(separator: " | "))",
                     ]
                 } catch {
                     return [
-                        "  invalid Mac pending launch: \(error)",
+                        "  invalid Mac launching record: \(error)",
                     ]
                 }
             }
@@ -432,9 +412,9 @@ public enum StatusService {
             if let appPath = info.macAppPath, !appPath.isEmpty {
                 parts.append("app: \(appPath)")
             }
-            if let generation = info.macGenerationKey,
-               !generation.isEmpty {
-                parts.append("generation: \(generation)")
+            if let revision = info.macInstallRevision,
+               !revision.isEmpty {
+                parts.append("install revision: \(revision)")
             }
             if let logPath = info.macLogPath,
                !logPath.isEmpty {

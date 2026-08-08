@@ -42,7 +42,7 @@ on:
         default: false
         type: boolean
       run_playcover_live:
-        description: "Run the core pending-launch and Runtime crash/stress gate on its dedicated self-hosted runner."
+        description: "Run the core launch-recovery and fixed-slot Runtime gate on its dedicated self-hosted runner."
         required: false
         default: false
         type: boolean
@@ -166,7 +166,7 @@ jobs:
         run: bash scripts/test_playcover_backend.sh --non-live
 
   playcover-live-and-stress:
-    name: Core pending-launch and Runtime live gate
+    name: Core launch-recovery and fixed-slot Runtime live gate
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_playcover_live }}
     # The two public-fixture gates also require the initialized stable signer
     # and an unlocked, launch-capable GUI session.

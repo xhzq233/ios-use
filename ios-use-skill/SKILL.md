@@ -10,8 +10,8 @@ description: "Use when a task explicitly requires running, scripting, or trouble
 - Read `references/simulator.md` before operating or troubleshooting a Simulator.
 - Read `references/proxy.md` before configuring HTTP/HTTPS capture or certificates.
 - Read `references/nslog.md` only when the target App already integrates NSLogger.
-- Read `references/frida-debug.md` before using `start --mac --frida`, `debug`,
-  or a Frida-loaded native dylib patch.
+- Read `references/frida-debug.md` before using `debug` or a Frida-loaded
+  native dylib patch.
 - Read `references/report.md` before creating or updating a GitHub issue.
 
 Do not load unrelated references preemptively.
@@ -38,13 +38,21 @@ rerun the same command. This setup is shared across `IOS_USE_HOME` values.
 
 Use a distinct `IOS_USE_HOME` for each concurrent ios-use session. This allows
 multiple Mac Apps with different bundle IDs (or independent device sessions) to
-run at the same time while sharing the one-time Mac signing setup and prepared
-App cache. The Mac backend intentionally rejects two concurrent copies of the
+run at the same time while sharing the one-time Mac signing setup and installed
+Mac Apps. The Mac backend intentionally rejects two concurrent copies of the
 same bundle ID.
 
-The first start for an App requires `--app`. Later,
-`ios-use start --mac --reuse` restarts the last successfully started App for the
-current `IOS_USE_HOME`. Run `ios-use stop` before switching backends.
+`start --mac --app <App.app>` installs or updates the single Mac App for that
+bundle ID; pass `--app` again after rebuilding the source. Every Mac App
+includes the Frida debug Engine, so `ios-use debug` works for any Mac session.
+Later, `ios-use start --mac --reuse` relaunches the installed App for the
+current `IOS_USE_HOME`'s bundle ID. Run `ios-use stop` before switching
+backends.
+
+After upgrading ios-use, Apps installed by older versions are not migrated or
+auto-launched: run `start --mac --app` once per bundle ID before `--reuse`
+works again. ios-use never deletes old caches for you; run `ios-use du` to see
+what you can remove.
 
 - Connect real devices over USB and use iOS 17.4 or later.
 - Run `config` on first use, after upgrading ios-use, when `status` reports
@@ -212,7 +220,7 @@ tail -f <log-file>
 
 Do not echo signed URLs, tokens, credentials, or unrelated private log content.
 
-### Debug a Frida-enabled Mac App
+### Debug a Mac App with Frida
 
 When runtime implementation details matter, use semantic DOM to name the
 current UI and `ui-tree` to relate one label to its UIKit subtree:
@@ -231,7 +239,7 @@ Read `references/frida-debug.md` first. Prefer stdin for multi-line GumJS and
 use an explicit reset when a failed script may have installed hooks:
 
 ```bash
-ios-use start --mac --frida --app /path/to/App.app
+ios-use start --mac --app /path/to/App.app
 ios-use debug - < probe.js
 ios-use debug --reset
 ```

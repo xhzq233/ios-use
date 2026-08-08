@@ -74,6 +74,16 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
+    func testVersionFlagPrintsPinnedPublicVersion() {
+        XCTAssertEqual(IOSUseCLI.version, "2.0.1")
+        for flag in ["--version", "-V"] {
+            let result = IOSUseCLI().run(arguments: [flag])
+            XCTAssertEqual(result.exitCode, 0)
+            XCTAssertEqual(result.stdout, "2.0.1\n")
+            XCTAssertTrue(result.stderr.isEmpty)
+        }
+    }
+
     func testRootHelpRestoresSemanticShellWorkflow() {
         let result = IOSUseCLI().run(arguments: ["--help"])
 
@@ -854,7 +864,7 @@ final class IOSUseCLITests: XCTestCase {
         let result = IOSUseCLI().run(arguments: ["start", "--help"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertTrue(result.stdout.contains("--app <source-or-prepared.app>"))
+        XCTAssertTrue(result.stdout.contains("--app <source.app>"))
         XCTAssertTrue(result.stdout.contains("--log"))
         XCTAssertTrue(result.stdout.contains("retained after stop"))
         XCTAssertTrue(result.stdout.contains("automatically prepares"))
@@ -3447,12 +3457,27 @@ final class IOSUseCLITests: XCTestCase {
             socketRootOverrideForTesting: socketRoot
         )
         let sessionID = "media-session"
-        let generationKey = "generation"
+        let installRevision = String(repeating: "a", count: 64)
+        let bundleIdentifier = "com.example.media"
+        let slotDirectory =
+            "\(paths.playcoverApps)/\(bundleIdentifier)"
         let appPath =
-            "\(paths.playcoverGlobalObjects)/\(generationKey)/App.app"
+            "\(slotDirectory)/Media.app"
         try FileManager.default.createDirectory(
             atPath: appPath,
             withIntermediateDirectories: true
+        )
+        let info = try PropertyListSerialization.data(
+            fromPropertyList: [
+                "CFBundleIdentifier": bundleIdentifier,
+                "CFBundleExecutable": "Media",
+            ],
+            format: .xml,
+            options: 0
+        )
+        try info.write(
+            to: URL(fileURLWithPath: appPath)
+                .appendingPathComponent("Info.plist")
         )
         let executablePath = "\(appPath)/Media"
         XCTAssertTrue(
@@ -3460,6 +3485,40 @@ final class IOSUseCLITests: XCTestCase {
                 atPath: executablePath,
                 contents: Data()
             )
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executablePath
+        )
+        for embeddedExecutable in [
+            "Frameworks/IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+            "Frameworks/IOSUseFridaEngine.framework/IOSUseFridaEngine",
+        ] {
+            let url = URL(fileURLWithPath: appPath)
+                .appendingPathComponent(embeddedExecutable)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            XCTAssertTrue(
+                FileManager.default.createFile(
+                    atPath: url.path,
+                    contents: Data()
+                )
+            )
+        }
+        let metadata = PlayCoverSlotMetadata(
+            bundleIdentifier: bundleIdentifier,
+            appRelativePath: "Media.app",
+            executableRelativePath: "Media",
+            installRevision: installRevision
+        )
+        let metadataURL = URL(fileURLWithPath: slotDirectory)
+            .appendingPathComponent("slot.json")
+        try JSONEncoder().encode(metadata).write(to: metadataURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: metadataURL.path
         )
         try FileManager.default.createDirectory(
             atPath: paths.playcoverRun,
@@ -3476,10 +3535,10 @@ final class IOSUseCLITests: XCTestCase {
                 runnerPid: 42,
                 startMode: PlayCoverSessionService.deviceType,
                 sessionIdentifier: sessionID,
-                bundleId: "com.example.media",
+                bundleId: bundleIdentifier,
                 macAppPath: appPath,
                 macExecutablePath: executablePath,
-                macGenerationKey: generationKey,
+                macInstallRevision: installRevision,
                 macRuntimeSocketPath:
                     try paths.macRuntimeSocketPath(
                         sessionID: sessionID

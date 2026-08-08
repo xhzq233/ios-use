@@ -15,8 +15,8 @@ Usage: scripts/test_playcover_backend.sh [--non-live|--live]
             an integration-host gate: installed execution requires the
             disposable-account contract, initialized stable host signer, and
             a launch-capable GUI session.
---live      Run the independent pending-launch crash/restart gate and the
-            Runtime protocol/crash stress gate.
+--live      Run the independent launch-recovery crash gate and the fixed-slot
+            Runtime lifecycle stress gate.
             Both use the committed public fixture on a dedicated,
             launch-capable Apple-silicon host. Missing live prerequisites fail
             with EX_CONFIG (78); they are not reported as a passing or skipped
@@ -111,11 +111,11 @@ run_non_live() {
 run_live() {
   require_disposable_account
   require_apple_silicon_xcode 78
-  echo "[playcover-live] Running pending-launch CLI crash/restart matrix..."
+  echo "[playcover-live] Running phase-free launch-recovery crash matrix..."
   bash "$ROOT_DIR/scripts/test_playcover_pending_launch_crash_live.sh" --live
-  echo "[playcover-live] Running Runtime protocol/crash stress matrix..."
+  echo "[playcover-live] Running fixed-slot Runtime lifecycle stress matrix..."
   bash "$ROOT_DIR/scripts/test_playcover_runtime_stress_live.sh"
-  echo "[playcover-live] core pending-launch and Runtime stress gate passed"
+  echo "[playcover-live] core launch-recovery and fixed-slot stress gate passed"
 }
 
 case "$MODE" in

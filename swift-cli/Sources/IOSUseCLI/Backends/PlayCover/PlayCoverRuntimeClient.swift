@@ -612,7 +612,7 @@ struct PlayCoverRuntimeHelloPayload:
     let pid: Int32
     let bundleIdentifier: String
     let executablePath: String
-    let generationKey: String
+    let installRevision: String
     let capabilities: [String]
     let controlStage: String
     let controlFailure: String?

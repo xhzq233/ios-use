@@ -9,7 +9,7 @@ import Darwin
 
 /// Account-wide launch exclusion for one Mac bundle identifier.
 ///
-/// A Home selects the prepared generation and session state, but it does not
+/// A Home selects the current Bundle slot and session state, but it does not
 /// create another copy of a running macOS bundle.  The lock is deliberately
 /// outside IOS_USE_HOME so two Homes cannot race into the same LaunchServices
 /// identity.  The process census is checked while the lock is held.
@@ -42,20 +42,35 @@ final class PlayCoverBundleStartLock {
         bundleIdentifier: String,
         paths: IOSUsePaths
     ) throws -> PlayCoverBundleStartLock {
-        guard !bundleIdentifier.isEmpty,
-              bundleIdentifier.utf8.count <= 200 else {
-            throw PlayCoverBackendError.launchFailed(
-                "bundle identifier cannot form an account launch lock"
+        let acquisition = try acquireForRecovery(
+            bundleIdentifier: bundleIdentifier,
+            paths: paths
+        )
+        if let pid = acquisition.runningPIDs.first {
+            throw PlayCoverBackendError.bundleAlreadyRunning(
+                bundleIdentifier: bundleIdentifier,
+                pid: pid
             )
         }
-        try PlayCoverManagedAppService.withSecureManagedDirectories(
-            paths: paths
-        ) { _ in () }
+        return acquisition.lock
+    }
+
+    static func acquireForRecovery(
+        bundleIdentifier: String,
+        paths: IOSUsePaths
+    ) throws -> (
+        lock: PlayCoverBundleStartLock,
+        runningPIDs: [Int32]
+    ) {
+        try PlayCoverSlotService.validateBundleIdentifier(
+            bundleIdentifier
+        )
+        try ensureLocksRoot(paths.playcoverLocks)
         #if canImport(Darwin)
         let digest = SHA256.hash(data: Data(bundleIdentifier.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
-        let lockPath = "\(paths.playcoverGlobalLocks)/bundle-\(digest).lock"
+        let lockPath = "\(paths.playcoverLocks)/bundle-\(digest).lock"
         let descriptor = Darwin.open(
             lockPath,
             O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC,
@@ -82,15 +97,28 @@ final class PlayCoverBundleStartLock {
         }
         let lock = PlayCoverBundleStartLock(descriptor: descriptor)
         let pids = try runningBundlePIDs(bundleIdentifier)
-        if let pid = pids.first {
-            throw PlayCoverBackendError.bundleAlreadyRunning(
-                bundleIdentifier: bundleIdentifier,
-                pid: pid
+        return (lock, pids)
+        #else
+        return (PlayCoverBundleStartLock(), [])
+        #endif
+    }
+
+    private static func ensureLocksRoot(_ path: String) throws {
+        try FileManager.default.createDirectory(
+            atPath: path,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        #if canImport(Darwin)
+        var status = stat()
+        guard lstat(path, &status) == 0,
+              status.st_mode & S_IFMT == S_IFDIR,
+              status.st_uid == geteuid(),
+              chmod(path, 0o700) == 0 else {
+            throw PlayCoverBackendError.launchFailed(
+                "Mac Bundle lock root must be an owner-only directory"
             )
         }
-        return lock
-        #else
-        return PlayCoverBundleStartLock()
         #endif
     }
 

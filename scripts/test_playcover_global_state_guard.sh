@@ -18,7 +18,10 @@ playcover_require_disposable_account_contract() {
   local account_home
   local canonical_account_home
   local expected_account_home
-  local expected_global_cache
+  local expected_account_cache
+  local expected_apps_root
+  local expected_locks_root
+  local expected_known_homes
   local expected_playchain_root
   local expected_socket_root
 
@@ -82,7 +85,9 @@ playcover_require_disposable_account_contract() {
     "could not canonicalize the effective account home"
 
   expected_account_home="$canonical_account_home"
-  expected_global_cache="$canonical_account_home/Library/Caches/dev.ios-use/mac/prepared"
+  expected_account_cache="$canonical_account_home/Library/Caches/dev.ios-use/mac"
+  expected_apps_root="$expected_account_cache/apps"
+  expected_locks_root="$expected_account_cache/locks"
   expected_known_homes="$canonical_account_home/Library/Application Support/dev.ios-use/homes"
   expected_playchain_root="$canonical_account_home/Library/Application Support/dev.ios-use/mac/playchain"
   expected_socket_root="/private/tmp/dev.ios-use-$account_uid"
@@ -103,19 +108,23 @@ playcover_require_disposable_account_contract() {
   fi
   PLAYCOVER_ACCOUNT_UID="$account_uid"
   PLAYCOVER_ACCOUNT_HOME="$expected_account_home"
-  PLAYCOVER_GLOBAL_CACHE_ROOT="$expected_global_cache"
-  PLAYCOVER_GLOBAL_OBJECTS_ROOT="$expected_global_cache/objects"
+  PLAYCOVER_ACCOUNT_CACHE_ROOT="$expected_account_cache"
+  PLAYCOVER_APPS_ROOT="$expected_apps_root"
+  PLAYCOVER_LOCKS_ROOT="$expected_locks_root"
+  PLAYCOVER_LEGACY_PREPARED_ROOT="$expected_account_cache/prepared"
+  PLAYCOVER_LEGACY_LAUNCH_FACADES_ROOT="$expected_account_cache/launch-facades"
   PLAYCOVER_KNOWN_HOMES_ROOT="$expected_known_homes"
-  PLAYCOVER_GLOBAL_LOCKS_ROOT="$expected_global_cache/locks"
   PLAYCOVER_PLAYCHAIN_ROOT="$expected_playchain_root"
   PLAYCOVER_SOCKET_ROOT="$expected_socket_root"
   export \
     PLAYCOVER_ACCOUNT_UID \
     PLAYCOVER_ACCOUNT_HOME \
-    PLAYCOVER_GLOBAL_CACHE_ROOT \
-    PLAYCOVER_GLOBAL_OBJECTS_ROOT \
+    PLAYCOVER_ACCOUNT_CACHE_ROOT \
+    PLAYCOVER_APPS_ROOT \
+    PLAYCOVER_LOCKS_ROOT \
+    PLAYCOVER_LEGACY_PREPARED_ROOT \
+    PLAYCOVER_LEGACY_LAUNCH_FACADES_ROOT \
     PLAYCOVER_KNOWN_HOMES_ROOT \
-    PLAYCOVER_GLOBAL_LOCKS_ROOT \
     PLAYCOVER_PLAYCHAIN_ROOT \
     PLAYCOVER_SOCKET_ROOT
 }

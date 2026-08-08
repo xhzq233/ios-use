@@ -18,23 +18,21 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let playcover: String
     public let playcoverRun: String
     public let playcoverLogs: String
-    public let playcoverPendingLaunch: String
-    public let playcoverPendingLaunchLock: String
+    public let playcoverLaunching: String
+    public let playcoverCurrentBundle: String
+    public let playcoverApps: String
+    public let playcoverLocks: String
+    public let playcoverLegacyPrepared: String
+    public let playcoverLegacyLaunchFacades: String
     public let playcoverHomeID: String
     public let accountCacheRoot: String
     public let accountApplicationSupportRoot: String
     public let knownHomes: String
-    public let playcoverGlobalCache: String
-    public let playcoverGlobalObjects: String
-    public let playcoverGlobalLocks: String
-    public let playcoverLastGeneration: String
     public let playcoverFridaSourceCache: String
     public let playcoverFridaBuildCache: String
     public let playcoverSocketRoot: String
     public let playcoverPlayChain: String
     public let playcoverSigningBinding: String
-    public let playcoverLaunchFacades: String
-    public let playcoverRuntime: String
 
     public func macRuntimeSocketPath(
         sessionID: String
@@ -136,7 +134,6 @@ public struct IOSUsePaths: Equatable, Sendable {
             "\(accountHome)/Library/Caches/dev.ios-use"
         let accountApplicationSupportRoot =
             "\(accountHome)/Library/Application Support/dev.ios-use"
-        let globalCache = "\(accountCacheRoot)/mac/prepared"
         let playChain =
             "\(accountApplicationSupportRoot)/mac/playchain"
         #if canImport(Darwin)
@@ -161,20 +158,21 @@ public struct IOSUsePaths: Equatable, Sendable {
             playcover: "\(configured.root)/mac",
             playcoverRun: "\(configured.root)/mac/run",
             playcoverLogs: "\(configured.root)/logs/mac",
-            playcoverPendingLaunch:
-                "\(configured.root)/mac/pending-launch.json",
-            playcoverPendingLaunchLock:
-                "\(configured.root)/mac/pending-launch.lock",
+            playcoverLaunching:
+                "\(configured.root)/mac/launching.json",
+            playcoverCurrentBundle:
+                "\(configured.root)/mac/current-bundle.json",
+            playcoverApps: "\(accountCacheRoot)/mac/apps",
+            playcoverLocks: "\(accountCacheRoot)/mac/locks",
+            playcoverLegacyPrepared:
+                "\(accountCacheRoot)/mac/prepared",
+            playcoverLegacyLaunchFacades:
+                "\(accountCacheRoot)/mac/launch-facades",
             playcoverHomeID: homeID,
             accountCacheRoot: accountCacheRoot,
             accountApplicationSupportRoot:
                 accountApplicationSupportRoot,
             knownHomes: "\(accountApplicationSupportRoot)/homes",
-            playcoverGlobalCache: globalCache,
-            playcoverGlobalObjects: "\(globalCache)/objects",
-            playcoverGlobalLocks: "\(globalCache)/locks",
-            playcoverLastGeneration:
-                "\(configured.root)/mac/last-generation.json",
             playcoverFridaSourceCache:
                 "\(accountCacheRoot)/mac/frida-engine/source",
             playcoverFridaBuildCache:
@@ -183,9 +181,6 @@ public struct IOSUsePaths: Equatable, Sendable {
             playcoverPlayChain: playChain,
             playcoverSigningBinding:
                 "\(accountApplicationSupportRoot)/mac-stable-signing-binding-v1.json",
-            playcoverLaunchFacades:
-                "\(accountCacheRoot)/mac/launch-facades",
-            playcoverRuntime: "\(configured.root)/mac/IOSUsePlayRuntime.framework"
         )
     }
 

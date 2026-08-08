@@ -89,7 +89,7 @@ bytes. To install a
 specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.0.0
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.0.1
 ```
 
 Intel Macs are unsupported because the Mac Runtime and converted iPhone Apps
@@ -230,29 +230,33 @@ On Apple Silicon with full Xcode and `xcodegen` available, the local CLI build
 also builds the default injected runtime. Before the first Mac-backend start for
 your macOS account, run `config --mac`; macOS asks once for authentication
 to trust the dedicated signing identity. If you cancel, safely retry the same
-command: it resumes that identity instead of creating another one. The identity
-and immutable prepared Apps are shared by the macOS account, while each
-`IOS_USE_HOME` keeps its own session and most-recent-generation reference. Both
-`start --mac --app` and
-`start --mac --reuse` only check the existing identity and tell you to run
-`config --mac` if setup is missing or trust must be completed.
+command: it resumes that identity instead of creating another one. The signing
+identity and installed Apps are shared by the macOS account, while each
+`IOS_USE_HOME` keeps its own session and remembers which Bundle ID to reuse.
+Both `start --mac --app` and `start --mac --reuse` only check the existing
+identity and tell you to run `config --mac` if setup is missing or trust must be
+completed.
 
-`start --mac --app` accepts either an unmodified iPhoneOS App or a managed
-prepared App. A source App is cloned into the account-wide immutable generation
-cache, converted by the pinned preparation pipeline, injected, signed inside-out,
-fully verified, and launched. A later `start --mac --reuse` explicitly reuses the
-generation referenced by that same home after a bounded integrity check. After rebuilding
-the source App, pass `--app` again so the new iPhoneOS Mach-O content selects or
-prepares its generation; `--reuse` deliberately does not inspect the source
-build. The isolated live Runtime stress gate proves that launch `hello` carries
-only the fixed-geometry readiness snapshot while full window, screen, alert,
-resize, and mouse diagnostics remain on `status`.
+Each Bundle ID has one installed Mac App. `start --mac --app <source.app>`
+installs or updates that App from an unmodified iPhoneOS source and launches it;
+every Mac App includes the Frida debug Engine, so `ios-use debug` is always
+available.
+`start --mac --reuse` relaunches the currently installed App for this home's
+Bundle ID without re-reading the source. After rebuilding the source, pass
+`--app` again to update the installed App; `--reuse` deliberately does not
+inspect the source build.
+
+v2.0.1 does not migrate or auto-launch anything installed by older versions, and
+it never deletes old caches for you. After upgrading, stop any running Mac
+session and run `start --mac --app` once for each Bundle you want to keep using;
+`--reuse` only offers that instruction until the App is installed. Run
+`ios-use du` to see leftover caches you can remove yourself.
 
 The CLI creates one random session ID and connects straight to the injected
 Runtime's owner-only Unix socket. `driver.lock` keeps the Mac backend selected until
 `ios-use stop`, so session commands cannot fall back to XCTest. `status`,
 screenshots, DOM/wait, touch/input, capture, URL delivery, logs, and evidence
-all use that exact PID, executable, session, and prepared generation.
+all use that exact process, executable, and session.
 `ui-tree` is a read-only Mac-only diagnostic that relates a fresh semantic DOM
 target to its current UIKit view subtree. It does not replace `dom`, does not
 act on views, and is unavailable for device and Simulator sessions.

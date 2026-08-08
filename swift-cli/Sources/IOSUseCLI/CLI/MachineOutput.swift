@@ -375,24 +375,24 @@ enum MachineOutput {
             classified.mutationMayHaveApplied = true
             return classified
         }
+        if let launchError =
+                error as? PlayCoverSlotUnterminatedLaunchError {
+            return MachineError(
+                message: launchError.description,
+                category: IOSUseErrorCategory.session,
+                code: "mac_launch_rollback_failed",
+                phase: "mac_dyld_launch",
+                retryable: false,
+                fatal: true,
+                mutationMayHaveApplied: true
+            )
+        }
         if let rollbackError =
                 error as? PlayCoverSessionCommitRollbackError {
             return MachineError(
                 message: rollbackError.description,
                 category: IOSUseErrorCategory.session,
                 code: "mac_session_commit_rollback_failed",
-                phase: "mac_session_commit",
-                retryable: false,
-                fatal: true,
-                mutationMayHaveApplied: true
-            )
-        }
-        if let handoffError =
-                error as? PlayCoverSessionJournalHandoffError {
-            return MachineError(
-                message: handoffError.description,
-                category: IOSUseErrorCategory.session,
-                code: "mac_session_handoff_failed",
                 phase: "mac_session_commit",
                 retryable: false,
                 fatal: true,
@@ -418,17 +418,6 @@ enum MachineOutput {
                 phase: phase,
                 retryable: true,
                 fatal: false,
-                mutationMayHaveApplied: true
-            )
-        }
-        if let launchError = error as? PlayCoverUnterminatedLaunchError {
-            return MachineError(
-                message: launchError.description,
-                category: IOSUseErrorCategory.session,
-                code: "mac_launch_rollback_failed",
-                phase: "mac_dyld_launch",
-                retryable: false,
-                fatal: true,
                 mutationMayHaveApplied: true
             )
         }
@@ -553,10 +542,10 @@ enum MachineOutput {
                 phase = "mac_preflight"
                 retryable = true
                 fatal = false
-            case .pendingLaunchUnresolved:
+            case .launchRecoveryUnresolved:
                 category = IOSUseErrorCategory.session
-                code = "mac_pending_launch_unresolved"
-                phase = "mac_pending_launch"
+                code = "mac_launch_recovery_unresolved"
+                phase = "mac_launch_recovery"
                 retryable = false
                 fatal = false
             }
@@ -601,15 +590,11 @@ enum MachineOutput {
         }
         if let sessionError =
                 error as? PlayCoverSessionUnterminatedLaunchError {
-            return sessionError.result.logPath
+            return sessionError.logPath
         }
         if let rollbackError =
                 error as? PlayCoverSessionCommitRollbackError {
             return rollbackError.result.logPath
-        }
-        if let handoffError =
-                error as? PlayCoverSessionJournalHandoffError {
-            return handoffError.result.logPath
         }
         if let cleanupError =
                 error as? PlayCoverSessionCleanupError {

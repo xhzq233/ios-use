@@ -3,7 +3,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /// Stable ABI consumed by IOSUsePlayRuntimeFrida.m.  The framework is built
-/// separately from the Runtime and is embedded only in a --frida generation.
+/// separately from the Runtime and is embedded in every prepared Mac App.
 FOUNDATION_EXPORT void *IOSUseFridaEngineCreate(void);
 FOUNDATION_EXPORT void IOSUseFridaEngineReset(void *engine);
 

@@ -15,7 +15,7 @@ public enum SessionService {
         public let controlSocketPath: String?
         public let macAppPath: String?
         public let macExecutablePath: String?
-        public let macGenerationKey: String?
+        public let macInstallRevision: String?
         public let macRuntimeSocketPath: String?
         public let macLogPath: String?
 
@@ -33,7 +33,7 @@ public enum SessionService {
             controlSocketPath: String? = nil,
             macAppPath: String? = nil,
             macExecutablePath: String? = nil,
-            macGenerationKey: String? = nil,
+            macInstallRevision: String? = nil,
             macRuntimeSocketPath: String? = nil,
             macLogPath: String? = nil
         ) {
@@ -50,7 +50,7 @@ public enum SessionService {
             self.controlSocketPath = controlSocketPath
             self.macAppPath = macAppPath
             self.macExecutablePath = macExecutablePath
-            self.macGenerationKey = macGenerationKey
+            self.macInstallRevision = macInstallRevision
             self.macRuntimeSocketPath = macRuntimeSocketPath
             self.macLogPath = macLogPath
         }
@@ -70,7 +70,7 @@ public enum SessionService {
                 controlSocketPath: metadata.controlSocketPath ?? controlSocketPath,
                 macAppPath: macAppPath,
                 macExecutablePath: macExecutablePath,
-                macGenerationKey: macGenerationKey,
+                macInstallRevision: macInstallRevision,
                 macRuntimeSocketPath: macRuntimeSocketPath,
                 macLogPath: macLogPath
             )
@@ -184,7 +184,6 @@ public enum SessionService {
     public static func startPlayCover(
         appPath: String?,
         captureStdio: Bool = false,
-        fridaEnabled: Bool = false,
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
@@ -203,7 +202,6 @@ public enum SessionService {
             appPath: appPath,
             signingIdentity: signingIdentity,
             captureStdio: captureStdio,
-            fridaEnabled: fridaEnabled,
             timeout: timeout,
             paths: paths
         )
@@ -216,7 +214,6 @@ public enum SessionService {
         appPath: String?,
         signingIdentity: PlayCoverSigningIdentityEvidence?,
         captureStdio: Bool = false,
-        fridaEnabled: Bool = false,
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
@@ -231,7 +228,6 @@ public enum SessionService {
                 appPath: appPath,
                 signingIdentity: signingIdentity,
                 captureStdio: captureStdio,
-                fridaEnabled: fridaEnabled,
                 timeout: timeout,
                 paths: paths
             )
@@ -242,21 +238,16 @@ public enum SessionService {
         appPath: String?,
         signingIdentity: PlayCoverSigningIdentityEvidence?,
         captureStdio: Bool,
-        fridaEnabled: Bool,
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
         try prepareForDriverStart(paths: paths)
-        try PlayCoverSessionService.requireNoPendingLaunch(
-            paths: paths
-        )
         var launch: PlayCoverSessionService.LaunchResult?
         do {
             let result = try PlayCoverSessionService.launch(
                 explicitAppPath: appPath,
                 signingIdentity: signingIdentity,
                 captureStdio: captureStdio,
-                fridaEnabled: fridaEnabled,
                 timeout: timeout,
                 paths: paths
             )
@@ -268,22 +259,16 @@ public enum SessionService {
             #if DEBUG && canImport(Darwin)
             PlayCoverLaunchCrashCut.hit(.afterDriverLockDurable)
             #endif
-            do {
-                try PlayCoverSessionService
-                    .retirePendingLaunchJournalAfterDriverCommit(
-                        result: result,
-                        paths: paths
-                    )
-            } catch {
-                throw PlayCoverSessionJournalHandoffError(
-                    result: result,
-                    underlying: error
-                )
-            }
-            let cacheDisposition = result.reused ? "reused" : "prepared"
+            try PlayCoverSessionService.finishDriverLockCommit(
+                result: result,
+                paths: paths
+            )
+            let slotDisposition = result.recovered
+                ? "recovered"
+                : (result.reused ? "reused" : "installed")
             var output = """
             Mac session started for \(result.bundleIdentifier) (pid \(result.pid))
-            Mac generation \(cacheDisposition): \(result.generationKey)
+            Mac App slot \(slotDisposition): \(result.appPath)
             IOS_USE_HOME: \(paths.root)
 
             """
@@ -291,16 +276,6 @@ public enum SessionService {
                 output += "Mac log: \(logPath)\n"
             }
             return output
-        } catch let error as
-                PlayCoverSessionJournalHandoffError {
-            throw error
-        } catch let error as
-                PlayCoverSessionUnterminatedLaunchError {
-            // The ready gate did not complete, so driver.lock must not
-            // advertise an active backend. The durable owned journal is the
-            // sole recovery authority for `status`, `stop`, and the next
-            // `start`.
-            throw error
         } catch {
             if let launch {
                 let reportedError: Error
@@ -314,21 +289,13 @@ public enum SessionService {
                     reportedError = error
                 }
                 do {
-                    if launch.usesPendingLaunchJournal {
-                        try PlayCoverSessionService
-                            .rollbackAfterDriverCommitFailure(
-                                result: launch,
-                                paths: paths
-                            )
-                    } else {
-                        _ = try PlayCoverSessionService.terminate(
-                            result: launch,
-                            paths: paths
-                        )
-                        try DriverSessionStore.removeDriverLock(
-                            paths: paths
-                        )
-                    }
+                    _ = try PlayCoverSessionService.terminate(
+                        result: launch,
+                        paths: paths
+                    )
+                    try DriverSessionStore.removeDriverLock(
+                        paths: paths
+                    )
                 } catch let cleanupError {
                     throw PlayCoverSessionCommitRollbackError(
                         result: launch,
@@ -395,8 +362,8 @@ public enum SessionService {
     private static func stopLocked(paths: IOSUsePaths) throws -> String {
         guard let current = try readDriverLockInfo(paths: paths) else {
             if let pid = try PlayCoverSessionService
-                .stopPendingWithoutDriverLock(paths: paths) {
-                return "Mac pending launch stopped (pid \(pid))\n"
+                .stopLaunchingWithoutDriverLock(paths: paths) {
+                return "Mac interrupted launch stopped (pid \(pid))\n"
                     + "Mac session stopped\n"
             }
             _ = try requireDriverLock(paths: paths)
@@ -405,11 +372,6 @@ public enum SessionService {
             )
         }
         if current.deviceType == PlayCoverSessionService.deviceType {
-            try PlayCoverSessionService
-                .retirePendingLaunchMatchingDriverLock(
-                    current,
-                    paths: paths
-                )
             let pid = try PlayCoverSessionService.terminate(
                 session: current,
                 paths: paths
@@ -425,7 +387,6 @@ public enum SessionService {
             return "Mac App stopped (pid \(pid))\n"
                 + "Mac session stopped\n"
         }
-        try PlayCoverSessionService.requireNoPendingLaunch(paths: paths)
         var output = try DriverLifecycleService.terminateDriver(
             for: current,
             paths: paths,

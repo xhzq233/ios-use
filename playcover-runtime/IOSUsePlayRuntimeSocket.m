@@ -45,7 +45,7 @@ static const CGFloat IOSUseRuntimeDeviceSafeAreaTop =
 
 static NSString *IOSUseRuntimeSessionID;
 static NSString *IOSUseRuntimeSocketPath;
-static NSString *IOSUseRuntimeGenerationKey;
+static NSString *IOSUseRuntimeInstallRevision;
 static NSString *IOSUseRuntimeSocketStatus = @"not-started";
 static NSString *IOSUseRuntimeSocketFailureStage;
 static NSNumber *IOSUseRuntimeSocketFailureErrno;
@@ -364,13 +364,11 @@ static BOOL IOSUseSocketPeerDisconnected(int descriptor) {
         errno != EINTR;
 }
 
-static NSArray<NSString *> *IOSUseCapabilities(
-    BOOL requiredHooksReady
-) {
+static NSArray<NSString *> *IOSUseCapabilities(BOOL requiredHooksReady) {
     if (!requiredHooksReady) {
         return @[];
     }
-    NSMutableArray<NSString *> *capabilities = [NSMutableArray arrayWithArray:@[
+    return @[
         @"hello",
         @"ping",
         @"diagnostics",
@@ -385,11 +383,8 @@ static NSArray<NSString *> *IOSUseCapabilities(
         @"dismissAlert",
         @"dismissAlertByLabel",
         @"open",
-    ]];
-    if (IOSUsePlayRuntimeFridaEnabled()) {
-        [capabilities addObject:@"debug"];
-    }
-    return capabilities;
+        @"debug",
+    ];
 }
 
 /// The public `geometry.window` remains the immutable UIKit target canvas.
@@ -1394,7 +1389,7 @@ static NSDictionary<NSString *, id> *IOSUseControlHelloPayload(void) {
             NSBundle.mainBundle.bundleIdentifier ?: @"",
         @"executablePath":
             NSBundle.mainBundle.executablePath ?: @"",
-        @"generationKey": IOSUseRuntimeGenerationKey ?: @"",
+        @"installRevision": IOSUseRuntimeInstallRevision ?: @"",
         @"capabilities": IOSUseCapabilities(requiredHooksReady),
         @"controlStage": controlStage,
         @"controlFailure":
@@ -2438,7 +2433,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
         return IOSUseBasicErrorEnvelope(
             requestID,
             @"unsupported_command",
-            @"Runtime supports hello, ping, diagnostics, screenshot, dom, waitFor, tap, longPress, swipe, input, dismissAlert, dismissAlertByLabel, open, and debug when the Frida capability is enabled",
+            @"Runtime supports hello, ping, diagnostics, screenshot, dom, waitFor, tap, longPress, swipe, input, dismissAlert, dismissAlertByLabel, open, and debug",
             @"protocol",
             @"dispatch",
             NO
@@ -2809,17 +2804,17 @@ void IOSUsePlayRuntimeStartSocket(void) {
     dispatch_once(&onceToken, ^{
         const char *sessionValue = getenv("IOS_USE_PLAY_SESSION_ID");
         const char *socketValue = getenv("IOS_USE_PLAY_RUNTIME_SOCKET");
-        const char *generationValue =
-            getenv("IOS_USE_PLAY_GENERATION_KEY");
+        const char *installRevisionValue =
+            getenv("IOS_USE_PLAY_INSTALL_REVISION");
         NSString *sessionID = sessionValue == NULL
             ? nil
             : [NSString stringWithUTF8String:sessionValue];
         NSString *socketPath = socketValue == NULL
             ? nil
             : [NSString stringWithUTF8String:socketValue];
-        NSString *generationKey = generationValue == NULL
+        NSString *installRevision = installRevisionValue == NULL
             ? nil
-            : [NSString stringWithUTF8String:generationValue];
+            : [NSString stringWithUTF8String:installRevisionValue];
         if (sessionID.length == 0 ||
             [sessionID lengthOfBytesUsingEncoding:NSUTF8StringEncoding] >
                 128) {
@@ -2830,13 +2825,13 @@ void IOSUsePlayRuntimeStartSocket(void) {
             IOSUseRecordSocketFailure(@"socket-env", EINVAL);
             return;
         }
-        if (!IOSUseIsLowercaseSHA256(generationKey)) {
-            IOSUseRecordSocketFailure(@"generation-env", EINVAL);
+        if (!IOSUseIsLowercaseSHA256(installRevision)) {
+            IOSUseRecordSocketFailure(@"install-revision-env", EINVAL);
             return;
         }
         IOSUseRuntimeSessionID = [sessionID copy];
         IOSUseRuntimeSocketPath = [socketPath copy];
-        IOSUseRuntimeGenerationKey = [generationKey copy];
+        IOSUseRuntimeInstallRevision = [installRevision copy];
         IOSUseRecordSocketState(@"starting", nil, 0);
         int listener = IOSUseCreateListener(socketPath);
         if (listener < 0) {

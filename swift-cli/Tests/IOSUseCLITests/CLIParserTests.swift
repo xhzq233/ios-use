@@ -352,6 +352,17 @@ final class CLIParserTests: XCTestCase {
                 .invalidValue("--verbose cannot be used with --mac")
             )
         }
+        for arguments in [
+            ["start", "--mac", "--app", "/work/Demo.app", "--frida"],
+            ["start", "--mac", "--reuse", "--frida"],
+        ] {
+            XCTAssertThrowsError(try CLIParser.parse(arguments)) { error in
+                XCTAssertEqual(
+                    error as? CLIParseError,
+                    .unknownOption("--frida")
+                )
+            }
+        }
     }
 
     func testRejectsDuplicateMacStartSelectors() {
@@ -390,7 +401,7 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(
             result.stdout.contains(
-                "ios-use start --mac --app <source-or-prepared.app>"
+                "ios-use start --mac --app <source.app>"
             )
         )
         XCTAssertTrue(
@@ -403,11 +414,14 @@ final class CLIParserTests: XCTestCase {
         )
         XCTAssertTrue(
             result.stdout.contains(
-                "Use --reuse only to explicitly launch"
+                "Use --reuse only to launch"
             )
         )
         XCTAssertFalse(
             result.stdout.contains("start --playcover")
+        )
+        XCTAssertFalse(
+            result.stdout.contains("--frida")
         )
     }
 

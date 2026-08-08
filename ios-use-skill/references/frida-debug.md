@@ -1,9 +1,10 @@
 # Mac Frida Debug
 
-Use this reference for an App started with Mac debugging enabled:
+Use this reference for an App started with the Mac backend; every Mac App
+includes the Frida debug Engine, so `debug` is always available:
 
 ```bash
-ios-use start --mac --frida --app /path/to/App.app
+ios-use start --mac --app /path/to/App.app
 ```
 
 ## Run scripts
@@ -251,7 +252,7 @@ original process state:
 
 ```bash
 ios-use stop
-ios-use start --mac --frida --reuse
+ios-use start --mac --reuse
 ```
 
 Do not model native patching as load/unload. `debug --reset` removes Frida hooks

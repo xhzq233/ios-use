@@ -189,11 +189,6 @@ public enum CLIParser {
                 options.reuse = true
             case "--log":
                 options.log = true
-            case "--frida":
-                guard !options.frida else {
-                    throw CLIParseError.invalidValue("--frida may only be provided once")
-                }
-                options.frida = true
             case "--timeout":
                 options.timeout = try parsePositiveDurationSecondsStrict(
                     try parser.value(for: arg),
@@ -225,15 +220,9 @@ public enum CLIParser {
                     "--mac requires exactly one of --app <app> or --reuse"
                 )
             }
-            if options.frida, options.appPath == nil, !options.reuse {
-                throw CLIParseError.invalidValue(
-                    "--frida requires --app or --reuse"
-                )
-            }
         } else if options.appPath != nil
                     || options.reuse
                     || options.log
-                    || options.frida
                     || timeoutWasProvided {
             throw CLIParseError.invalidValue(
                 "--app, --reuse, --log, and --timeout require --mac"

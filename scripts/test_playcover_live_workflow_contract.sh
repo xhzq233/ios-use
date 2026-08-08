@@ -111,7 +111,7 @@ validate_workflow() {
     return 1
   require_exact_line \
     "$file" \
-    '        description: "Run the core pending-launch and Runtime crash/stress gate on its dedicated self-hosted runner."' \
+    '        description: "Run the core launch-recovery and fixed-slot Runtime gate on its dedicated self-hosted runner."' \
     "the core live workflow-dispatch description" ||
     return 1
   validate_disposable_secret_bindings "$file" 2 ||
@@ -296,18 +296,18 @@ validate_guarded_script() {
 
 validate_backend_gate() {
   local file="$1"
-  local pending_line
+  local recovery_line
   local stress_line
 
   require_exact_line \
     "$file" \
     '  bash "$ROOT_DIR/scripts/test_playcover_pending_launch_crash_live.sh" --live' \
-    "the pending-launch same-boot crash gate" ||
+    "the phase-free launch-recovery crash gate" ||
     return 1
   require_exact_line \
     "$file" \
     '  bash "$ROOT_DIR/scripts/test_playcover_runtime_stress_live.sh"' \
-    "the isolated Runtime protocol/crash stress gate" ||
+    "the isolated fixed-slot Runtime lifecycle stress gate" ||
     return 1
   if [[ "$(
     count_pattern \
@@ -340,7 +340,7 @@ validate_backend_gate() {
     return 1
   fi
 
-  pending_line="$(
+  recovery_line="$(
     grep -nF \
       'bash "$ROOT_DIR/scripts/test_playcover_pending_launch_crash_live.sh" --live' \
       "$file" |
@@ -352,10 +352,10 @@ validate_backend_gate() {
       "$file" |
       cut -d: -f1
   )"
-  if [[ -z "$pending_line" || -z "$stress_line" ]] ||
-      ((pending_line >= stress_line)); then
+  if [[ -z "$recovery_line" || -z "$stress_line" ]] ||
+      ((recovery_line >= stress_line)); then
     fail_contract \
-      "the pending-launch gate must run before Runtime protocol/crash stress"
+      "the launch-recovery gate must run before fixed-slot Runtime stress"
     return 1
   fi
 }
@@ -504,7 +504,7 @@ sed \
   "$BACKEND_GATE" >"$missing_stress_gate"
 expect_backend_rejected \
   "$missing_stress_gate" \
-  "a core aggregate without Runtime protocol/crash stress"
+  "a core aggregate without fixed-slot Runtime stress"
 
 fixture_in_aggregate="$TEST_TEMP/fixture-in-aggregate.sh"
 sed \

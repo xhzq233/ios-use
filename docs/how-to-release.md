@@ -24,8 +24,9 @@ IOS_USE_RELEASE_VERSION=v1.2.0 bash scripts/release_build.sh
 ```
 
 Every release builds and verifies the pinned Frida Catalyst Engine together
-with the base Runtime. The installer keeps both as read-only resources; only
-`start --mac --frida` copies the Engine into a prepared App.
+with the Runtime. The installer keeps both as read-only resources; every
+`start --mac --app` injects the Engine into the installed App, so Frida is a
+resident Mac-backend capability rather than an opt-in.
 The Engine embeds the complete notices for its statically linked GumJS
 closure. The same notice is published as a release asset, and the exact pinned
 Frida source closure is included in the corresponding-source archive.
@@ -48,7 +49,7 @@ This script:
 4. Builds the real-device and simulator driver IPAs.
 5. Refuses any source-input change during the build and stages the Runtime and
    pinned Engine as read-only source resources under `release/`; preparation
-   may sign only a managed copy.
+   may sign only the installed App slot copy.
 6. Builds corresponding source from the exact current `HEAD`, adds the complete
    pinned Yams Git tree and Frida GumJS static source closure, and proves its
    Runtime inputs have the same digest as the fresh binary build.
@@ -60,7 +61,7 @@ This script:
 Expected assets:
 
 The Mac resources archive contains the Runtime, pinned sandbox rules, and the
-optional-at-runtime Frida Engine under one installed resource root.
+always-injected Frida Engine under one installed resource root.
 
 - `release/ios-use-darwin-arm64`
 - `release/driver.ipa`

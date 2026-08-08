@@ -12,7 +12,7 @@ import SQLite3
 
 struct IOSUsePlayChainManagedLocation {
     let appBundleURL: URL
-    let generationKey: String
+    let installRevision: String
     let playcoverRootURL: URL
     let databaseURL: URL
 }
@@ -27,7 +27,7 @@ enum IOSUsePlayChainLocation {
         if let testingDatabaseURL {
             return IOSUsePlayChainManagedLocation(
                 appBundleURL: Bundle.main.bundleURL,
-                generationKey: String(repeating: "0", count: 64),
+                installRevision: String(repeating: "0", count: 64),
                 playcoverRootURL:
                     testingDatabaseURL
                         .deletingLastPathComponent()
@@ -37,8 +37,8 @@ enum IOSUsePlayChainLocation {
         }
 #endif
         let environment = ProcessInfo.processInfo.environment
-        guard let generationKey =
-                environment["IOS_USE_PLAY_GENERATION_KEY"],
+        guard let installRevision =
+                environment["IOS_USE_PLAY_INSTALL_REVISION"],
               let playChainRootPath =
                 environment["IOS_USE_PLAYCHAIN_ROOT"] else {
             throw NSError(
@@ -51,8 +51,8 @@ enum IOSUsePlayChainLocation {
             )
         }
         let hexadecimal = CharacterSet(charactersIn: "0123456789abcdef")
-        guard generationKey.count == 64,
-              generationKey.unicodeScalars.allSatisfy({
+        guard installRevision.count == 64,
+              installRevision.unicodeScalars.allSatisfy({
                   hexadecimal.contains($0)
               }) else {
             throw NSError(
@@ -61,7 +61,7 @@ enum IOSUsePlayChainLocation {
                 userInfo: [
                     NSLocalizedDescriptionKey:
                         "launch identity contains an invalid "
-                            + "generation key"
+                            + "install revision"
                 ]
             )
         }
@@ -156,7 +156,7 @@ enum IOSUsePlayChainLocation {
             .appendingPathComponent("\(bundleID).db")
         return IOSUsePlayChainManagedLocation(
             appBundleURL: appBundleURL,
-            generationKey: generationKey.lowercased(),
+            installRevision: installRevision.lowercased(),
             playcoverRootURL: playcoverRootURL,
             databaseURL: databaseURL
         )
@@ -174,7 +174,7 @@ enum IOSUsePlayChainLocation {
                 "bundleIdentifier":
                     Bundle.main.bundleIdentifier ?? "",
                 "preparedAppPath": location.appBundleURL.path,
-                "generationKey": location.generationKey,
+                "installRevision": location.installRevision,
                 "macRootPath":
                     location.playcoverRootURL.path,
                 "databasePath": location.databaseURL.path,

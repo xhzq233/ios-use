@@ -5,9 +5,9 @@ import Darwin
 #endif
 import PlayCoverUpstream
 
-/// Resolves the optional, pinned Catalyst Engine installed beside ios-use.
-/// The normal Runtime never calls this service, and only a Frida preparation
-/// copies the verified framework into a prepared App generation.
+/// Resolves the pinned Catalyst Engine installed beside ios-use. Every Mac
+/// preparation copies the verified framework into the fixed App slot; the
+/// Runtime loads it on the first debug command.
 enum PlayCoverFridaEngineService {
     static let frameworkName = "IOSUseFridaEngine.framework"
     static let descriptorVersion = "16.5.6"
@@ -28,9 +28,9 @@ enum PlayCoverFridaEngineService {
     }
 
     /// The verified immutable Engine object selected for one prepare.  The
-    /// digest is part of the prepared generation identity; callers must pass
-    /// this value through the preparation plan instead of recomputing it from
-    /// the framework after publication.
+    /// digest is part of the installed App compatibility identity; callers
+    /// must pass it through the preparation plan instead of recomputing it
+    /// from the framework after publication.
     struct Resolved: Equatable, Sendable {
         let path: String
         let sha256: String

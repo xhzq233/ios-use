@@ -3,68 +3,62 @@ import Foundation
 import Darwin
 #endif
 
-/// Home-local reuse selection. Lifecycle commands never enumerate other Homes.
+/// Home-local selection for `start --mac --reuse`.
+///
+/// The Home selects one Bundle ID. The account-global slot is the only source
+/// of App/executable identity and is never copied into this record.
 enum PlayCoverHomeStore {
-    private struct LastGeneration: Codable, Equatable, Sendable {
-        let generationKey: String
+    private struct CurrentBundle: Codable, Equatable, Sendable {
+        let bundleIdentifier: String
     }
 
     private static let maximumRecordBytes = 32 * 1_024
     private static let processLock = NSLock()
 
-    static func readLast(paths: IOSUsePaths) throws -> String? {
+    static func readCurrentBundle(paths: IOSUsePaths) throws -> String? {
         processLock.lock()
         defer { processLock.unlock() }
         guard let data = try readOwnerOnlyFile(
-            at: paths.playcoverLastGeneration,
-            maximumBytes: maximumRecordBytes,
-            label: "Mac last-generation reference"
+            at: paths.playcoverCurrentBundle
         ) else {
             return nil
         }
-        let record: LastGeneration
         do {
             guard let object = try JSONSerialization
                     .jsonObject(with: data) as? [String: Any],
-                  Set(object.keys) == Set(["generationKey"]) else {
+                  Set(object.keys) == Set(["bundleIdentifier"]) else {
                 throw PlayCoverBackendError.cacheTampered(
-                    "Mac last-generation reference has unknown fields"
+                    "Mac current-bundle reference has unknown fields"
                 )
             }
-            record = try JSONDecoder().decode(
-                LastGeneration.self,
+            let record = try JSONDecoder().decode(
+                CurrentBundle.self,
                 from: data
             )
+            try PlayCoverSlotService.validateBundleIdentifier(
+                record.bundleIdentifier
+            )
+            return record.bundleIdentifier
+        } catch let error as PlayCoverBackendError {
+            throw error
         } catch {
             throw PlayCoverBackendError.cacheTampered(
-                "Mac last-generation reference is not valid JSON"
+                "Mac current-bundle reference is not valid JSON"
             )
         }
-        try validateGenerationKey(record.generationKey)
-        return record.generationKey
     }
 
-    static func updateLast(
-        generationKey: String,
+    static func updateCurrentBundle(
+        _ bundleIdentifier: String,
         paths: IOSUsePaths
     ) throws {
-        try validateGenerationKey(generationKey)
+        try PlayCoverSlotService.validateBundleIdentifier(
+            bundleIdentifier
+        )
         processLock.lock()
         defer { processLock.unlock() }
-        try writeOwnerOnlyJSON(
-            LastGeneration(generationKey: generationKey),
-            to: paths.playcoverLastGeneration,
-            label: "Mac last-generation reference"
-        )
-    }
-
-    private static func writeOwnerOnlyJSON<T: Encodable>(
-        _ value: T,
-        to path: String,
-        label: String
-    ) throws {
-        let url = URL(fileURLWithPath: path)
-        let parent = url.deletingLastPathComponent()
+        let parent = URL(fileURLWithPath: paths.playcoverCurrentBundle)
+            .deletingLastPathComponent()
         try FileManager.default.createDirectory(
             at: parent,
             withIntermediateDirectories: true,
@@ -73,48 +67,47 @@ enum PlayCoverHomeStore {
         #if canImport(Darwin)
         guard chmod(parent.path, 0o700) == 0 else {
             throw PlayCoverBackendError.prepareFailed(
-                "cannot secure \(label) directory: errno \(errno)"
+                "cannot secure Mac current-bundle directory: errno \(errno)"
             )
         }
         var existing = stat()
-        if lstat(path, &existing) == 0,
+        if lstat(paths.playcoverCurrentBundle, &existing) == 0,
            existing.st_mode & S_IFMT != S_IFREG {
             throw PlayCoverBackendError.cacheTampered(
-                "\(label) path is not a regular file"
+                "Mac current-bundle path is not a regular file"
             )
         }
         #endif
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(value)
+        let data = try encoder.encode(
+            CurrentBundle(bundleIdentifier: bundleIdentifier)
+        )
         guard data.count <= maximumRecordBytes else {
             throw PlayCoverBackendError.prepareFailed(
-                "\(label) exceeds its size limit"
+                "Mac current-bundle reference exceeds its size limit"
             )
         }
-        try data.write(to: url, options: .atomic)
+        try data.write(
+            to: URL(fileURLWithPath: paths.playcoverCurrentBundle),
+            options: .atomic
+        )
         #if canImport(Darwin)
-        guard chmod(path, 0o600) == 0 else {
+        guard chmod(paths.playcoverCurrentBundle, 0o600) == 0 else {
             throw PlayCoverBackendError.prepareFailed(
-                "cannot secure \(label): errno \(errno)"
+                "cannot secure Mac current-bundle reference: errno \(errno)"
             )
         }
         #endif
     }
 
-    private static func readOwnerOnlyFile(
-        at path: String,
-        maximumBytes: Int,
-        label: String
-    ) throws -> Data? {
+    private static func readOwnerOnlyFile(at path: String) throws -> Data? {
         #if canImport(Darwin)
         var status = stat()
         guard lstat(path, &status) == 0 else {
-            if errno == ENOENT {
-                return nil
-            }
+            if errno == ENOENT { return nil }
             throw PlayCoverBackendError.cacheTampered(
-                "cannot inspect \(label): errno \(errno)"
+                "cannot inspect Mac current-bundle reference: errno \(errno)"
             )
         }
         guard status.st_mode & S_IFMT == S_IFREG,
@@ -122,9 +115,9 @@ enum PlayCoverHomeStore {
               status.st_mode & 0o077 == 0,
               status.st_nlink == 1,
               status.st_size >= 0,
-              status.st_size <= maximumBytes else {
+              status.st_size <= maximumRecordBytes else {
             throw PlayCoverBackendError.cacheTampered(
-                "\(label) is not a bounded owner-only regular file"
+                "Mac current-bundle reference is not a bounded owner-only file"
             )
         }
         #else
@@ -133,26 +126,11 @@ enum PlayCoverHomeStore {
         }
         #endif
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
-        guard data.count <= maximumBytes else {
+        guard data.count <= maximumRecordBytes else {
             throw PlayCoverBackendError.cacheTampered(
-                "\(label) exceeds its size limit"
+                "Mac current-bundle reference exceeds its size limit"
             )
         }
         return data
-    }
-
-    private static func validateGenerationKey(_ value: String) throws {
-        guard isLowercaseSHA256(value) else {
-            throw PlayCoverBackendError.cacheTampered(
-                "Mac last-generation key is invalid"
-            )
-        }
-    }
-
-    private static func isLowercaseSHA256(_ value: String) -> Bool {
-        value.count == 64 && value.unicodeScalars.allSatisfy {
-            (48...57).contains($0.value)
-                || (97...102).contains($0.value)
-        }
     }
 }

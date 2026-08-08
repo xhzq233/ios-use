@@ -149,10 +149,10 @@ require_owned_regular() {
     fail_case "PCAP-CONFIG-OWNER-MODE"
 }
 
-require_owner_directory_700 "$PLAYCOVER_GLOBAL_CACHE_ROOT"
-PREPARED_ROOT="$PLAYCOVER_GLOBAL_OBJECTS_ROOT"
+require_owner_directory_700 "$PLAYCOVER_ACCOUNT_CACHE_ROOT"
+PREPARED_ROOT="$PLAYCOVER_APPS_ROOT"
 KNOWN_HOMES_DIR="$PLAYCOVER_KNOWN_HOMES_ROOT"
-GLOBAL_LOCKS_DIR="$PLAYCOVER_GLOBAL_LOCKS_ROOT"
+GLOBAL_LOCKS_DIR="$PLAYCOVER_LOCKS_ROOT"
 SOCKET_ROOT="$PLAYCOVER_SOCKET_ROOT"
 PLAYCHAIN_DIR="$PLAYCHAIN_ROOT"
 LOGS_DIR="$PLAYCHAIN_ROOT"
@@ -173,13 +173,22 @@ require_owned_nonwritable_directory "$PREPARED_APP"
 [[ "$PREPARED_APP" == *.app ]] ||
   fail_case "PCAP-CONFIG-PREPARED"
 
-GENERATION_DIR="${PREPARED_APP%/*}"
-GENERATION_KEY="${GENERATION_DIR##*/}"
+SLOT_DIR="${PREPARED_APP%/*}"
+BUNDLE_ID="${SLOT_DIR##*/}"
 [[
-  "${GENERATION_DIR%/*}" == "$PREPARED_ROOT" &&
-  "$GENERATION_KEY" =~ ^[0-9a-f]{64}$
+  "${SLOT_DIR%/*}" == "$PREPARED_ROOT" &&
+  -n "$BUNDLE_ID" &&
+  "$BUNDLE_ID" != "." &&
+  "$BUNDLE_ID" != ".." &&
+  "$BUNDLE_ID" != */*
 ]] || fail_case "PCAP-CONFIG-PREPARED"
-require_owner_directory_700 "$GENERATION_DIR"
+require_owner_directory_700 "$SLOT_DIR"
+SLOT_METADATA="$SLOT_DIR/slot.json"
+require_owned_regular_600 "$SLOT_METADATA"
+[[ "$(/usr/bin/jq -er '.bundleIdentifier' "$SLOT_METADATA")" == "$BUNDLE_ID" ]] ||
+  fail_case "PCAP-CONFIG-PREPARED"
+[[ "$(/usr/bin/jq -er '.appRelativePath' "$SLOT_METADATA")" == "${PREPARED_APP##*/}" ]] ||
+  fail_case "PCAP-CONFIG-PREPARED"
 
 /usr/bin/codesign \
   --verify \
@@ -242,7 +251,7 @@ AUDIT_TEMP_ROOT="$(
   fail_case "PCAP-TEMP"
 case "$AUDIT_TEMP_ROOT/" in
   "$PLAYCOVER_ACCOUNT_HOME/"*|\
-  "$PLAYCOVER_GLOBAL_CACHE_ROOT/"*|\
+  "$PLAYCOVER_ACCOUNT_CACHE_ROOT/"*|\
   "$PLAYCOVER_PLAYCHAIN_ROOT/"*|\
   "$PLAYCOVER_SOCKET_ROOT/"*)
     fail_case "PCAP-TEMP"

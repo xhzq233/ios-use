@@ -27,12 +27,14 @@ Ordinary start only resolves the existing identity and fails with an explicit
 `config --mac` instruction when it is missing or still needs trust. Other
 unhealthy states fail closed without start-time mutation.
 
-`start --mac --reuse` explicitly reuses the most recent verified generation
-from the current `IOS_USE_HOME`. There are no public `playcover inspect`,
-`prepare`, or `verify` commands; those are internal start steps and test
-entry points. After rebuilding a source App, pass `--app` again; `--reuse`
-deliberately does not inspect, hash, or otherwise depend on the original source
-path.
+`start --mac --app` installs or updates the single account-global App slot for
+that Bundle ID; `start --mac --reuse` launches the current installed slot for
+the Bundle ID recorded by the current `IOS_USE_HOME`. There are no public
+`playcover inspect`, `prepare`, or `verify` commands; those are internal start
+steps and test entry points. After rebuilding a source App, pass `--app` again
+to reinstall the slot; `--reuse` deliberately does not inspect, hash, or
+otherwise depend on the original source path, and it does not select a
+historical build.
 
 `--log` is optional. It asks the CLI to create a unique owner-only file under
 `$IOS_USE_HOME/logs/mac`, then sends the already-open file descriptor to the
@@ -42,8 +44,9 @@ Home path itself. Start prints the path, and `status` reports it as `stdio log`.
 The file is
 retained after a successful stop, an App crash, or a failed launch so it remains
 usable as evidence. The flag and path are per-session state only; they do not
-participate in source inspection, the Runtime hash, or the generation key. This
-capture begins at the Runtime's earliest controllable C constructor.
+participate in source inspection, the Runtime hash, or the slot install
+revision. This capture begins at the Runtime's earliest controllable C
+constructor.
 Objective-C `+load` and dyld diagnostics that precede constructors are outside
 its contract; exact-PID unified logging remains a separate source.
 
@@ -61,9 +64,9 @@ adapter, AppKit bridge, and tests:
 | Virtual native raster | 1290 x 2796 pixels |
 
 The Runtime does not read a device profile or bootstrap file. Fixed geometry
-is not persisted independently in session or prepared-cache state. A header
-change alters the Runtime build hash and therefore selects a new
-final-generation identity naturally.
+is not persisted independently in session or slot state. A header change alters
+the Runtime build hash, which feeds the slot install revision, so the next
+`--app` reinstall naturally supersedes an incompatible slot.
 
 The outer AppKit surface is an opaque, rectangular, resizable system window.
 Its public title bar displays `CFBundleDisplayName`, falling back to
@@ -121,16 +124,17 @@ output or consume App touch events.
 ## Architecture and Session
 
 ```text
-ios-use start --mac (--app <source-or-prepared.app> | --reuse) [--log]
-  -> PlayCoverManagedAppService
-     -> source classification or managed-generation selection
-     -> account-global content-addressed final lookup or construction
-     -> current Home last-generation selection
-  -> PlayCoverService
-     -> pinned PlayCover prepare graph and full verification
-     -> one bounded integrity verification immediately before launch
-     -> pinned-shape session App facade under the account cache
-     -> NSWorkspace facade launch with exact environment and PID
+ios-use start --mac (--app <source.app> | --reuse) [--log]
+  -> PlayCoverSessionService
+     -> resolve the Bundle ID (source Info.plist for --app, current-bundle for --reuse)
+     -> account-wide bundle start lock and live-process census
+  -> PlayCoverSlotService
+     -> --app: prepare + inject Runtime/Frida Engine + sign + verify in a
+        sibling staging dir, then atomic rename/swap the single <bundleID> slot
+     -> --reuse: read slot.json and verify the installed slot's install revision
+  -> PlayCoverSlotLauncher
+     -> write the minimal launching.json crash handle
+     -> NSWorkspace launches the slot App directly with exact environment and PID
   -> IOSUsePlayRuntime.framework
      -> pinned PlayTools platform/geometry/keychain hooks
      -> opaque resizable AppKit host, fixed canvas, and complete App compositor
@@ -154,36 +158,31 @@ that bootstrap only from the authenticated session peer, revalidates the
 descriptor, then redirects file descriptors 1 and 2. Runtime hello reports
 that exact outcome, and start does not commit the session unless it matches.
 
-The launch facade is a real `.app` directory whose top-level children are
-symlinks to the immutable prepared App, matching pinned PlayCover's
-`createAlias` shape. It lives under
-`~/Library/Caches/dev.ios-use/mac/launch-facades`, outside the Applications
-directories indexed by Launchpad. Each random session gets a collision-free
-facade name.
-An NSWorkspace callback may establish rollback ownership only for a new process
-that reports the exact session facade and prepared executable; it cannot by
-itself commit a session. A newly observed PID grants no ownership. Polling may
-challenge a new process whose bundle URL is either that facade or the canonical
-immutable prepared App, because LaunchServices can expose the latter after
-resolving the facade. The process must retain the exact prepared executable and
-authenticate this start's random session, socket, PID, bundle, and executable
-through Runtime identified ping before a prepared-App path may be claimed.
-Final Runtime `hello` must still pass before session commit.
-An account-wide bundle start lock and live-process census reject an already
-running copy of the same bundle ID before launch. ios-use neither attaches to
-nor terminates that existing process, and it has no direct-spawn fallback.
-The launch journal has exactly three transient phases:
-`intent -> owned -> driverLockCommitted`. `intent` is durable before the single
-NSWorkspace submission; `owned` requires an exact callback or authenticated
-Runtime owner; `driverLockCommitted` is reached only after that owner becomes
-the active session, then the journal is removed. A submitted launch that never
-yields an exact owner keeps both its intent and facade and returns
-`mac_pending_launch_unresolved`; later commands do not guess that a delayed
-LaunchServices completion is impossible. There is no automatic unresolved-
-intent recovery or cross-process cleanup.
-Confirmed stop and rollback of an exact owned process remove its facade.
-Launch discovery uses the full validated `start --timeout` value rather than a
-shorter hidden deadline.
+NSWorkspace launches the slot App directly; there is no symlink facade or
+per-session App copy. An account-wide bundle start lock and live-process census
+reject an already running copy of the same Bundle ID before launch. ios-use
+neither attaches to nor terminates that existing process, and it has no
+direct-spawn fallback.
+
+Because the NSWorkspace submission is asynchronous, start atomically writes one
+minimal `launching.json` crash handle before submitting. It is not a phase
+journal: it holds only the session ID, Runtime socket, Bundle ID, relative
+executable, submit time, and optional log path, and it never grants process
+ownership. An NSWorkspace callback or polled `NSRunningApplication` census
+identifies the new process, which must authenticate this start's exact session,
+socket, PID, Bundle ID, and executable through an identified Runtime ping before
+it can be claimed; a newly observed PID grants no ownership. Final Runtime
+`hello` must still pass, after which start writes `driver.lock` and removes
+`launching.json`.
+
+Recovery is limited to that one crash window. If a later start or `stop` finds a
+leftover `launching.json`, it re-acquires the same bundle lock and resolves it
+without guessing: a single same-Bundle process that authenticates the recorded
+session is adopted as active or terminated by `stop`; no matching process past
+one full start timeout means the record is stale and is removed; a same-Bundle
+process that cannot authenticate leaves the App for the user to close and only
+clears the tool-side record. Launch discovery uses the full validated
+`start --timeout` value rather than a shorter hidden deadline.
 
 Each connection carries one four-byte big-endian length-prefixed JSON request:
 
@@ -223,8 +222,8 @@ the complete observational payload used by
 their command result. Request and response sizes, absolute deadlines, and
 one-request-per-connection behavior are bounded. The CLI authenticates the
 peer UID and PID plus the live executable at the Unix transport, then verifies
-bundle, prepared generation, and Runtime identity during handshake and status.
-A mutation whose bytes may have reached the Runtime is never replayed
+Bundle ID, slot install revision, and Runtime identity during handshake and
+status. A mutation whose bytes may have reached the Runtime is never replayed
 automatically.
 
 UI availability follows the real scene-owning host surface, not
@@ -239,17 +238,17 @@ continue; if the surface disappears, the same typed gate applies.
 
 All applicable commands keep routing to this Runtime until `ios-use stop`.
 `stop` does not call a lifecycle RPC: the host revalidates the exact
-generation, PID, and executable, sends termination only to that process, and
-clears only matching session state. The host never probes or unlinks a Runtime
+install revision, PID, and executable, sends termination only to that process,
+and clears only matching session state. The host never probes or unlinks a Runtime
 socket: on Darwin, even a live listener can return `ECONNREFUSED` when its
 accept queue is full, and pathname deletion cannot be made conditional on an
 inode. The Runtime owns its freshly bound random path, marks its listener
 close-on-exec, and removes that path from its `atexit` and `SIGTERM` exits.
 Crash/SIGKILL residue and all unknown run-directory entries remain preserved;
 the next random session uses a different path. Start fails closed if its new
-path unexpectedly exists. As with the generation namespace guard, this is an
-owner-only cache boundary rather than a defense against a malicious process
-running as the same user: the Runtime's signal-safe `unlink` assumes another
+path unexpectedly exists. This is an owner-only cache boundary rather than a
+defense against a malicious process running as the same user: the Runtime's
+signal-safe `unlink` assumes another
 same-UID writer does not replace its bound pathname. The injected Runtime owns
 the host lifecycle for this backend, so it installs the process `SIGTERM`
 handler and exits with `_exit(143)` after removing that pathname.
@@ -268,89 +267,74 @@ performs a real sign/strict-verify probe. A cancelled trust authentication does
 not remove the binding or create a replacement, so the next explicit
 `config --mac` continues with the same certificate.
 
-All ordinary prepare, managed-selection, and start paths resolve this exact
-binding with initialization disabled. They never create, rotate, or repair the
-identity or modify Trust Settings. An explicit `start --mac --app` resolves and
-validates the signer before routing, Home locking, source inspection, hashing,
-or cache state is read. Missing and trust-required states direct the operator
-to `config --mac`; replaced, expired, or inaccessible state also fails closed.
+All ordinary prepare and start paths resolve this exact binding with
+initialization disabled. They never create, rotate, or repair the identity or
+modify Trust Settings. An explicit `start --mac --app` resolves and validates
+the signer before routing, Home locking, source inspection, or slot state is
+read. Missing and trust-required states direct the operator to `config --mac`;
+replaced, expired, or inaccessible state also fails closed.
 
-Final prepared Apps are shared by the macOS account. The fixed owner-only cache
-root is:
+Each Bundle ID has exactly one App slot, shared by the macOS account. The fixed
+owner-only layout is:
 
 ```text
-~/Library/Caches/dev.ios-use/mac/prepared/
-  objects/<generation>/App.app
-  locks/
+~/Library/Caches/dev.ios-use/mac/apps/<bundleID>/
+  <displayName>.app
+  slot.json
+~/Library/Caches/dev.ios-use/mac/locks/bundle-<sha256(bundleID)>.lock
 
-$IOS_USE_HOME/mac/last-generation.json
+$IOS_USE_HOME/mac/current-bundle.json
 
 ~/Library/Application Support/dev.ios-use/homes/<home-id>.json
 ```
 
-`objects` contains the only final generation for a content key and `locks`
-serializes per-generation publication. Each Home keeps only its own last
-generation for explicit `--reuse`; normal lifecycle commands never enumerate
-other Homes. The small account support records only let the read-only `ios-use du`
-command discover known Homes. Changing `IOS_USE_HOME` changes session and
-configuration state, but it does not create a second final App when the
-generation key is identical.
+The slot directory holds exactly one user-readable `<displayName>.app` and a
+small `slot.json`; the per-Bundle lock serializes install and launch. Each Home
+records only the current Bundle ID for `--reuse`; normal lifecycle commands
+never enumerate other Homes. The small account support records only let the
+read-only `ios-use du` command discover known Homes. Changing `IOS_USE_HOME`
+changes session and configuration state and which Bundle ID `--reuse` selects,
+but all Homes share the same single account-global slot per Bundle ID.
 
-The source App is always read-only. A cold prepare creates a sibling staging
-directory below `objects`, copies the source once, applies the pinned
-conversion/dependency/rpath changes, embeds and injects the Runtime, removes
-the copied mobile provision, composes entitlements, signs inside-out, removes
-quarantine, and performs full verification. Only then does one atomic rename
-publish `<generation>`. Failures remove only transaction-owned staging;
-existing generations and the source are never overwritten or repaired in
+`start --mac --app` always installs or updates the slot; it does not compute a
+source-tree hash to reuse an earlier build. The source App is always read-only.
+Install creates a sibling staging directory beside the slot, copies the source
+once, applies the pinned conversion/dependency/rpath changes, embeds and injects
+the Runtime and Frida Engine, removes the copied mobile provision, composes
+entitlements, signs inside-out, removes quarantine, and performs full
+verification. Only then does one atomic operation publish the slot: first
+install is an atomic rename from "no slot"; an update is an atomic swap of the
+whole `<bundleID>` directory, never delete-then-create, so a changed display
+name never briefly exposes two Apps. The swapped-out directory is deleted as
+transaction residue, not kept as a rollback build. Failures remove only
+transaction-owned staging, and the source is never overwritten or repaired in
 place.
 
-The immutable generation key contains:
+`slot.json` records only the Bundle ID, the App relative path, the executable
+relative path, and one unified `installRevision`. That revision is a single
+compatibility seal over the install-contract version, the Runtime build hash,
+the pinned prepare revision (which includes the Frida Engine ABI), the account
+namespace policy hash, and the signing-policy revision. The namespace policy
+hash derives from the canonical account PlayChain root, the fixed UID socket
+root, and its policy revision, and deliberately excludes the logical
+`IOS_USE_HOME` and Home ID. `--reuse` reads `slot.json` and refuses to launch
+when the installed `installRevision` no longer matches the current prepare
+contract, directing the operator to reinstall with `--app`. There is no
+separate `manifest + completed` marker, persisted source inventory, generation
+key, or CDHash sidecar.
 
-- the complete source content hash;
-- the Runtime/build content hash;
-- the pinned prepare implementation revision;
-- the account namespace policy hash, derived from the canonical account
-  PlayChain root, the fixed UID socket root, and its policy revision;
-- the signer's public-key SPKI SHA-256;
-- the signer's certificate SHA-256;
-- the signing-policy revision.
-
-The namespace policy hash deliberately excludes the logical
-`IOS_USE_HOME` and Home ID. It changes the generation only when the absolute
-paths authorized by the final entitlement change.
-
-Every reuse validates the immutable markers, executable and Runtime hashes,
-recorded code-object inventory, strict signatures, stable signer, designated
-requirement, CDHash, signing identifier, and managed-path identity. The
-manifest is the single current compact cache-integrity seal: it stores only
-relative paths and stable hashes/evidence and contains no source, prepared, or
-Runtime absolute path. Rich source inventories, Mach-O observations, and the
-entitlement differential remain in memory for the preparation result and are
-not persisted. The completed marker binds the canonical manifest hash and the
-critical executable hashes. Both sidecars are bounded, owner-only, single-link
-regular files.
-
-The explicit-source path builds one immutable preparation plan containing the
-source inspection, Runtime hash, prepare revision, signer evidence, and
-generation key. The same plan is used through final publication, and the
-copied Runtime plus signer are checked again before the generation can win the
-atomic publish. If another process already published the key, the candidate is
-discarded and the immutable winner is fully verified.
-
-ios-use does not garbage-collect generations, logs, artifacts, Frida development
-caches, or historical Home records. Lifecycle commands access only the current Home and
-never enumerate the Home discovery index. `ios-use du` is the explicit,
+ios-use does not garbage-collect slots, logs, artifacts, Frida development
+caches, or historical Home records. Lifecycle commands access only the current
+Home and never enumerate the Home discovery index. `ios-use du` is the explicit,
 read-only account report. Its default output groups rebuildable cache,
 persistent App data, logical Home data, and metadata/residue so the cleanup
 impact is visible before a user removes anything. Each group shows allocated
-size and latest descendant modification time; prepared Apps also show their
-version and capability. `--json` retains raw paths, Home/session generation
-references, and any incomplete-statistics warnings. The command follows no
-symlink, has a bounded traversal, and does no source hashing, signing
-verification, Runtime connection, recovery, or deletion. It does not write its
-own `cli.log` entry. A Home is added to the small discovery index only after a
-successful executable `start`.
+size and latest descendant modification time; the current App slot also shows
+its display name and version. `--json` retains raw paths, references, and any
+incomplete-statistics warnings. The command follows no symlink, has a bounded
+traversal, and does no source hashing, signing verification, Runtime connection,
+recovery, or deletion. It does not write its own `cli.log` entry. A Home is
+added to the small discovery index only after a successful executable `start`.
 
 Each logical Home keeps only its own Runtime log files under:
 
@@ -361,14 +345,23 @@ Each logical Home keeps only its own Runtime log files under:
 
 The Runtime's Unix socket is under `/private/tmp/dev.ios-use-<uid>/`; that
 socket root follows the effective UID rather than `HOME` or `IOS_USE_HOME`.
-The log root is deliberately Home-local. The account-global cache holds shared
-prepared Apps and publication locks; Application Support holds the
+The log root is deliberately Home-local. The account-global cache holds the
+per-Bundle App slots and their locks; Application Support holds the
 discovery-only Home index and per-bundle KeyCover databases. The App
 entitlement allows the account-level PlayChain root and
 fixed UID socket root; Home-local log access arrives only as the verified
-descriptor capability. Logical-Home operation locks serialize local session
-and pending-journal mutations, while per-generation locks coordinate shared
-final Apps.
+descriptor capability. Logical-Home operation locks serialize local session and
+`launching.json` mutations, while per-Bundle locks coordinate the shared slot.
+
+`v2.0.1` does not read, migrate, or auto-remove any pre-2.0.1 state. Legacy
+content-addressed prepared caches, launch facades, generation locks, and Home
+generation/pending references are simply ignored by the fixed-slot model, so no
+production start, `status`, or `stop` path touches them. Upgrading is a cache
+reset: stop any running Mac session, then run `start --mac --app` once per
+Bundle to build its new slot. Existing legacy caches remain on disk until you
+clear them yourself; `ios-use du` reports the fixed legacy roots as generic
+rebuildable cache so their size is visible, but ios-use never deletes them for
+you.
 
 A separate hermetic differential gate continues to compare the pinned
 full-PlayTools Installer result with the production prepare result. It uses
@@ -390,34 +383,29 @@ provenance, and an exact corresponding-source archive. `scripts/install.sh`
 verifies the manifest before placing both frameworks under
 `<prefix>/share/ios-use/mac/`, re-verifies their signatures, and never
 copies executable Runtime content into `IOS_USE_HOME`. The frameworks are
-read-only preparation inputs: prepare signs only managed App copies.
+read-only preparation inputs: prepare signs only the account-global slot copy.
 Installed-layout acceptance hashes both complete source frameworks before and
 after fixture execution.
 
-Runtime resolution honors a valid framework explicitly managed by an explicit
-`IOS_USE_HOME`, then the adjacent development layout, and finally this stable
-prefix share location. The implicit default Home is mutable session state and
-is never a Runtime source, so a stale framework left there cannot shadow the
-Runtime beside a development build. Account-global prepared objects are also
-never Runtime sources. Changing `IOS_USE_HOME` selects different logical
-session/reference/log state, but identical generation keys
-reuse the same account-global final App. It does not require a second Runtime
-installation or allow the installer to put mutable executable code in that
-Home.
+Runtime resolution checks the adjacent development layout and then this stable
+prefix share location. `IOS_USE_HOME`, legacy Home-local frameworks, and
+account-global App slots are never Runtime sources, so mutable or stale state
+cannot shadow the Runtime shipped beside ios-use. Changing `IOS_USE_HOME`
+selects different logical session/reference/log state and which Bundle ID
+`--reuse` targets, but all Homes share the same single account-global slot per
+Bundle ID and require no second Runtime installation.
 
-## Optional GumJS Debug Engine
+## Resident GumJS Debug Engine
 
-`start --mac --frida --app <source.app>` validates the installed arm64 Mac
+`start --mac --app <source.app>` always validates the installed arm64 Mac
 Catalyst `IOSUseFridaEngine.framework` against the pinned version, Gum commit,
-Engine ABI, Agent digest, and wrapper-source closure. Its actual framework
-digest participates in the generation key, so toolchain output cannot alias a
-different prepared App. A genuine generation miss revalidates the resource
-immediately before copying it, then performs one normal prepare/sign/publication
-pass. A prepared Frida generation remains launchable through bare reuse without
-re-reading that input. Base generations contain no Gum or Engine code, and
-ordinary start never accesses the installed Engine or network.
-There is no start-time Engine download, object cache, lock, environment override,
-or compatibility path.
+Engine ABI, Agent digest, and wrapper-source closure, then injects it into the
+slot during every install. The Engine ABI feeds the slot install revision, so an
+incompatible toolchain output cannot alias the current slot. The installed slot
+stays launchable through bare `--reuse` without re-reading that input, so the
+debug Engine is resident for every Mac session. The installed Engine is
+validated from the local read-only resource only; there is no start-time Engine
+download, object cache, lock, environment override, or compatibility path.
 
 `ios-use debug`, `--reset`, and `--stream` use the existing authenticated
 Runtime Unix socket and one in-process GumJS Agent. The Runtime does not start
@@ -528,16 +516,17 @@ global-mouse acceptance. It refuses fixture overrides and freshly rebuilds the
 Runtime, workspace CLI, and public fixture from one clean Git checkout on every
 invocation; CLI object files use a new SwiftPM scratch directory and fixture
 objects use new DerivedData. Its evidence binds the unchanged HEAD to the exact
-CLI, Runtime, complete fixture App tree, protocol-probe, and
-prepared-generation digests. A raw authenticated `hello` probe attests the
+CLI, Runtime, complete fixture App tree, protocol-probe, and installed-slot
+digests. A raw authenticated `hello` probe attests the
 exact minimal readiness field set and the absence of status-only AppKit fields,
 then proves the same session remains healthy through a full `status` request.
 The gate also exercises zero-length, oversized, exact-limit, malformed,
 invalid-UTF-8, and truncated Runtime frames and proves listener health after
-each one. One cold prepare is followed by 20 bare
-start/status/stop cycles with unique session IDs and one immutable generation;
-each cycle verifies the exact lock/PID/socket identity and the eventual removal
-of only that cycle's lock and Runtime-owned socket. The same gate verifies
+each one. It proves fixed-slot A ↔ B atomic replacement, then runs 20 bare
+start/status/stop cycles through `--reuse` with unique session IDs against one
+installed slot; each cycle verifies the exact lock/PID/socket identity and the
+eventual removal of only that cycle's `launching.json` and Runtime-owned socket.
+The same gate verifies
 scene replacement, endpoint-loss classification, fixture-owned self-`SIGKILL`
 stale cleanup,
 preservation of the crash socket residue, and recovery through a fresh random
@@ -550,7 +539,7 @@ recorded-PID-reuse cases that cannot be forced safely in a host live run.
 The run directory and attestation candidate are exclusively created and the
 final is a no-clobber hard link; it does not rely on `ditto` preserving a Unix
 socket in the archived home.
-These process-local checks, together with the pending-launch same-boot crash
+These process-local checks, together with the same-boot launch crash/recovery
 gate, are the required core live aggregate. CI runs that aggregate on the
 provisioned Apple-silicon host with its stable signer already initialized and
 an unlocked, launch-capable GUI session. It does not consume a private App,
@@ -569,15 +558,15 @@ The second value must match the effective account's canonical passwd Home.
 Cache, PlayChain, and socket roots are then derived from that verified account
 and UID. Missing or mismatched input exits with `EX_CONFIG` (78). GitHub
 workflows receive both private values through secrets. A temporary
-`IOS_USE_HOME` alone is not isolation for account-global objects, Runtime
+`IOS_USE_HOME` alone is not isolation for account-global App slots, Runtime
 socket residue, PlayChain, or Home discovery records.
 
 The unlocked real cursor, popup, and mouse/touch workflows remain optional
 additive diagnostics. Their live display matrix requires exactly one
 main display and one eligible active, online, non-mirrored extended display
 with an NSScreen and a different backing scale; missing hardware or a locked
-console is an `EX_CONFIG` (78) failure. The same PID, session, prepared
-generation, and AppKit window number must survive exact-window interpolated
+console is an `EX_CONFIG` (78) failure. The same PID, session, install
+revision, and AppKit window number must survive exact-window interpolated
 title-bar drags main → extended → main. Each phase binds Runtime diagnostics to
 the selected screen ID, backing scale, and visible frame while requiring host
 display scales 0.75, 1.0, and 0.875 respectively. The external-App diagnostic

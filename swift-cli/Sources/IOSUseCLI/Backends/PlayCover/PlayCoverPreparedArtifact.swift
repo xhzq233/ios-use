@@ -1,6 +1,6 @@
 import PlayCoverUpstream
 
 struct PlayCoverPreparedArtifact: Sendable {
-    let manifest: PlayCoverPrepareManifest
+    let preparedApp: PlayCoverPreparedApp
     let upstreamResult: PlayCoverUpstreamPrepareResult?
 }

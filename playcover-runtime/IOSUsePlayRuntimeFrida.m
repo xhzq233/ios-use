@@ -47,11 +47,6 @@ static void *IOSUseFridaSubscriptionContext;
 static BOOL IOSUseFridaLoadAttempted;
 static NSDictionary<NSString *, id> *IOSUseFridaLoadError;
 
-BOOL IOSUsePlayRuntimeFridaEnabled(void) {
-    const char *value = getenv("IOS_USE_PLAY_FRIDA");
-    return value != NULL && strcmp(value, "1") == 0;
-}
-
 static NSDictionary<NSString *, id> *IOSUseFridaError(
     NSString *code,
     NSString *message,
@@ -244,19 +239,6 @@ IOSUsePlayRuntimeFridaDebugCommand(
 ) {
     if (error != NULL) {
         *error = nil;
-    }
-    if (!IOSUsePlayRuntimeFridaEnabled()) {
-        if (error != NULL) {
-            *error = IOSUseFridaError(
-                @"frida_capability_unavailable",
-                @"the active App generation was not prepared with --frida",
-                @"validation",
-                @"debug_preflight",
-                NO,
-                @[]
-            );
-        }
-        return nil;
     }
     if (![arguments isKindOfClass:NSDictionary.class]) {
         if (error != NULL) {
