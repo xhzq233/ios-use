@@ -12,7 +12,7 @@ import MachO
 import injection
 
 private let playCoverPrepareDifferentialEmbeddedSourceClosureSHA256 =
-    "a57751bdfeb777e06f807962314c50af982df6fc9ecdf24ead1b21bb150c470d"
+    "78489e9c7ab962195bb406de92466dad5b6c73502560ed5ed59479c18b855b3c"
 
 private func playCoverCanonicalExistingURL(_ url: URL) -> URL? {
     guard let resolved = realpath(url.standardizedFileURL.path, nil) else {

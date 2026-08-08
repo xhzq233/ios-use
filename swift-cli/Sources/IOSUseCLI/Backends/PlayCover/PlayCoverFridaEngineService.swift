@@ -18,7 +18,7 @@ enum PlayCoverFridaEngineService {
     static let descriptorAgentSHA256 =
         "665d78f59fbc5141f0bd77567271a9725ba1d12d109183c262e08880f289c084"
     static let descriptorSourceClosureSHA256 =
-        "51d84ebb8f9740da4300a24ac7e4f480d99ae424be3d105a69d164894cb40198"
+        "c18486cd912b95369925dcea03715c28d5ade4a84a362f6d7f7ccf705560e08b"
 
     private struct FrameworkEvidence {
         let sha256: String

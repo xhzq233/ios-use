@@ -516,6 +516,22 @@ if ! cmp -s "$EXPECTED_RULES" "$INSTALLED_RULES"; then
   exit 1
 fi
 
+IOS_USE_HOME="$CUSTOM_HOME" \
+  "$INSTALLED_BINARY" status --json > "$STATUS_FILE"
+python3 - "$STATUS_FILE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    payload = json.load(stream)
+resources = payload.get("data", {}).get("macBackend", {}).get("resources", {})
+if resources.get("status") != "ready":
+    raise SystemExit(
+        "[installed-layout] ERROR: installed Mac resource semantics are not ready: "
+        + json.dumps(resources, sort_keys=True)
+    )
+PY
+
 if [[ -e "$CUSTOM_HOME/mac/IOSUsePlayRuntime.framework" ]] ||
    [[ -e "$CUSTOM_HOME/mac/IOSUseFridaEngine.framework" ]] ||
    [[ -e "$PREFIX/bin/.ios-use/playcover/IOSUsePlayRuntime.framework" ]] ||
