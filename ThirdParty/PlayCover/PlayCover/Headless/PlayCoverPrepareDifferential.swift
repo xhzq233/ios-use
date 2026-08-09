@@ -12,7 +12,7 @@ import MachO
 import injection
 
 private let playCoverPrepareDifferentialEmbeddedSourceClosureSHA256 =
-    "78489e9c7ab962195bb406de92466dad5b6c73502560ed5ed59479c18b855b3c"
+    "89e4bc7e082e8daaa01fe2a4f576fafbaa9949049af03206495e3df59786ca38"
 
 private func playCoverCanonicalExistingURL(_ url: URL) -> URL? {
     guard let resolved = realpath(url.standardizedFileURL.path, nil) else {
@@ -26,7 +26,6 @@ public struct PlayCoverPinnedPrimitivePrepareOptions: Sendable {
     public let sourceApp: URL
     public let stagingApp: URL
     public let managedHome: URL
-    public let defaultRulesData: Data
     public let playSignActive: Bool
     public let bundledPlayToolsFramework: URL?
 
@@ -34,14 +33,12 @@ public struct PlayCoverPinnedPrimitivePrepareOptions: Sendable {
         sourceApp: URL,
         stagingApp: URL,
         managedHome: URL,
-        defaultRulesData: Data,
         playSignActive: Bool = false,
         bundledPlayToolsFramework: URL? = nil
     ) {
         self.sourceApp = sourceApp
         self.stagingApp = stagingApp
         self.managedHome = managedHome
-        self.defaultRulesData = defaultRulesData
         self.playSignActive = playSignActive
         self.bundledPlayToolsFramework = bundledPlayToolsFramework
     }
@@ -108,7 +105,7 @@ public enum PlayCoverPinnedHeadlessInstallerOracle {
             + "already-unpacked, signed source .app fixture.",
         "Installer.wrap's Finder-library move is replaced by an APFS clone to "
             + "the explicit output.",
-        "PlayApp.sign is retained as exact corresponding source but its GUI "
+        "PlayApp.sign is retained in the exact tagged source but its GUI "
             + "class closure is not linked. The adapter records its direct "
             + "Entitlements.composeEntitlements then Shell.signAppWith "
             + "sequence; the pinned side keeps --deep while ios-use "
@@ -300,9 +297,7 @@ public enum PlayCoverPinnedPrimitiveCharacterization {
         let pinnedEntitlements = try Entitlements.composeEntitlements(
             stagedBaseApp,
             discordActivityEnabled: false,
-            bypass: false,
             playSignActive: options.playSignActive,
-            defaultRulesData: options.defaultRulesData,
             homeDirectory: options.managedHome
         )
         executedPinnedSymbols.append(
@@ -3395,7 +3390,6 @@ public enum PlayCoverPrepareDifferentialGate {
         repositoryRoot: URL
     ) throws -> PlayCoverDifferentialImplementationEvidence {
         let relativePaths = [
-            "ThirdParty/PlayCover/Package.resolved",
             "ThirdParty/PlayCover/Package.swift",
             "ThirdParty/PlayCover/PROVENANCE.md",
             "ThirdParty/PlayCover/PlayCover/AppInstaller/Installer.swift",
@@ -3407,9 +3401,7 @@ public enum PlayCoverPrepareDifferentialGate {
             "ThirdParty/PlayCover/PlayCover/Model/AppInfo.swift",
             "ThirdParty/PlayCover/PlayCover/Model/BaseApp.swift",
             "ThirdParty/PlayCover/PlayCover/Model/PlayApp.swift",
-            "ThirdParty/PlayCover/PlayCover/Model/PlayRules.swift",
             "ThirdParty/PlayCover/PlayCover/PlayCoverError.swift",
-            "ThirdParty/PlayCover/PlayCover/Rules/default.yaml",
             "ThirdParty/PlayCover/PlayCover/Utils/Entitlements.swift",
             "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
                 + "DataExtensions.swift",
@@ -3444,8 +3436,6 @@ public enum PlayCoverPrepareDifferentialGate {
                 + "PlayCoverBundleStartLock.swift",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                 + "PlayCoverFridaEngineService.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverRulesService.swift",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                 + "PlayCoverHomeStore.swift",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"

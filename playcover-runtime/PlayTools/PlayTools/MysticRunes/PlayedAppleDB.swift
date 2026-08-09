@@ -10,6 +10,14 @@ import Foundation
 import Security
 import SQLite3
 
+#if IOS_USE_PLAYCHAIN_TESTING
+private func IOSUsePlayRuntimeCapturedInstallRevision()
+    -> UnsafePointer<CChar>? { nil }
+
+private func IOSUsePlayRuntimeCapturedPlayChainRoot()
+    -> UnsafePointer<CChar>? { nil }
+#endif
+
 struct IOSUsePlayChainManagedLocation {
     let appBundleURL: URL
     let installRevision: String
@@ -36,11 +44,10 @@ enum IOSUsePlayChainLocation {
             )
         }
 #endif
-        let environment = ProcessInfo.processInfo.environment
-        guard let installRevision =
-                environment["IOS_USE_PLAY_INSTALL_REVISION"],
-              let playChainRootPath =
-                environment["IOS_USE_PLAYCHAIN_ROOT"] else {
+        guard let installRevisionBytes =
+                IOSUsePlayRuntimeCapturedInstallRevision(),
+              let playChainRootBytes =
+                IOSUsePlayRuntimeCapturedPlayChainRoot() else {
             throw NSError(
                 domain: "IOSUsePlayChain",
                 code: 1,
@@ -50,6 +57,8 @@ enum IOSUsePlayChainLocation {
                 ]
             )
         }
+        let installRevision = String(cString: installRevisionBytes)
+        let playChainRootPath = String(cString: playChainRootBytes)
         let hexadecimal = CharacterSet(charactersIn: "0123456789abcdef")
         guard installRevision.count == 64,
               installRevision.unicodeScalars.allSatisfy({

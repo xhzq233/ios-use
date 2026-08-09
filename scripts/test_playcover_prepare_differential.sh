@@ -197,7 +197,6 @@ if ! jq -e '
     .implementation.testExecutableDevice > 0 and
     .implementation.testExecutableInode > 0 and
     .implementation.relativeSourcePaths == ([
-      "ThirdParty/PlayCover/Package.resolved",
       "ThirdParty/PlayCover/Package.swift",
       "ThirdParty/PlayCover/PROVENANCE.md",
       "ThirdParty/PlayCover/PlayCover/AppInstaller/Installer.swift",
@@ -207,9 +206,7 @@ if ! jq -e '
       "ThirdParty/PlayCover/PlayCover/Model/AppInfo.swift",
       "ThirdParty/PlayCover/PlayCover/Model/BaseApp.swift",
       "ThirdParty/PlayCover/PlayCover/Model/PlayApp.swift",
-      "ThirdParty/PlayCover/PlayCover/Model/PlayRules.swift",
       "ThirdParty/PlayCover/PlayCover/PlayCoverError.swift",
-      "ThirdParty/PlayCover/PlayCover/Rules/default.yaml",
       "ThirdParty/PlayCover/PlayCover/Utils/Entitlements.swift",
       "ThirdParty/PlayCover/PlayCover/Utils/Extensions/DataExtensions.swift",
       "ThirdParty/PlayCover/PlayCover/Utils/Extensions/FileExtensions.swift",
@@ -243,7 +240,6 @@ if ! jq -e '
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSigningCertificateBuilder.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSigningIdentityService.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverPreparedArtifact.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverRulesService.swift",
       "swift-cli/Sources/IOSUseCLI/Support/IOSUsePaths.swift",
       "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverExternalPrepareDifferentialTests.swift",
       "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverPrepareDifferentialTests.swift",

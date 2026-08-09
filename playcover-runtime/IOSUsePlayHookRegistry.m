@@ -70,6 +70,8 @@ IOSUsePlayHookRegistryExpectedRequiredIdentifiers(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         identifiers = @[
+            @"playtools.process-info.mac-catalyst-app",
+            @"playtools.process-info.ios-app-on-mac",
             @"safe-area.provider",
             @"playtools.screen.scene-frame",
             @"playtools.screen.scene-bounds",

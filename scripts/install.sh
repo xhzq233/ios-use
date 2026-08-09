@@ -304,13 +304,12 @@ playcover_resources_destination_for_prefix() {
 
 install_playcover_resources() {
   local prefix="$1"
-  local destination staged runtime engine engine_notices rules
+  local destination staged runtime engine engine_notices
   destination="$(playcover_resources_destination_for_prefix "$prefix")"
   staged="$DIST_DIR/playcover-resources-stage"
   runtime="$staged/IOSUsePlayRuntime.framework"
   engine="$staged/IOSUseFridaEngine.framework"
   engine_notices="$engine/Resources/ThirdPartyNotices.txt"
-  rules="$staged/default-sandbox-rules.yaml"
   rm -rf "$staged"
   mkdir -p "$staged"
 
@@ -326,14 +325,11 @@ install_playcover_resources() {
     fi
     cp -R "$source_root/IOSUsePlayRuntime.framework" "$runtime"
     cp -R "$source_root/IOSUseFridaEngine.framework" "$engine"
-    cp \
-      "$ROOT_DIR/ThirdParty/PlayCover/PlayCover/Rules/default.yaml" \
-      "$rules"
   else
     local archived_path
     while IFS= read -r archived_path; do
       case "$archived_path" in
-        IOSUsePlayRuntime.framework|IOSUsePlayRuntime.framework/*|IOSUseFridaEngine.framework|IOSUseFridaEngine.framework/*|default-sandbox-rules.yaml) ;;
+        IOSUsePlayRuntime.framework|IOSUsePlayRuntime.framework/*|IOSUseFridaEngine.framework|IOSUseFridaEngine.framework/*) ;;
         *)
           echo "Mac backend resources archive contains an unexpected path: $archived_path" >&2
           exit 1
@@ -361,10 +357,6 @@ install_playcover_resources() {
     echo "Frida Engine does not contain its static-dependency notices." >&2
     exit 1
   fi
-  if [[ ! -f "$rules" || -L "$rules" || ! -s "$rules" ]]; then
-    echo "Mac backend resources do not contain the sandbox rules." >&2
-    exit 1
-  fi
   if ! codesign --verify --strict "$runtime" >/dev/null 2>&1; then
     echo "Mac Runtime signature verification failed." >&2
     exit 1
@@ -381,7 +373,6 @@ install_playcover_resources() {
     "$destination/default-sandbox-rules.yaml"
   mv "$runtime" "$destination/IOSUsePlayRuntime.framework"
   mv "$engine" "$destination/IOSUseFridaEngine.framework"
-  install -m 644 "$rules" "$destination/default-sandbox-rules.yaml"
   if ! codesign --verify --strict \
       "$destination/IOSUsePlayRuntime.framework" >/dev/null 2>&1; then
     echo "Installed Mac Runtime signature verification failed." >&2

@@ -6,7 +6,6 @@ GLOBAL_STATE_GUARD="$ROOT_DIR/scripts/test_playcover_global_state_guard.sh"
 FIXTURE_APP="$ROOT_DIR/playcover-fixtures/.build/DerivedData/Build/Products/Release-iphoneos/IOSUsePlayFixture.app"
 RUNTIME_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
 ENGINE_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUseFridaEngine.framework"
-RULES_SOURCE="$ROOT_DIR/ThirdParty/PlayCover/PlayCover/Rules/default.yaml"
 RELEASE_ASSET_DIR=""
 VERIFY_ONLY=0
 
@@ -16,7 +15,7 @@ Usage: scripts/test_playcover_installed_layout.sh [--release-dir <directory>] [-
 
 Without --release-dir, constructs checksummed assets from the current freshly
 built CLI and PlayCover resources. With --release-dir, consumes the exact assets created by
-scripts/release_build.sh and validates their checksum/build/source manifests
+scripts/release_build.sh and validates their exact five-file checksum set
 before exercising an isolated temporary-prefix install. By default it also runs the installed
 start/status/stop path and therefore requires the documented disposable-account
 ACK and expected passwd Home. --verify-only stops after the isolated installed
@@ -79,10 +78,6 @@ if [[ -z "$RELEASE_ASSET_DIR" ]]; then
     echo "[installed-layout] ERROR: current pinned Frida Engine is missing; build it before this release gate" >&2
     exit 1
   fi
-  if [[ ! -s "$RULES_SOURCE" ]]; then
-    echo "[installed-layout] ERROR: pinned sandbox rules are missing" >&2
-    exit 1
-  fi
   /usr/bin/codesign --verify --strict "$RUNTIME_SOURCE"
   /usr/bin/codesign --verify --strict "$ENGINE_SOURCE"
 else
@@ -112,14 +107,13 @@ INSTALLED_BINARY="$PREFIX/bin/ios-use"
 INSTALLED_RUNTIME="$PREFIX/share/ios-use/mac/IOSUsePlayRuntime.framework"
 INSTALLED_ENGINE="$PREFIX/share/ios-use/mac/IOSUseFridaEngine.framework"
 INSTALLED_ENGINE_NOTICES="$INSTALLED_ENGINE/Resources/ThirdPartyNotices.txt"
-INSTALLED_RULES="$PREFIX/share/ios-use/mac/default-sandbox-rules.yaml"
+LEGACY_RULES="$PREFIX/share/ios-use/mac/default-sandbox-rules.yaml"
 LOG_FILE="$TEMP_ROOT/start.log"
 STATUS_FILE="$TEMP_ROOT/status.json"
-SOURCE_ASSET="source.tar.gz"
+SOURCE_ARCHIVE="$TEMP_ROOT/source.tar.gz"
 INSTALL_VERSION_FOR_TEST="v0.0.0-test"
 EXPECTED_RUNTIME="$RUNTIME_SOURCE"
 EXPECTED_ENGINE="$ENGINE_SOURCE"
-EXPECTED_RULES="$RULES_SOURCE"
 START_ATTEMPTED=0
 SESSION_STOPPED=0
 
@@ -168,31 +162,6 @@ runtime_content_manifest() {
   )
 }
 
-runtime_source_digest() {
-  local source_tree="$1"
-  local manifest="$2"
-  local relative
-  : > "$manifest"
-  while IFS= read -r relative; do
-    if [[ ! -f "$source_tree/$relative" ]]; then
-      echo "[installed-layout] ERROR: corresponding source Runtime input is missing: $relative" >&2
-      exit 1
-    fi
-    printf '%s  %s\n' \
-      "$(shasum -a 256 "$source_tree/$relative" | awk '{print $1}')" \
-      "$relative" >> "$manifest"
-  done < <(
-    cd "$source_tree"
-    {
-      find playcover-runtime -type f -print
-      find swift-cli/Sources/IOSUsePlayDevice -type f -print
-      printf '%s\n' scripts/build_playcover_runtime.sh
-    } |
-      LC_ALL=C sort
-  )
-  shasum -a 256 "$manifest" | awk '{print $1}'
-}
-
 mkdir -p \
   "$SOURCE_ROOT" \
   "$EXPECTED_PARENT" \
@@ -200,14 +169,15 @@ mkdir -p \
   "$INSTALL_HOME" \
   "$CUSTOM_HOME"
 
+cp -R "$ROOT_DIR/ios-use-skill" "$SOURCE_ROOT/ios-use-skill"
+(
+  cd "$SOURCE_PARENT"
+  COPYFILE_DISABLE=1 tar -czf "$SOURCE_ARCHIVE" \
+    "$(basename "$SOURCE_ROOT")"
+)
+
 if [[ -z "$RELEASE_ASSET_DIR" ]]; then
   mkdir -p "$ASSET_DIR"
-  cp -R "$ROOT_DIR/ios-use-skill" "$SOURCE_ROOT/ios-use-skill"
-  (
-    cd "$SOURCE_PARENT"
-    COPYFILE_DISABLE=1 tar -czf "$ASSET_DIR/$SOURCE_ASSET" \
-      "$(basename "$SOURCE_ROOT")"
-  )
 
   install -m 755 "$ROOT_DIR/ios-use" "$ASSET_DIR/ios-use-darwin-arm64"
   # PlayCover execution never reads the XCTest driver payloads. Small,
@@ -220,14 +190,12 @@ if [[ -z "$RELEASE_ASSET_DIR" ]]; then
   mkdir -p "$RESOURCE_STAGE"
   cp -R "$RUNTIME_SOURCE" "$RESOURCE_STAGE/IOSUsePlayRuntime.framework"
   cp -R "$ENGINE_SOURCE" "$RESOURCE_STAGE/IOSUseFridaEngine.framework"
-  cp "$RULES_SOURCE" "$RESOURCE_STAGE/default-sandbox-rules.yaml"
   (
     cd "$RESOURCE_STAGE"
     COPYFILE_DISABLE=1 tar -czf \
       "$ASSET_DIR/ios-use-mac-resources.tar.gz" \
       IOSUsePlayRuntime.framework \
-      IOSUseFridaEngine.framework \
-      default-sandbox-rules.yaml
+      IOSUseFridaEngine.framework
   )
   (
     cd "$ASSET_DIR"
@@ -244,13 +212,6 @@ else
     driver.ipa
     driver-sim.ipa
     ios-use-mac-resources.tar.gz
-    LICENSE
-    PLAYCOVER-LICENSE-GPL-3.0
-    PLAYTOOLS-LICENSE-AGPL-3.0
-    INJECT-LICENSE-GPL-3.0
-    YAMS-LICENSE-MIT
-    FRIDA-STATIC-DEPENDENCY-NOTICES.txt
-    THIRD-PARTY-LICENSES.md
     SHA256SUMS
   )
   for required_asset in "${required_assets[@]}"; do
@@ -259,14 +220,27 @@ else
       exit 1
     fi
   done
-  awk '{ print $2 }' "$ASSET_DIR/SHA256SUMS" |
-    LC_ALL=C sort > "$TEMP_ROOT/checksums.expected"
+  printf '%s\n' "${required_assets[@]}" |
+    LC_ALL=C sort > "$TEMP_ROOT/assets.expected"
   (
     cd "$ASSET_DIR"
-    find . -maxdepth 1 -type f ! -name SHA256SUMS -print |
+    find . -mindepth 1 -maxdepth 1 -print |
       sed 's#^\./##' |
       LC_ALL=C sort
-  ) > "$TEMP_ROOT/checksums.actual"
+  ) > "$TEMP_ROOT/assets.actual"
+  if ! cmp -s "$TEMP_ROOT/assets.expected" "$TEMP_ROOT/assets.actual"; then
+    echo "[installed-layout] ERROR: release directory is not the exact five-asset set" >&2
+    diff -u --label expected --label actual \
+      "$TEMP_ROOT/assets.expected" "$TEMP_ROOT/assets.actual" >&2 || true
+    exit 1
+  fi
+  awk '{ print $2 }' "$ASSET_DIR/SHA256SUMS" |
+    LC_ALL=C sort > "$TEMP_ROOT/checksums.expected"
+  printf '%s\n' \
+    driver-sim.ipa \
+    driver.ipa \
+    ios-use-darwin-arm64 \
+    ios-use-mac-resources.tar.gz > "$TEMP_ROOT/checksums.actual"
   if ! cmp -s "$TEMP_ROOT/checksums.expected" "$TEMP_ROOT/checksums.actual"; then
     echo "[installed-layout] ERROR: SHA256SUMS does not cover the exact release asset file set" >&2
     diff -u --label "checksummed assets" --label "release assets" \
@@ -278,136 +252,19 @@ else
     shasum -a 256 -c SHA256SUMS
   ) >/dev/null
 
-  shopt -s nullglob
-  source_assets=("$ASSET_DIR"/ios-use-v*-corresponding-source.tar.gz)
-  build_manifests=("$ASSET_DIR"/MAC-BACKEND-BUILD-MANIFEST-v*.txt)
-  provenance_assets=("$ASSET_DIR"/MAC-BACKEND-PROVENANCE-v*.md)
-  changelog_assets=("$ASSET_DIR"/CHANGELOG-v*.md)
-  shopt -u nullglob
-  if [[ "${#source_assets[@]}" -ne 1 ||
-        "${#build_manifests[@]}" -ne 1 ||
-        "${#provenance_assets[@]}" -ne 1 ||
-        "${#changelog_assets[@]}" -ne 1 ]]; then
-    echo "[installed-layout] ERROR: release requires exactly one versioned source, build-manifest, provenance, and changelog asset" >&2
-    exit 1
-  fi
-  SOURCE_ASSET="$(basename "${source_assets[0]}")"
-  INSTALL_VERSION_FOR_TEST="${SOURCE_ASSET#ios-use-}"
-  INSTALL_VERSION_FOR_TEST="${INSTALL_VERSION_FOR_TEST%-corresponding-source.tar.gz}"
-  build_manifest_basename="$(basename "${build_manifests[0]}")"
-  provenance_basename="$(basename "${provenance_assets[0]}")"
-  changelog_basename="$(basename "${changelog_assets[0]}")"
   release_binary_version="$(
     "$ASSET_DIR/ios-use-darwin-arm64" --version |
       tr -d '[:space:]'
   )"
-  if [[ "$build_manifest_basename" != "MAC-BACKEND-BUILD-MANIFEST-$INSTALL_VERSION_FOR_TEST.txt" ||
-        "$provenance_basename" != "MAC-BACKEND-PROVENANCE-$INSTALL_VERSION_FOR_TEST.md" ||
-        "$changelog_basename" != "CHANGELOG-$INSTALL_VERSION_FOR_TEST.md" ||
-        "$release_binary_version" != "${INSTALL_VERSION_FOR_TEST#v}" ]]; then
-    echo "[installed-layout] ERROR: release binary and versioned asset names disagree" >&2
+  if [[ ! "$release_binary_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "[installed-layout] ERROR: release binary has an invalid version" >&2
     exit 1
   fi
+  INSTALL_VERSION_FOR_TEST="v$release_binary_version"
 
   tar -xzf "$ASSET_DIR/ios-use-mac-resources.tar.gz" -C "$EXPECTED_PARENT"
   EXPECTED_RUNTIME="$EXPECTED_PARENT/IOSUsePlayRuntime.framework"
   EXPECTED_ENGINE="$EXPECTED_PARENT/IOSUseFridaEngine.framework"
-  EXPECTED_RULES="$EXPECTED_PARENT/default-sandbox-rules.yaml"
-  tar -xzf "$ASSET_DIR/$SOURCE_ASSET" -C "$SOURCE_PARENT"
-  source_roots=("$SOURCE_PARENT"/ios-use-v*)
-  if [[ "${#source_roots[@]}" -ne 1 ||
-        ! -d "${source_roots[0]}/ios-use-skill" ||
-        ! -d "${source_roots[0]}/ThirdParty/Yams/upstream-source" ||
-        ! -d "${source_roots[0]}/ThirdParty/Frida/upstream-source/frida-gum" ||
-        ! -s "${source_roots[0]}/ThirdParty/Yams/PROVENANCE.md" ||
-        ! -s "${source_roots[0]}/ThirdParty/Frida/PROVENANCE.md" ||
-        ! -s "${source_roots[0]}/ThirdParty/Frida/upstream-source/FRIDA-SOURCE-MANIFEST.txt" ||
-        ! -s "${source_roots[0]}/CORRESPONDING-SOURCE-MANIFEST.txt" ]]; then
-    echo "[installed-layout] ERROR: corresponding source lacks its versioned root, skill, Yams/Frida source, or source manifest" >&2
-    exit 1
-  fi
-  if ! cmp -s \
-       "$ASSET_DIR/YAMS-LICENSE-MIT" \
-       "${source_roots[0]}/ThirdParty/Yams/LICENSE" ||
-     ! cmp -s \
-       "$ASSET_DIR/YAMS-LICENSE-MIT" \
-       "${source_roots[0]}/ThirdParty/Yams/upstream-source/LICENSE" ||
-     ! cmp -s \
-       "$ASSET_DIR/THIRD-PARTY-LICENSES.md" \
-       "${source_roots[0]}/ThirdParty/LICENSES.md"; then
-    echo "[installed-layout] ERROR: release and corresponding-source license materials differ" >&2
-    exit 1
-  fi
-  if ! cmp -s \
-       "$ASSET_DIR/FRIDA-STATIC-DEPENDENCY-NOTICES.txt" \
-       "$EXPECTED_ENGINE/Resources/ThirdPartyNotices.txt"; then
-    echo "[installed-layout] ERROR: top-level and framework Frida notices differ" >&2
-    exit 1
-  fi
-  python3 "${source_roots[0]}/scripts/frida_distribution.py" validate-source \
-    --repository-root "${source_roots[0]}" \
-    --source-root \
-      "${source_roots[0]}/ThirdParty/Frida/upstream-source/frida-gum"
-
-  BUILD_MANIFEST="${build_manifests[0]}"
-  if ! grep -Fq "\`$SOURCE_ASSET\`" "${provenance_assets[0]}" ||
-     ! grep -Fq "\`$(basename "$BUILD_MANIFEST")\`" "${provenance_assets[0]}"; then
-    echo "[installed-layout] ERROR: release provenance does not name its exact source and build manifest assets" >&2
-    exit 1
-  fi
-  expected_runtime_archive_sha="$(
-    awk -F': ' '$1 == "Mac backend resources archive SHA-256" { print $2 }' \
-      "$BUILD_MANIFEST"
-  )"
-  expected_source_archive_sha="$(
-    awk -F': ' '$1 == "Corresponding-source archive SHA-256" { print $2 }' \
-      "$BUILD_MANIFEST"
-  )"
-  expected_runtime_source_sha="$(
-    awk -F': ' '$1 == "Mac Runtime input manifest SHA-256" { print $2 }' \
-      "$BUILD_MANIFEST"
-  )"
-  expected_frida_source_manifest_sha="$(
-    awk -F': ' \
-      '$1 == "Frida source closure manifest SHA-256" { print $2 }' \
-      "$BUILD_MANIFEST"
-  )"
-  expected_frida_notices_sha="$(
-    awk -F': ' \
-      '$1 == "Frida static-dependency notices SHA-256" { print $2 }' \
-      "$BUILD_MANIFEST"
-  )"
-  archived_runtime_source_sha="$(
-    runtime_source_digest \
-      "${source_roots[0]}" \
-      "$TEMP_ROOT/runtime-source.archived"
-  )"
-  if [[ "$expected_runtime_archive_sha" != "$(
-          shasum -a 256 "$ASSET_DIR/ios-use-mac-resources.tar.gz" |
-            awk '{print $1}'
-        )" ||
-        "$expected_source_archive_sha" != "$(
-          shasum -a 256 "$ASSET_DIR/$SOURCE_ASSET" |
-            awk '{print $1}'
-        )" ||
-        "$expected_runtime_source_sha" != "$(
-          awk -F': ' '$1 == "Mac Runtime input manifest SHA-256" { print $2 }' \
-            "${source_roots[0]}/CORRESPONDING-SOURCE-MANIFEST.txt"
-        )" ||
-        "$expected_runtime_source_sha" != "$archived_runtime_source_sha" ||
-        "$expected_frida_source_manifest_sha" != "$(
-          shasum -a 256 \
-            "${source_roots[0]}/ThirdParty/Frida/upstream-source/FRIDA-SOURCE-MANIFEST.txt" |
-            awk '{print $1}'
-        )" ||
-        "$expected_frida_notices_sha" != "$(
-          shasum -a 256 \
-            "$ASSET_DIR/FRIDA-STATIC-DEPENDENCY-NOTICES.txt" |
-            awk '{print $1}'
-        )" ]]; then
-    echo "[installed-layout] ERROR: release build/source/archive digest evidence is inconsistent" >&2
-    exit 1
-  fi
 fi
 
 cat > "$FAKE_BIN/curl" <<'SCRIPT'
@@ -433,7 +290,14 @@ done
 
 asset=""
 case "$url" in
-  *codeload.github.com*) asset="$IOS_USE_RELEASE_TEST_SOURCE_ASSET" ;;
+  *codeload.github.com*)
+    if [[ -n "$out" ]]; then
+      cp "$IOS_USE_RELEASE_TEST_SOURCE_ARCHIVE" "$out"
+    else
+      cat "$IOS_USE_RELEASE_TEST_SOURCE_ARCHIVE"
+    fi
+    exit 0
+    ;;
   */ios-use-darwin-arm64) asset="ios-use-darwin-arm64" ;;
   */ios-use-mac-resources.tar.gz) asset="ios-use-mac-resources.tar.gz" ;;
   */driver.ipa) asset="driver.ipa" ;;
@@ -462,13 +326,15 @@ fi
 SCRIPT
 chmod +x "$FAKE_BIN/curl"
 
+mkdir -p "$(dirname "$LEGACY_RULES")"
+printf 'legacy sandbox rules\n' > "$LEGACY_RULES"
 INSTALL_OUTPUT="$(
   HOME="$INSTALL_HOME" \
     PREFIX="$PREFIX" \
     IOS_USE_GITHUB_REPO="example/ios-use" \
     IOS_USE_VERSION="$INSTALL_VERSION_FOR_TEST" \
     IOS_USE_RELEASE_TEST_ASSETS="$ASSET_DIR" \
-    IOS_USE_RELEASE_TEST_SOURCE_ASSET="$SOURCE_ASSET" \
+    IOS_USE_RELEASE_TEST_SOURCE_ARCHIVE="$SOURCE_ARCHIVE" \
     PATH="$FAKE_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     bash "$ROOT_DIR/scripts/install.sh" --print-path
 )"
@@ -480,8 +346,7 @@ fi
 if [[ ! -x "$INSTALLED_BINARY" ||
       ! -x "$INSTALLED_RUNTIME/IOSUsePlayRuntime" ||
       ! -x "$INSTALLED_ENGINE/IOSUseFridaEngine" ||
-      ! -s "$INSTALLED_ENGINE_NOTICES" ||
-      ! -s "$INSTALLED_RULES" ]]; then
+      ! -s "$INSTALLED_ENGINE_NOTICES" ]]; then
   echo "[installed-layout] ERROR: release assets were not installed into the prefix layout" >&2
   exit 1
 fi
@@ -511,8 +376,8 @@ if ! cmp -s \
   echo "[installed-layout] ERROR: installed Frida notices differ from the release archive" >&2
   exit 1
 fi
-if ! cmp -s "$EXPECTED_RULES" "$INSTALLED_RULES"; then
-  echo "[installed-layout] ERROR: installed sandbox rules differ from the release archive" >&2
+if [[ -e "$LEGACY_RULES" ]]; then
+  echo "[installed-layout] ERROR: installer kept the removed sandbox YAML" >&2
   exit 1
 fi
 

@@ -4,11 +4,10 @@
 //
 
 import Foundation
-import Yams
 
 public final class Entitlements {
     // These are so critical they MUST be gone no matter what.
-    static var critical = [
+    static let critical = [
         "/bin/bash",
         "/usr/sbin/sshd",
         "/usr/libexec/ssh-keysign",
@@ -16,6 +15,40 @@ public final class Entitlements {
         "/etc/ssh/sshd_config",
         "/usr/libexec/sftp-server",
         "/usr/bin/ssh"
+    ]
+
+    private static let defaultAllowRules = [
+        "(allow user-preference-write (preference-domain \".GlobalPreferences\"))",
+        "(allow user-preference-read (preference-domain \".GlobalPreferences\"))",
+        "(allow file* file-read* file-write* file-write-data file-read-metadata file-ioctl (subpath \"${HomeDirectory}/Library/Containers/io.playcover.PlayCover\"))",
+        "(allow file* file-read* file-read-metadata file-ioctl (subpath \"${HomeDirectory}/Library/Frameworks/PlayTools.framework\"))",
+        "(allow file* file-read* (subpath \"${HomeDirectory}/Library/Group Containers/\"))",
+    ]
+
+    static let cleanIOSDeniedLiteralPaths = [
+        "/usr/sbin/frida-server",
+        "/usr/bin/cycript",
+        "/usr/local/bin/cycript",
+        "/usr/lib/libcycript.dylib",
+    ]
+
+    static let cleanIOSDeniedSubpaths = [
+        "/Applications/Cydia.app",
+        "/Library/MobileSubstrate",
+        "/etc/apt",
+        "/private/etc/apt",
+        "/private/var/binpack",
+        "/private/var/cache/apt",
+        "/private/var/jb",
+        "/private/var/lib/apt",
+        "/private/var/lib/cydia",
+        "/private/var/stash",
+        "/var/binpack",
+        "/var/cache/apt",
+        "/var/jb",
+        "/var/lib/apt",
+        "/var/lib/cydia",
+        "/var/stash",
     ]
 
     static var playCoverEntitlementsDir: URL {
@@ -40,18 +73,14 @@ public final class Entitlements {
     public static func areEntitlementsValid(
         app: BaseApp,
         discordActivityEnabled: Bool = false,
-        bypass: Bool = false,
         playSignActive: Bool? = nil,
-        defaultRulesData: Data,
         homeDirectory: URL
     ) throws -> Bool {
         guard let old = try dumpEntitlements(exec: app.executable) as? [String: AnyHashable] else { return false }
         guard let new = try composeEntitlements(
             app,
             discordActivityEnabled: discordActivityEnabled,
-            bypass: bypass,
             playSignActive: playSignActive,
-            defaultRulesData: defaultRulesData,
             homeDirectory: homeDirectory
         ) as? [String: AnyHashable] else { return false }
         return new.hashValue == old.hashValue
@@ -83,14 +112,10 @@ public final class Entitlements {
     public static func composeEntitlements(
         _ app: BaseApp,
         discordActivityEnabled: Bool = false,
-        bypass: Bool = false,
         playSignActive: Bool? = nil,
-        defaultRulesData: Data,
         homeDirectory: URL
     ) throws -> [String: Any] {
         var base = [String: Any]()
-        let bundleID = app.info.bundleIdentifier
-
         setBaseEntitlements(&base)
 
         if playSignActive ?? SystemConfig.isPlaySignActive {
@@ -104,16 +129,17 @@ public final class Entitlements {
 
         var sandboxProfile = [String]()
 
-        var rules = try getDefaultRules(defaultRulesData)
+        var allowRules = defaultAllowRules
         if discordActivityEnabled {
-             rules.allow?.append("(allow network* ipc-posix*)")
-         }
+            allowRules.append("(allow network* ipc-posix*)")
+        }
 
-        sandboxProfile.append(contentsOf: PlayRules.buildRules(
-            rules: rules.allow ?? [],
-            bundleID: bundleID,
-            homeDirectory: homeDirectory
-        ))
+        sandboxProfile.append(contentsOf: allowRules.map {
+            $0.replacingOccurrences(
+                of: "${HomeDirectory}",
+                with: homeDirectory.path
+            )
+        })
         sandboxProfile.append("(deny process-fork)")
         for file in critical {
             sandboxProfile.append("""
@@ -121,34 +147,15 @@ public final class Entitlements {
                     """)
         }
 
-        if bypass {
-            for file in PlayRules.buildRules(
-                rules: rules.blocklist ?? [],
-                bundleID: bundleID,
-                homeDirectory: homeDirectory
-            ) {
-                sandboxProfile.append(
-                    """
-                     (deny file* file-read* file-read-metadata file-ioctl (literal "\(file)"))
+        for file in cleanIOSDeniedLiteralPaths {
+            sandboxProfile.append("""
+                    (deny file* file-read* file-read-metadata file-ioctl (literal "\(file)"))
                     """)
-            }
-
-            for file in PlayRules.buildRules(
-                rules: rules.greenlist ?? [],
-                bundleID: bundleID,
-                homeDirectory: homeDirectory
-            ) {
-                sandboxProfile.append(
-                    """
-                     (allow file* file-read* file-read-metadata file-ioctl (literal "\(file)"))
+        }
+        for directory in cleanIOSDeniedSubpaths {
+            sandboxProfile.append("""
+                    (deny file* file-read* file-read-metadata file-ioctl (subpath "\(directory)"))
                     """)
-            }
-
-            sandboxProfile.append(contentsOf: PlayRules.buildRules(
-                rules: rules.bypass ?? [],
-                bundleID: bundleID,
-                homeDirectory: homeDirectory
-            ))
         }
 
         base["com.apple.security.temporary-exception.sbpl"] = sandboxProfile
@@ -198,16 +205,6 @@ public final class Entitlements {
         kTCCServiceSystemPolicyDeveloperFile
         kTCCServiceSystemPolicyDocumentsFolder
         """
-
-    static func getDefaultRules(_ data: Data) throws -> PlayRules {
-        do {
-            let decoder = YAMLDecoder()
-            let decoded: PlayRules = try decoder.decode(PlayRules.self, from: data)
-            return decoded
-        } catch {
-            throw "failed to decode default sandbox rules: \(error)"
-        }
-    }
 
     public static func isAppRequireUnsandbox(_ app: BaseApp) -> Bool {
         unsandboxedApps.contains(app.info.bundleIdentifier)

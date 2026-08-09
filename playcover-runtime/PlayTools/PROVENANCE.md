@@ -3,8 +3,7 @@
 - Upstream: https://github.com/PlayCover/PlayTools.git
 - Pinned commit: `d688f695e83bf080be9ad4b7346e914c7c343d96`
 - License: AGPL-3.0; see `LICENSE`
-- Corresponding source: the release asset named
-  `ios-use-v<version>-corresponding-source.tar.gz` contains this imported tree,
+- Source carrier: the exact GitHub release tag contains this imported tree,
   the local Runtime integration, build recipe, license, and this record.
 
 ## Expected vendored upstream files
@@ -103,3 +102,18 @@ touch, and PlayChain sources are compared directly with the pinned checkout by
 `scripts/audit_playcover_upstreams.sh`. Every allowed changed path is listed
 above and emitted as a full unified diff; an unrecorded or stale path fails the
 gate.
+
+### Clean-iOS identity boundary
+
+The local `NSObject+Swizzle.m` patch installs required hooks on the concrete
+`NSProcessInfo` instance class so `isMacCatalystApp` and `isiOSAppOnMac` return
+false before App code can read them. `PlayLoader.m` reuses its existing
+`open`/`stat`/`access` interposition point to return `ENOENT` for a fixed set of
+shell, SSH, Cydia, MobileSubstrate, apt, cycript, Frida-server, and `/var/jb`
+paths. The same bounded file set is denied by the compiled sandbox rules.
+
+The ios-use Runtime captures its private session revision and PlayChain root
+before initialization, then removes all `IOS_USE_PLAY_*` bootstrap variables
+and empty environment entries. `PlayedAppleDB.swift` reads only the captured
+values. This contract intentionally does not hide loaded images, rewrite the
+Mach-O Catalyst platform, or implement generic anti-debug behavior.

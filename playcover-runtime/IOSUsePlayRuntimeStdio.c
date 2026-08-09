@@ -204,5 +204,7 @@ static void IOSUsePlayRuntimeInitializeEntry(void) {
         (void)IOSUsePlayRuntimeBootstrapStdio();
     }
     IOSUsePlayRuntimeInitializeAfterStdio();
+    extern void IOSUsePlayRuntimeHideLaunchEnvironment(void);
+    IOSUsePlayRuntimeHideLaunchEnvironment();
 #endif
 }

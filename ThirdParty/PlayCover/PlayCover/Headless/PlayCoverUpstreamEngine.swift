@@ -571,7 +571,6 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
     public let runtimeSocketRoot: URL
     public let runtimeSocketPath: String
     public let runtimeLoadPath: String
-    public let defaultRulesData: Data
     public let playSignActive: Bool
     public let codesignIdentity: String
     public let expectedRuntimeBuildHash: String?
@@ -588,7 +587,6 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         runtimeSocketRoot: URL,
         runtimeSocketPath: String,
         runtimeLoadPath: String,
-        defaultRulesData: Data,
         playSignActive: Bool = false,
         codesignIdentity: String,
         expectedRuntimeBuildHash: String? = nil,
@@ -604,7 +602,6 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         self.runtimeSocketRoot = runtimeSocketRoot
         self.runtimeSocketPath = runtimeSocketPath
         self.runtimeLoadPath = runtimeLoadPath
-        self.defaultRulesData = defaultRulesData
         self.playSignActive = playSignActive
         self.codesignIdentity = codesignIdentity
         self.expectedRuntimeBuildHash = expectedRuntimeBuildHash
@@ -702,11 +699,6 @@ public enum PlayCoverUpstreamEngine {
         "7190cc9ce57c8dee0e222918468f2579acc95e1b"
     public static let injectRevision =
         "e6d3aa4abe106f90fd8c5a1ca04db15c19d324eb"
-    /// SHA-256 of the vendored `Rules/default.yaml`. Headless prepare never
-    /// reads mutable rules from the caller's HOME.
-    public static let defaultRulesRevision =
-        "0a544ec2c294dd9ed5e2d9fd323fe07be30b7d31b3ec7b71a078c6222b37583e"
-
     private static let cpuTypeArm64: Int32 = 0x0100_000c
     private static let platformIPhoneOS: UInt32 = 2
     public static let platformMacCatalyst: UInt32 = 6
@@ -1261,7 +1253,6 @@ public enum PlayCoverUpstreamEngine {
                         .entitlementsPlist,
                 runtimeSocketPath: options.runtimeSocketPath,
                 managedHome: options.managedHome,
-                defaultRulesData: options.defaultRulesData,
                 playSignActive: options.playSignActive
             )
         }
@@ -3990,7 +3981,6 @@ public enum PlayCoverUpstreamEngine {
         originalPlist: Data?,
         runtimeSocketPath: String,
         managedHome: URL? = nil,
-        defaultRulesData: Data,
         playSignActive: Bool
     ) throws -> EntitlementComposition {
         let original = try entitlementDictionary(originalPlist)
@@ -4009,9 +3999,7 @@ public enum PlayCoverUpstreamEngine {
             baseline = try Entitlements.composeEntitlements(
                 app,
                 discordActivityEnabled: false,
-                bypass: false,
                 playSignActive: playSignActive,
-                defaultRulesData: defaultRulesData,
                 homeDirectory: managedHome
                     ?? FileManager.default.homeDirectoryForCurrentUser
             )

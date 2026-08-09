@@ -1,182 +1,132 @@
 # How To Release
 
-This repository releases from Git tags. The release workflow builds the Swift CLI, builds both driver IPAs, packages release assets, and uploads them to the GitHub Release that matches the tag.
+ios-use releases from Git tags. A release publishes exactly five assets: the
+CLI, two driver IPAs, the Mac resource archive, and their checksum manifest.
 
-## 1. Bump Version
+## 1. Pin the version
 
-Update the CLI version constant in `swift-cli/Sources/IOSUseCLI/CLI/IOSUseCLI.swift` and refresh any hard-coded tests or docs that intentionally pin the public version.
+Update `IOSUseCLI.version` in
+`swift-cli/Sources/IOSUseCLI/CLI/IOSUseCLI.swift`, its intentionally pinned
+tests, and `release-notes/CHANGELOG-vX.Y.Z.md`. The binary and tag must match:
 
-The release tag must match the binary version exactly, for example:
-
-- `IOSUseCLI.version = "1.2.0"`
-- Git tag: `v1.2.0`
-
-## 2. Build Release Assets Locally
-
-Use Apple-silicon macOS with full Xcode and `xcodegen` installed. Start from a
-clean Git tree: the script fails before building when tracked or untracked
-source differs from `HEAD`, and checks again after the build.
-
-Run the release build script with the intended tag:
-
-```bash
-IOS_USE_RELEASE_VERSION=v1.2.0 bash scripts/release_build.sh
+```text
+IOSUseCLI.version = "X.Y.Z"
+tag = vX.Y.Z
 ```
 
-Every release builds and verifies the pinned Frida Catalyst Engine together
-with the Runtime. The installer keeps both as read-only resources; every
-`start --mac --app` injects the Engine into the installed App, so Frida is a
-resident Mac-backend capability rather than an opt-in.
-The Engine embeds the complete notices for its statically linked GumJS
-closure. The same notice is published as a release asset, and the exact pinned
-Frida source closure is included in the corresponding-source archive.
-The Engine build normalizes compiler-visible source paths so local source,
-cache, and temporary build-root paths are not embedded in the binary. Frida's
-generated source maps may still vary between otherwise equivalent builds, so
-the release records the framework's actual digest and size in its build
-manifest and protects the complete resources archive with `SHA256SUMS`; it
-does not duplicate one toolchain-specific framework hash in source code.
+## 2. Run the repository gate
 
-This script:
-
-1. Refuses a dirty source tree and audits pinned PlayCover, PlayTools, `inject`,
-   Yams, and Frida closure metadata, commits, licenses, expected vendored
-   files, local patch sets, and SwiftPM resolutions.
-2. Hashes the complete tracked Runtime build-input set, then forces a fresh
-   Runtime build from a new derived-data directory.
-3. Builds the Swift CLI and verifies `./ios-use --version` matches
-   `IOS_USE_RELEASE_VERSION` when provided.
-4. Builds the real-device and simulator driver IPAs.
-5. Refuses any source-input change during the build and stages the Runtime and
-   pinned Engine as read-only source resources under `release/`; preparation
-   may sign only the installed App slot copy.
-6. Builds corresponding source from the exact current `HEAD`, adds the complete
-   pinned Yams Git tree and Frida GumJS static source closure, and proves its
-   Runtime inputs have the same digest as the fresh binary build.
-7. Stages the versioned build digest manifest, licenses, upstream provenance,
-   and changelog.
-8. Verifies every source/archive file set and writes `release/SHA256SUMS` for
-   every content asset.
-
-Expected assets:
-
-The Mac resources archive contains the Runtime, pinned sandbox rules, and the
-always-injected Frida Engine under one installed resource root.
-
-- `release/ios-use-darwin-arm64`
-- `release/driver.ipa`
-- `release/driver-sim.ipa`
-- `release/ios-use-mac-resources.tar.gz`
-- `release/ios-use-v1.2.0-corresponding-source.tar.gz`
-- `release/LICENSE`, `release/*-LICENSE-*` (including Yams MIT), and
-  `release/THIRD-PARTY-LICENSES.md`
-- `release/FRIDA-STATIC-DEPENDENCY-NOTICES.txt`
-- `release/MAC-BACKEND-BUILD-MANIFEST-v1.2.0.txt`
-- `release/MAC-BACKEND-PROVENANCE-v1.2.0.md`
-- `release/CHANGELOG-v1.2.0.md`
-- `release/SHA256SUMS`
-
-## 3. Sanity Check
-
-Verify the staged binary and assets before publishing:
+Use Apple-silicon macOS with full Xcode and `xcodegen` installed:
 
 ```bash
-./ios-use --version
-ls -lh release/
+bash scripts/ci_test.sh
 git diff --check
 ```
 
-`./ios-use --version` must print the same version as the tag you will publish.
-The tag workflow runs the exact files under `release/` through
-checksum/build-manifest/source-manifest validation and `install.sh` before any
-upload. This verification installs only into an isolated temporary prefix and
-does not touch account-global Mac backend state, so the release can run on a
-GitHub-hosted macOS runner. The workflow explicitly installs `xcodegen`, Meson,
-and Ninja before the clean Runtime, Driver, CLI, and Frida Engine build.
+The non-live gate builds and tests the CLI, drivers, Runtime, Frida integration,
+and pinned PlayCover differential contracts. Account-global live tests remain
+explicit because they require an unlocked GUI session and a disposable account.
 
-When a real installed launch is needed for a release candidate, run it
-explicitly on a launch-capable local Mac after building the fixture:
+## 3. Build release assets
+
+Start from a clean Git checkout. The build refuses tracked or untracked changes
+both before and after compiling:
+
+```bash
+IOS_USE_RELEASE_VERSION=vX.Y.Z bash scripts/release_build.sh
+```
+
+The build:
+
+1. audits the pinned PlayCover, PlayTools, and `inject` sources, licenses, and
+   recorded local patches;
+2. forces fresh Runtime, CLI, and real-device/simulator driver builds;
+3. fetches and validates the exact public Frida commits before building the
+   resident GumJS Engine;
+4. packages only `IOSUsePlayRuntime.framework` and
+   `IOSUseFridaEngine.framework` in the Mac resource archive;
+5. rejects local source/cache paths in the frameworks; and
+6. writes `SHA256SUMS` for the four content assets and rejects any release
+   directory that is not the exact five-file set.
+
+Expected `release/` entries:
+
+- `ios-use-darwin-arm64`
+- `driver.ipa`
+- `driver-sim.ipa`
+- `ios-use-mac-resources.tar.gz`
+- `SHA256SUMS`
+
+The Engine's required third-party notices are embedded at
+`IOSUseFridaEngine.framework/Resources/ThirdPartyNotices.txt`. Project and
+vendored source/license material is carried by the exact GitHub tag source;
+Frida source locations and commits are pinned in
+`ThirdParty/Frida/PROVENANCE.md`. No duplicate source, license, provenance,
+changelog, or build-manifest release assets are produced.
+
+## 4. Validate the staged install
+
+```bash
+./ios-use --version
+bash scripts/test_playcover_installed_layout.sh \
+  --release-dir release \
+  --verify-only
+```
+
+This verifies the exact asset set, every checksum, both framework signatures,
+the embedded Frida notices, and an isolated-prefix install. It does not launch
+an App or touch account-global Mac state.
+
+For a local release candidate on a disposable, launch-capable Mac, run the live
+installed-layout gate separately:
 
 ```bash
 bash playcover-fixtures/build.sh
 bash scripts/test_playcover_installed_layout.sh --release-dir release
 ```
 
-The live form requires the disposable-account acknowledgement documented by
-the script. It validates `start/status/stop`, but it is independent of asset
-publication and is not simulated by the hosted release job.
+The live form validates `start/status/stop` and requires the safety
+acknowledgement documented by the script.
 
-## 4. Commit And Tag
-
-Commit the version bump, then create the release tag:
+## 5. Commit, tag, and push
 
 ```bash
-git add README.md release-notes/CHANGELOG-v1.2.0.md swift-cli/Sources/IOSUseCLI/CLI/IOSUseCLI.swift
-git commit -m "chore(release): bump version to 1.2.0"
-git tag v1.2.0
-```
-
-Use the current version number in both the commit message and tag name.
-
-## 5. Push
-
-Push the branch and tag:
-
-```bash
+git add <release changes>
+git commit -m "chore(release): prepare X.Y.Z"
+git tag vX.Y.Z
 git push origin main
-git push origin v1.2.0
+git push origin vX.Y.Z
 ```
 
-Pushing the tag triggers `.github/workflows/release.yml`.
+Pushing the tag triggers `.github/workflows/release.yml`. The workflow rebuilds
+from the tag, reruns the isolated installed-layout validation, uses the tracked
+release note as the GitHub Release body, and uploads only the five explicit
+paths above.
 
-Release assets are immutable through the workflow: it refuses to start when the
-tag's Release already contains any asset. The upload action is additionally
-configured to skip, rather than overwrite, an unexpected duplicate filename. Do not
-retry a partially uploaded tag because a second build could produce checksums for
-different bytes. Fix the issue and publish a new patch version instead.
+Release assets are immutable in the normal workflow: a tag whose Release
+already has assets is rejected, and duplicate names are never overwritten.
+Normally fix a failed publication and use a new patch version.
 
-## 6. Watch The GitHub Release
+## 6. Verify GitHub
 
-The release workflow runs on tag pushes that match `v*` and uploads:
+After the workflow succeeds, confirm:
 
-- `ios-use-darwin-arm64`
-- `driver.ipa`
-- `driver-sim.ipa`
-- `ios-use-mac-resources.tar.gz`
-- `ios-use-vX.Y.Z-corresponding-source.tar.gz`
-- license, Frida static-dependency notices, upstream provenance, and versioned
-  Runtime/source digest assets
-- `CHANGELOG-vX.Y.Z.md`
-- `SHA256SUMS`
+- the tag resolves to the intended commit;
+- the Release body matches `release-notes/CHANGELOG-vX.Y.Z.md`;
+- the Release has exactly the five expected assets;
+- `SHA256SUMS` has exactly four entries and validates every content asset;
+- the GitHub tag source contains the project/vendored licenses and source; and
+- every public Frida repository resolves the commit recorded in
+  `ThirdParty/Frida/PROVENANCE.md`.
 
-To watch it:
+## Checklist
 
-1. Open the GitHub Actions run for the `Build & Release` workflow.
-2. Confirm `scripts/release_build.sh` passes its version check.
-3. Confirm the exact-release isolated installed-layout step passes before upload.
-4. Open the GitHub Release page for the tag and verify the assets are attached.
-
-## 7. Release Checklist
-
-- `IOSUseCLI.version` matches the release tag.
-- The checkout is clean before and after release builds.
-- `xcodegen` and full Xcode are present on Apple Silicon.
-- `scripts/release_build.sh` succeeds with `IOS_USE_RELEASE_VERSION=vX.Y.Z`.
-- `scripts/test_playcover_installed_layout.sh --release-dir release --verify-only`
-  succeeds for those exact assets.
-- `release/` contains all expected assets.
-- `git diff --check` passes.
-- The tag is pushed to origin.
-- The GitHub Release has the Mac backend resources archive, corresponding source, license,
-  Frida static-dependency notices, provenance, build manifest, changelog, and
-  checksums in addition to the CLI and driver IPAs.
-
-The non-live integration and core PlayCover live gates remain explicit
-`workflow_dispatch` jobs because they mutate account-global state and require
-an unlocked GUI session. They are optional remote entry points for a dedicated
-Mac, not release infrastructure: the hosted release job builds, validates, and
-publishes without them. A maintainer can run the same live scripts locally when
-real launch coverage is needed. The jobs need no operator App, private
-scenario/evidence directory, or external-App attestation; a remote live run
-uploads only its runner-temporary `run.log`. The two-display fixture and generic
-external-App workflows remain optional additive diagnostics.
+- [ ] `IOSUseCLI.version` and `vX.Y.Z` match.
+- [ ] `bash scripts/ci_test.sh` passes.
+- [ ] The checkout is clean before the release build.
+- [ ] `IOS_USE_RELEASE_VERSION=vX.Y.Z bash scripts/release_build.sh` passes.
+- [ ] Isolated installed-layout verification passes for `release/`.
+- [ ] `release/` contains exactly five files.
+- [ ] `git diff --check` passes.
+- [ ] Branch and tag are pushed.
+- [ ] GitHub Actions succeeds and the Release has exactly five assets.

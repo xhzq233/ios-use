@@ -4,8 +4,7 @@
 - Pinned commit: `7190cc9ce57c8dee0e222918468f2579acc95e1b`
 - License: GPL-3.0; see `LICENSE`
 - Imported files retain their upstream directory and file names.
-- Corresponding source: the release asset named
-  `ios-use-v<version>-corresponding-source.tar.gz` contains this imported tree,
+- Source carrier: the exact GitHub release tag contains this imported tree,
   local headless integration, build recipes, license, and this record.
 
 ## Expected vendored upstream files
@@ -20,9 +19,7 @@ exactly.
 - `Model/AppInfo.swift`
 - `Model/BaseApp.swift`
 - `Model/PlayApp.swift`
-- `Model/PlayRules.swift`
 - `PlayCoverError.swift`
-- `Rules/default.yaml`
 - `Utils/Entitlements.swift`
 - `Utils/Extensions/DataExtensions.swift`
 - `Utils/Extensions/FileExtensions.swift`
@@ -45,7 +42,6 @@ not listed here, or a listed path that becomes byte-identical, fails
 <!-- audit-local-patches:start -->
 - `PlayCover/AppInstaller/Installer.swift`
 - `PlayCover/Model/BaseApp.swift`
-- `PlayCover/Model/PlayRules.swift`
 - `PlayCover/PlayCoverError.swift`
 - `PlayCover/Utils/Entitlements.swift`
 - `PlayCover/Utils/Extensions/DataExtensions.swift`
@@ -62,8 +58,8 @@ The imported source is the authority for iOS-to-Mac conversion and prepare
 ordering.  `Package.swift` selects the non-GUI closure and
 `PlayCover/Headless/PlayCoverUpstreamEngine.swift` provides the ios-use API.
 `Model/PlayApp.swift` and `Utils/Extensions/PlayAppExtensions.swift` are
-nevertheless retained byte-for-byte, audited, and included in corresponding
-source. They are explicitly excluded from the SwiftPM target because the class
+nevertheless retained byte-for-byte and audited in the tagged source. They are
+explicitly excluded from the SwiftPM target because the class
 also closes over non-vendored GUI/global application state; exclusion is a
 link boundary, not a source omission. The headless host directly adapts the
 pinned `createAlias` shape—a real `.app` directory whose top-level children
@@ -132,16 +128,16 @@ adapter call sites:
 
 | Pinned `PlayApp.sign` symbol | Headless preservation / strengthening |
 | --- | --- |
-| `Entitlements.composeEntitlements(self)` | Both paths call the vendored `Entitlements.composeEntitlements` directly on the staged `BaseApp`. Explicit `discordActivityEnabled`, `bypass`, `playSignActive`, account Runtime-root, and UID socket-root inputs replace GUI `AppSettings` reads. Production keeps the pinned rule that source entitlements are overlaid only when PlaySign is active, then appends file access for the fixed account Runtime root and file plus AF_UNIX bind access for the fixed UID socket root. KeyCover uses the account-global `playchain/<bundle-id>.db` child. The rich preparation result records every key removed from the source by the pinned non-PlaySign composition; compact schema-version-5 generation manifests intentionally omit that runtime-only differential and all absolute paths. |
+| `Entitlements.composeEntitlements(self)` | Both paths call the vendored `Entitlements.composeEntitlements` directly on the staged `BaseApp`. Explicit `discordActivityEnabled`, `playSignActive`, and managed Home inputs replace GUI `AppSettings` reads. Five previously effective sandbox allow expressions are compiled into Swift, while fixed shell/SSH and clean-iOS paths are denied without a YAML decoder. Production keeps the pinned rule that source entitlements are overlaid only when PlaySign is active, then appends access for the fixed managed Home and AF_UNIX socket root. KeyCover uses the account-global `playchain/<bundle-id>.db` child. Differential evidence records every entitlement key removed by the pinned non-PlaySign composition. |
 | `conf.store(tmpEnts)` | Both paths serialize the resulting dictionary to an owner-private temporary plist before codesign. The pinned oracle uses its reference plist; production writes the final composed data immediately before each entitlement-bearing sign and removes it with `defer`. |
 | `Shell.signAppWith(executable, entitlements: tmpEnts)` | The pinned oracle calls `Shell.signAppWithPinnedOracle` with the exact upstream root target and `--deep` arguments. Production deterministically reproduces the resulting code-object state inside-out with the selected stable identity: every child is signed without restoring source entitlements, each child is verified, and the root `.` is signed last with the final composed entitlements before the whole order is re-verified. The root certificate, designated requirement, CDHash, and signing identifier are then bound to the selected identity and prepared bundle. |
 
-The rest of `PlayApp` is corresponding source but is deliberately not linked:
+The rest of `PlayApp` remains in the tagged source but is deliberately not linked:
 
 | GUI/global `PlayApp` symbols | Why the headless target does not link them |
 | --- | --- |
-| `init`, display-name alias URLs, `hasAlias`, Finder/cache/delete helpers | They load keymap/Discord state or mutate/delete the installed/source App. ios-use prepares only a managed clone and derives a collision-free session alias name instead of reusing global display names. |
-| `launch`, `runAppExec`, `isInfoPlistSigned`, timeout assertions | ios-use owns launch/PID/session/UDS identity and termination. It opens its session-scoped pinned-shape alias through `NSWorkspace`, but does not link PlayCover's second lifecycle owner or display-sleep loop. |
+| `init`, display-name alias URLs, `hasAlias`, Finder/cache/delete helpers | They load keymap/Discord state or mutate/delete the installed/source App. ios-use prepares and installs one fixed managed App slot per Bundle ID. |
+| `launch`, `runAppExec`, `isInfoPlistSigned`, timeout assertions | ios-use owns launch/PID/session/UDS identity and termination. It opens the fixed Bundle slot through `NSWorkspace`, but does not link PlayCover's second lifecycle owner or display-sleep loop. |
 | `unlockKeyCover` / `lockKeyCover` UI branch | The methods depend on `NSAlert` and mutable GUI settings. The headless KeyCover/PlayChain primitives are invoked from the managed prepare/session boundary without modal UI and retain the pinned enabled guard, so the default-disabled CLI leaves a newly created plain PlayChain database unchanged. |
 | `prohibitedToPlay`, `maliciousProhibited`, and their deletion/cache branch | These are PlayCover product policy and GUI recovery behavior, not conversion or signing semantics. In particular, deleting an input conflicts with ios-use's source-immutability contract. |
 

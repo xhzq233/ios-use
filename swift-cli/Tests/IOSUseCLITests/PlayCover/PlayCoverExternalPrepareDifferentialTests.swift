@@ -79,7 +79,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
     private struct RevisionProfile: Codable, Equatable {
         let playCover: String
         let inject: String
-        let rules: String
         let prepare: String
     }
 
@@ -665,8 +664,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                     PlayCoverPinnedHeadlessInstallerOracle
                         .playCoverRevision,
                 inject: PlayCoverUpstreamEngine.injectRevision,
-                rules: PlayCoverUpstreamEngine
-                    .defaultRulesRevision,
                 prepare:
                     PlayCoverService.prepareImplementationRevision
             ),
@@ -1024,8 +1021,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                     sourceApp: sourceSnapshot,
                     stagingApp: pinnedOutput,
                     managedHome: pinnedHome,
-                    defaultRulesData:
-                        try PlayCoverRulesService.ensureAvailable(),
                     bundledPlayToolsFramework: playTools
                 )
             )
@@ -1260,8 +1255,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 == PlayCoverUpstreamEngine.playCoverRevision,
               profile.revisions.inject
                 == PlayCoverUpstreamEngine.injectRevision,
-              profile.revisions.rules
-                == PlayCoverUpstreamEngine.defaultRulesRevision,
               profile.revisions.prepare
                 == PlayCoverService.prepareImplementationRevision else {
             throw ProfileError.invalid(
@@ -1657,7 +1650,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 playCover:
                     PlayCoverUpstreamEngine.playCoverRevision,
                 inject: PlayCoverUpstreamEngine.injectRevision,
-                rules: PlayCoverUpstreamEngine.defaultRulesRevision,
                 prepare: PlayCoverService.prepareImplementationRevision
             ),
             allowances: allowances

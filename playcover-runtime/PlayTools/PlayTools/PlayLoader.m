@@ -249,6 +249,80 @@ DYLD_INTERPOSE(pt_SecKeyGeneratePair, SecKeyGeneratePair)
 
 static uint8_t ue_status = 0;
 
+static const char *const IOSUseCleanIOSDeniedLiteralPaths[] = {
+    "/bin/bash",
+    "/bin/sh",
+    "/usr/bin/ssh",
+    "/usr/sbin/sshd",
+    "/usr/libexec/ssh-keysign",
+    "/usr/libexec/sftp-server",
+    "/etc/ssh/sshd_config",
+    "/usr/sbin/frida-server",
+    "/usr/bin/cycript",
+    "/usr/local/bin/cycript",
+    "/usr/lib/libcycript.dylib",
+};
+
+static const char *const IOSUseCleanIOSDeniedSubpaths[] = {
+    "/Applications/Cydia.app",
+    "/Library/MobileSubstrate",
+    "/etc/apt",
+    "/private/etc/apt",
+    "/private/var/binpack",
+    "/private/var/cache/apt",
+    "/private/var/jb",
+    "/private/var/lib/apt",
+    "/private/var/lib/cydia",
+    "/private/var/stash",
+    "/var/binpack",
+    "/var/cache/apt",
+    "/var/jb",
+    "/var/lib/apt",
+    "/var/lib/cydia",
+    "/var/stash",
+};
+
+static BOOL IOSUseCleanIOSPathHasPrefix(
+    const char *path,
+    const char *prefix
+) {
+    size_t length = strlen(prefix);
+    return strncmp(path, prefix, length) == 0 &&
+        (path[length] == '\0' || path[length] == '/');
+}
+
+static BOOL IOSUseCleanIOSPathIsDenied(const char *path) {
+    if (path == NULL || path[0] != '/') {
+        return NO;
+    }
+    size_t literalCount = sizeof(IOSUseCleanIOSDeniedLiteralPaths) /
+        sizeof(IOSUseCleanIOSDeniedLiteralPaths[0]);
+    for (size_t index = 0; index < literalCount; index += 1) {
+        if (strcmp(path, IOSUseCleanIOSDeniedLiteralPaths[index]) == 0) {
+            return YES;
+        }
+    }
+    size_t subpathCount = sizeof(IOSUseCleanIOSDeniedSubpaths) /
+        sizeof(IOSUseCleanIOSDeniedSubpaths[0]);
+    for (size_t index = 0; index < subpathCount; index += 1) {
+        if (IOSUseCleanIOSPathHasPrefix(
+                path,
+                IOSUseCleanIOSDeniedSubpaths[index]
+            )) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static int IOSUseCleanIOSRejectPath(const char *path) {
+    if (!IOSUseCleanIOSPathIsDenied(path)) {
+        return 0;
+    }
+    errno = ENOENT;
+    return -1;
+}
+
 static char const* ue_fix_filename(char const* filename) {
     static char UE_PATTERN[1024] = "//Users/";
     getlogin_r(UE_PATTERN + 8, sizeof(UE_PATTERN) - 8);
@@ -268,6 +342,9 @@ static char const* ue_fix_filename(char const* filename) {
 
 static int pt_open(char const* restrict filename, int oflag, ... ) {
     filename = ue_fix_filename(filename);
+    if (IOSUseCleanIOSRejectPath(filename) != 0) {
+        return -1;
+    }
 
     if (oflag == O_CREAT) {
         int mod;
@@ -283,19 +360,37 @@ static int pt_open(char const* restrict filename, int oflag, ... ) {
 }
 
 static int pt_stat(char const* restrict path, struct stat* restrict buf) {
-    return stat(ue_fix_filename(path), buf);
+    path = ue_fix_filename(path);
+    if (IOSUseCleanIOSRejectPath(path) != 0) {
+        return -1;
+    }
+    return stat(path, buf);
 }
 
 static int pt_access(char const* path, int mode) {
-    return access(ue_fix_filename(path), mode);
+    path = ue_fix_filename(path);
+    if (IOSUseCleanIOSRejectPath(path) != 0) {
+        return -1;
+    }
+    return access(path, mode);
 }
 
 static int pt_rename(char const* restrict old_name, char const* restrict new_name) {
-    return rename(ue_fix_filename(old_name), ue_fix_filename(new_name));
+    old_name = ue_fix_filename(old_name);
+    new_name = ue_fix_filename(new_name);
+    if (IOSUseCleanIOSRejectPath(old_name) != 0 ||
+        IOSUseCleanIOSRejectPath(new_name) != 0) {
+        return -1;
+    }
+    return rename(old_name, new_name);
 }
 
 static int pt_unlink(char const* path) {
-    return unlink(ue_fix_filename(path));
+    path = ue_fix_filename(path);
+    if (IOSUseCleanIOSRejectPath(path) != 0) {
+        return -1;
+    }
+    return unlink(path);
 }
 
 static NSMutableDictionary *thread_sleep_counters = nil;

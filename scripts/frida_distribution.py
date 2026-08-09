@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""Verify and package the exact Frida GumJS source/license closure used by ios-use."""
+"""Verify the exact Frida GumJS source/license closure used by ios-use."""
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import io
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 import subprocess
-import tarfile
 from typing import NoReturn
 
 
-SOURCE_MANIFEST = "FRIDA-SOURCE-MANIFEST.txt"
 FRIDA_VERSION = "16.5.6"
 
 
@@ -22,7 +19,6 @@ class Component:
     key: str
     name: str
     source_relative: str
-    archive_relative: str
     repository: str
     commit: str
     license_label: str
@@ -35,7 +31,6 @@ COMPONENTS = (
         "frida-gum",
         "Frida Gum",
         ".",
-        "frida-gum",
         "https://github.com/frida/frida-gum.git",
         "0afeb85fcdeae1d995a55bc07f0fe57b197aecae",
         "wxWindows Library Licence 3.1 and bundled BSD notices",
@@ -45,7 +40,6 @@ COMPONENTS = (
         "releng",
         "Frida releng (build source only)",
         "releng",
-        "frida-gum/releng",
         "https://github.com/frida/releng.git",
         "4622f5c4c432d94c1c625e598b120425a68a8414",
         "Source-only build tooling; see the upstream tree",
@@ -54,7 +48,6 @@ COMPONENTS = (
         "quickjs",
         "QuickJS",
         "subprojects/quickjs",
-        "frida-gum/subprojects/quickjs",
         "https://github.com/frida/quickjs.git",
         "12de2e4904b63405052508c891b215d056962c18",
         "MIT",
@@ -65,7 +58,6 @@ COMPONENTS = (
         "glib",
         "GLib and proxy-libintl-static",
         "subprojects/glib",
-        "frida-gum/subprojects/glib",
         "https://github.com/frida/glib.git",
         "148f677c620b57893e3fcdb872d241b61870ef0d",
         "LGPL-2.1-or-later plus the licenses recorded by GLib; proxy-libintl-static is LGPL-2.0",
@@ -86,7 +78,6 @@ COMPONENTS = (
         "libffi",
         "libffi",
         "subprojects/libffi",
-        "frida-gum/subprojects/libffi",
         "https://github.com/frida/libffi.git",
         "10bcbcc6295e559b7c952b054e7669a912d3ce06",
         "MIT",
@@ -97,7 +88,6 @@ COMPONENTS = (
         "capstone",
         "Capstone",
         "subprojects/capstone",
-        "frida-gum/subprojects/capstone",
         "https://github.com/frida/capstone.git",
         "e98746112da0a40b2ccd0340db0d20cca5f97950",
         "BSD-3-Clause and LLVM University of Illinois/NCSA",
@@ -108,7 +98,6 @@ COMPONENTS = (
         "json-glib",
         "JSON-GLib",
         "subprojects/json-glib",
-        "frida-gum/subprojects/json-glib",
         "https://github.com/frida/json-glib.git",
         "1f40dc373415b728efa8315af7f975bd5a4e2490",
         "LGPL-2.1-or-later",
@@ -119,7 +108,6 @@ COMPONENTS = (
         "tinycc",
         "TinyCC",
         "subprojects/tinycc",
-        "frida-gum/subprojects/tinycc",
         "https://github.com/frida/tinycc.git",
         "722c253d8dece3bc9a46b6f510c6682329d838b7",
         "LGPL-2.1-or-later",
@@ -130,7 +118,6 @@ COMPONENTS = (
         "sqlite",
         "SQLite",
         "subprojects/sqlite",
-        "frida-gum/subprojects/sqlite",
         "https://github.com/frida/sqlite.git",
         "9337327a50008f2d2236112ccb6f44059b1bafbd",
         "Public domain",
@@ -140,7 +127,6 @@ COMPONENTS = (
         "pcre2",
         "PCRE2",
         "subprojects/pcre2",
-        "frida-gum/subprojects/pcre2",
         "https://github.com/frida/pcre2.git",
         "b47486922fdc3486499b310dc9cf903449700474",
         "BSD-3-Clause",
@@ -254,7 +240,7 @@ def verify_git_sources(source_root: Path) -> None:
 
 def metadata_lines() -> list[str]:
     return [
-        f"| {component.name} | `{component.commit}` | {component.license_label} | `{component.archive_relative}` |"
+        f"| {component.name} | {component.repository} | `{component.commit}` | {component.license_label} |"
         for component in COMPONENTS
     ]
 
@@ -298,122 +284,6 @@ def validate_metadata(repository_root: Path) -> None:
         fail("Frida Engine descriptor version differs from the reviewed release version")
 
 
-def manifest_path_for(source_root: Path) -> Path:
-    return source_root.parent / SOURCE_MANIFEST
-
-
-def inventory(root: Path) -> list[Path]:
-    return sorted(
-        (path for path in root.rglob("*") if path.is_file() or path.is_symlink()),
-        key=lambda path: path.relative_to(root).as_posix(),
-    )
-
-
-def write_source_manifest(output_root: Path) -> Path:
-    manifest = output_root / SOURCE_MANIFEST
-    lines = [
-        "ios-use Frida source closure",
-        f"frida-version: {FRIDA_VERSION}",
-        "",
-        "components:",
-    ]
-    lines.extend(
-        f"{component.key}\t{component.commit}\t{component.repository}\t{component.archive_relative}"
-        for component in COMPONENTS
-    )
-    lines.append("")
-    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return manifest
-
-
-def parse_source_manifest(manifest: Path) -> list[str]:
-    lines = manifest.read_text(encoding="utf-8").splitlines()
-    if lines[:2] != [
-        "ios-use Frida source closure",
-        f"frida-version: {FRIDA_VERSION}",
-    ]:
-        fail(f"unsupported Frida source manifest: {manifest}")
-    try:
-        components_index = lines.index("components:")
-    except ValueError:
-        fail(f"incomplete Frida source manifest: {manifest}")
-    return [line for line in lines[components_index + 1 :] if line]
-
-
-def verify_archived_sources(source_root: Path) -> None:
-    manifest = manifest_path_for(source_root)
-    if not manifest.is_file() or manifest.is_symlink():
-        fail(f"archived Frida source manifest is missing: {manifest}")
-    component_records = parse_source_manifest(manifest)
-    expected_components = [
-        f"{component.key}\t{component.commit}\t{component.repository}\t{component.archive_relative}"
-        for component in COMPONENTS
-    ]
-    if component_records != expected_components:
-        fail("archived Frida component pins differ from the reviewed closure")
-    for component in COMPONENTS:
-        source = component_path(source_root, component)
-        if not source.is_dir() or source.is_symlink():
-            fail(f"archived {component.name} source directory is missing")
-        verify_wrap(source_root, component)
-        required = component.license_paths
-        if component.key == "sqlite":
-            required = ("sqlite3.h",)
-        elif component.key == "releng":
-            required = ("mkdevkit.py",)
-        for relative in required:
-            path = source / relative
-            if not path.is_file():
-                fail(f"archived {component.name} source lacks {relative}")
-
-
-def verify_sources(source_root: Path) -> None:
-    if (source_root / ".git").exists():
-        verify_git_sources(source_root)
-    else:
-        verify_archived_sources(source_root)
-
-
-def safe_extract_git_archive(source: Path, commit: str, destination: Path) -> None:
-    archive = subprocess.run(
-        ["git", "archive", "--format=tar", commit],
-        cwd=source,
-        check=True,
-        stdout=subprocess.PIPE,
-    ).stdout
-    destination.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tar:
-        for member in tar.getmembers():
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts:
-                fail(f"unsafe path in {source} archive: {member.name}")
-            if member.issym() or member.islnk():
-                target = PurePosixPath(member.linkname)
-                if target.is_absolute() or ".." in target.parts:
-                    fail(f"unsafe link in {source} archive: {member.name}")
-        tar.extractall(destination)
-
-
-def stage_source(source_root: Path, output_root: Path, file_list_output: Path) -> None:
-    verify_git_sources(source_root)
-    if output_root.exists() and any(output_root.iterdir()):
-        fail(f"Frida source output is not empty: {output_root}")
-    output_root.mkdir(parents=True, exist_ok=True)
-    for component in COMPONENTS:
-        safe_extract_git_archive(
-            component_path(source_root, component),
-            component.commit,
-            output_root / component.archive_relative,
-        )
-    write_source_manifest(output_root)
-    verify_archived_sources(output_root / "frida-gum")
-    file_list_output.parent.mkdir(parents=True, exist_ok=True)
-    file_list_output.write_text(
-        "".join(f"{path.relative_to(output_root).as_posix()}\n" for path in inventory(output_root)),
-        encoding="utf-8",
-    )
-
-
 def sqlite_notice(sqlite_source: Path) -> str:
     lines = (sqlite_source / "sqlite3.h").read_text(encoding="utf-8").splitlines()
     marker = "** The author disclaims copyright to this source code.  In place of"
@@ -452,13 +322,15 @@ def verify_engine(engine: Path) -> None:
 
 
 def generate_notices(source_root: Path, engine: Path, output: Path) -> None:
-    verify_sources(source_root)
+    verify_git_sources(source_root)
     verify_engine(engine)
     chunks = [
         "ios-use Frida Engine third-party notices\n",
         "This file applies to IOSUseFridaEngine.framework. The framework statically "
-        "links the pinned components listed below. Complete corresponding source is "
-        "provided in the release's ios-use-v<version>-corresponding-source.tar.gz. "
+        "links the pinned components listed below. Exact source is available from "
+        "each public upstream repository at the pinned commit shown below; ios-use "
+        "integration source and build scripts are available from the matching "
+        "ios-use release tag. "
         "Apple frameworks and libraries dynamically loaded from /System/Library or "
         "/usr/lib are not copied into the release.\n",
     ]
@@ -472,8 +344,7 @@ def generate_notices(source_root: Path, engine: Path, output: Path) -> None:
                 f"Upstream: {component.repository}\n",
                 f"Pinned commit: {component.commit}\n",
                 f"License: {component.license_label}\n",
-                "Corresponding source: ThirdParty/Frida/upstream-source/"
-                f"{component.archive_relative}\n",
+                "Exact source locator: upstream repository + pinned commit above\n",
             )
         )
         source = component_path(source_root, component)
@@ -500,13 +371,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "action",
-        choices=("validate-metadata", "validate-source", "notices", "stage-source"),
+        choices=("validate-metadata", "validate-source", "notices"),
     )
     parser.add_argument("--repository-root", type=Path)
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--engine", type=Path)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--file-list-output", type=Path)
     args = parser.parse_args()
 
     repository_root = (args.repository_root or Path(__file__).resolve().parent.parent).resolve()
@@ -517,15 +387,11 @@ def main() -> None:
         parser.error("--source-root is required")
     source_root = args.source_root.resolve()
     if args.action == "validate-source":
-        verify_sources(source_root)
-    elif args.action == "notices":
+        verify_git_sources(source_root)
+    else:
         if args.engine is None or args.output is None:
             parser.error("notices requires --engine and --output")
         generate_notices(source_root, args.engine.resolve(), args.output.resolve())
-    else:
-        if args.output is None or args.file_list_output is None:
-            parser.error("stage-source requires --output and --file-list-output")
-        stage_source(source_root, args.output.resolve(), args.file_list_output.resolve())
 
 
 if __name__ == "__main__":

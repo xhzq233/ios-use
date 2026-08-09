@@ -17,7 +17,6 @@ prepare_fixture() {
     "$FIXTURE_ROOT/ThirdParty/Frida" \
     "$FIXTURE_ROOT/ThirdParty/PlayCover" \
     "$FIXTURE_ROOT/ThirdParty/inject" \
-    "$FIXTURE_ROOT/ThirdParty/Yams" \
     "$FIXTURE_ROOT/playcover-runtime" \
     "$FIXTURE_ROOT/swift-cli/Sources/IOSUseCLI/Backends/PlayCover"
 
@@ -31,7 +30,6 @@ prepare_fixture() {
   cp "$ROOT_DIR/ThirdParty/Frida/PROVENANCE.md" \
     "$FIXTURE_ROOT/ThirdParty/Frida/"
   cp "$ROOT_DIR/ThirdParty/PlayCover/Package.swift" \
-    "$ROOT_DIR/ThirdParty/PlayCover/Package.resolved" \
     "$ROOT_DIR/ThirdParty/PlayCover/PROVENANCE.md" \
     "$FIXTURE_ROOT/ThirdParty/PlayCover/"
   cp -R "$ROOT_DIR/ThirdParty/PlayCover/PlayCover" \
@@ -41,13 +39,9 @@ prepare_fixture() {
     "$FIXTURE_ROOT/ThirdParty/inject/"
   cp -R "$ROOT_DIR/ThirdParty/inject/Injection" \
     "$FIXTURE_ROOT/ThirdParty/inject/"
-  cp "$ROOT_DIR/ThirdParty/Yams/LICENSE" \
-    "$ROOT_DIR/ThirdParty/Yams/PROVENANCE.md" \
-    "$FIXTURE_ROOT/ThirdParty/Yams/"
   cp -R "$ROOT_DIR/playcover-runtime/PlayTools" \
     "$FIXTURE_ROOT/playcover-runtime/"
   cp "$ROOT_DIR/playcover-runtime/project.yml" "$FIXTURE_ROOT/playcover-runtime/"
-  cp "$ROOT_DIR/swift-cli/Package.resolved" "$FIXTURE_ROOT/swift-cli/"
   cp \
     "$ROOT_DIR/swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverFridaEngineService.swift" \
     "$FIXTURE_ROOT/swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
@@ -90,14 +84,7 @@ expect_metadata_failure "a provenance pin that differs from the script pin"
 
 prepare_fixture
 sed -i.bak \
-  's/3036ba9d69cf1fd04d433527bc339dc0dc75433d/0000000000000000000000000000000000000000/' \
-  "$FIXTURE_ROOT/ThirdParty/PlayCover/Package.resolved"
-rm "$FIXTURE_ROOT/ThirdParty/PlayCover/Package.resolved.bak"
-expect_metadata_failure "a Yams resolution that differs from its audited pin"
-
-prepare_fixture
-sed -i.bak \
-  's/| Yams | `3036ba9d69cf1fd04d433527bc339dc0dc75433d` | MIT/| Yams | `3036ba9d69cf1fd04d433527bc339dc0dc75433d` | Apache-2.0/' \
+  's/| PlayCover | `7190cc9ce57c8dee0e222918468f2579acc95e1b` | GPL-3.0/| PlayCover | `7190cc9ce57c8dee0e222918468f2579acc95e1b` | Apache-2.0/' \
   "$FIXTURE_ROOT/ThirdParty/LICENSES.md"
 rm "$FIXTURE_ROOT/ThirdParty/LICENSES.md.bak"
 expect_metadata_failure "a third-party license manifest that differs from provenance"

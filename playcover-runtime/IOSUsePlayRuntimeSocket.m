@@ -13,6 +13,7 @@
 
 #import <UIKit/UIKit.h>
 #import <arpa/inet.h>
+#import <crt_externs.h>
 #import <errno.h>
 #import <fcntl.h>
 #import <limits.h>
@@ -24,6 +25,7 @@
 #import <sys/stat.h>
 #import <sys/time.h>
 #import <poll.h>
+#import <stdlib.h>
 #import <sys/un.h>
 #import <unistd.h>
 
@@ -46,6 +48,7 @@ static const CGFloat IOSUseRuntimeDeviceSafeAreaTop =
 static NSString *IOSUseRuntimeSessionID;
 static NSString *IOSUseRuntimeSocketPath;
 static NSString *IOSUseRuntimeInstallRevision;
+static NSString *IOSUseRuntimePlayChainRoot;
 static NSString *IOSUseRuntimeSocketStatus = @"not-started";
 static NSString *IOSUseRuntimeSocketFailureStage;
 static NSNumber *IOSUseRuntimeSocketFailureErrno;
@@ -2806,6 +2809,8 @@ void IOSUsePlayRuntimeStartSocket(void) {
         const char *socketValue = getenv("IOS_USE_PLAY_RUNTIME_SOCKET");
         const char *installRevisionValue =
             getenv("IOS_USE_PLAY_INSTALL_REVISION");
+        const char *playChainRootValue =
+            getenv("IOS_USE_PLAYCHAIN_ROOT");
         NSString *sessionID = sessionValue == NULL
             ? nil
             : [NSString stringWithUTF8String:sessionValue];
@@ -2815,6 +2820,9 @@ void IOSUsePlayRuntimeStartSocket(void) {
         NSString *installRevision = installRevisionValue == NULL
             ? nil
             : [NSString stringWithUTF8String:installRevisionValue];
+        NSString *playChainRoot = playChainRootValue == NULL
+            ? nil
+            : [NSString stringWithUTF8String:playChainRootValue];
         if (sessionID.length == 0 ||
             [sessionID lengthOfBytesUsingEncoding:NSUTF8StringEncoding] >
                 128) {
@@ -2832,6 +2840,7 @@ void IOSUsePlayRuntimeStartSocket(void) {
         IOSUseRuntimeSessionID = [sessionID copy];
         IOSUseRuntimeSocketPath = [socketPath copy];
         IOSUseRuntimeInstallRevision = [installRevision copy];
+        IOSUseRuntimePlayChainRoot = [playChainRoot copy];
         IOSUseRecordSocketState(@"starting", nil, 0);
         int listener = IOSUseCreateListener(socketPath);
         if (listener < 0) {
@@ -2841,6 +2850,50 @@ void IOSUsePlayRuntimeStartSocket(void) {
         atexit(IOSUseRemoveOwnedSocket);
         IOSUseRecordSocketState(@"listening", nil, 0);
     });
+}
+
+const char *IOSUsePlayRuntimeCapturedInstallRevision(void) {
+    return IOSUseRuntimeInstallRevision.UTF8String;
+}
+
+const char *IOSUsePlayRuntimeCapturedPlayChainRoot(void) {
+    return IOSUseRuntimePlayChainRoot.UTF8String;
+}
+
+void IOSUsePlayRuntimeHideLaunchEnvironment(void) {
+    NSMutableOrderedSet<NSString *> *names =
+        [NSMutableOrderedSet orderedSetWithArray:@[
+            @"IOS_USE_PLAY_SESSION_ID",
+            @"IOS_USE_PLAY_RUNTIME_SOCKET",
+            @"IOS_USE_PLAY_INSTALL_REVISION",
+            @"IOS_USE_PLAYCHAIN_ROOT",
+            @"IOS_USE_PLAY_STDIO_LOG",
+        ]];
+    char ***environmentPointer = _NSGetEnviron();
+    if (environmentPointer != NULL && *environmentPointer != NULL) {
+        for (char **entry = *environmentPointer;
+             *entry != NULL;
+             entry += 1) {
+            char *separator = strchr(*entry, '=');
+            if (separator == NULL || separator[1] != '\0') {
+                continue;
+            }
+            size_t length = (size_t)(separator - *entry);
+            if (length == 0) {
+                continue;
+            }
+            NSString *name = [[NSString alloc]
+                initWithBytes:*entry
+                length:length
+                encoding:NSUTF8StringEncoding];
+            if (name.length > 0) {
+                [names addObject:name];
+            }
+        }
+    }
+    for (NSString *name in names) {
+        (void)unsetenv(name.UTF8String);
+    }
 }
 
 int IOSUsePlayRuntimeBootstrapStdio(void) {

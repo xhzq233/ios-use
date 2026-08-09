@@ -10,15 +10,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         case sliceTemporaryFileObserved
     }
 
-    private func pinnedDefaultRulesData() throws -> Data {
-        try Data(
-            contentsOf: URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("PlayCover/Rules/default.yaml")
-        )
-    }
-
     func testLowercaseHexEncodingIsByteExactForArraysAndSlices() {
         let bytes: [UInt8] = [
             0x00, 0x01, 0x0f, 0x10, 0x7f, 0x80, 0xfe, 0xff,
@@ -140,7 +131,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                         "@executable_path/Frameworks/"
                         + "IOSUsePlayRuntime.framework/"
                         + "IOSUsePlayRuntime",
-                    defaultRulesData: try pinnedDefaultRulesData(),
                     codesignIdentity: "-"
                 )
             )
@@ -1195,7 +1185,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             appURL: fixture.app,
             originalPlist: originalData,
             runtimeSocketPath: socket,
-            defaultRulesData: try pinnedDefaultRulesData(),
             playSignActive: false
         )
         let final = try XCTUnwrap(
@@ -1208,9 +1197,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         let pinned = try Entitlements.composeEntitlements(
             BaseApp(appUrl: fixture.app),
             discordActivityEnabled: false,
-            bypass: false,
             playSignActive: false,
-            defaultRulesData: try pinnedDefaultRulesData(),
             homeDirectory:
                 FileManager.default.homeDirectoryForCurrentUser
         )
@@ -1255,6 +1242,52 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertFalse(sandbox.contains { $0.contains("s-one.sock") })
     }
 
+    func testInlineSandboxRulesPreserveAllowsAndDenyCleanIOSPaths()
+        throws {
+        let fixture = try makeApp(
+            executable: makeThinMachO(dependencies: [])
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let entitlements = try Entitlements.composeEntitlements(
+            BaseApp(appUrl: fixture.app),
+            discordActivityEnabled: false,
+            playSignActive: false,
+            homeDirectory: fixture.root
+        )
+        let sandbox = try XCTUnwrap(
+            entitlements["com.apple.security.temporary-exception.sbpl"]
+                as? [String]
+        )
+        XCTAssertEqual(
+            Array(sandbox.prefix(5)),
+            [
+                "(allow user-preference-write (preference-domain \".GlobalPreferences\"))",
+                "(allow user-preference-read (preference-domain \".GlobalPreferences\"))",
+                "(allow file* file-read* file-write* file-write-data file-read-metadata file-ioctl (subpath \"\(fixture.root.path)/Library/Containers/io.playcover.PlayCover\"))",
+                "(allow file* file-read* file-read-metadata file-ioctl (subpath \"\(fixture.root.path)/Library/Frameworks/PlayTools.framework\"))",
+                "(allow file* file-read* (subpath \"\(fixture.root.path)/Library/Group Containers/\"))",
+            ]
+        )
+        XCTAssertEqual(sandbox[5], "(deny process-fork)")
+        XCTAssertEqual(
+            sandbox.count,
+            6 + Entitlements.critical.count
+                + Entitlements.cleanIOSDeniedLiteralPaths.count
+                + Entitlements.cleanIOSDeniedSubpaths.count
+        )
+        for path in Entitlements.critical
+            + Entitlements.cleanIOSDeniedLiteralPaths {
+            XCTAssertTrue(sandbox.contains {
+                $0.contains("(literal \"\(path)\")")
+            })
+        }
+        for path in Entitlements.cleanIOSDeniedSubpaths {
+            XCTAssertTrue(sandbox.contains {
+                $0.contains("(subpath \"\(path)\")")
+            })
+        }
+    }
+
     func testEntitlementComposerCanonicalizesTmpSandboxPaths()
         throws {
         let lexicalRoot = URL(
@@ -1295,7 +1328,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     "s-runtime.sock"
                 ).path,
                 managedHome: lexicalRoot,
-                defaultRulesData: try pinnedDefaultRulesData(),
                 playSignActive: false
             )
         let final = try XCTUnwrap(
@@ -1652,7 +1684,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 runtimeSocketPath:
                     managed.appendingPathComponent("s-runtime.sock").path,
                 runtimeLoadPath: runtimeLoadPath,
-                defaultRulesData: try pinnedDefaultRulesData(),
                 codesignIdentity: "-",
                 expectedRuntimeBuildHash: runtimeBuildHash
             ),
@@ -1892,7 +1923,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 runtimeSocketPath:
                     home.appendingPathComponent("s-runtime.sock").path,
                 runtimeLoadPath: runtimeLoadPath,
-                defaultRulesData: try pinnedDefaultRulesData(),
                 codesignIdentity: "-",
                 expectedRuntimeBuildHash: runtimeHash
             )
@@ -2056,7 +2086,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                         runtimeSocketPath: managed
                             .appendingPathComponent("s-runtime.sock").path,
                         runtimeLoadPath: runtimeLoadPath,
-                        defaultRulesData: try pinnedDefaultRulesData(),
                         codesignIdentity: "-"
                     ),
                     sourceInspection: sourceInspection
@@ -2156,7 +2185,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     runtimeSocketPath: managed
                         .appendingPathComponent("s-runtime.sock").path,
                     runtimeLoadPath: runtimeLoadPath,
-                    defaultRulesData: try pinnedDefaultRulesData(),
                     codesignIdentity: "-",
                     expectedRuntimeBuildHash:
                         try PlayCoverUpstreamEngine.runtimeBuildHash(
@@ -2227,7 +2255,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             runtimeLoadPath:
                 "@executable_path/Frameworks/"
                 + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
-            defaultRulesData: try pinnedDefaultRulesData(),
             codesignIdentity: "-",
             expectedRuntimeBuildHash: String(repeating: "0", count: 64)
         )

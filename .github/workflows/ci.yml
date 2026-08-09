@@ -103,7 +103,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: swift-cli/.build
-          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'swift-cli/Sources/**/*.swift', 'swift-cli/Tests/**/*.swift', 'shared/IOSUseProtocol/Package.swift', 'shared/IOSUseProtocol/Sources/**/*.swift', 'ThirdParty/PlayCover/Package.swift', 'ThirdParty/PlayCover/Package.resolved', 'ThirdParty/PlayCover/PlayCover/**/*.swift', 'ThirdParty/PlayCover/PlayCover/Rules/default.yaml', 'ThirdParty/inject/Package.swift', 'ThirdParty/inject/Injection/Injection/**/*.swift') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'swift-cli/Sources/**/*.swift', 'swift-cli/Tests/**/*.swift', 'shared/IOSUseProtocol/Package.swift', 'shared/IOSUseProtocol/Sources/**/*.swift', 'ThirdParty/PlayCover/Package.swift', 'ThirdParty/PlayCover/PlayCover/**/*.swift', 'ThirdParty/inject/Package.swift', 'ThirdParty/inject/Injection/Injection/**/*.swift') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-swift-cli-
 

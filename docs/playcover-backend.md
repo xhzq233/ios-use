@@ -376,16 +376,20 @@ produce an acceptance decision.
 The Runtime and pinned Frida Engine are release-built, ad-hoc-signed frameworks,
 not artifacts built inside a user's mutable state directory. The Engine build
 normalizes compiler-visible source paths so local source, cache, and temporary
-build-root paths are not embedded. Frida-generated source maps may still vary,
-so each release records the actual framework digest and size. A release contains
-one Mac-backend-resources archive, SHA-256 manifest, applicable licenses, upstream
-provenance, and an exact corresponding-source archive. `scripts/install.sh`
-verifies the manifest before placing both frameworks under
+build-root paths are not embedded. A release contains one Mac resource archive
+with these two frameworks and one SHA-256 manifest covering it together with the
+CLI and two driver IPAs. `scripts/install.sh` verifies the manifest before placing both frameworks under
 `<prefix>/share/ios-use/mac/`, re-verifies their signatures, and never
 copies executable Runtime content into `IOS_USE_HOME`. The frameworks are
 read-only preparation inputs: prepare signs only the account-global slot copy.
 Installed-layout acceptance hashes both complete source frameworks before and
 after fixture execution.
+
+The exact Git tag carries ios-use and vendored source/license records. The
+Frida Engine build separately fetches and validates every public repository and
+commit recorded in `ThirdParty/Frida/PROVENANCE.md`; its required notices live
+inside the framework. These source and license carriers are not duplicated as
+standalone Release assets.
 
 Runtime resolution checks the adjacent development layout and then this stable
 prefix share location. `IOS_USE_HOME`, legacy Home-local frameworks, and
@@ -584,15 +588,12 @@ The vendored source and license records are under `ThirdParty/` and
 - PlayTools `d688f695e83bf080be9ad4b7346e914c7c343d96`
   (AGPL-3.0);
 - `inject` `e6d3aa4abe106f90fd8c5a1ca04db15c19d324eb`
-  (GPL-3.0);
-- Yams `3036ba9d69cf1fd04d433527bc339dc0dc75433d`, version `5.1.3`
-  (MIT).
+  (GPL-3.0).
 
 Each provenance file records the upstream URL, pinned revision, imported
 files, and local headless patches. The audit requires the script-owned expected
 file sets, provenance manifests, and actual vendored trees to match, then runs
-the Git diff. It also requires the Yams manifest and both resolved-package pins
-to agree and compares every distributed license byte-for-byte with its pinned
-checkout. `ThirdParty/LICENSES.md` is the release license index. Release
-corresponding source includes the complete Yams tree and a Runtime-input digest
-matching the forced fresh build.
+the Git diff and compares every vendored license byte-for-byte with its pinned
+checkout. `ThirdParty/LICENSES.md` is the license index. The release build also
+validates the public Frida source pins and embedded notices before packaging the
+Engine.

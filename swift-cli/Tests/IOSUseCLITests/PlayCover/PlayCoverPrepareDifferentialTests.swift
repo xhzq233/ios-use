@@ -85,7 +85,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             + "                \"Model/PlayApp.swift\",\n"
             + "                \"Utils/Extensions/"
             + "PlayAppExtensions.swift\",\n"
-            + "                \"Rules/default.yaml\",\n"
             + "            ],\n"
             + "            sources: ["
         XCTAssertEqual(
@@ -93,8 +92,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 separatedBy: exactExclusionBlock
             ).count - 1,
             1,
-            "the pinned GUI authorities and externally installed rules "
-                + "must remain in the exact exclude block before sources"
+            "the pinned GUI authorities must remain in the exact exclude "
+                + "block before sources"
         )
         XCTAssertEqual(
             package.components(
@@ -168,9 +167,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             PlayCoverPinnedPrimitivePrepareOptions(
                 sourceApp: aliasedSource,
                 stagingApp: staging,
-                managedHome: managedHome,
-                defaultRulesData:
-                    try PlayCoverRulesService.ensureAvailable()
+                managedHome: managedHome
             )
         )
 
@@ -280,8 +277,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 sourceApp: source,
                 stagingApp: pinnedOutput,
                 managedHome: pinnedHome,
-                defaultRulesData:
-                    try PlayCoverRulesService.ensureAvailable(),
                 bundledPlayToolsFramework: playTools
             )
         )
@@ -804,7 +799,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         XCTAssertEqual(
             attestation.implementation.relativeSourcePaths,
             [
-                "ThirdParty/PlayCover/Package.resolved",
                 "ThirdParty/PlayCover/Package.swift",
                 "ThirdParty/PlayCover/PROVENANCE.md",
                 "ThirdParty/PlayCover/PlayCover/AppInstaller/"
@@ -818,9 +812,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "ThirdParty/PlayCover/PlayCover/Model/AppInfo.swift",
                 "ThirdParty/PlayCover/PlayCover/Model/BaseApp.swift",
                 "ThirdParty/PlayCover/PlayCover/Model/PlayApp.swift",
-                "ThirdParty/PlayCover/PlayCover/Model/PlayRules.swift",
                 "ThirdParty/PlayCover/PlayCover/PlayCoverError.swift",
-                "ThirdParty/PlayCover/PlayCover/Rules/default.yaml",
                 "ThirdParty/PlayCover/PlayCover/Utils/"
                     + "Entitlements.swift",
                 "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
@@ -858,8 +850,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "PlayCoverSlotService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverFridaEngineService.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverRulesService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverHomeStore.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
@@ -2213,6 +2203,46 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 + "(literal \"/usr/libexec/sftp-server\"))",
             "(deny file* file-read* file-read-metadata file-ioctl "
                 + "(literal \"/usr/bin/ssh\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(literal \"/usr/sbin/frida-server\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(literal \"/usr/bin/cycript\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(literal \"/usr/local/bin/cycript\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(literal \"/usr/lib/libcycript.dylib\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/Applications/Cydia.app\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/Library/MobileSubstrate\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/etc/apt\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/private/etc/apt\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/private/var/binpack\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/private/var/cache/apt\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/private/var/jb\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/private/var/lib/apt\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/private/var/lib/cydia\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/private/var/stash\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/var/binpack\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/var/cache/apt\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/var/jb\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/var/lib/apt\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/var/lib/cydia\"))",
+            "(deny file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"/var/stash\"))",
         ]
         let pinnedSandbox = commonSandboxPrefix + [
             "(allow file* file-read* file-write* file-write-data "
@@ -2320,12 +2350,12 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 ".",
                 "app.signature.entitlementsCanonicalSHA256",
                 .exact(
-                    "0fefbbc83136bf80b28853dd1c249300f56c34cad6e06600"
-                        + "f4fe3f102713c62d"
+                    "0d8459f82422afcede32a4804e951936d4dde1922f03c7b6"
+                        + "c91904b7c51549dd"
                 ),
                 .exact(
-                    "e1573881aa75dcf600e3f9ddd5c4e9c9408e6485c7dd77bb"
-                        + "e9db717b18dd90be"
+                    "c31ae2222091d3a263ed641c9784b3326b2ba06b1517af90"
+                        + "ef316727a536c1b8"
                 ),
                 "The root signature carries the same separately reviewed "
                     + "entitlement dictionaries as the main executable.",
@@ -2762,8 +2792,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-superblob-padding-size",
                 path: "Fixture",
                 field: "superBlob.paddingSize",
-                pinned: "18013",
-                iosUse: "18007",
+                pinned: "18009",
+                iosUse: "18003",
                 reason: "The narrowed entitlement blobs change the exact "
                     + "zero-padding extent within LC_CODE_SIGNATURE."
             ),
@@ -2772,11 +2802,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.paddingSHA256",
                 pinned:
-                    "09889139ae200818dd59f51a93282026d55321b4fc79916ff"
-                        + "9ce6371ecfb41ea",
+                    "a823790dcb6fad8e523a4bed70301f678b0740535ca4ede98"
+                        + "5390960965c2aed",
                 iosUse:
-                    "6b30a91c0f19e68955540a4cb036a2b6b769d771f170cbbad"
-                        + "8f316def886ab67",
+                    "7545207eeed18df73b3b3de2a2361cebcc6055c251fd0f3e"
+                        + "c561c8427ff615e5",
                 reason: "The exact zero-padding lengths have distinct "
                     + "reviewed SHA-256 digests."
             ),
@@ -2815,8 +2845,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-xml-entitlements-slot-length",
                 path: "Fixture",
                 field: "superBlob.slots[type=5,occurrence=0].length",
-                pinned: "2716",
-                iosUse: "3393",
+                pinned: "4778",
+                iosUse: "5455",
                 reason: "The compared canonical XML entitlement dictionaries "
                     + "serialize to these exact blob lengths."
             ),
@@ -2826,11 +2856,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 field: "superBlob.slots[type=5,occurrence=0]."
                     + "normalizedBytesSHA256",
                 pinned:
-                    "f6633b77ab162a8adaa081ae937781380007c0acafcb73627d"
-                        + "c3e04470d78be9",
+                    "92f06420ab3c20d6232838dfe0b1bd7328fe3e857dc0daf2"
+                        + "258b2676eaa8f1ac",
                 iosUse:
-                    "5de5fa657f88c75483b01910aa7a8a01089d1ed70dc2a3a828"
-                        + "27a8a186e29c73",
+                    "be492c66766fc0b4fa59454842cae16ad816697006d12c056"
+                        + "e09c7cca3999d27",
                 reason: "After zeroing only the run-specific managed-home "
                     + "path bytes, the full XML entitlement blobs must match "
                     + "these exact encodings."
@@ -2848,8 +2878,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-der-entitlements-slot-length",
                 path: "Fixture",
                 field: "superBlob.slots[type=7,occurrence=0].length",
-                pinned: "2030",
-                iosUse: "2655",
+                pinned: "3732",
+                iosUse: "4357",
                 reason: "The decoded and parity-checked DER entitlement "
                     + "dictionaries have these exact encoded lengths."
             ),
@@ -2859,11 +2889,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 field: "superBlob.slots[type=7,occurrence=0]."
                     + "normalizedBytesSHA256",
                 pinned:
-                    "c487c4f47fdb26709f4e026d74255b2ba82ef289f71540b3"
-                        + "b85719fe9bc9438b",
+                    "832678e095fc273f5c43c138537c99cabd2a9a124318d5f2"
+                        + "74eac37f0d33246e",
                 iosUse:
-                    "009f4290be6f578e4db89c47ddd71d8641c519cd8aba182650"
-                        + "e7015571bd958b",
+                    "7ff3abf80134ef7ffd6748e291cdbb8cabf3ea3b544489a1d"
+                        + "e2f18872171fab9",
                 reason: "After zeroing only the run-specific managed-home "
                     + "path bytes, the full DER entitlement blobs must match "
                     + "these exact encodings."
@@ -2883,11 +2913,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "derEntitlementsCanonicalSHA256",
                 pinned:
-                    "0fefbbc83136bf80b28853dd1c249300f56c34cad6e06600"
-                        + "f4fe3f102713c62d",
+                    "0d8459f82422afcede32a4804e951936d4dde1922f03c7b6"
+                        + "c91904b7c51549dd",
                 iosUse:
-                    "e1573881aa75dcf600e3f9ddd5c4e9c9408e6485c7dd77bb"
-                        + "e9db717b18dd90be",
+                    "c31ae2222091d3a263ed641c9784b3326b2ba06b1517af90"
+                        + "ef316727a536c1b8",
                 reason: "DER decoding matches each side's separately allowed "
                     + "canonical XML entitlement dictionary."
             ),
@@ -2909,12 +2939,12 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "Fixture",
                 arm64 + "signature.entitlementsCanonicalSHA256",
                 .exact(
-                    "0fefbbc83136bf80b28853dd1c249300f56c34cad6e06600"
-                        + "f4fe3f102713c62d"
+                    "0d8459f82422afcede32a4804e951936d4dde1922f03c7b6"
+                        + "c91904b7c51549dd"
                 ),
                 .exact(
-                    "e1573881aa75dcf600e3f9ddd5c4e9c9408e6485c7dd77bb"
-                        + "e9db717b18dd90be"
+                    "c31ae2222091d3a263ed641c9784b3326b2ba06b1517af90"
+                        + "ef316727a536c1b8"
                 ),
                 "The account-global Runtime namespace and Runtime socket "
                     + "rules intentionally change the signed main "

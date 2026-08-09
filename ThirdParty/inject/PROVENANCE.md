@@ -4,8 +4,7 @@
 - Pinned commit: `e6d3aa4abe106f90fd8c5a1ca04db15c19d324eb`
 - License: GPL-3.0; see `LICENSE`
 - Imported source: `Injection/Injection/{BitType,Command,Extension,Inject,Shell}.swift`
-- Corresponding source: the release asset named
-  `ios-use-v<version>-corresponding-source.tar.gz` contains the five imported
+- Source carrier: the exact GitHub release tag contains the five imported
   files, local package recipe, license, and this record.
 
 ## Expected vendored upstream files

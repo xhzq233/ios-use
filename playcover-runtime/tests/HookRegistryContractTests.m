@@ -121,6 +121,15 @@ int main(void) {
                 containsObject:@"photos.authorization.request"],
             @"Photos feature hook was classified as Runtime/UI core"
         );
+        passed &= IOSUseHookRequire(
+            [IOSUsePlayHookRegistryExpectedRequiredIdentifiers()
+                containsObject:
+                    @"playtools.process-info.mac-catalyst-app"] &&
+                [IOSUsePlayHookRegistryExpectedRequiredIdentifiers()
+                    containsObject:
+                        @"playtools.process-info.ios-app-on-mac"],
+            @"ProcessInfo Catalyst identity hooks are not required"
+        );
 
         IOSUseHookReset(@"missing.required");
         NSDictionary<NSString *, id> *missingDiagnostics =

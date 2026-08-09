@@ -393,7 +393,6 @@ if ! jq -e \
       .revisions.inject
       | type == "string" and test("^[0-9a-f]{40}$")
     ) and
-    (.revisions.rules | lower_sha256) and
     (.revisions.prepare | type == "string" and length > 0) and
     .inputs.runtimeUnchanged == true and
     .inputs.playToolsUnchanged == true and

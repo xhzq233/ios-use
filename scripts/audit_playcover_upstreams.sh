@@ -16,16 +16,16 @@ usage() {
 Usage: scripts/audit_playcover_upstreams.sh [--cache-dir <directory>] [--metadata-only]
 
 Checks the pinned upstream remote, commit, license, and byte diff for every
-vendored PlayCover, PlayTools, and inject source file, plus the exact Yams
-SwiftPM pin and license. Expected imported-file manifests are checked in both
+vendored PlayCover, PlayTools, and inject source file. Expected imported-file
+manifests are checked in both
 the script and provenance so a missing vendored source cannot disappear from
 the audit silently. A changed imported file must be named in the provenance
 file's recorded-local-patches block; both an unrecorded patch and a stale patch
 record fail the audit. The cache is an external checkout used only as audit
 evidence; vendored directories are not assumed to be Git repositories.
 
---metadata-only validates the script/provenance pins, expected vendored file
-sets, and SwiftPM resolution without cloning the upstream checkouts.
+--metadata-only validates the script/provenance pins and expected vendored
+file sets without cloning the upstream checkouts.
 USAGE
 }
 
@@ -106,7 +106,6 @@ require_exact_playcover_exclude_block() {
             exclude: [
                 "Model/PlayApp.swift",
                 "Utils/Extensions/PlayAppExtensions.swift",
-                "Rules/default.yaml",
             ],
 EXCLUDE
   )"
@@ -127,40 +126,6 @@ verify_provenance_metadata() {
   require_exact_text "$provenance" "- Pinned commit: \`$commit\`" "$name pinned commit"
   require_exact_text "$provenance" "- License: $license; see \`LICENSE\`" "$name license declaration"
   echo "[upstream-audit] $name provenance pin: exact script match"
-}
-
-verify_resolved_pin() {
-  local resolved="$1"
-  local identity="$2"
-  local remote="$3"
-  local commit="$4"
-  local version="$5"
-  local pin_block="$AUDIT_TEMP/resolved.$(basename "$(dirname "$resolved")").$identity"
-
-  awk -v identity="\"identity\" : \"$identity\"" '
-    index($0, identity) {
-      if (found) {
-        duplicate = 1
-      }
-      found = 1
-      capture = 1
-    }
-    capture { print }
-    capture && /"version"[[:space:]]*:/ { capture = 0 }
-    END {
-      if (!found || duplicate) {
-        exit 1
-      }
-    }
-  ' "$resolved" > "$pin_block" || {
-    echo "[upstream-audit] ERROR: $resolved must resolve exactly one $identity pin." >&2
-    exit 1
-  }
-
-  require_exact_text "$pin_block" "\"location\" : \"$remote\"" "$resolved $identity remote"
-  require_exact_text "$pin_block" "\"revision\" : \"$commit\"" "$resolved $identity revision"
-  require_exact_text "$pin_block" "\"version\" : \"$version\"" "$resolved $identity version"
-  echo "[upstream-audit] $resolved $identity resolution: exact pin"
 }
 
 extract_provenance_list() {
@@ -367,18 +332,13 @@ PLAYTOOLS_REMOTE="https://github.com/PlayCover/PlayTools.git"
 PLAYTOOLS_COMMIT="d688f695e83bf080be9ad4b7346e914c7c343d96"
 INJECT_REMOTE="https://github.com/paradiseduo/inject.git"
 INJECT_COMMIT="e6d3aa4abe106f90fd8c5a1ca04db15c19d324eb"
-YAMS_REMOTE="https://github.com/jpsim/Yams.git"
-YAMS_COMMIT="3036ba9d69cf1fd04d433527bc339dc0dc75433d"
-YAMS_VERSION="5.1.3"
 
 PLAYCOVER_IMPORTED_FILES=(
   "AppInstaller/Installer.swift"
   "Model/AppInfo.swift"
   "Model/BaseApp.swift"
   "Model/PlayApp.swift"
-  "Model/PlayRules.swift"
   "PlayCoverError.swift"
-  "Rules/default.yaml"
   "Utils/Entitlements.swift"
   "Utils/Extensions/DataExtensions.swift"
   "Utils/Extensions/FileExtensions.swift"
@@ -429,12 +389,6 @@ verify_provenance_metadata PlayTools \
 verify_provenance_metadata inject \
   "$ROOT_DIR/ThirdParty/inject/PROVENANCE.md" \
   "$INJECT_REMOTE" "$INJECT_COMMIT" "GPL-3.0"
-verify_provenance_metadata Yams \
-  "$ROOT_DIR/ThirdParty/Yams/PROVENANCE.md" \
-  "$YAMS_REMOTE" "$YAMS_COMMIT" "MIT"
-require_exact_text "$ROOT_DIR/ThirdParty/Yams/PROVENANCE.md" \
-  "- Pinned version: \`$YAMS_VERSION\`" \
-  "Yams pinned version"
 require_exact_text "$ROOT_DIR/ThirdParty/LICENSES.md" \
   "| PlayCover | \`$PLAYCOVER_COMMIT\` | GPL-3.0 — \`ThirdParty/PlayCover/LICENSE\` | \`ThirdParty/PlayCover/PROVENANCE.md\` |" \
   "PlayCover third-party license manifest entry"
@@ -444,9 +398,6 @@ require_exact_text "$ROOT_DIR/ThirdParty/LICENSES.md" \
 require_exact_text "$ROOT_DIR/ThirdParty/LICENSES.md" \
   "| inject | \`$INJECT_COMMIT\` | GPL-3.0 — \`ThirdParty/inject/LICENSE\` | \`ThirdParty/inject/PROVENANCE.md\` |" \
   "inject third-party license manifest entry"
-require_exact_text "$ROOT_DIR/ThirdParty/LICENSES.md" \
-  "| Yams | \`$YAMS_COMMIT\` | MIT — \`ThirdParty/Yams/LICENSE\` | \`ThirdParty/Yams/PROVENANCE.md\` |" \
-  "Yams third-party license manifest entry"
 
 verify_expected_vendored_files PlayCover \
   "$ROOT_DIR/ThirdParty/PlayCover/PROVENANCE.md" \
@@ -465,11 +416,7 @@ require_exact_playcover_exclude_block \
   "$ROOT_DIR/ThirdParty/PlayCover/Package.swift"
 
 for playcover_source in "${PLAYCOVER_IMPORTED_FILES[@]}"; do
-  if [[ "$playcover_source" == "Rules/default.yaml" ]]; then
-    require_exact_text "$ROOT_DIR/ThirdParty/PlayCover/Package.swift" \
-      "\"$playcover_source\"," \
-      "PlayCover Package.swift installed-resource exclusion for $playcover_source"
-  elif [[ "$playcover_source" == "Model/PlayApp.swift" \
+  if [[ "$playcover_source" == "Model/PlayApp.swift" \
        || "$playcover_source" == "Utils/Extensions/PlayAppExtensions.swift" ]]; then
     require_exact_text "$ROOT_DIR/ThirdParty/PlayCover/Package.swift" \
       "\"$playcover_source\"," \
@@ -497,35 +444,18 @@ require_exact_text "$ROOT_DIR/playcover-runtime/project.yml" \
   '- path: "${IOS_USE_RUNTIME_SOURCE_ROOT}/PlayTools/PlayTools/Controls/PTFakeTouch/PTFakeMetaTouch.h"' \
   "PlayTools public fake-touch header membership"
 
-require_exact_text "$ROOT_DIR/ThirdParty/PlayCover/Package.swift" \
-  "url: \"$YAMS_REMOTE\"" "PlayCover Package.swift Yams remote"
-require_exact_text "$ROOT_DIR/ThirdParty/PlayCover/Package.swift" \
-  "exact: \"$YAMS_VERSION\"" "PlayCover Package.swift Yams exact version"
-verify_resolved_pin "$ROOT_DIR/ThirdParty/PlayCover/Package.resolved" \
-  yams "$YAMS_REMOTE" "$YAMS_COMMIT" "$YAMS_VERSION"
-verify_resolved_pin "$ROOT_DIR/swift-cli/Package.resolved" \
-  yams "$YAMS_REMOTE" "$YAMS_COMMIT" "$YAMS_VERSION"
-
 if [[ "$METADATA_ONLY" -eq 1 ]]; then
-  echo "[upstream-audit] PASS: provenance pins, SwiftPM resolution, and expected vendored files audited"
+  echo "[upstream-audit] PASS: provenance pins and expected vendored files audited"
   exit 0
 fi
 
 PLAYCOVER_UPSTREAM="$(checkout_pinned PlayCover "$PLAYCOVER_REMOTE" "$PLAYCOVER_COMMIT")"
 PLAYTOOLS_UPSTREAM="$(checkout_pinned PlayTools "$PLAYTOOLS_REMOTE" "$PLAYTOOLS_COMMIT")"
 INJECT_UPSTREAM="$(checkout_pinned inject "$INJECT_REMOTE" "$INJECT_COMMIT")"
-YAMS_UPSTREAM="$(checkout_pinned Yams "$YAMS_REMOTE" "$YAMS_COMMIT")"
-YAMS_TAG_COMMIT="$(git -C "$YAMS_UPSTREAM" rev-parse "$YAMS_VERSION^{commit}")"
-if [[ "$YAMS_TAG_COMMIT" != "$YAMS_COMMIT" ]]; then
-  echo "[upstream-audit] ERROR: Yams tag $YAMS_VERSION resolves to $YAMS_TAG_COMMIT, expected $YAMS_COMMIT" >&2
-  exit 1
-fi
-echo "[upstream-audit] Yams tag $YAMS_VERSION: exact pinned commit"
 
 verify_license PlayCover "$PLAYCOVER_UPSTREAM" "$ROOT_DIR/ThirdParty/PlayCover"
 verify_license PlayTools "$PLAYTOOLS_UPSTREAM" "$ROOT_DIR/playcover-runtime/PlayTools"
 verify_license inject "$INJECT_UPSTREAM" "$ROOT_DIR/ThirdParty/inject"
-verify_license Yams "$YAMS_UPSTREAM" "$ROOT_DIR/ThirdParty/Yams"
 
 PLAYCOVER_PATCHES="$AUDIT_TEMP/PlayCover.actual"
 PLAYTOOLS_PATCHES="$AUDIT_TEMP/PlayTools.actual"
@@ -539,7 +469,7 @@ audit_expected_files PlayCover "$PLAYCOVER_UPSTREAM" "$ROOT_DIR" \
   "${PLAYCOVER_IMPORTED_FILES[@]}"
 verify_recorded_patches PlayCover \
   "$ROOT_DIR/ThirdParty/PlayCover/PROVENANCE.md" "$PLAYCOVER_PATCHES"
-echo "[upstream-audit] PlayCover local-only integration: PlayCover/Headless/** (headless API facade). Model/PlayApp.swift and Utils/Extensions/PlayAppExtensions.swift are exact audited corresponding-source authorities, explicitly excluded from SwiftPM because the GUI class closure is not linked; PlayApp.sign is adapter-traced through entitlement composition and root-last signing. GUI omissions: Views/**, ViewModel/**, Services/**, AppInstaller/Downloader.swift, AppContainer.swift, Store/download/update/keymap/preferences/UI resources and app targets."
+echo "[upstream-audit] PlayCover local-only integration: PlayCover/Headless/** (headless API facade). Model/PlayApp.swift and Utils/Extensions/PlayAppExtensions.swift are exact audited source authorities, explicitly excluded from SwiftPM because the GUI class closure is not linked; PlayApp.sign is adapter-traced through entitlement composition and root-last signing. GUI omissions: Views/**, ViewModel/**, Services/**, AppInstaller/Downloader.swift, AppContainer.swift, Store/download/update/keymap/preferences/UI resources and app targets."
 
 audit_expected_files PlayTools "$PLAYTOOLS_UPSTREAM" "$ROOT_DIR" \
   . playcover-runtime/PlayTools "$PLAYTOOLS_PATCHES" \
@@ -554,4 +484,4 @@ audit_expected_files inject "$INJECT_UPSTREAM" "$ROOT_DIR" \
 verify_recorded_patches inject \
   "$ROOT_DIR/ThirdParty/inject/PROVENANCE.md" "$INJECT_PATCHES"
 echo "[upstream-audit] inject omissions: its executable target and upstream tests; ios-use links only the pinned Injection library."
-echo "[upstream-audit] PASS: remote, commit, license, expected files, imported-source diffs, SwiftPM pins, and recorded local patch sets audited"
+echo "[upstream-audit] PASS: remote, commit, license, expected files, imported-source diffs, and recorded local patch sets audited"

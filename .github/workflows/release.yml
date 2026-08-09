@@ -101,11 +101,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-
 
-      - name: Cache pinned upstream audit checkouts
+      - name: Cache pinned PlayCover upstream audit checkouts
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/ios-use-playcover-upstream-audit
-          key: ${{ runner.os }}-${{ runner.arch }}-playcover-upstreams-7190cc9-d688f6-e6d3aa-yams3036ba
+          key: ${{ runner.os }}-${{ runner.arch }}-playcover-upstreams-7190cc9-d688f6-e6d3aa
 
       - name: Build release assets
         env:
@@ -121,7 +121,12 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.resolve_tag.outputs.tag }}
-          files: release/*
-          body_path: release/CHANGELOG-${{ steps.resolve_tag.outputs.tag }}.md
+          files: |
+            release/ios-use-darwin-arm64
+            release/driver.ipa
+            release/driver-sim.ipa
+            release/ios-use-mac-resources.tar.gz
+            release/SHA256SUMS
+          body_path: release-notes/CHANGELOG-${{ steps.resolve_tag.outputs.tag }}.md
           overwrite_files: false
           fail_on_unmatched_files: true

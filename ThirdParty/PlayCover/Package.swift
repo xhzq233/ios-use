@@ -13,23 +13,17 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../inject"),
-        .package(
-            url: "https://github.com/jpsim/Yams.git",
-            exact: "5.1.3"
-        ),
     ],
     targets: [
         .target(
             name: "PlayCoverUpstream",
             dependencies: [
                 .product(name: "Injection", package: "inject"),
-                .product(name: "Yams", package: "Yams"),
             ],
             path: "PlayCover",
             exclude: [
                 "Model/PlayApp.swift",
                 "Utils/Extensions/PlayAppExtensions.swift",
-                "Rules/default.yaml",
             ],
             sources: [
                 "PlayCoverError.swift",
@@ -46,7 +40,6 @@ let package = Package(
                 "Utils/SystemConfig.swift",
                 "Model/AppInfo.swift",
                 "Model/BaseApp.swift",
-                "Model/PlayRules.swift",
                 "Headless/PlayCoverUpstreamEngine.swift",
                 "Headless/PlayCoverPrepareDifferential.swift",
             ]

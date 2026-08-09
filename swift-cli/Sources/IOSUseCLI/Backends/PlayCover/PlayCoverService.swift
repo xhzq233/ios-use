@@ -11,12 +11,11 @@ public enum PlayCoverService {
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v19+single-bundle-slot+playcover-"
+        "ios-use-headless-v20+single-bundle-slot+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision
-        + "+rules-"
-        + PlayCoverUpstreamEngine.defaultRulesRevision
+        + "+inline-sandbox-v1"
         + "+always-frida"
     private static let accountNamespacePolicyRevision =
         "account-runtime-namespace-v1"
@@ -182,7 +181,6 @@ public enum PlayCoverService {
             ),
             runtimeSocketPath: sandboxSocket,
             runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
-            defaultRulesData: try PlayCoverRulesService.ensureAvailable(),
             codesignIdentity: plan.signingIdentity.codesignSelector,
             expectedRuntimeBuildHash: plan.runtimeBuildHash,
             expectedRuntimeEvidence: plan.runtimeEvidence,

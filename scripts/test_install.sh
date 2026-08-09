@@ -20,13 +20,11 @@ FAKE_BIN="$TMP_ROOT/fake-bin"
 FAKE_HOME="$TMP_ROOT/home"
 FAKE_RUNTIME_DIR="$TMP_ROOT/runtime/IOSUsePlayRuntime.framework"
 FAKE_ENGINE_DIR="$TMP_ROOT/runtime/IOSUseFridaEngine.framework"
-FAKE_RULES="$TMP_ROOT/runtime/default-sandbox-rules.yaml"
 FAKE_RESOURCES_ARCHIVE="$TMP_ROOT/ios-use-mac-resources.tar.gz"
 FAKE_CHECKSUMS="$TMP_ROOT/SHA256SUMS"
 mkdir -p \
   "$FAKE_SOURCE/ios-use-skill" \
   "$FAKE_SOURCE/swift-cli" \
-  "$FAKE_SOURCE/ThirdParty/PlayCover/PlayCover/Rules" \
   "$FAKE_SOURCE/scripts" \
   "$FAKE_RUNTIME_DIR" \
   "$FAKE_ENGINE_DIR" \
@@ -35,8 +33,6 @@ mkdir -p \
 
 printf 'remote skill fixture\n' > "$FAKE_SOURCE/ios-use-skill/SKILL.md"
 printf '// fake package\n' > "$FAKE_SOURCE/swift-cli/Package.swift"
-printf 'allow: []\n' > \
-  "$FAKE_SOURCE/ThirdParty/PlayCover/PlayCover/Rules/default.yaml"
 cat > "$FAKE_SOURCE/scripts/build_swift_cli.sh" <<'SCRIPT'
 #!/bin/bash
 set -euo pipefail
@@ -83,8 +79,7 @@ printf '%s\n' '<plist version="1.0"><dict/></plist>' > "$FAKE_ENGINE_DIR/Info.pl
 mkdir -p "$FAKE_ENGINE_DIR/Resources"
 printf 'fake Frida notices\n' > \
   "$FAKE_ENGINE_DIR/Resources/ThirdPartyNotices.txt"
-printf 'allow: []\n' > "$FAKE_RULES"
-(cd "$(dirname "$FAKE_RUNTIME_DIR")" && tar -czf "$FAKE_RESOURCES_ARCHIVE" IOSUsePlayRuntime.framework IOSUseFridaEngine.framework default-sandbox-rules.yaml)
+(cd "$(dirname "$FAKE_RUNTIME_DIR")" && tar -czf "$FAKE_RESOURCES_ARCHIVE" IOSUsePlayRuntime.framework IOSUseFridaEngine.framework)
 {
   printf '#!/bin/sh\necho 1.0.3\n' | shasum -a 256 | awk '{print $1 "  ios-use-darwin-arm64"}'
   printf 'remote-driver\n' | shasum -a 256 | awk '{print $1 "  driver.ipa"}'
@@ -238,7 +233,9 @@ if grep -qi 'playcover' <<<"$HELP_OUTPUT"; then
 fi
 
 BUILD_HOME="$FAKE_HOME/build-from-source"
-mkdir -p "$BUILD_HOME"
+mkdir -p "$BUILD_HOME/share/ios-use/mac"
+printf 'legacy rules\n' > \
+  "$BUILD_HOME/share/ios-use/mac/default-sandbox-rules.yaml"
 mkdir -p "$BUILD_HOME/.ios-use/flows"
 printf 'legacy recipe\n' > "$BUILD_HOME/.ios-use/flows/proxy_configca.yaml"
 printf 'legacy recipe\n' > "$BUILD_HOME/.ios-use/flows/subflow_wait_and_find.yaml"
@@ -280,8 +277,8 @@ if [[ ! -s "$BUILD_HOME/share/ios-use/mac/IOSUseFridaEngine.framework/Resources/
   echo "[install-test] ERROR: build-from-source install omitted Frida notices" >&2
   exit 1
 fi
-if [[ ! -s "$BUILD_HOME/share/ios-use/mac/default-sandbox-rules.yaml" ]]; then
-  echo "[install-test] ERROR: build-from-source install did not install the sandbox rules" >&2
+if [[ -e "$BUILD_HOME/share/ios-use/mac/default-sandbox-rules.yaml" ]]; then
+  echo "[install-test] ERROR: build-from-source install kept legacy sandbox rules" >&2
   exit 1
 fi
 if [[ -e "$BUILD_HOME/.ios-use/playcover/IOSUsePlayRuntime.framework" ]]; then
@@ -306,7 +303,9 @@ if [[ ! -f "$BUILD_HOME/.ios-use/flows/my-local-flow.yaml" ]]; then
 fi
 
 DOWNLOAD_HOME="$FAKE_HOME/download"
-mkdir -p "$DOWNLOAD_HOME"
+mkdir -p "$DOWNLOAD_HOME/share/ios-use/mac"
+printf 'legacy rules\n' > \
+  "$DOWNLOAD_HOME/share/ios-use/mac/default-sandbox-rules.yaml"
 DOWNLOAD_PATH="$(run_install "$DOWNLOAD_HOME" | tail -n 1)"
 if [[ "$DOWNLOAD_PATH" != "$DOWNLOAD_HOME/bin/ios-use" || ! -x "$DOWNLOAD_PATH" ]]; then
   echo "[install-test] ERROR: release download install did not create expected binary" >&2
@@ -328,8 +327,8 @@ if [[ ! -s "$DOWNLOAD_HOME/share/ios-use/mac/IOSUseFridaEngine.framework/Resourc
   echo "[install-test] ERROR: release install omitted Frida notices" >&2
   exit 1
 fi
-if [[ ! -s "$DOWNLOAD_HOME/share/ios-use/mac/default-sandbox-rules.yaml" ]]; then
-  echo "[install-test] ERROR: release install did not install the sandbox rules" >&2
+if [[ -e "$DOWNLOAD_HOME/share/ios-use/mac/default-sandbox-rules.yaml" ]]; then
+  echo "[install-test] ERROR: release install kept legacy sandbox rules" >&2
   exit 1
 fi
 if [[ -e "$DOWNLOAD_HOME/.ios-use/playcover/IOSUsePlayRuntime.framework" ]]; then
