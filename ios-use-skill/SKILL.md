@@ -5,6 +5,14 @@ description: "Use when a task explicitly requires running, scripting, or trouble
 
 # ios-use Operational Playbook
 
+## Install or update ios-use
+
+Use the same command for both the initial installation and every update:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
+```
+
 ## 1. Load only the relevant reference
 
 - Read `references/simulator.md` before operating or troubleshooting a Simulator.
