@@ -542,11 +542,11 @@ enum MachineOutput {
                 phase = "mac_preflight"
                 retryable = true
                 fatal = false
-            case .launchRecoveryUnresolved:
+            case .launchRecoveryUnresolved(_, let recoveryRetryable):
                 category = IOSUseErrorCategory.session
                 code = "mac_launch_recovery_unresolved"
                 phase = "mac_launch_recovery"
-                retryable = false
+                retryable = recoveryRetryable
                 fatal = false
             }
             return MachineError(

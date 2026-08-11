@@ -361,10 +361,16 @@ public enum SessionService {
 
     private static func stopLocked(paths: IOSUsePaths) throws -> String {
         guard let current = try readDriverLockInfo(paths: paths) else {
-            if let pid = try PlayCoverSessionService
+            switch try PlayCoverSessionService
                 .stopLaunchingWithoutDriverLock(paths: paths) {
+            case .stopped(let pid):
                 return "Mac interrupted launch stopped (pid \(pid))\n"
                     + "Mac session stopped\n"
+            case .cleared:
+                return "Mac interrupted launch state cleared "
+                    + "(no running App)\nMac session stopped\n"
+            case .noRecord:
+                break
             }
             _ = try requireDriverLock(paths: paths)
             preconditionFailure(

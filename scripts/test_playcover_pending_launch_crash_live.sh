@@ -577,7 +577,7 @@ for attempt in $(seq 1 100); do
     .error.category == "session" and
     .error.code == "mac_launch_recovery_unresolved" and
     .error.phase == "mac_launch_recovery" and
-    .error.retryable == false and
+    .error.retryable == true and
     .error.fatal == false and
     .error.mutationMayHaveApplied == false
   ' "$RUN_DIR/$attempt_name.stderr" >/dev/null ||

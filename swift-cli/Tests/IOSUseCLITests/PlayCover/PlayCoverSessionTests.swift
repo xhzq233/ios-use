@@ -20,6 +20,8 @@ final class PlayCoverSessionTests: XCTestCase {
         PlayCoverSlotLauncher.processStartTimeOverrideForTesting = nil
         PlayCoverSlotLauncher.signalOverrideForTesting = nil
         #if canImport(AppKit)
+        PlayCoverSlotLauncher.workspaceOpenOverrideForTesting = nil
+        PlayCoverSlotLauncher.workspaceSubmissionObserverForTesting = nil
         PlayCoverBundleStartLock.runningBundlePIDsOverrideForTesting = nil
         #endif
         super.tearDown()
@@ -220,6 +222,113 @@ final class PlayCoverSessionTests: XCTestCase {
         try PlayCoverSessionService.finishDriverLockCommit(
             result: recovered,
             paths: fixture.paths
+        )
+        XCTAssertNil(
+            try PlayCoverLaunchingStore.load(paths: fixture.paths)
+        )
+        #endif
+    }
+
+    func testRecentInterruptedLaunchPreservesTransientAuthentication()
+        throws
+    {
+        #if canImport(AppKit)
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        PlayCoverSlotService.currentInstallRevisionOverrideForTesting = { _ in
+            fixture.installRevision
+        }
+        PlayCoverSessionService.nowMillisecondsOverrideForTesting = {
+            10_000
+        }
+        PlayCoverBundleStartLock.runningBundlePIDsOverrideForTesting = { _ in
+            [654]
+        }
+        PlayCoverSlotLauncher.authenticateOverrideForTesting = { _, _, _, _ in
+            throw PlayCoverRuntimeClientError.timeout(
+                operation: "Runtime is still starting"
+            )
+        }
+        let record = try launchingRecord(
+            fixture: fixture,
+            submittedAt: 1
+        )
+        try PlayCoverLaunchingStore.create(record, paths: fixture.paths)
+
+        XCTAssertThrowsError(
+            try PlayCoverSessionService.recoverLaunching(
+                timeout: 15,
+                paths: fixture.paths
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "the interrupted \(record.bundleIdentifier) launch has "
+                        + "not authenticated yet"
+                )
+            )
+        }
+        XCTAssertEqual(
+            try PlayCoverLaunchingStore.load(paths: fixture.paths),
+            record
+        )
+        #endif
+    }
+
+    func testStopPreservesRecentNoProcessLaunchForLateWorkspaceStart()
+        throws
+    {
+        #if canImport(AppKit)
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        configureNoRunningBundle()
+        PlayCoverSessionService.nowMillisecondsOverrideForTesting = {
+            10_000
+        }
+        let record = try launchingRecord(
+            fixture: fixture,
+            submittedAt: 1
+        )
+        try PlayCoverLaunchingStore.create(record, paths: fixture.paths)
+
+        XCTAssertThrowsError(
+            try SessionService.stop(paths: fixture.paths)
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "still within its asynchronous submit window"
+                )
+            )
+            XCTAssertTrue(
+                MachineOutput.classify(error).retryable
+            )
+        }
+        XCTAssertEqual(
+            try PlayCoverLaunchingStore.load(paths: fixture.paths),
+            record
+        )
+        #endif
+    }
+
+    func testStopClearsInterruptedLaunchWithoutRunningProcess() throws {
+        #if canImport(AppKit)
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        configureNoRunningBundle()
+        try FileManager.default.createDirectory(
+            atPath: fixture.paths.playcoverPlayChain,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let record = try launchingRecord(fixture: fixture, submittedAt: 1)
+        try PlayCoverLaunchingStore.create(record, paths: fixture.paths)
+
+        let output = try SessionService.stop(paths: fixture.paths)
+
+        XCTAssertEqual(
+            output,
+            "Mac interrupted launch state cleared (no running App)\n"
+                + "Mac session stopped\n"
         )
         XCTAssertNil(
             try PlayCoverLaunchingStore.load(paths: fixture.paths)

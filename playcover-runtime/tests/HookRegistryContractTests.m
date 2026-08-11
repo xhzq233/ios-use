@@ -122,13 +122,13 @@ int main(void) {
             @"Photos feature hook was classified as Runtime/UI core"
         );
         passed &= IOSUseHookRequire(
-            [IOSUsePlayHookRegistryExpectedRequiredIdentifiers()
+            ![IOSUsePlayHookRegistryExpectedRequiredIdentifiers()
                 containsObject:
                     @"playtools.process-info.mac-catalyst-app"] &&
-                [IOSUsePlayHookRegistryExpectedRequiredIdentifiers()
+                ![IOSUsePlayHookRegistryExpectedRequiredIdentifiers()
                     containsObject:
                         @"playtools.process-info.ios-app-on-mac"],
-            @"ProcessInfo Catalyst identity hooks are not required"
+            @"ProcessInfo Catalyst identity hooks must stay removed"
         );
 
         IOSUseHookReset(@"missing.required");
@@ -654,19 +654,17 @@ int main(void) {
             YES,
             nil
         );
-        IOSUsePlayHookRegistryRecordPreMainInvocation(
-            "dyld.active-platform"
-        );
+        IOSUsePlayHookRegistryRecordPreMainInvocation("dyld.uname");
         IOSUsePlayHookRegistryDeclareObservedWrapper(
-            @"dyld.active-platform",
+            @"dyld.uname",
             @"dyld-interpose",
             @"libSystem",
-            @"dyld_get_active_platform",
-            @"int(void)"
+            @"uname",
+            @"int(struct utsname *)"
         );
         passed &= IOSUseHookRequire(
             IOSUsePlayHookRegistryEntryReady(
-                @"dyld.active-platform"
+                @"dyld.uname"
             ) &&
                 IOSUsePlayHookRegistryRequiredReady(),
             @"pre-main invocation was not retained until declaration"

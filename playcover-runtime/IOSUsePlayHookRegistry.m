@@ -48,7 +48,6 @@ typedef struct {
 
 static IOSUsePlayPreMainInvocationCounter
     IOSUsePlayPreMainInvocationCounters[] = {
-        {"dyld.active-platform", 0},
         {"dyld.uname", 0},
         {"dyld.sysctl", 0},
         {"dyld.sysctlbyname", 0},
@@ -70,8 +69,6 @@ IOSUsePlayHookRegistryExpectedRequiredIdentifiers(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         identifiers = @[
-            @"playtools.process-info.mac-catalyst-app",
-            @"playtools.process-info.ios-app-on-mac",
             @"safe-area.provider",
             @"playtools.screen.scene-frame",
             @"playtools.screen.scene-bounds",

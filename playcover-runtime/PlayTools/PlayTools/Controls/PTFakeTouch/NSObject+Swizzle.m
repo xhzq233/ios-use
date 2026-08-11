@@ -398,20 +398,6 @@ static void IOSUsePlayInstallRequiredIdentityHook(
     }
 }
 
-- (BOOL)iosUsePlayIsMacCatalystApp {
-    IOSUsePlayHookRegistryRecordInvocation(
-        @"playtools.process-info.mac-catalyst-app"
-    );
-    return NO;
-}
-
-- (BOOL)iosUsePlayIsiOSAppOnMac {
-    IOSUsePlayHookRegistryRecordInvocation(
-        @"playtools.process-info.ios-app-on-mac"
-    );
-    return NO;
-}
-
 bool menuWasCreated = false;
 - (id) initWithRootMenuHook:(id)rootMenu {
     self = [self initWithRootMenuHook:rootMenu];
@@ -451,25 +437,6 @@ bool menuWasCreated = false;
 
 @implementation PTSwizzleLoader
 + (void)load {
-    Class processInfoClass = NSProcessInfo.processInfo.class;
-    IOSUsePlayInstallRequiredIdentityHook(
-        @"playtools.process-info.mac-catalyst-app",
-        processInfoClass,
-        NSSelectorFromString(@"isMacCatalystApp"),
-        @selector(iosUsePlayIsMacCatalystApp),
-        YES,
-        NO,
-        NULL
-    );
-    IOSUsePlayInstallRequiredIdentityHook(
-        @"playtools.process-info.ios-app-on-mac",
-        processInfoClass,
-        NSSelectorFromString(@"isiOSAppOnMac"),
-        @selector(iosUsePlayIsiOSAppOnMac),
-        YES,
-        NO,
-        NULL
-    );
     Class sceneSettingsClass;
     if (@available(iOS 17.1, *)) {
         sceneSettingsClass =

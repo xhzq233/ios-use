@@ -84,6 +84,12 @@ enum PlayCoverSessionService {
         case unverifiable(errno: Int32)
     }
 
+    enum InterruptedLaunchStopResult: Equatable {
+        case noRecord
+        case cleared
+        case stopped(Int32)
+    }
+
     typealias LaunchOverride = (
         _ slot: PlayCoverInstalledSlot,
         _ sessionID: String,
@@ -284,16 +290,17 @@ enum PlayCoverSessionService {
                 paths: paths
             )
             throw PlayCoverBackendError.launchRecoveryUnresolved(
-                "launching record no longer matches the current Bundle slot"
+                "launching record no longer matches the current Bundle slot",
+                retryable: true
             )
         }
+        let age = max(0, nowMilliseconds() - record.submittedAt)
+        let staleAfter = max(
+            staleLaunchingMilliseconds,
+            Int64(timeout * 1_000)
+        )
         switch acquisition.runningPIDs.count {
         case 0:
-            let age = nowMilliseconds() - record.submittedAt
-            let staleAfter = max(
-                staleLaunchingMilliseconds,
-                Int64(timeout * 1_000)
-            )
             if age >= staleAfter {
                 try PlayCoverLaunchingStore.remove(
                     sessionID: record.sessionID,
@@ -309,7 +316,8 @@ enum PlayCoverSessionService {
                 return nil
             }
             throw PlayCoverBackendError.launchRecoveryUnresolved(
-                "a recent Mac launch is still within its submit timeout"
+                "a recent Mac launch is still within its submit timeout",
+                retryable: true
             )
         case 1:
             let pid = acquisition.runningPIDs[0]
@@ -341,6 +349,15 @@ enum PlayCoverSessionService {
                     recovered: true
                 )
             } catch {
+                if !PlayCoverService.runtimeHelloFailureIsTerminal(error),
+                   age < staleAfter {
+                    throw PlayCoverBackendError.launchRecoveryUnresolved(
+                        "the interrupted \(record.bundleIdentifier) launch "
+                            + "has not authenticated yet; retry start or run "
+                            + "`ios-use stop` to resolve it",
+                        retryable: true
+                    )
+                }
                 try PlayCoverLaunchingStore.remove(
                     sessionID: record.sessionID,
                     paths: paths
@@ -348,24 +365,26 @@ enum PlayCoverSessionService {
                 throw PlayCoverBackendError.launchRecoveryUnresolved(
                     "a \(record.bundleIdentifier) process is running but "
                         + "does not authenticate the interrupted ios-use "
-                        + "launch; close it and retry"
+                        + "launch; close it and retry",
+                    retryable: false
                 )
             }
         default:
             throw PlayCoverBackendError.launchRecoveryUnresolved(
                 "multiple \(record.bundleIdentifier) processes are running; "
-                    + "close them and retry"
+                    + "close them and retry",
+                retryable: false
             )
         }
     }
 
     static func stopLaunchingWithoutDriverLock(
         paths: IOSUsePaths
-    ) throws -> Int32? {
+    ) throws -> InterruptedLaunchStopResult {
         guard let record = try PlayCoverLaunchingStore.load(
             paths: paths
         ) else {
-            return nil
+            return .noRecord
         }
         let acquisition = try PlayCoverBundleStartLock.acquireForRecovery(
             bundleIdentifier: record.bundleIdentifier,
@@ -378,6 +397,15 @@ enum PlayCoverSessionService {
             )
         }
         guard let pid = acquisition.runningPIDs.first else {
+            let age = max(0, nowMilliseconds() - record.submittedAt)
+            guard age >= staleLaunchingMilliseconds else {
+                throw PlayCoverBackendError.launchRecoveryUnresolved(
+                    "the interrupted \(record.bundleIdentifier) launch is "
+                        + "still within its asynchronous submit window; "
+                        + "retry `ios-use stop`",
+                    retryable: true
+                )
+            }
             try PlayCoverLaunchingStore.remove(
                 sessionID: record.sessionID,
                 paths: paths
@@ -389,7 +417,7 @@ enum PlayCoverSessionService {
                     isDirectory: true
                 )
             )
-            return nil
+            return .cleared
         }
         let slot = try PlayCoverSlotService.read(
             bundleIdentifier: record.bundleIdentifier,
@@ -438,7 +466,7 @@ enum PlayCoverSessionService {
                 isDirectory: true
             )
         )
-        return pid
+        return .stopped(pid)
     }
 
     @discardableResult

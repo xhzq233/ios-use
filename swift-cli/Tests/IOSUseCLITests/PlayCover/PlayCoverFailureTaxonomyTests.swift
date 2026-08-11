@@ -55,7 +55,14 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
                 true
             ),
             (
-                .launchRecoveryUnresolved("intent"),
+                .launchRecoveryUnresolved("intent", retryable: true),
+                "session",
+                "mac_launch_recovery_unresolved",
+                "mac_launch_recovery",
+                true
+            ),
+            (
+                .launchRecoveryUnresolved("manual action", retryable: false),
                 "session",
                 "mac_launch_recovery_unresolved",
                 "mac_launch_recovery",

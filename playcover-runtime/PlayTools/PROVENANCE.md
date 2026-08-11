@@ -105,15 +105,17 @@ gate.
 
 ### Clean-iOS identity boundary
 
-The local `NSObject+Swizzle.m` patch installs required hooks on the concrete
-`NSProcessInfo` instance class so `isMacCatalystApp` and `isiOSAppOnMac` return
-false before App code can read them. `PlayLoader.m` reuses its existing
-`open`/`stat`/`access` interposition point to return `ENOENT` for a fixed set of
-shell, SSH, Cydia, MobileSubstrate, apt, cycript, Frida-server, and `/var/jb`
-paths. The same bounded file set is denied by the compiled sandbox rules.
+The Runtime preserves the native Catalyst platform signals exposed by
+`NSProcessInfo` and dyld because Apple frameworks consume the same process-wide
+APIs during scene creation. Device model, idiom, screen, orientation, and touch
+compatibility remain the fixed iPhone contract. `PlayLoader.m` reuses its
+existing `open`/`stat`/`access` interposition point to return `ENOENT` for a
+fixed set of shell, SSH, Cydia, MobileSubstrate, apt, cycript, Frida-server, and
+`/var/jb` paths. The same bounded file set is denied by the compiled sandbox
+rules.
 
 The ios-use Runtime captures its private session revision and PlayChain root
 before initialization, then removes all `IOS_USE_PLAY_*` bootstrap variables
 and empty environment entries. `PlayedAppleDB.swift` reads only the captured
-values. This contract intentionally does not hide loaded images, rewrite the
-Mach-O Catalyst platform, or implement generic anti-debug behavior.
+values. This contract intentionally does not hide Catalyst, hide loaded images,
+rewrite the Mach-O platform, or implement generic anti-debug behavior.

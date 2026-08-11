@@ -253,8 +253,12 @@ public enum StatusService {
             switch sessionStatus {
             case "notRunning":
                 return "Run `ios-use start --mac --app <App.app>`."
-            case "unresolvedOpen", "invalidLaunching", "invalid":
-                return "Resolve the reported Mac session state before starting again."
+            case "unresolvedOpen":
+                return "Run `ios-use stop` to resolve the reported Mac "
+                    + "launch state before starting again."
+            case "invalidLaunching", "invalid":
+                return "Resolve the reported Mac session state before "
+                    + "starting again."
             default:
                 return nil
             }

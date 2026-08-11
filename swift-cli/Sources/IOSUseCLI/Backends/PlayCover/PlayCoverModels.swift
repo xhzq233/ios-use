@@ -262,7 +262,7 @@ public enum PlayCoverBackendError:
     case terminateFailed(String)
     case capabilityUnavailable(String)
     case bundleAlreadyRunning(bundleIdentifier: String, pid: Int32)
-    case launchRecoveryUnresolved(String)
+    case launchRecoveryUnresolved(String, retryable: Bool)
 
     public var description: String {
         switch self {
@@ -305,7 +305,7 @@ public enum PlayCoverBackendError:
         case .bundleAlreadyRunning(let bundleIdentifier, let pid):
             return "Mac bundle is already running: \(bundleIdentifier) "
                 + "(pid \(pid))"
-        case .launchRecoveryUnresolved(let message):
+        case .launchRecoveryUnresolved(let message, _):
             return "Mac launch is unresolved: \(message)"
         }
     }
