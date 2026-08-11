@@ -27,21 +27,6 @@ NSTimeInterval IOSUsePlayRuntimeAutomationMainThreadTimeout(void) {
 typedef BOOL (*IOSUseAutomationSendBool)(id, SEL);
 typedef unsigned long long (*IOSUseAutomationSendTraits)(id, SEL);
 typedef CGPoint (*IOSUseAutomationSendPoint)(id, SEL);
-typedef BOOL (*IOSUseAutomationOpenURLModern)(
-    id,
-    SEL,
-    UIApplication *,
-    NSURL *,
-    NSDictionary *
-);
-typedef BOOL (*IOSUseAutomationOpenURLLegacy)(
-    id,
-    SEL,
-    UIApplication *,
-    NSURL *,
-    NSString * _Nullable,
-    id _Nullable
-);
 typedef NSDictionary<NSString *, id> * _Nullable
 (^IOSUseAutomationDeferredFinalize)(
     NSDictionary<NSString *, id> * _Nullable * _Nullable
@@ -5055,119 +5040,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
     };
 }
 
-static NSDictionary<NSString *, id> *IOSUseAutomationOpen(
-    NSDictionary<NSString *, id> *arguments,
-    NSDictionary<NSString *, id> **commandError
-) {
-    NSString *urlString = arguments[@"url"];
-    NSURL *url = [urlString isKindOfClass:NSString.class]
-        ? [NSURL URLWithString:urlString]
-        : nil;
-    if (url == nil || url.scheme.length == 0) {
-        if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"invalid_arguments",
-                @"open url must be an absolute URL",
-                @"validation",
-                @"validation",
-                NO,
-                nil,
-                @[]
-            );
-        }
-        return nil;
-    }
-    NSMutableSet<NSString *> *ownSchemes = [NSMutableSet set];
-    for (NSDictionary *type in
-         NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"]) {
-        for (NSString *scheme in type[@"CFBundleURLSchemes"]) {
-            if ([scheme isKindOfClass:NSString.class]) {
-                [ownSchemes addObject:scheme.lowercaseString];
-            }
-        }
-    }
-    if (![ownSchemes containsObject:url.scheme.lowercaseString]) {
-        if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"open_target_mismatch",
-                @"Runtime open only delivers URLs registered by the active target",
-                @"validation",
-                @"delivery",
-                NO,
-                nil,
-                @[]
-            );
-        }
-        return nil;
-    }
-    UIApplication *application =
-        UIApplication.sharedApplication;
-    id delegate = application.delegate;
-    SEL modernSelector =
-        @selector(application:openURL:options:);
-    SEL legacySelector = NSSelectorFromString(
-        @"application:openURL:sourceApplication:annotation:"
-    );
-    BOOL delivered = NO;
-    NSString *deliveryBackend = @"";
-    if ([delegate respondsToSelector:modernSelector]) {
-        delivered =
-            ((IOSUseAutomationOpenURLModern)objc_msgSend)(
-                delegate,
-                modernSelector,
-                application,
-                url,
-                @{}
-            );
-        deliveryBackend =
-            @"active-application-delegate-openURL-options";
-    } else if ([delegate respondsToSelector:legacySelector]) {
-        delivered =
-            ((IOSUseAutomationOpenURLLegacy)objc_msgSend)(
-                delegate,
-                legacySelector,
-                application,
-                url,
-                nil,
-                nil
-            );
-        deliveryBackend =
-            @"active-application-delegate-openURL-legacy";
-    } else {
-        if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"open_unsupported",
-                @"active target exposes no in-process application URL handler",
-                @"interaction",
-                @"delivery",
-                NO,
-                nil,
-                @[]
-            );
-        }
-        return nil;
-    }
-    if (!delivered) {
-        if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"open_rejected",
-                @"active target rejected the URL",
-                @"interaction",
-                @"delivery",
-                NO,
-                nil,
-                @[]
-            );
-        }
-        return nil;
-    }
-    return @{
-        @"delivered": @YES,
-        @"url": url.absoluteString,
-        @"deliveryBackend": deliveryBackend,
-    };
-}
-
 NSDictionary<NSString *, id> *IOSUsePlayRuntimeAutomationCommand(
     NSString *command,
     NSDictionary<NSString *, id> *arguments,
@@ -5225,11 +5097,6 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeAutomationCommand(
                     arguments,
                     [command
                         isEqualToString:@"dismissAlertByLabel"],
-                    localError
-                );
-            } else if ([command isEqualToString:@"open"]) {
-                localResult = IOSUseAutomationOpen(
-                    arguments,
                     localError
                 );
             } else if (localError != NULL) {

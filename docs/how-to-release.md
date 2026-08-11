@@ -6,7 +6,7 @@ CLI, two driver IPAs, the Mac resource archive, and their checksum manifest.
 ## 1. Pin the version
 
 Update `IOSUseCLI.version` in
-`swift-cli/Sources/IOSUseCLI/CLI/IOSUseCLI.swift`, its intentionally pinned
+`swift-cli/Sources/IOSUseCLI/CLI/Version.swift`, its intentionally pinned
 tests, and `release-notes/CHANGELOG-vX.Y.Z.md`. The binary and tag must match:
 
 ```text
@@ -23,9 +23,12 @@ bash scripts/ci_test.sh
 git diff --check
 ```
 
-The non-live gate builds and tests the CLI, drivers, Runtime, Frida integration,
-and pinned PlayCover differential contracts. Account-global live tests remain
-explicit because they require an unlocked GUI session and a disposable account.
+The repository gate runs the Swift CLI and Driver unit suites, the pinned
+PlayCover differential contracts, script syntax and install smoke checks, then
+builds the Release CLI and Simulator Driver. The release build below owns fresh
+Runtime, Frida Engine and real-device Driver production builds. Account-global
+live tests remain explicit because they require an unlocked GUI session and a
+disposable account.
 
 ## 3. Build release assets
 

@@ -51,7 +51,7 @@ Modern multimodal models do not usually allocate tokens linearly with every scre
 1. **DOM-first targeting** - Most actions use label/value text. The driver resolves coordinates internally, so the LLM does not need to guess pixel positions for standard UI.
 2. **Vision fallback** - When AX is incomplete (for example, a custom-drawn icon), the LLM can inspect a screenshot and pass raw coordinates.
 3. **Offset hybrid** — Combine both: anchor on a known label, then apply a relative offset to hit an adjacent unlabeled control.
-4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom` and use `dom` / `waitFor` to confirm semantic state. Capture explicitly named screenshots when visual evidence is needed. Failed UI mutations return a stable error code; actionable lookup/action failures also print one `Evidence:` manifest path that references the captured screenshot, fast OCR, and fresh DOM when available.
+4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom` and use `dom` / `waitFor` to confirm semantic state. Capture explicitly named screenshots when visual context is needed. Failed UI mutations return a stable error code together with actionable targets, candidates, rejection reasons, suggestions, and alert details.
 
 This means:
 
@@ -89,7 +89,7 @@ bytes. To install a
 specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.0.1
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.0.2
 ```
 
 Intel Macs are unsupported because the Mac Runtime and converted iPhone Apps
@@ -138,7 +138,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | --- | --- |
 | `status` / `config --list` | Show connected real devices and configured device/Simulator state. |
 | `config` | Install or update the on-device driver; use `config --mac` once before the first local Mac-backend start. |
-| `start` / `status` / `stop` | Select, inspect, or release the current target. These are the only Mac-backend lifecycle commands; restart Mac with `stop`, then `start --mac --reuse`. |
+| `start` / `status` / `stop` | Select, inspect, or release the current target. These are the only Mac-backend lifecycle commands; restart Mac with `stop`, then `start --mac`. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID on a real device or Simulator; activation is UI-ready by default. |
 | `dom` | Print the current semantic UI tree. |
 | `ui-tree` | Inspect UIKit view classes and layout details for the active Mac App; use `dom` for interaction. |
@@ -150,7 +150,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | `media import` | Add one local photo or video to the Photos library used by the active backend. |
 | `oslog` / `nslog` | Capture system logs or app-side NSLogger output. |
 | `proxy` | Capture HTTP/HTTPS traffic through mitmproxy. |
-| `open` | Open a URL or custom scheme on a device. |
+| `open` | Open a URL or custom scheme on a device; on Mac it targets and activates the active App. |
 
 Typical manual loop:
 
@@ -233,29 +233,24 @@ to trust the dedicated signing identity. If you cancel, safely retry the same
 command: it resumes that identity instead of creating another one. The signing
 identity and installed Apps are shared by the macOS account, while each
 `IOS_USE_HOME` keeps its own session and remembers which Bundle ID to reuse.
-Both `start --mac --app` and `start --mac --reuse` only check the existing
-identity and tell you to run `config --mac` if setup is missing or trust must be
-completed.
+Both Mac start forms check the existing identity and tell you to run
+`config --mac` if setup is missing or trust must be completed.
 
 Each Bundle ID has one installed Mac App. `start --mac --app <source.app>`
-installs or updates that App from an unmodified iPhoneOS source and launches it;
-every Mac App includes the Frida debug Engine, so `ios-use debug` is always
-available.
-`start --mac --reuse` relaunches the currently installed App for this home's
-Bundle ID without re-reading the source. After rebuilding the source, pass
-`--app` again to update the installed App; `--reuse` deliberately does not
-inspect the source build.
+checks the source and signing identity, reuses an unchanged installed App, or
+updates it when needed. Every Mac App includes the Frida debug Engine, so
+`ios-use debug` is always available. Later, `start --mac` launches the current
+App remembered by this `IOS_USE_HOME` without requiring its source path.
 
-v2.0.1 does not migrate or auto-launch anything installed by older versions, and
+v2.0.2 does not migrate or auto-launch Mac Apps installed by older versions, and
 it never deletes old caches for you. After upgrading, stop any running Mac
-session and run `start --mac --app` once for each Bundle you want to keep using;
-`--reuse` only offers that instruction until the App is installed. Run
-`ios-use du` to see leftover caches you can remove yourself.
+session and run `start --mac --app` once for each Bundle you want to keep using.
+Run `ios-use du` to see leftover caches you can remove yourself.
 
 The CLI creates one random session ID and connects straight to the injected
 Runtime's owner-only Unix socket. `driver.lock` keeps the Mac backend selected until
 `ios-use stop`, so session commands cannot fall back to XCTest. `status`,
-screenshots, DOM/wait, touch/input, capture, URL delivery, logs, and evidence
+screenshots, DOM/wait, touch/input, capture, URL delivery, logs, and diagnostics
 all use that exact process, executable, and session.
 `ui-tree` is a read-only Mac-only diagnostic that relates a fresh semantic DOM
 target to its current UIKit view subtree. It does not replace `dom`, does not
@@ -345,13 +340,14 @@ bash scripts/ci_test.sh
 `./ios-use`; on Apple Silicon development hosts with full Xcode and `xcodegen`
 it also keeps a local development Runtime under `.ios-use/playcover/` up to
 date. Release installs instead use the checksummed, read-only prefix share
-layout; release CI runs the exact staged archive through `install.sh` and a
-fixture `start/status/stop` before upload. Use that binary for development
+layout; release CI runs the exact staged archive through an isolated,
+non-launching install verification before upload. Use that binary for development
 instead of a global `ios-use`.
 `bash scripts/build_driver.sh` defaults to Debug and writes development IPAs
 under `IOS_USE_HOME`, or cwd `.ios-use/` when unset. `scripts/ci_test.sh` is the
-default CI/local Swift-only validation path. Full Simulator command matrix
-tests use `bash scripts/ci_full_simulator.sh --driver-ipa <driver-sim.ipa>`.
+main local unit and build gate. Hosted CI routes script, Swift, Driver, and Mac
+Runtime changes to focused workflows. Full Simulator command matrix tests use
+`bash scripts/ci_full_simulator.sh --driver-ipa <driver-sim.ipa>`.
 See `scripts/README.md` for the script index.
 
 ## Acknowledgments

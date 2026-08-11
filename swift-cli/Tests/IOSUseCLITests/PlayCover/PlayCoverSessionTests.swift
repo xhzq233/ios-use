@@ -97,7 +97,7 @@ final class PlayCoverSessionTests: XCTestCase {
         )
     }
 
-    func testEveryExplicitAppStartResolvesFreshInstall() throws {
+    func testEveryExplicitAppStartResolvesAutomaticSlotDisposition() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         configureNoRunningBundle()
@@ -108,7 +108,7 @@ final class PlayCoverSessionTests: XCTestCase {
             _ in
             XCTAssertNotNil(explicit)
             installCount += 1
-            return (fixture.slot, false)
+            return (fixture.slot, installCount > 1)
         }
         PlayCoverSessionService.launchOverrideForTesting = launchResult
 
@@ -128,7 +128,7 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertEqual(installCount, 2)
     }
 
-    func testReuseReadsHomeBundleAndReturnsCurrentSlot() throws {
+    func testSourceLessStartReadsHomeBundleAndReturnsCurrentSlot() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         configureNoRunningBundle()
@@ -154,6 +154,21 @@ final class PlayCoverSessionTests: XCTestCase {
 
         XCTAssertTrue(result.reused)
         XCTAssertEqual(result.bundleIdentifier, fixture.bundleIdentifier)
+    }
+
+    func testSourceLessStartWithoutHomeSelectionRequestsApp() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        XCTAssertThrowsError(
+            try PlayCoverSessionService.launch(
+                explicitAppPath: nil,
+                timeout: 1,
+                paths: fixture.paths
+            )
+        ) { error in
+            XCTAssertTrue(String(describing: error).contains("--app"))
+        }
     }
 
     func testStaleLaunchingWithoutProcessIsRemoved() throws {
@@ -452,7 +467,7 @@ final class PlayCoverSessionTests: XCTestCase {
             fileURLWithPath: paths.playcoverApps,
             isDirectory: true
         ).appendingPathComponent(bundleIdentifier)
-        let app = slotDirectory.appendingPathComponent("Demo.app")
+        let app = slotDirectory.appendingPathComponent("App.app")
         try writeInfoPlist(bundleIdentifier, app: app)
         for relative in [
             "Frameworks/IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
@@ -473,9 +488,11 @@ final class PlayCoverSessionTests: XCTestCase {
         )
         let metadata = PlayCoverSlotMetadata(
             bundleIdentifier: bundleIdentifier,
-            appRelativePath: "Demo.app",
             executableRelativePath: "Demo",
-            installRevision: installRevision
+            installRevision: installRevision,
+            sourceContentHash: String(repeating: "b", count: 64),
+            signingCertificateSHA256:
+                String(repeating: "B", count: 64)
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]

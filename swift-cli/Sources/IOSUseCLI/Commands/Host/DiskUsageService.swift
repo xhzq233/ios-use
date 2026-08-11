@@ -414,7 +414,7 @@ enum DiskUsageService {
             category: "legacy-cache",
             storageClass: "rebuildable-cache",
             name: "Legacy prepared cache",
-            details: ["role": "unused by v2.0.1"],
+            details: ["role": "unused by the current release"],
             includeMissing: false,
             items: &items,
             warnings: &warnings,
@@ -514,7 +514,7 @@ enum DiskUsageService {
             category: "legacy-cache",
             storageClass: "rebuildable-cache",
             name: "Legacy launch facades",
-            details: ["role": "unused by v2.0.1"],
+            details: ["role": "unused by the current release"],
             includeMissing: false,
             items: &items,
             warnings: &warnings,
@@ -587,28 +587,32 @@ enum DiskUsageService {
                 as? [String: Any],
            Set(value.keys) == Set([
                 "bundleIdentifier",
-                "appRelativePath",
                 "executableRelativePath",
                 "installRevision",
+                "sourceContentHash",
+                "signingCertificateSHA256",
            ]),
            let bundle = value["bundleIdentifier"] as? String,
-           let appRelativePath = value["appRelativePath"] as? String,
            let executable = value["executableRelativePath"] as? String,
            let revision = value["installRevision"] as? String,
+           let sourceHash = value["sourceContentHash"] as? String,
+           let certificateHash = value[
+                "signingCertificateSHA256"
+           ] as? String,
            bundle == directoryName,
-           appRelativePath.hasSuffix(".app"),
-           appRelativePath != ".app",
-           !appRelativePath.contains("/"),
            !executable.isEmpty,
            !executable.hasPrefix("/"),
            !executable.split(separator: "/").contains(".."),
-           isLowercaseSHA256(revision) {
+           isLowercaseSHA256(revision),
+           isLowercaseSHA256(sourceHash),
+           isUppercaseSHA256(certificateHash) {
             details["bundle"] = bundle
-            details["appRelativePath"] = appRelativePath
             details["executableRelativePath"] = executable
             details["installRevision"] = revision
+            details["sourceContentHash"] = sourceHash
+            details["signingCertificateSHA256"] = certificateHash
             app = url.appendingPathComponent(
-                appRelativePath,
+                PlayCoverSlotService.appFilename,
                 isDirectory: true
             )
         } else {
@@ -1094,6 +1098,12 @@ enum DiskUsageService {
         value.count == 64 && value.unicodeScalars.allSatisfy {
             (48...57).contains($0.value)
                 || (97...102).contains($0.value)
+        }
+    }
+
+    private static func isUppercaseSHA256(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 70)
         }
     }
 

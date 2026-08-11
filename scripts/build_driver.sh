@@ -57,11 +57,11 @@ BUILD_DIR="$PROJECT_DIR/build"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 XCTEST_WRAPPER_PATH="$BUILD_DIR/IOSUseDriver-Runner.app"
 
-CLI_VERSION="$(find "$ROOT_DIR/swift-cli/Sources/IOSUseCLI" -name '*.swift' -print0 \
-  | xargs -0 sed -n 's/.*public static let version = "\(.*\)".*/\1/p' \
+VERSION_FILE="$ROOT_DIR/swift-cli/Sources/IOSUseCLI/CLI/Version.swift"
+CLI_VERSION="$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' "$VERSION_FILE" \
   | head -1)"
 if [ -z "$CLI_VERSION" ]; then
-  echo "[build] ERROR: failed to read IOSUseCLI.version"
+  echo "[build] ERROR: failed to read IOSUseCLI.version from $VERSION_FILE"
   exit 1
 fi
 echo "[build] Driver version: $CLI_VERSION"

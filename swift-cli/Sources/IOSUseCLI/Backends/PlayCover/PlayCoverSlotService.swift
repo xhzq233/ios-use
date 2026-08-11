@@ -6,9 +6,10 @@ import Darwin
 
 struct PlayCoverSlotMetadata: Codable, Equatable, Sendable {
     let bundleIdentifier: String
-    let appRelativePath: String
     let executableRelativePath: String
     let installRevision: String
+    let sourceContentHash: String
+    let signingCertificateSHA256: String
 }
 
 struct PlayCoverInstalledSlot: Equatable, Sendable {
@@ -17,10 +18,16 @@ struct PlayCoverInstalledSlot: Equatable, Sendable {
     let executablePath: String
 }
 
+struct PlayCoverSlotInstallResult: Equatable, Sendable {
+    let slot: PlayCoverInstalledSlot
+    let reused: Bool
+}
+
 /// The account-global, single-current-App store for the Mac backend.
 enum PlayCoverSlotService {
     static let metadataFilename = "slot.json"
-    static let installContractRevision = "mac-bundle-slot-v1"
+    static let appFilename = "App.app"
+    static let installContractRevision = "mac-bundle-slot-v2"
     private static let maximumMetadataBytes = 64 * 1_024
     private static let processLock = NSLock()
 
@@ -41,15 +48,14 @@ enum PlayCoverSlotService {
         sourceAppPath: String,
         paths: IOSUsePaths,
         signingIdentity: PlayCoverSigningIdentityEvidence
-    ) throws -> PlayCoverInstalledSlot {
+    ) throws -> PlayCoverSlotInstallResult {
         let sourcePath = URL(
             fileURLWithPath: sourceAppPath,
             isDirectory: true
         ).standardizedFileURL.path
         guard !isInsideAppsRoot(sourcePath, paths: paths) else {
             throw PlayCoverBackendError.invalidApp(
-                "--app expects a source App, not an installed Mac slot; "
-                    + "use --reuse"
+                "--app expects a source App, not an installed Mac slot"
             )
         }
         let preparationSource = try PlayCoverService
@@ -57,13 +63,6 @@ enum PlayCoverSlotService {
         try validateSource(preparationSource.inspection)
         let bundleIdentifier = preparationSource.inspection.bundleIdentifier
         try validateBundleIdentifier(bundleIdentifier)
-        let displayName = try resolvedDisplayName(
-            sourceAppPath: sourcePath,
-            bundleIdentifier: bundleIdentifier
-        )
-        let appRelativePath = "\(displayName).app"
-        try validateAppRelativePath(appRelativePath)
-
         let runtimePath = try resolveDefaultRuntime(paths: paths)
         let engine = try PlayCoverFridaEngineService.ensureAvailable()
         let plan = try PlayCoverService.makePreparationPlan(
@@ -84,9 +83,12 @@ enum PlayCoverSlotService {
         try validateExecutableRelativePath(executableRelativePath)
         let metadata = PlayCoverSlotMetadata(
             bundleIdentifier: bundleIdentifier,
-            appRelativePath: appRelativePath,
             executableRelativePath: executableRelativePath,
-            installRevision: installRevision
+            installRevision: installRevision,
+            sourceContentHash:
+                preparationSource.inspection.sourceContentHash,
+            signingCertificateSHA256:
+                signingIdentity.certificateSHA256
         )
 
         processLock.lock()
@@ -96,6 +98,16 @@ enum PlayCoverSlotService {
             bundleIdentifier: bundleIdentifier,
             appsRoot: appsRoot
         )
+        if let current = reusableSlot(
+            bundleIdentifier: bundleIdentifier,
+            paths: paths,
+            expectedMetadata: metadata
+        ) {
+            return PlayCoverSlotInstallResult(
+                slot: current,
+                reused: true
+            )
+        }
         let stagingName = stagingDirectoryName(
             bundleIdentifier: bundleIdentifier
         )
@@ -104,7 +116,7 @@ enum PlayCoverSlotService {
             isDirectory: true
         )
         let stagingApp = stagingDirectory.appendingPathComponent(
-            appRelativePath,
+            appFilename,
             isDirectory: true
         )
         let finalDirectory = appsRoot.appendingPathComponent(
@@ -112,7 +124,7 @@ enum PlayCoverSlotService {
             isDirectory: true
         )
         let finalApp = finalDirectory.appendingPathComponent(
-            appRelativePath,
+            appFilename,
             isDirectory: true
         )
         try FileManager.default.createDirectory(
@@ -188,7 +200,26 @@ enum PlayCoverSlotService {
                 "published Mac slot metadata changed during installation"
             )
         }
-        return installed
+        return PlayCoverSlotInstallResult(
+            slot: installed,
+            reused: false
+        )
+    }
+
+    static func reusableSlot(
+        bundleIdentifier: String,
+        paths: IOSUsePaths,
+        expectedMetadata: PlayCoverSlotMetadata
+    ) -> PlayCoverInstalledSlot? {
+        guard let current = try? read(
+            bundleIdentifier: bundleIdentifier,
+            paths: paths,
+            expectedInstallRevision:
+                expectedMetadata.installRevision
+        ), current.metadata == expectedMetadata else {
+            return nil
+        }
+        return current
     }
 
     static func readCurrent(
@@ -228,12 +259,29 @@ enum PlayCoverSlotService {
         let metadata: PlayCoverSlotMetadata
         do {
             guard let object = try JSONSerialization
-                    .jsonObject(with: data) as? [String: Any],
-                  Set(object.keys) == Set([
+                    .jsonObject(with: data) as? [String: Any] else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "Mac slot metadata is not a JSON object"
+                )
+            }
+            let keys = Set(object.keys)
+            if keys == Set([
+                "bundleIdentifier",
+                "appRelativePath",
+                "executableRelativePath",
+                "installRevision",
+            ]) {
+                throw PlayCoverBackendError.launchFailed(
+                    "the installed Mac App uses a legacy slot layout; "
+                        + "run `ios-use start --mac --app <source.app>`"
+                )
+            }
+            guard keys == Set([
                     "bundleIdentifier",
-                    "appRelativePath",
                     "executableRelativePath",
                     "installRevision",
+                    "sourceContentHash",
+                    "signingCertificateSHA256",
                   ]) else {
                 throw PlayCoverBackendError.cacheTampered(
                     "Mac slot metadata has unknown fields"
@@ -264,7 +312,7 @@ enum PlayCoverSlotService {
             )
         }
         let app = slotDirectory.appendingPathComponent(
-            metadata.appRelativePath,
+            appFilename,
             isDirectory: true
         )
         let executable = app.appendingPathComponent(
@@ -307,7 +355,7 @@ enum PlayCoverSlotService {
             atPath: slotDirectory.path
         ).filter { !$0.hasPrefix(".") }
         guard Set(visibleEntries) == Set([
-            metadata.appRelativePath,
+            appFilename,
             metadataFilename,
         ]) else {
             throw PlayCoverBackendError.cacheTampered(
@@ -407,9 +455,16 @@ enum PlayCoverSlotService {
     }
 
     static func validateBundleIdentifier(_ value: String) throws {
-        guard isSafeComponent(value, maximumUTF8Bytes: 200) else {
+        guard isSafeComponent(value, maximumUTF8Bytes: 200),
+              value.utf8.allSatisfy({ byte in
+                  (byte >= 48 && byte <= 57)
+                      || (byte >= 65 && byte <= 90)
+                      || (byte >= 97 && byte <= 122)
+                      || byte == 45
+                      || byte == 46
+              }) else {
             throw PlayCoverBackendError.invalidApp(
-                "Mac App Bundle ID is not a safe path component"
+                "Mac App Bundle ID must use ASCII letters, digits, '.' or '-'"
             )
         }
     }
@@ -450,13 +505,16 @@ enum PlayCoverSlotService {
         _ metadata: PlayCoverSlotMetadata
     ) throws {
         try validateBundleIdentifier(metadata.bundleIdentifier)
-        try validateAppRelativePath(metadata.appRelativePath)
         try validateExecutableRelativePath(
             metadata.executableRelativePath
         )
-        guard isLowercaseSHA256(metadata.installRevision) else {
+        guard isLowercaseSHA256(metadata.installRevision),
+              isLowercaseSHA256(metadata.sourceContentHash),
+              isUppercaseSHA256(
+                  metadata.signingCertificateSHA256
+              ) else {
             throw PlayCoverBackendError.cacheTampered(
-                "Mac slot installRevision is invalid"
+                "Mac slot identity digest is invalid"
             )
         }
     }
@@ -496,49 +554,6 @@ enum PlayCoverSlotService {
             }) {
                 throw PlayCoverBackendError.duplicateRuntimeLoad(macho.path)
             }
-        }
-    }
-
-    private static func resolvedDisplayName(
-        sourceAppPath: String,
-        bundleIdentifier: String
-    ) throws -> String {
-        let plistURL = URL(
-            fileURLWithPath: sourceAppPath,
-            isDirectory: true
-        ).appendingPathComponent("Info.plist")
-        let data = try Data(contentsOf: plistURL, options: .mappedIfSafe)
-        guard let plist = try PropertyListSerialization.propertyList(
-                from: data,
-                options: [],
-                format: nil
-              ) as? [String: Any] else {
-            throw PlayCoverBackendError.invalidApp(
-                "Mac source App Info.plist is invalid"
-            )
-        }
-        let candidates = [
-            plist["CFBundleDisplayName"] as? String,
-            plist["CFBundleName"] as? String,
-            bundleIdentifier,
-        ]
-        for raw in candidates.compactMap({ $0 }) {
-            let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if isSafeComponent(value, maximumUTF8Bytes: 200),
-               !value.lowercased().hasSuffix(".app") {
-                return value
-            }
-        }
-        return bundleIdentifier
-    }
-
-    private static func validateAppRelativePath(_ value: String) throws {
-        let basename = String(value.dropLast(4))
-        guard value.hasSuffix(".app"),
-              isSafeComponent(basename, maximumUTF8Bytes: 200) else {
-            throw PlayCoverBackendError.cacheTampered(
-                "Mac slot App path is invalid"
-            )
         }
     }
 
@@ -802,6 +817,12 @@ enum PlayCoverSlotService {
     private static func isLowercaseSHA256(_ value: String) -> Bool {
         value.utf8.count == 64 && value.utf8.allSatisfy {
             ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
+        }
+    }
+
+    private static func isUppercaseSHA256(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 70)
         }
     }
 }

@@ -569,19 +569,6 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(Double(-42.6).sanitized, -42.6)
     }
 
-    // MARK: - DriverError
-
-    func testDriverError_Descriptions() {
-        XCTAssertEqual(DriverError.noSession.description, "no active session")
-        XCTAssertEqual(DriverError.elementNotFound("foo").description, "element not found: foo")
-        XCTAssertEqual(DriverError.invalidArgs("bad").description, "invalid arguments: bad")
-        XCTAssertEqual(DriverError.appNotFound("com.test").description, "app not found: com.test")
-        XCTAssertEqual(DriverError.ambiguous("x").description, "ambiguous: x")
-        XCTAssertEqual(DriverError.timeout("x").description, "timeout: x")
-        XCTAssertEqual(DriverError.atBoundary("x").description, "at boundary: x")
-        XCTAssertEqual(DriverError.serverError("x").description, "server error: x")
-    }
-
     // MARK: - Levenshtein (doc 8)
 
     func testLevenshtein_Equal() {

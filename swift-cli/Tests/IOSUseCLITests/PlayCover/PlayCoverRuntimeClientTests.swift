@@ -251,16 +251,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     )
                 }
             ),
-            (
-                .open,
-                .open(.init(url: "demo://route")),
-                {
-                    XCTAssertEqual(
-                        $0["url"] as? String,
-                        "demo://route"
-                    )
-                }
-            ),
         ]
 
         for (command, arguments, validate) in cases {
@@ -1439,13 +1429,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     "reason": "label",
                 ],
             ]
-        case .open:
-            return [
-                "open": [
-                    "delivered": true,
-                    "url": "demo://route",
-                ],
-            ]
         case .debug:
             return [
                 "debug": [
@@ -1679,7 +1662,6 @@ private extension PlayCoverRuntimeCommand {
         .input,
         .dismissAlert,
         .dismissAlertByLabel,
-        .open,
         .debug,
     ]
 }

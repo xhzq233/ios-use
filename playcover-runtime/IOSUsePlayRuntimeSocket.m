@@ -385,7 +385,6 @@ static NSArray<NSString *> *IOSUseCapabilities(BOOL requiredHooksReady) {
         @"input",
         @"dismissAlert",
         @"dismissAlertByLabel",
-        @"open",
         @"debug",
     ];
 }
@@ -1588,8 +1587,7 @@ static BOOL IOSUseRuntimeIsAtomicMutationCommand(
     return [command isEqualToString:@"tap"] ||
         [command isEqualToString:@"longPress"] ||
         [command isEqualToString:@"swipe"] ||
-        [command isEqualToString:@"input"] ||
-        [command isEqualToString:@"open"];
+        [command isEqualToString:@"input"];
 }
 
 static NSDictionary<NSString *, id> * _Nullable
@@ -1824,7 +1822,6 @@ static BOOL IOSUseRuntimeIsUICommand(NSString *command) {
             @"input",
             @"dismissAlert",
             @"dismissAlertByLabel",
-            @"open",
         ]];
     });
     return [commands containsObject:command];
@@ -2406,7 +2403,6 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             @"input",
             @"dismissAlert",
             @"dismissAlertByLabel",
-            @"open",
         ] containsObject:command]
     ) {
         NSDictionary<NSString *, id> *commandError =
@@ -2436,7 +2432,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
         return IOSUseBasicErrorEnvelope(
             requestID,
             @"unsupported_command",
-            @"Runtime supports hello, ping, diagnostics, screenshot, dom, waitFor, tap, longPress, swipe, input, dismissAlert, dismissAlertByLabel, open, and debug",
+            @"Runtime supports hello, ping, diagnostics, screenshot, dom, waitFor, tap, longPress, swipe, input, dismissAlert, dismissAlertByLabel, and debug",
             @"protocol",
             @"dispatch",
             NO

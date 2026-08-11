@@ -1,8 +1,86 @@
 import Foundation
 import IOSUseProtocol
+#if canImport(AppKit)
+import AppKit
+#endif
 
 enum OpenURLService {
     static var realDeviceURLLauncherForTesting: ((String, String) throws -> Void)?
+    static var macURLLauncherForTesting: ((
+        URL,
+        URL,
+        SessionService.Info
+    ) throws -> Void)?
+
+    enum MacOpenError:
+        Error,
+        Equatable,
+        CustomStringConvertible,
+        MachineErrorConvertible
+    {
+        case schemeNotRegistered(String)
+        case targetMismatch(String)
+        case dispatchRejected(String)
+        case dispatchUnresolved(String)
+
+        var description: String {
+            switch self {
+            case .schemeNotRegistered(let scheme):
+                return "URL scheme \"\(scheme)\" is not registered by the active Mac App."
+            case .targetMismatch(let message):
+                return "Mac URL target does not match the active App: \(message)"
+            case .dispatchRejected(let message):
+                return "macOS did not accept the URL dispatch: \(message)"
+            case .dispatchUnresolved(let message):
+                return "macOS URL dispatch did not resolve: \(message)"
+            }
+        }
+
+        var machineError: MachineError {
+            switch self {
+            case .schemeNotRegistered:
+                return MachineError(
+                    message: description,
+                    category: IOSUseErrorCategory.validation,
+                    code: "open_scheme_unregistered",
+                    phase: IOSUseErrorPhase.validation,
+                    retryable: false,
+                    fatal: false,
+                    mutationMayHaveApplied: false
+                )
+            case .targetMismatch:
+                return MachineError(
+                    message: description,
+                    category: IOSUseErrorCategory.session,
+                    code: "open_target_mismatch",
+                    phase: IOSUseErrorPhase.session,
+                    retryable: false,
+                    fatal: false,
+                    mutationMayHaveApplied: false
+                )
+            case .dispatchRejected:
+                return MachineError(
+                    message: description,
+                    category: IOSUseErrorCategory.action,
+                    code: "open_dispatch_rejected",
+                    phase: IOSUseErrorPhase.dispatch,
+                    retryable: true,
+                    fatal: false,
+                    mutationMayHaveApplied: false
+                )
+            case .dispatchUnresolved:
+                return MachineError(
+                    message: description,
+                    category: IOSUseErrorCategory.action,
+                    code: "open_dispatch_unresolved",
+                    phase: IOSUseErrorPhase.dispatch,
+                    retryable: true,
+                    fatal: false,
+                    mutationMayHaveApplied: true
+                )
+            }
+        }
+    }
 
     // MARK: - Scheme Registry
 
@@ -123,7 +201,8 @@ enum OpenURLService {
             }
             return try openPlayCover(
                 url: validated,
-                session: activeDriver
+                session: activeDriver,
+                paths: paths
             )
         }
         let targetUdid = try SessionService.resolveTargetUdid(
@@ -168,7 +247,8 @@ enum OpenURLService {
             do {
                 base = try openPlayCover(
                     url: try validatedURL(url),
-                    session: activeDriver
+                    session: activeDriver,
+                    paths: paths
                 )
             } catch {
                 throw error
@@ -326,15 +406,34 @@ enum OpenURLService {
 
     private static func openPlayCover(
         url: String,
-        session: SessionService.Info
+        session: SessionService.Info,
+        paths: IOSUsePaths
     ) throws -> OpenResult {
-        let result = try PlayCoverDriverClient(
-            session: session
-        ).openURL(url)
-        guard result.url == url else {
-            throw PlayCoverDriverClientError
-                .malformedRuntimePayload("open URL echo")
+        let slot: PlayCoverInstalledSlot
+        do {
+            slot = try PlayCoverSessionService.validateSlot(
+                session: session,
+                paths: paths
+            )
+        } catch {
+            throw MacOpenError.targetMismatch(String(describing: error))
         }
+        guard let dispatchURL = URL(string: url),
+              let scheme = dispatchURL.scheme?.lowercased() else {
+            throw CLIParseError.invalidValue("Invalid URL: \(url)")
+        }
+        guard registeredSchemes(in: slot.appPath).contains(scheme) else {
+            throw MacOpenError.schemeNotRegistered(scheme)
+        }
+        let appURL = URL(
+            fileURLWithPath: slot.appPath,
+            isDirectory: true
+        )
+        try openMacURL(
+            dispatchURL,
+            withApplicationAt: appURL,
+            session: session
+        )
         return OpenResult(
             message: "Opened URL in active Mac App: \(url)",
             url: url,
@@ -344,6 +443,154 @@ enum OpenURLService {
             schemeLookupVerified: true
         )
     }
+
+    private static func registeredSchemes(in appPath: String) -> Set<String> {
+        let plistURL = URL(
+            fileURLWithPath: appPath,
+            isDirectory: true
+        ).appendingPathComponent("Info.plist")
+        guard let data = try? Data(contentsOf: plistURL),
+              let plist = try? PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+              ) as? [String: Any],
+              let types = plist["CFBundleURLTypes"] as? [[String: Any]] else {
+            return []
+        }
+        return Set(types.flatMap { type in
+            (type["CFBundleURLSchemes"] as? [String] ?? [])
+                .map { $0.lowercased() }
+        })
+    }
+
+    private static func openMacURL(
+        _ url: URL,
+        withApplicationAt appURL: URL,
+        session: SessionService.Info
+    ) throws {
+        if let launcher = macURLLauncherForTesting {
+            try launcher(url, appURL, session)
+            return
+        }
+        #if canImport(AppKit)
+        guard let storedRunnerPID = session.runnerPid,
+              let runnerPID = Int32(exactly: storedRunnerPID),
+              let bundleIdentifier = session.bundleId,
+              let executablePath = session.macExecutablePath else {
+            throw MacOpenError.targetMismatch(
+                "driver.lock is missing the running process identity"
+            )
+        }
+        guard let activeApplication = NSRunningApplication
+                .runningApplications(
+                    withBundleIdentifier: bundleIdentifier
+                ).first(where: {
+                    !$0.isTerminated
+                        && $0.processIdentifier == runnerPID
+                }),
+              PlayCoverRuntimeClient.canonicalPath(
+                activeApplication.bundleURL?.path ?? ""
+              ) == PlayCoverRuntimeClient.canonicalPath(appURL.path),
+              PlayCoverRuntimeClient.canonicalPath(
+                activeApplication.executableURL?.path ?? ""
+              ) == PlayCoverRuntimeClient.canonicalPath(executablePath) else {
+            throw MacOpenError.targetMismatch(
+                "the recorded process is no longer running from the active slot"
+            )
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+        configuration.promptsUserIfNeeded = true
+        configuration.createsNewApplicationInstance = false
+        let box = MacOpenCompletionBox()
+        let semaphore = DispatchSemaphore(value: 0)
+        NSWorkspace.shared.open(
+            [url],
+            withApplicationAt: appURL,
+            configuration: configuration
+        ) { application, error in
+            if let error {
+                box.resolve(.failure(error))
+            } else if let application {
+                box.resolve(.success(application))
+            } else {
+                box.resolve(.failure(
+                    MacOpenError.dispatchRejected(
+                        "LaunchServices returned no application"
+                    )
+                ))
+            }
+            semaphore.signal()
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 15
+        while box.value == nil,
+              ProcessInfo.processInfo.systemUptime < deadline {
+            if Thread.isMainThread {
+                _ = RunLoop.current.run(
+                    mode: .default,
+                    before: Date().addingTimeInterval(0.05)
+                )
+            } else {
+                _ = semaphore.wait(timeout: .now() + 0.05)
+            }
+        }
+        guard let result = box.value else {
+            throw MacOpenError.dispatchUnresolved(
+                "LaunchServices completion timed out"
+            )
+        }
+        let application: NSRunningApplication
+        do {
+            application = try result.get()
+        } catch let error as MacOpenError {
+            throw error
+        } catch {
+            throw MacOpenError.dispatchRejected(
+                String(describing: error)
+            )
+        }
+        guard !application.isTerminated,
+              application.processIdentifier == runnerPID,
+              application.bundleIdentifier == bundleIdentifier,
+              PlayCoverRuntimeClient.canonicalPath(
+                application.bundleURL?.path ?? ""
+              ) == PlayCoverRuntimeClient.canonicalPath(appURL.path),
+              PlayCoverRuntimeClient.canonicalPath(
+                application.executableURL?.path ?? ""
+              ) == PlayCoverRuntimeClient.canonicalPath(executablePath) else {
+            throw MacOpenError.dispatchUnresolved(
+                "LaunchServices returned a different process or App path"
+            )
+        }
+        #else
+        throw MacOpenError.dispatchRejected(
+            "AppKit is unavailable on this host"
+        )
+        #endif
+    }
+
+    #if canImport(AppKit)
+    private final class MacOpenCompletionBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored:
+            Result<NSRunningApplication, Error>?
+
+        var value: Result<NSRunningApplication, Error>? {
+            lock.lock()
+            defer { lock.unlock() }
+            return stored
+        }
+
+        func resolve(_ result: Result<NSRunningApplication, Error>) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard stored == nil else { return }
+            stored = result
+        }
+    }
+    #endif
 
     private static func openRealDeviceURL(url: String, udid: String) throws {
         if let launcher = realDeviceURLLauncherForTesting {

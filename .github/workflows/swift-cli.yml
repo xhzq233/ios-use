@@ -1,0 +1,52 @@
+name: Swift CLI
+
+on:
+  pull_request:
+    paths:
+      - "swift-cli/**"
+      - "shared/IOSUseProtocol/**"
+      - "ThirdParty/PlayCover/**"
+      - "ThirdParty/inject/**"
+      - "scripts/build_driver.sh"
+      - "scripts/build_swift_cli.sh"
+      - "scripts/test_swift_cli.sh"
+      - ".github/workflows/swift-cli.yml"
+  push:
+    branches: [main]
+    paths:
+      - "swift-cli/**"
+      - "shared/IOSUseProtocol/**"
+      - "ThirdParty/PlayCover/**"
+      - "ThirdParty/inject/**"
+      - "scripts/build_driver.sh"
+      - "scripts/build_swift_cli.sh"
+      - "scripts/test_swift_cli.sh"
+      - ".github/workflows/swift-cli.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  swift-cli-tests:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Swift CLI build
+        uses: actions/cache@v4
+        with:
+          path: swift-cli/.build
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'swift-cli/Sources/**/*.swift', 'swift-cli/Tests/**/*.swift', 'shared/IOSUseProtocol/Package.swift', 'shared/IOSUseProtocol/Sources/**/*.swift', 'ThirdParty/PlayCover/Package.swift', 'ThirdParty/PlayCover/PlayCover/**/*.swift', 'ThirdParty/inject/Package.swift', 'ThirdParty/inject/Injection/Injection/**/*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-swift-cli-
+
+      - name: Run the complete Swift CLI gate once
+        run: bash scripts/test_swift_cli.sh

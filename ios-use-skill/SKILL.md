@@ -50,17 +50,15 @@ run at the same time while sharing the one-time Mac signing setup and installed
 Mac Apps. The Mac backend intentionally rejects two concurrent copies of the
 same bundle ID.
 
-`start --mac --app <App.app>` installs or updates the single Mac App for that
-bundle ID; pass `--app` again after rebuilding the source. Every Mac App
-includes the Frida debug Engine, so `ios-use debug` works for any Mac session.
-Later, `ios-use start --mac --reuse` relaunches the installed App for the
-current `IOS_USE_HOME`'s bundle ID. Run `ios-use stop` before switching
-backends.
+`start --mac --app <App.app>` automatically reuses an unchanged installed App
+or updates it after the source changes. Every Mac App includes the Frida debug
+Engine, so `ios-use debug` works for any Mac session. Later,
+`ios-use start --mac` launches the current `IOS_USE_HOME`'s remembered App.
+Run `ios-use stop` before switching backends.
 
 After upgrading ios-use, Apps installed by older versions are not migrated or
-auto-launched: run `start --mac --app` once per bundle ID before `--reuse`
-works again. ios-use never deletes old caches for you; run `ios-use du` to see
-what you can remove.
+auto-launched: run `start --mac --app` once per bundle ID. ios-use never
+deletes old caches for you; run `ios-use du` to see what you can remove.
 
 - Connect real devices over USB and use iOS 17.4 or later.
 - Run `config` on first use, after upgrading ios-use, when `status` reports
@@ -75,7 +73,7 @@ what you can remove.
   `ios-use stop`.
 - Mac lifecycle is only `start`, `status`, and `stop`. Do not use `home`,
   `activateApp`, or `terminateApp` for a Mac session. Restart it with
-  `ios-use stop`, then `ios-use start --mac --reuse`.
+  `ios-use stop`, then `ios-use start --mac`.
 - Use `ios-use help <command>` for the complete option contract instead of guessing
   whether an individual command accepts `--udid`.
 
@@ -188,8 +186,9 @@ ios-use input --tap "搜索" --content "蓝牙"
 - Use coordinate taps, coordinate anchors, or fixed-distance swipes only when
   Accessibility exposes no usable semantic target. Prefer a label-relative offset
   before an absolute coordinate.
-- On mutation failure, open the returned `Evidence:` manifest and inspect its
-  screenshot, OCR, and fresh DOM before running separate diagnostic commands.
+- On mutation failure, read the inline target, candidate, rejection, suggestion,
+  and alert fields first. Request a fresh `dom` or named `screenshot` only when
+  the next decision needs more UI context.
 
 ## 5. Control Apps and inspect their logs
 

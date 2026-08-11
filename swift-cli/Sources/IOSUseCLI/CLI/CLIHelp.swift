@@ -114,7 +114,7 @@ enum CLIHelp {
             return """
             Usage: ios-use start [udid] [--verbose]
                    ios-use start --mac --app <source.app> [--log] [--timeout <duration>]
-                   ios-use start --mac --reuse [--log] [--timeout <duration>]
+                   ios-use start --mac [--log] [--timeout <duration>]
 
             Start a configured XCTest driver or an iOS App on this Mac and
             record it as the active backend in driver.lock.
@@ -123,9 +123,9 @@ enum CLIHelp {
             into its account-global Bundle slot, or directly launches the
             current slot. The current IOS_USE_HOME stores only its selected
             Bundle ID and session state.
-            Use --app after every Debug rebuild so the current source is
-            prepared and installed. Use --reuse only to launch that Home's
-            current installed App without reading its original source.
+            Use --app after a source rebuild; ios-use reuses an unchanged
+            installed slot automatically. Omit --app to launch this Home's
+            current installed App.
             Every Mac App includes the resident Frida debug Engine.
             --log captures target-App stdout/stderr from the injected Runtime
             onward in an owner-only per-session file retained after stop,
@@ -135,9 +135,8 @@ enum CLIHelp {
               --verbose                    Enable verbose XCTest output
               --mac                        Select the Mac backend
               --app <source.app>            Install or update, then launch this App
-              --reuse                      Launch the current installed App slot
               --log                        Capture target-App stdout/stderr to a retained session log
-              --timeout <duration>          Wait up to 60 seconds for direct Runtime socket hello; default 15s
+              --timeout <duration>          Runtime readiness timeout; default 60s
 
             """
         case "debug":
@@ -384,7 +383,7 @@ enum CLIHelp {
             By default, waits for the app to reach foreground and for one fresh UI snapshot.
             With --log, starts a background app stdio capture and returns a log file path.
             The Mac backend supports lifecycle through start/status/stop only;
-            restart it with stop, then start --mac --reuse.
+            restart it with stop, then start --mac.
 
             Options:
               --udid <udid>          Target USB real device or booted Simulator UDID; overrides active driver.lock
@@ -415,7 +414,7 @@ enum CLIHelp {
             return driverHelp(
                 usage: "ios-use home",
                 summary: "Press the Home button.",
-                footer: "The Mac backend has no Home action. Use start/status/stop; restart it with stop, then start --mac --reuse."
+                footer: "The Mac backend has no Home action. Use start/status/stop; restart it with stop, then start --mac."
             )
         case "open":
             return """

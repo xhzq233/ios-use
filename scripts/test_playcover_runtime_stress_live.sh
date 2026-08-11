@@ -18,7 +18,7 @@ usage() {
 Usage: scripts/test_playcover_runtime_stress_live.sh --live
 
 Builds a fresh CLI and fixture, proves fixed-slot A/B replacement, then runs
-20 cold start/status/stop cycles through --reuse. This gate mutates the
+20 cold start/status/stop cycles through the current slot. This gate mutates the
 account-global ios-use Mac slot for the fixture Bundle ID and therefore
 requires the disposable-account acknowledgement used by the other live gates.
 EOF
@@ -219,10 +219,8 @@ assert_fixed_slot() {
   revision="$(
     jq -er '.data.driver.macInstallRevision' "$RUN_DIR/$status_name.stdout"
   )"
-  case "$app_path" in
-    "$SLOT_ROOT"/*.app) ;;
-    *) fail "$status_name escaped the fixed Bundle slot: $app_path" ;;
-  esac
+  [[ "$app_path" == "$SLOT_ROOT/App.app" ]] ||
+    fail "$status_name escaped the canonical fixed Bundle slot: $app_path"
   [[ ! -L "$SLOT_ROOT" && ! -L "$app_path" ]] ||
     fail "$status_name launched a symlink/facade"
   [[ "$executable_path" == "$app_path/$expected_executable" ]] ||
@@ -232,17 +230,17 @@ assert_fixed_slot() {
     fail "$status_name slot.json is missing"
   jq -e \
     --arg bundle "$BUNDLE_ID" \
-    --arg app "$(basename "$app_path")" \
     --arg executable "$expected_executable" \
     --arg revision "$revision" '
       keys == [
-        "appRelativePath", "bundleIdentifier",
-        "executableRelativePath", "installRevision"
+        "bundleIdentifier", "executableRelativePath", "installRevision",
+        "signingCertificateSHA256", "sourceContentHash"
       ] and
       .bundleIdentifier == $bundle and
-      .appRelativePath == $app and
       .executableRelativePath == $executable and
-      .installRevision == $revision
+      .installRevision == $revision and
+      (.sourceContentHash | test("^[0-9a-f]{64}$")) and
+      (.signingCertificateSHA256 | test("^[0-9A-F]{64}$"))
     ' "$SLOT_ROOT/slot.json" >/dev/null ||
     fail "$status_name slot metadata is not exact"
   local visible_count
@@ -269,8 +267,8 @@ start_and_capture() {
   local prefix="$1"
   local mode="$2"
   local expected_executable="$3"
-  if [[ "$mode" == "reuse" ]]; then
-    run_cli "${prefix}_start" start --mac --reuse
+  if [[ "$mode" == "current" ]]; then
+    run_cli "${prefix}_start" start --mac
   else
     run_cli "${prefix}_start" start --mac --app "$mode"
   fi
@@ -281,6 +279,7 @@ start_and_capture() {
 echo "[playcover-runtime-stress] Characterizing A -> B -> A swap..." >&2
 start_and_capture install_a "$FIXTURE_A" "$EXECUTABLE_A"
 APP_A="$(jq -er '.data.driver.macAppPath' "$RUN_DIR/install_a_status.stdout")"
+HASH_A="$(jq -er '.sourceContentHash' "$SLOT_ROOT/slot.json")"
 REVISION="$(
   jq -er '.data.driver.macInstallRevision' "$RUN_DIR/install_a_status.stdout"
 )"
@@ -289,7 +288,10 @@ assert_stopped install_a_stopped
 
 start_and_capture install_b "$FIXTURE_B" "$EXECUTABLE_B"
 APP_B="$(jq -er '.data.driver.macAppPath' "$RUN_DIR/install_b_status.stdout")"
-[[ "$APP_A" != "$APP_B" ]] || fail "display-name replacement did not move the App basename"
+[[ "$APP_A" == "$SLOT_ROOT/App.app" && "$APP_B" == "$APP_A" ]] ||
+  fail "source replacement changed the canonical App.app path"
+[[ "$(jq -er '.sourceContentHash' "$SLOT_ROOT/slot.json")" != "$HASH_A" ]] ||
+  fail "changed source did not change sourceContentHash"
 [[ "$(jq -er '.data.driver.macInstallRevision' "$RUN_DIR/install_b_status.stdout")" == "$REVISION" ]] ||
   fail "source replacement changed the compatibility revision"
 run_cli install_b_stop stop
@@ -298,6 +300,8 @@ assert_stopped install_b_stopped
 start_and_capture reinstall_a "$FIXTURE_A" "$EXECUTABLE_A"
 [[ "$(jq -er '.data.driver.macAppPath' "$RUN_DIR/reinstall_a_status.stdout")" == "$APP_A" ]] ||
   fail "A reinstall did not restore the current App identity"
+[[ "$(jq -er '.sourceContentHash' "$SLOT_ROOT/slot.json")" == "$HASH_A" ]] ||
+  fail "A reinstall did not restore sourceContentHash"
 run_cli debug_eval debug --json '1 + 1'
 jq -e '.ok == true' "$RUN_DIR/debug_eval.stdout" >/dev/null ||
   fail "resident Frida eval failed"
@@ -310,12 +314,18 @@ jq -e '.ok == true' "$RUN_DIR/dom.stdout" >/dev/null ||
 run_cli reinstall_a_stop stop
 assert_stopped reinstall_a_stopped
 
-echo "[playcover-runtime-stress] Running $CYCLE_COUNT reuse cycles..." >&2
+start_and_capture explicit_hit "$FIXTURE_A" "$EXECUTABLE_A"
+rg -q '^Mac App slot reused:' "$RUN_DIR/explicit_hit_start.stdout" ||
+  fail "unchanged explicit source did not reuse the installed slot"
+run_cli explicit_hit_stop stop
+assert_stopped explicit_hit_stopped
+
+echo "[playcover-runtime-stress] Running $CYCLE_COUNT current-slot cycles..." >&2
 printf 'cycle\tsession\tpid\tinstallRevision\tappPath\n' \
   >"$RUN_DIR/cycles.tsv"
 for cycle in $(seq 1 "$CYCLE_COUNT"); do
   printf -v prefix 'cycle_%02d' "$cycle"
-  start_and_capture "$prefix" reuse "$EXECUTABLE_A"
+  start_and_capture "$prefix" current "$EXECUTABLE_A"
   jq -er --argjson cycle "$cycle" '
     [
       $cycle,
@@ -351,7 +361,7 @@ if ! awk -F '\t' -v expected="$CYCLE_COUNT" '
         revision_count != 1 || app_count != 1) exit 1
   }
 ' "$RUN_DIR/cycles.tsv"; then
-  fail "reuse cycles did not keep one slot with unique sessions"
+  fail "current-slot cycles did not keep one slot with unique sessions"
 fi
 
 END_HEAD="$(git -C "$ROOT_DIR" rev-parse HEAD)"

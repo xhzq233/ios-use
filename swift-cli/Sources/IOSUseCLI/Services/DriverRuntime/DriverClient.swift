@@ -69,7 +69,6 @@ protocol DriverCommandClient: AnyObject {
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload
-    func evidenceSnapshot() throws -> DriverEvidenceSnapshot
 }
 
 struct ScreenshotCapture {
@@ -108,11 +107,6 @@ struct ScreenshotCapture {
         self.captureGeneration = captureGeneration
         self.runtimeEvidence = runtimeEvidence
     }
-}
-
-struct DriverEvidenceSnapshot {
-    let screenshot: ScreenshotCapture
-    let dom: ForyDomPayload
 }
 
 struct ScreenshotCapturePerformance: Codable, Equatable {
@@ -154,13 +148,6 @@ extension DriverCommandClient {
         return try input(
             tap: tap,
             content: deletePrefix + content + (enter ? "\n" : "")
-        )
-    }
-
-    func evidenceSnapshot() throws -> DriverEvidenceSnapshot {
-        DriverEvidenceSnapshot(
-            screenshot: try screenshotCapture(),
-            dom: try dom(raw: false, fresh: true, waitQuiescence: false)
         )
     }
 
@@ -921,6 +908,9 @@ final class DriverClient: DriverCommandClient {
 
 func formatDriverError(message: String, payload: ForyErrorPayload) -> String {
     var lines = ["[\(payload.code)] \(message)"]
+    if let target = payload.target {
+        lines.append("target: \(formatDriverErrorTarget(target))")
+    }
     if !payload.suggestions.isEmpty {
         lines.append("suggestions: \(payload.suggestions.joined(separator: ", "))")
     }
@@ -928,6 +918,9 @@ func formatDriverError(message: String, payload: ForyErrorPayload) -> String {
         let context = [alert.surface, alert.kind].filter { !$0.isEmpty }.joined(separator: " ")
         if !context.isEmpty {
             lines.append("Alert: \(context)")
+        }
+        if !alert.text.isEmpty {
+            lines.append("  text: \(alert.text)")
         }
         if !alert.buttons.isEmpty {
             let shown = alert.buttons.count
@@ -949,6 +942,23 @@ func formatDriverError(message: String, payload: ForyErrorPayload) -> String {
         lines.append(contentsOf: payload.candidates.map { "  \(formatDriverErrorCandidate($0))" })
     }
     return lines.joined(separator: "\n")
+}
+
+func formatDriverErrorTarget(_ target: ForyTarget) -> String {
+    var parts: [String] = []
+    if !target.label.isEmpty {
+        parts.append("label=\"\(target.label)\"")
+    }
+    if let point = target.point {
+        parts.append("point=[\(point.x),\(point.y)]")
+    }
+    if !target.traits.isEmpty {
+        parts.append("traits=\"\(target.traits)\"")
+    }
+    if let cindex = target.cindex {
+        parts.append("cindex=\(cindex)")
+    }
+    return parts.isEmpty ? "unspecified" : parts.joined(separator: " ")
 }
 
 func formatDriverErrorCandidate(_ candidate: ForyErrorCandidate) -> String {

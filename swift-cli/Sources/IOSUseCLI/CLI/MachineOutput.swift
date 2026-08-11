@@ -186,7 +186,6 @@ enum MachineOutput {
         let data: MachineValue
         let warnings: [String]
         let error: MachineError
-        let evidenceManifest: String?
         let interaction: MachineValue?
     }
 
@@ -220,7 +219,6 @@ enum MachineOutput {
         error: Error,
         data: MachineValue = .object([:]),
         warnings: [String] = [],
-        evidenceManifest: String? = nil,
         exitCode: Int32 = 1,
         mutationMayHaveApplied: Bool? = nil
     ) -> CLIResult {
@@ -243,7 +241,6 @@ enum MachineOutput {
                 data: failureData,
                 warnings: metadata.warnings,
                 error: classified,
-                evidenceManifest: evidenceManifest,
                 interaction: metadata.interaction
             ),
             exitCode: exitCode,
@@ -286,7 +283,8 @@ enum MachineOutput {
                 phase: payload.phase,
                 retryable: payload.retryable,
                 fatal: payload.fatal,
-                mutationMayHaveApplied: DriverFailureEvidence.mutationMayHaveApplied(errorPayload: payload)
+                mutationMayHaveApplied:
+                    driverMutationMayHaveApplied(payload)
             )
         }
         if let clientError = error as? DriverClientError {

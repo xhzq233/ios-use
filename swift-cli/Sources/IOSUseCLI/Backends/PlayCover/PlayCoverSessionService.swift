@@ -157,17 +157,18 @@ enum PlayCoverSessionService {
                     "explicit Mac App start has no signing identity"
                 )
             }
-            slot = try PlayCoverSlotService.install(
+            let resolution = try PlayCoverSlotService.install(
                 sourceAppPath: explicitAppPath,
                 paths: paths,
                 signingIdentity: signingIdentity
             )
+            slot = resolution.slot
             guard slot.metadata.bundleIdentifier == bundleIdentifier else {
                 throw PlayCoverBackendError.cacheTampered(
                     "source Bundle ID changed during prepare"
                 )
             }
-            reused = false
+            reused = resolution.reused
         } else {
             guard let selected = try PlayCoverHomeStore
                     .readCurrentBundle(paths: paths) else {
@@ -295,9 +296,13 @@ enum PlayCoverSessionService {
             )
         }
         let age = max(0, nowMilliseconds() - record.submittedAt)
+        let timeoutMilliseconds = timeout
+            >= Double(Int64.max) / 1_000
+            ? Int64.max
+            : Int64(timeout * 1_000)
         let staleAfter = max(
             staleLaunchingMilliseconds,
-            Int64(timeout * 1_000)
+            timeoutMilliseconds
         )
         switch acquisition.runningPIDs.count {
         case 0:

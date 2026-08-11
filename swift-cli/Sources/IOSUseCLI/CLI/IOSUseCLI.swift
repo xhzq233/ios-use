@@ -6,7 +6,6 @@ public struct IOSUseCLI: Sendable {
     typealias PlayCoverSignerInitializer =
         @Sendable () throws -> PlayCoverSigningIdentityEvidence
 
-    public static let version = "2.0.1"
     static var driverClientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)? {
         get { DriverCommandExecution.clientFactoryForTesting }
         set { DriverCommandExecution.clientFactoryForTesting = newValue }
@@ -607,6 +606,14 @@ public struct IOSUseCLI: Sendable {
             switch command {
             case .du, .status, .config, .start, .stop:
                 return nil
+            case .open:
+                return commandFailure(
+                    command: command.commandName,
+                    error: OpenURLService.MacOpenError.targetMismatch(
+                        String(describing: error)
+                    ),
+                    json: json
+                )
             default:
                 return commandFailure(
                     command: command.commandName,
@@ -763,16 +770,17 @@ public struct IOSUseCLI: Sendable {
             }
             return CLIResult(exitCode: 0, stdout: result.stdout)
         } catch {
-            let evidence = DriverFailureEvidence.collect(to: error, action: action, session: session, paths: paths)
             if json {
                 return MachineOutput.failure(
                     command: action.name,
                     error: error,
-                    data: machineDriverErrorData(error),
-                    evidenceManifest: evidence.manifestPath
+                    data: machineDriverErrorData(error)
                 )
             }
-            return CLIErrorEnvelope(message: evidence.renderedMessage, exitCode: 1).render()
+            return CLIErrorEnvelope(
+                message: renderDriverFailure(error),
+                exitCode: 1
+            ).render()
         }
     }
 

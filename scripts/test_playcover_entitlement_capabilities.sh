@@ -187,7 +187,7 @@ SLOT_METADATA="$SLOT_DIR/slot.json"
 require_owned_regular_600 "$SLOT_METADATA"
 [[ "$(/usr/bin/jq -er '.bundleIdentifier' "$SLOT_METADATA")" == "$BUNDLE_ID" ]] ||
   fail_case "PCAP-CONFIG-PREPARED"
-[[ "$(/usr/bin/jq -er '.appRelativePath' "$SLOT_METADATA")" == "${PREPARED_APP##*/}" ]] ||
+[[ "${PREPARED_APP##*/}" == "App.app" ]] ||
   fail_case "PCAP-CONFIG-PREPARED"
 
 /usr/bin/codesign \

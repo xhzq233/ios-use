@@ -301,13 +301,15 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
     private func unterminatedLaunchError(
         originalError: String
     ) -> PlayCoverSlotUnterminatedLaunchError {
-        let appPath = "/tmp/apps/com.example.fixture/Fixture.app"
+        let appPath = "/tmp/apps/com.example.fixture/App.app"
         let slot = PlayCoverInstalledSlot(
             metadata: PlayCoverSlotMetadata(
                 bundleIdentifier: "com.example.fixture",
-                appRelativePath: "Fixture.app",
                 executableRelativePath: "Fixture",
-                installRevision: String(repeating: "a", count: 64)
+                installRevision: String(repeating: "a", count: 64),
+                sourceContentHash: String(repeating: "b", count: 64),
+                signingCertificateSHA256:
+                    String(repeating: "B", count: 64)
             ),
             appPath: appPath,
             executablePath: "\(appPath)/Fixture"

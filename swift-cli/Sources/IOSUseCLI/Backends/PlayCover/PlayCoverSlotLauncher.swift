@@ -84,8 +84,7 @@ enum PlayCoverSlotLauncher {
     ) throws -> PlayCoverSlotLaunchIdentity {
         guard UUID(uuidString: sessionID) != nil,
               timeout.isFinite,
-              timeout > 0,
-              timeout <= 60 else {
+              timeout > 0 else {
             throw PlayCoverBackendError.launchFailed(
                 "Mac session identity or timeout is invalid"
             )
@@ -511,7 +510,7 @@ enum PlayCoverSlotLauncher {
         let expectedCapabilities = Set([
             "hello", "ping", "diagnostics", "screenshot", "dom", "uiTree",
             "waitFor", "tap", "longPress", "swipe", "input",
-            "dismissAlert", "dismissAlertByLabel", "open", "debug",
+            "dismissAlert", "dismissAlertByLabel", "debug",
         ])
         guard Set(payload.capabilities) == expectedCapabilities else {
             throw PlayCoverBackendError.verificationFailed(

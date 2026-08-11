@@ -3,6 +3,43 @@ import Foundation
 import XCTest
 
 final class PlayCoverSlotServiceTests: XCTestCase {
+    func testSourceInspectionPerformanceWhenRequested() throws {
+        guard let rawPath = ProcessInfo.processInfo.environment[
+            "IOS_USE_PLAYCOVER_SOURCE_HASH_APP"
+        ], !rawPath.isEmpty else {
+            throw XCTSkip(
+                "set IOS_USE_PLAYCOVER_SOURCE_HASH_APP to a local App"
+            )
+        }
+        let app = URL(
+            fileURLWithPath: rawPath,
+            isDirectory: true
+        ).standardizedFileURL
+        var durations: [Double] = []
+        var hashes: [String] = []
+        for _ in 0..<3 {
+            let started = ProcessInfo.processInfo.systemUptime
+            let source = try PlayCoverService.inspectPreparationSource(
+                appPath: app.path
+            )
+            durations.append(
+                ProcessInfo.processInfo.systemUptime - started
+            )
+            hashes.append(source.inspection.sourceContentHash)
+        }
+        let inventory = try sourceInventory(at: app)
+        let sorted = durations.sorted()
+        print(
+            "source-inspection files=\(inventory.files) "
+                + "bytes=\(inventory.bytes) seconds="
+                + durations.map { String(format: "%.3f", $0) }
+                    .joined(separator: ",")
+        )
+        XCTAssertEqual(Set(hashes).count, 1)
+        XCTAssertLessThanOrEqual(sorted[1], 3)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(sorted.last), 5)
+    }
+
     func testFirstInstallRenamePublishesExactlyOneDirectory() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -121,7 +158,10 @@ final class PlayCoverSlotServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(slot.metadata.bundleIdentifier, fixture.bundleIdentifier)
-        XCTAssertEqual(slot.metadata.appRelativePath, "Demo.app")
+        XCTAssertEqual(
+            URL(fileURLWithPath: slot.appPath).lastPathComponent,
+            "App.app"
+        )
         XCTAssertEqual(
             URL(fileURLWithPath: slot.executablePath).lastPathComponent,
             "Demo"
@@ -148,7 +188,7 @@ final class PlayCoverSlotServiceTests: XCTestCase {
         let fixture = try makeSlotFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let infoURL = fixture.slotDirectory
-            .appendingPathComponent("Demo.app/Info.plist")
+            .appendingPathComponent("App.app/Info.plist")
         let data = try PropertyListSerialization.data(
             fromPropertyList: [
                 "CFBundleIdentifier": fixture.bundleIdentifier,
@@ -165,6 +205,84 @@ final class PlayCoverSlotServiceTests: XCTestCase {
                 paths: fixture.paths
             )
         )
+    }
+
+    func testReusableSlotRequiresEveryDirectIdentityField() throws {
+        let fixture = try makeSlotFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let current = try PlayCoverSlotService.read(
+            bundleIdentifier: fixture.bundleIdentifier,
+            paths: fixture.paths
+        )
+
+        XCTAssertNotNil(
+            PlayCoverSlotService.reusableSlot(
+                bundleIdentifier: fixture.bundleIdentifier,
+                paths: fixture.paths,
+                expectedMetadata: current.metadata
+            )
+        )
+        for mismatched in [
+            PlayCoverSlotMetadata(
+                bundleIdentifier: fixture.bundleIdentifier,
+                executableRelativePath: "Demo",
+                installRevision: fixture.installRevision,
+                sourceContentHash: String(repeating: "c", count: 64),
+                signingCertificateSHA256:
+                    String(repeating: "B", count: 64)
+            ),
+            PlayCoverSlotMetadata(
+                bundleIdentifier: fixture.bundleIdentifier,
+                executableRelativePath: "Demo",
+                installRevision: fixture.installRevision,
+                sourceContentHash: String(repeating: "b", count: 64),
+                signingCertificateSHA256:
+                    String(repeating: "C", count: 64)
+            ),
+            PlayCoverSlotMetadata(
+                bundleIdentifier: fixture.bundleIdentifier,
+                executableRelativePath: "Demo",
+                installRevision: String(repeating: "d", count: 64),
+                sourceContentHash: String(repeating: "b", count: 64),
+                signingCertificateSHA256:
+                    String(repeating: "B", count: 64)
+            ),
+        ] {
+            XCTAssertNil(
+                PlayCoverSlotService.reusableSlot(
+                    bundleIdentifier: fixture.bundleIdentifier,
+                    paths: fixture.paths,
+                    expectedMetadata: mismatched
+                )
+            )
+        }
+    }
+
+    func testLegacyDisplayNameSlotRequiresExplicitReinstall() throws {
+        let fixture = try makeSlotFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let legacy: [String: String] = [
+            "bundleIdentifier": fixture.bundleIdentifier,
+            "appRelativePath": "Demo.app",
+            "executableRelativePath": "Demo",
+            "installRevision": fixture.installRevision,
+        ]
+        let metadataURL = fixture.slotDirectory
+            .appendingPathComponent("slot.json")
+        try JSONEncoder().encode(legacy).write(to: metadataURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: metadataURL.path
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverSlotService.read(
+                bundleIdentifier: fixture.bundleIdentifier,
+                paths: fixture.paths
+            )
+        ) { error in
+            XCTAssertTrue(String(describing: error).contains("--app"))
+        }
     }
 
     func testHomeSelectionStoresOnlyBundleIdentifier() throws {
@@ -235,7 +353,10 @@ final class PlayCoverSlotServiceTests: XCTestCase {
     }
 
     func testBundleIdentifierCannotEscapeSlotRoot() throws {
-        for value in ["", ".", "..", "a/b", "bad\0id", "bad\nid"] {
+        for value in [
+            "", ".", "..", "a/b", "bad\0id", "bad\nid",
+            "com.example.ExampleApp", "com_example_demo",
+        ] {
             XCTAssertThrowsError(
                 try PlayCoverSlotService.validateBundleIdentifier(value)
             )
@@ -259,7 +380,7 @@ final class PlayCoverSlotServiceTests: XCTestCase {
             fileURLWithPath: paths.playcoverApps,
             isDirectory: true
         ).appendingPathComponent(bundleIdentifier)
-        let app = slotDirectory.appendingPathComponent("Demo.app")
+        let app = slotDirectory.appendingPathComponent("App.app")
         try FileManager.default.createDirectory(
             at: app.appendingPathComponent(
                 "Frameworks/IOSUsePlayRuntime.framework"
@@ -298,9 +419,11 @@ final class PlayCoverSlotServiceTests: XCTestCase {
         try plistData.write(to: app.appendingPathComponent("Info.plist"))
         let metadata = PlayCoverSlotMetadata(
             bundleIdentifier: bundleIdentifier,
-            appRelativePath: "Demo.app",
             executableRelativePath: "Demo",
-            installRevision: installRevision
+            installRevision: installRevision,
+            sourceContentHash: String(repeating: "b", count: 64),
+            signingCertificateSHA256:
+                String(repeating: "B", count: 64)
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -343,5 +466,32 @@ final class PlayCoverSlotServiceTests: XCTestCase {
             attributes: [.posixPermissions: 0o700]
         )
         return root
+    }
+
+    private func sourceInventory(
+        at root: URL
+    ) throws -> (files: Int, bytes: UInt64) {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [
+                .isRegularFileKey,
+                .fileSizeKey,
+            ],
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        var files = 0
+        var bytes: UInt64 = 0
+        for case let url as URL in enumerator {
+            let values = try url.resourceValues(
+                forKeys: [.isRegularFileKey, .fileSizeKey]
+            )
+            if values.isRegularFile == true {
+                files += 1
+                bytes += UInt64(values.fileSize ?? 0)
+            }
+        }
+        return (files, bytes)
     }
 }

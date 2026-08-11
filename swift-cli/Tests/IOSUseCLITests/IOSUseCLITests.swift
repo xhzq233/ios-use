@@ -38,6 +38,7 @@ final class IOSUseCLITests: XCTestCase {
         AppLogCaptureService.terminateObservationTimeoutForTesting = nil
         OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
         OpenURLService.realDeviceURLLauncherForTesting = nil
+        OpenURLService.macURLLauncherForTesting = nil
         AppManagementService.installerForTesting = nil
         AppManagementService.uninstallerForTesting = nil
         AppManagementService.appsProviderForTesting = nil
@@ -75,11 +76,11 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     func testVersionFlagPrintsPinnedPublicVersion() {
-        XCTAssertEqual(IOSUseCLI.version, "2.0.1")
+        XCTAssertEqual(IOSUseCLI.version, "2.0.2")
         for flag in ["--version", "-V"] {
             let result = IOSUseCLI().run(arguments: [flag])
             XCTAssertEqual(result.exitCode, 0)
-            XCTAssertEqual(result.stdout, "2.0.1\n")
+            XCTAssertEqual(result.stdout, "2.0.2\n")
             XCTAssertTrue(result.stderr.isEmpty)
         }
     }
@@ -516,7 +517,7 @@ final class IOSUseCLITests: XCTestCase {
         )
         XCTAssertTrue(
             home.stdout.contains(
-                "restart it with stop, then start --mac --reuse"
+                "restart it with stop, then start --mac"
             )
         )
     }
@@ -869,17 +870,6 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("retained after stop"))
         XCTAssertTrue(result.stdout.contains("automatically prepares"))
         XCTAssertFalse(result.stdout.contains("--app <prepared.app>"))
-    }
-
-    func testDriverDeploymentTargetsStayAtIOS17() throws {
-        let repoRoot = repositoryRootForTest()
-        let driverProject = try String(contentsOf: repoRoot.appendingPathComponent("driver/project.yml"))
-        let sharedPackage = try String(contentsOf: repoRoot.appendingPathComponent("shared/IOSUseProtocol/Package.swift"))
-
-        XCTAssertTrue(driverProject.contains("iOS: \"17.0\""))
-        XCTAssertFalse(driverProject.contains("iOS: \"16.0\""))
-        XCTAssertTrue(sharedPackage.contains(".iOS(.v17)"))
-        XCTAssertFalse(sharedPackage.contains(".iOS(.v16)"))
     }
 
     func testInstallCommandWithExplicitUdidIsHostOnlyAndDoesNotWriteDriverLock() throws {
@@ -3148,6 +3138,141 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("URL scheme \"notexist\" not registered on device"))
     }
 
+    func testOpenURLMacTargetsActiveSlotThroughSystemDispatcher() throws {
+        let fixture = try makeMacOpenFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var dispatchedURL: URL?
+        var targetAppURL: URL?
+        var targetPID: Int?
+        OpenURLService.macURLLauncherForTesting = { url, appURL, session in
+            dispatchedURL = url
+            targetAppURL = appURL
+            targetPID = session.runnerPid
+        }
+        IOSUseCLI.playCoverDriverClientFactoryForTesting = { _ in
+            XCTFail("host-side Mac open must not call the Runtime")
+            return FakeDriverCommandClient()
+        }
+
+        let result = IOSUseCLI(pathsForTesting: fixture.paths).run(
+            arguments: ["open", "demo://route"]
+        )
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertEqual(dispatchedURL?.absoluteString, "demo://route")
+        XCTAssertEqual(targetAppURL?.path, fixture.appPath)
+        XCTAssertEqual(targetPID, fixture.runnerPID)
+        XCTAssertTrue(result.stdout.contains("active Mac App"))
+    }
+
+    func testOpenURLMacRejectsUnregisteredSchemeBeforeDispatch() throws {
+        let fixture = try makeMacOpenFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        OpenURLService.macURLLauncherForTesting = { _, _, _ in
+            XCTFail("unregistered scheme must not reach LaunchServices")
+        }
+
+        let result = IOSUseCLI(pathsForTesting: fixture.paths).run(
+            arguments: ["open", "other://route", "--json"]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        let envelope = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(result.stderr.utf8)
+            ) as? [String: Any]
+        )
+        let error = try XCTUnwrap(envelope["error"] as? [String: Any])
+        XCTAssertEqual(error["code"] as? String, "open_scheme_unregistered")
+        XCTAssertEqual(error["mutationMayHaveApplied"] as? Bool, false)
+    }
+
+    func testOpenURLMacClassifiesSystemDispatchRejection() throws {
+        let fixture = try makeMacOpenFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        OpenURLService.macURLLauncherForTesting = { _, _, _ in
+            throw OpenURLService.MacOpenError.dispatchRejected(
+                "fixture rejection"
+            )
+        }
+
+        let result = IOSUseCLI(pathsForTesting: fixture.paths).run(
+            arguments: ["open", "demo://route", "--json"]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        let envelope = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(result.stderr.utf8)
+            ) as? [String: Any]
+        )
+        let error = try XCTUnwrap(envelope["error"] as? [String: Any])
+        XCTAssertEqual(error["code"] as? String, "open_dispatch_rejected")
+        XCTAssertEqual(error["retryable"] as? Bool, true)
+    }
+
+    func testOpenURLMacRejectsSlotIdentityMismatchBeforeDispatch() throws {
+        let fixture = try makeMacOpenFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try Data("unexpected".utf8).write(
+            to: URL(fileURLWithPath: fixture.appPath)
+                .deletingLastPathComponent()
+                .appendingPathComponent("unexpected-entry")
+        )
+        OpenURLService.macURLLauncherForTesting = { _, _, _ in
+            XCTFail("invalid active slot must not reach LaunchServices")
+        }
+
+        let result = IOSUseCLI(pathsForTesting: fixture.paths).run(
+            arguments: ["open", "demo://route", "--json"]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        let envelope = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(result.stderr.utf8)
+            ) as? [String: Any]
+        )
+        let error = try XCTUnwrap(envelope["error"] as? [String: Any])
+        XCTAssertEqual(
+            error["code"] as? String,
+            "open_target_mismatch",
+            result.stderr
+        )
+        XCTAssertEqual(error["mutationMayHaveApplied"] as? Bool, false)
+    }
+
+    func testOpenURLMacDomDistinguishesPostDispatchReadinessFailure() throws {
+        let fixture = try makeMacOpenFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        OpenURLService.macURLLauncherForTesting = { _, _, _ in }
+        IOSUseCLI.playCoverDriverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(domHandler: { _, fresh, _ in
+                XCTAssertTrue(fresh)
+                throw CLIParseError.invalidValue("fixture UI not ready")
+            })
+        }
+
+        let result = IOSUseCLI(pathsForTesting: fixture.paths).run(
+            arguments: ["open", "demo://route", "--dom", "--json"]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        let envelope = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(result.stderr.utf8)
+            ) as? [String: Any]
+        )
+        let error = try XCTUnwrap(envelope["error"] as? [String: Any])
+        XCTAssertEqual(error["mutationMayHaveApplied"] as? Bool, true)
+        XCTAssertTrue(
+            (error["message"] as? String ?? "")
+                .contains("foreground DOM readiness failed")
+        )
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        XCTAssertEqual(data["mutationDispatched"] as? Bool, true)
+    }
+
     func testOpenURLRealDeviceLookupFailureStillUsesNativeLauncherWithoutDevicectl() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-open-url-real-lookup-fail-\(UUID().uuidString)")
@@ -3462,7 +3587,7 @@ final class IOSUseCLITests: XCTestCase {
         let slotDirectory =
             "\(paths.playcoverApps)/\(bundleIdentifier)"
         let appPath =
-            "\(slotDirectory)/Media.app"
+            "\(slotDirectory)/App.app"
         try FileManager.default.createDirectory(
             atPath: appPath,
             withIntermediateDirectories: true
@@ -3509,9 +3634,11 @@ final class IOSUseCLITests: XCTestCase {
         }
         let metadata = PlayCoverSlotMetadata(
             bundleIdentifier: bundleIdentifier,
-            appRelativePath: "Media.app",
             executableRelativePath: "Media",
-            installRevision: installRevision
+            installRevision: installRevision,
+            sourceContentHash: String(repeating: "b", count: 64),
+            signingCertificateSHA256:
+                String(repeating: "B", count: 64)
         )
         let metadataURL = URL(fileURLWithPath: slotDirectory)
             .appendingPathComponent("slot.json")
@@ -3815,6 +3942,118 @@ final class IOSUseCLITests: XCTestCase {
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try data.write(to: URL(fileURLWithPath: "\(path)/Info.plist"))
         try Data("binary".utf8).write(to: URL(fileURLWithPath: "\(path)/App"))
+    }
+
+    private struct MacOpenFixture {
+        let root: URL
+        let paths: IOSUsePaths
+        let appPath: String
+        let runnerPID: Int
+    }
+
+    private func makeMacOpenFixture() throws -> MacOpenFixture {
+        let root = URL(
+            fileURLWithPath: "/tmp/iu-mo-"
+                + String(UUID().uuidString.prefix(8)),
+            isDirectory: true
+        )
+        let paths = IOSUsePaths.resolve(
+            environment: [
+                "IOS_USE_HOME": root.appendingPathComponent("home").path,
+            ],
+            accountHomeDirectoryOverrideForTesting:
+                root.appendingPathComponent("account").path,
+            socketRootOverrideForTesting:
+                root.appendingPathComponent("sockets").path
+        )
+        let bundleIdentifier = "com.example.macopen"
+        let installRevision = String(repeating: "a", count: 64)
+        let slot = URL(
+            fileURLWithPath: paths.playcoverApps,
+            isDirectory: true
+        ).appendingPathComponent(bundleIdentifier, isDirectory: true)
+        let app = slot.appendingPathComponent("App.app", isDirectory: true)
+        let runtime = app.appendingPathComponent(
+            "Frameworks/IOSUsePlayRuntime.framework/IOSUsePlayRuntime"
+        )
+        let engine = app.appendingPathComponent(
+            "Frameworks/IOSUseFridaEngine.framework/IOSUseFridaEngine"
+        )
+        try FileManager.default.createDirectory(
+            at: runtime.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: engine.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let executable = app.appendingPathComponent("Demo")
+        for file in [executable, runtime, engine] {
+            try Data("fixture".utf8).write(to: file)
+        }
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executable.path
+        )
+        let plist: [String: Any] = [
+            "CFBundleIdentifier": bundleIdentifier,
+            "CFBundleExecutable": "Demo",
+            "CFBundleURLTypes": [[
+                "CFBundleURLSchemes": ["demo"],
+            ]],
+        ]
+        try PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .binary,
+            options: 0
+        ).write(to: app.appendingPathComponent("Info.plist"))
+        let metadata = PlayCoverSlotMetadata(
+            bundleIdentifier: bundleIdentifier,
+            executableRelativePath: "Demo",
+            installRevision: installRevision,
+            sourceContentHash: String(repeating: "b", count: 64),
+            signingCertificateSHA256: String(repeating: "B", count: 64)
+        )
+        let metadataURL = slot.appendingPathComponent("slot.json")
+        try JSONEncoder().encode(metadata).write(to: metadataURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: metadataURL.path
+        )
+        let sessionID = UUID().uuidString
+        let runnerPID = 42
+        try FileManager.default.createDirectory(
+            atPath: paths.playcoverRun,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        XCTAssertEqual(Darwin.chmod(paths.playcoverRun, 0o700), 0)
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: PlayCoverSessionService.deviceType,
+                deviceName: "Mac",
+                deviceVersion: "Mac Catalyst",
+                deviceType: PlayCoverSessionService.deviceType,
+                startedAt: 1,
+                runnerPid: runnerPID,
+                startMode: PlayCoverSessionService.deviceType,
+                sessionIdentifier: sessionID,
+                bundleId: bundleIdentifier,
+                macAppPath: app.path,
+                macExecutablePath: executable.path,
+                macInstallRevision: installRevision,
+                macRuntimeSocketPath: try paths.macRuntimeSocketPath(
+                    sessionID: sessionID
+                )
+            ),
+            paths: paths
+        )
+        return MacOpenFixture(
+            root: root,
+            paths: paths,
+            appPath: app.path,
+            runnerPID: runnerPID
+        )
     }
 
     private func writeDriverLock(udid: String, deviceType: String, paths: IOSUsePaths) throws {

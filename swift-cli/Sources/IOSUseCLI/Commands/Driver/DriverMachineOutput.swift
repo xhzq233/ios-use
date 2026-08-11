@@ -107,11 +107,110 @@ func machineAlert(_ alert: ForyAlertPayload) -> MachineValue {
 }
 
 func machineDriverErrorData(_ error: Error) -> MachineValue {
-    guard case DriverClientError.driverError(_, let payload) = error,
-          let alert = payload.alert else {
+    guard let failure = driverFailureDetails(error) else {
         return .object([:])
     }
-    return .object(["alert": machineAlert(alert)])
+    let payload = failure.payload
+    return .object([
+        "target": payload.target.map(machineErrorTarget) ?? .null,
+        "candidateCount": .integer(Int(payload.candidateCount)),
+        "suggestions": .array(
+            payload.suggestions.map(MachineValue.string)
+        ),
+        "candidates": .array(
+            payload.candidates.map(machineErrorCandidate)
+        ),
+        "alert": payload.alert.map(machineAlert) ?? .null,
+    ])
+}
+
+func renderDriverFailure(_ error: Error) -> String {
+    guard let failure = driverFailureDetails(error) else {
+        return String(describing: error)
+    }
+    return formatDriverError(
+        message: failure.message,
+        payload: failure.payload
+    )
+}
+
+func driverMutationMayHaveApplied(_ payload: ForyErrorPayload) -> Bool {
+    payload.category == IOSUseErrorCategory.action
+        || payload.category == IOSUseErrorCategory.postcondition
+}
+
+private struct DriverFailureDetails {
+    let message: String
+    let payload: ForyErrorPayload
+}
+
+private func driverFailureDetails(
+    _ error: Error
+) -> DriverFailureDetails? {
+    if case DriverClientError.driverError(
+        let message,
+        let payload
+    ) = error {
+        return DriverFailureDetails(message: message, payload: payload)
+    }
+    guard case DriverCommandExecutionError.postconditionFailed(
+        let label,
+        let underlying
+    ) = error,
+    case DriverClientError.driverError(
+        let message,
+        let underlyingPayload
+    ) = underlying else {
+        return nil
+    }
+    return DriverFailureDetails(
+        message: "\(label) failed after mutation: \(message)",
+        payload: ForyErrorPayload(
+            category: IOSUseErrorCategory.postcondition,
+            code: IOSUseErrorCode.postconditionFailed,
+            phase: IOSUseErrorPhase.postcondition,
+            retryable: underlyingPayload.retryable,
+            fatal: underlyingPayload.fatal,
+            target: underlyingPayload.target,
+            candidateCount: underlyingPayload.candidateCount,
+            suggestions: underlyingPayload.suggestions,
+            candidates: underlyingPayload.candidates,
+            alert: underlyingPayload.alert
+        )
+    )
+}
+
+private func machineErrorTarget(_ target: ForyTarget) -> MachineValue {
+    .object([
+        "label": .string(target.label),
+        "point": target.point.map(machinePoint) ?? .null,
+        "traits": target.traits.isEmpty
+            ? .null
+            : .string(target.traits),
+        "cindex": target.cindex.map { .integer(Int($0)) } ?? .null,
+    ])
+}
+
+private func machineErrorCandidate(
+    _ candidate: ForyErrorCandidate
+) -> MachineValue {
+    let element = candidate.element
+    return .object([
+        "type": .string(
+            IOSUseElementTypes.displayName(rawType: element.elemType)
+        ),
+        "typeCode": .integer(Int(element.elemType)),
+        "label": .string(element.label),
+        "value": .string(element.value),
+        "traits": .array(element.traits.map(MachineValue.string)),
+        "frame": element.rect.map(machineRect) ?? .null,
+        "ancestors": .array(
+            element.ancestors.map(MachineValue.string)
+        ),
+        "rejectedBy": .array(
+            candidate.rejectedBy.map(MachineValue.string)
+        ),
+    ])
 }
 
 func machineDom(_ payload: ForyDomPayload) -> MachineValue {

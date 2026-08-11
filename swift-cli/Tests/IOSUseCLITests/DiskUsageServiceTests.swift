@@ -238,7 +238,7 @@ final class DiskUsageServiceTests: XCTestCase {
             fileURLWithPath: paths.playcoverApps,
             isDirectory: true
         ).appendingPathComponent(bundleIdentifier, isDirectory: true)
-        let app = slot.appendingPathComponent("\(displayName).app")
+        let app = slot.appendingPathComponent("App.app")
         try FileManager.default.createDirectory(
             at: app,
             withIntermediateDirectories: true
@@ -258,9 +258,11 @@ final class DiskUsageServiceTests: XCTestCase {
         try writeBytes(256, to: app.appendingPathComponent("Demo"))
         let metadata = PlayCoverSlotMetadata(
             bundleIdentifier: bundleIdentifier,
-            appRelativePath: "\(displayName).app",
             executableRelativePath: "Demo",
-            installRevision: String(repeating: "a", count: 64)
+            installRevision: String(repeating: "a", count: 64),
+            sourceContentHash: String(repeating: "b", count: 64),
+            signingCertificateSHA256:
+                String(repeating: "B", count: 64)
         )
         try JSONEncoder().encode(metadata).write(
             to: slot.appendingPathComponent("slot.json")

@@ -105,14 +105,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
                         finalState: self.makeFinalState()
                     )
                 )
-            case .open:
-                return self.makePayload(
-                    capability: command,
-                    open: .init(
-                        delivered: true,
-                        url: "demo://route"
-                    )
-                )
             default:
                 return self.makePayload(capability: command)
             }
@@ -164,8 +156,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
             cindex: 2
         )
         let alert = try client.dismissAlert(index: 1)
-        let open = try client.openURL("demo://route")
-
         XCTAssertEqual(dom.snapshotGeneration, 10)
         XCTAssertEqual(dom.elements.first?.nodeID, "n-10")
         XCTAssertEqual(dom.elements.first?.className, "UIButton")
@@ -184,9 +174,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertNil(input.postcondition)
         XCTAssertTrue(alert.dismissed)
         XCTAssertEqual(alert.button, "Allow")
-        XCTAssertTrue(open.delivered)
-        XCTAssertEqual(open.url, "demo://route")
-
         XCTAssertEqual(
             requests.map(\.0),
             [
@@ -197,7 +184,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 .swipe,
                 .input,
                 .dismissAlert,
-                .open,
             ]
         )
         guard case .dom(let domArgs) = requests[0].1 else {
@@ -256,10 +242,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
         }
         XCTAssertEqual(dismissArgs.index, 1)
         XCTAssertEqual(dismissArgs.selection, "index")
-        guard case .open(let openArgs) = requests[7].1 else {
-            return XCTFail("missing open arguments")
-        }
-        XCTAssertEqual(openArgs.url, "demo://route")
     }
 
     func testDismissAlertForwardsExactLabelWithoutIndex() throws {
@@ -975,53 +957,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 )
             ).screenshotCapture()
         )
-    }
-
-    func testAtomicEvidenceRequiresSameScreenshotAndDOMGeneration()
-        throws
-    {
-        let jpeg = try makeJPEG(
-            width: Int(IOSUsePlayDeviceNativeWidth),
-            height: Int(IOSUsePlayDeviceNativeHeight)
-        )
-        let matchingDOM = makeDOM(generation: 31)
-        let matching = makeScreenshot(
-            jpeg: jpeg,
-            snapshotGeneration: 31,
-            captureGeneration: 4
-        )
-        let snapshot = try makeClient(
-            response: makePayload(
-                capability: .screenshot,
-                screenshot: matching,
-                dom: matchingDOM
-            )
-        ).evidenceSnapshot()
-
-        XCTAssertEqual(snapshot.screenshot.snapshotGeneration, 31)
-        XCTAssertEqual(snapshot.dom.snapshotGeneration, 31)
-
-        let mismatched = makeScreenshot(
-            jpeg: jpeg,
-            snapshotGeneration: 31,
-            captureGeneration: 5
-        )
-        XCTAssertThrowsError(
-            try makeClient(
-                response: makePayload(
-                    capability: .screenshot,
-                    screenshot: mismatched,
-                    dom: makeDOM(generation: 32)
-                )
-            ).evidenceSnapshot()
-        ) {
-            XCTAssertEqual(
-                $0 as? PlayCoverDriverClientError,
-                .malformedRuntimePayload(
-                    "atomic screenshot/DOM generation"
-                )
-            )
-        }
     }
 
     func testDOMUsesOnlyCommandPayloadAndValidatesItsOwnWindowSize()
@@ -2304,8 +2239,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
         input: PlayCoverRuntimeActionPayload? = nil,
         dismissAlert: PlayCoverRuntimeAlertPayload? = nil,
         dismissAlertByLabel:
-            PlayCoverRuntimeAlertPayload? = nil,
-        open: PlayCoverRuntimeOpenPayload? = nil
+            PlayCoverRuntimeAlertPayload? = nil
     ) -> PlayCoverRuntimeResponsePayload {
         switch capability {
         case .hello:
@@ -2431,11 +2365,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
             return .dismissAlertByLabel(
                 dismissAlertByLabel
             )
-        case .open:
-            guard let open else {
-                preconditionFailure("missing open test payload")
-            }
-            return .open(open)
         case .debug:
             return .debug(
                 PlayCoverRuntimeDebugPayload(

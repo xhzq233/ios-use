@@ -426,10 +426,8 @@ assert_fixed_slot() {
   app_path="$(jq -er '.data.driver.macAppPath' "$status")"
   executable_path="$(jq -er '.data.driver.macExecutablePath' "$status")"
   revision="$(jq -er '.data.driver.macInstallRevision' "$status")"
-  case "$app_path" in
-    "$SLOT_ROOT"/*.app) ;;
-    *) fail_gate "$name escaped the fixed Bundle slot: $app_path" ;;
-  esac
+  [[ "$app_path" == "$SLOT_ROOT/App.app" ]] ||
+    fail_gate "$name escaped the canonical fixed Bundle slot: $app_path"
   [[ ! -L "$SLOT_ROOT" && ! -L "$app_path" ]] ||
     fail_gate "$name launched a symlink or facade"
   [[ "$executable_path" == "$app_path/$EXECUTABLE_NAME" &&
@@ -438,17 +436,17 @@ assert_fixed_slot() {
   assert_private_file "$SLOT_ROOT/slot.json" "$name slot.json"
   jq -e \
     --arg bundle "$BUNDLE_ID" \
-    --arg app "$(basename "$app_path")" \
     --arg executable "$EXECUTABLE_NAME" \
     --arg revision "$revision" '
       keys == [
-        "appRelativePath", "bundleIdentifier",
-        "executableRelativePath", "installRevision"
+        "bundleIdentifier", "executableRelativePath", "installRevision",
+        "signingCertificateSHA256", "sourceContentHash"
       ] and
       .bundleIdentifier == $bundle and
-      .appRelativePath == $app and
       .executableRelativePath == $executable and
-      .installRevision == $revision
+      .installRevision == $revision and
+      (.sourceContentHash | test("^[0-9a-f]{64}$")) and
+      (.signingCertificateSHA256 | test("^[0-9A-F]{64}$"))
     ' "$SLOT_ROOT/slot.json" >/dev/null ||
     fail_gate "$name slot metadata is not exact"
   visible_count="$(find "$SLOT_ROOT" -mindepth 1 -maxdepth 1 \
@@ -511,7 +509,7 @@ run_crash_start() {
   local cut="$2"
   set +e
   cli_env "$TEST_HOME" "$CRASH_ENV=$cut" \
-    "$DEBUG_CLI" --json start --mac --reuse --timeout 30s \
+    "$DEBUG_CLI" --json start --mac --timeout 30s \
     >"$RUN_DIR/$name.start.json" \
     2>"$RUN_DIR/$name.start.stderr"
   local exit_status=$?
@@ -560,7 +558,7 @@ recovered=0
 for attempt in $(seq 1 100); do
   printf -v attempt_name 'afterOpenReturned.recover-%03d' "$attempt"
   set +e
-  cli_env "$TEST_HOME" "$DEBUG_CLI" --json start --mac --reuse \
+  cli_env "$TEST_HOME" "$DEBUG_CLI" --json start --mac \
     --timeout 5s \
     >"$RUN_DIR/$attempt_name.stdout" \
     2>"$RUN_DIR/$attempt_name.stderr"
@@ -630,7 +628,7 @@ driver_birth="$(jq -er '.processBirthMicroseconds' \
   "$RUN_DIR/afterDriverLockDurable.process.json")"
 
 set +e
-cli_env "$TEST_HOME" "$DEBUG_CLI" --json start --mac --reuse \
+cli_env "$TEST_HOME" "$DEBUG_CLI" --json start --mac \
   >"$RUN_DIR/afterDriverLockDurable.blocked-start.stdout" \
   2>"$RUN_DIR/afterDriverLockDurable.blocked-start.stderr"
 blocked_status=$?
@@ -650,8 +648,8 @@ jq -e '
   fail_gate "blocked start mutated the durable launch state"
 stop_and_verify afterDriverLockDurable "$driver_pid" "$driver_birth"
 
-echo "[playcover-launch-recovery] Final normal reuse..." >&2
-cli_env "$TEST_HOME" "$DEBUG_CLI" --json start --mac --reuse \
+echo "[playcover-launch-recovery] Final current-slot start..." >&2
+cli_env "$TEST_HOME" "$DEBUG_CLI" --json start --mac \
   --timeout 30s \
   >"$RUN_DIR/final.start.json" \
   2>"$RUN_DIR/final.start.stderr" ||

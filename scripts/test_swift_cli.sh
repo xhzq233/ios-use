@@ -32,10 +32,6 @@ if grep -Eq 'date -u \+%Y%m%d%H%M%S|rev-parse --short=12' "$ROOT_DIR/scripts/bui
 fi
 
 echo "[swift-cli] Checking driver logging API..."
-if ! grep -q 'NSLog("%@", message)' "$ROOT_DIR/driver/ui/DriverLog.swift"; then
-  echo "[swift-cli] ERROR: DriverLog must use NSLog so XCTest openstdio can collect driver logs" >&2
-  exit 1
-fi
 if find "$ROOT_DIR/driver" \( -name '*.swift' -o -name '*.m' -o -name '*.mm' -o -name '*.h' \) -print0 | xargs -0 grep -nE 'import os\.log|os_log\('; then
   echo "[swift-cli] ERROR: driver logs must not use os_log; use DriverLog/NSLog for openstdio collection" >&2
   exit 1

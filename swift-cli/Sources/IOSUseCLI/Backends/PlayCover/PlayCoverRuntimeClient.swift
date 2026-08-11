@@ -15,7 +15,6 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case input
     case dismissAlert
     case dismissAlertByLabel
-    case open
     case debug
 }
 
@@ -290,10 +289,6 @@ struct PlayCoverRuntimeDismissAlertByLabelArguments:
     }
 }
 
-struct PlayCoverRuntimeOpenArguments: Codable, Equatable, Sendable {
-    let url: String
-}
-
 struct PlayCoverRuntimeDebugArguments: Codable, Equatable, Sendable {
     let script: String?
     let reset: Bool
@@ -319,7 +314,6 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
     case dismissAlertByLabel(
         PlayCoverRuntimeDismissAlertByLabelArguments
     )
-    case open(PlayCoverRuntimeOpenArguments)
     case debug(PlayCoverRuntimeDebugArguments)
 
     func encode(to encoder: Encoder) throws {
@@ -343,8 +337,6 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
         case .dismissAlert(let arguments):
             try arguments.encode(to: encoder)
         case .dismissAlertByLabel(let arguments):
-            try arguments.encode(to: encoder)
-        case .open(let arguments):
             try arguments.encode(to: encoder)
         case .debug(let arguments):
             try arguments.encode(to: encoder)
@@ -494,11 +486,6 @@ struct PlayCoverRuntimeAlertPayload: Codable, Equatable, Sendable {
     let reason: String
     let hitView: PlayCoverRuntimeHitView?
     let finalState: PlayCoverRuntimeFinalState?
-}
-
-struct PlayCoverRuntimeOpenPayload: Codable, Equatable, Sendable {
-    let delivered: Bool
-    let url: String
 }
 
 struct PlayCoverRuntimeDebugPayload: Codable, Equatable, Sendable {
@@ -696,10 +683,6 @@ private struct PlayCoverRuntimeAlertByLabelResult: Codable {
     let dismissAlertByLabel: PlayCoverRuntimeAlertPayload
 }
 
-private struct PlayCoverRuntimeOpenResult: Codable {
-    let open: PlayCoverRuntimeOpenPayload
-}
-
 private struct PlayCoverRuntimeDebugResult: Codable {
     let debug: PlayCoverRuntimeDebugPayload
 }
@@ -718,7 +701,6 @@ enum PlayCoverRuntimeResponsePayload: Equatable, Sendable {
     case input(PlayCoverRuntimeActionPayload)
     case dismissAlert(PlayCoverRuntimeAlertPayload)
     case dismissAlertByLabel(PlayCoverRuntimeAlertPayload)
-    case open(PlayCoverRuntimeOpenPayload)
     case debug(PlayCoverRuntimeDebugPayload)
 }
 
@@ -1187,18 +1169,6 @@ final class PlayCoverRuntimeClient {
         return payload
     }
 
-    func open(
-        _ arguments: PlayCoverRuntimeOpenArguments
-    ) throws -> PlayCoverRuntimeOpenPayload {
-        guard case .open(let payload) =
-                try request(.open, arguments: .open(arguments)) else {
-            throw PlayCoverRuntimeClientError.malformedResponse(
-                "open response type mismatch"
-            )
-        }
-        return payload
-    }
-
     func debug(
         _ arguments: PlayCoverRuntimeDebugArguments
     ) throws -> PlayCoverRuntimeDebugPayload {
@@ -1403,10 +1373,6 @@ final class PlayCoverRuntimeClient {
             return .dismissAlertByLabel(
                 payload.dismissAlertByLabel
             )
-        case .open:
-            let payload: PlayCoverRuntimeOpenResult =
-                try performRequest(command, arguments: arguments)
-            return .open(payload.open)
         case .debug:
             let payload: PlayCoverRuntimeDebugResult =
                 try performRequest(command, arguments: arguments)

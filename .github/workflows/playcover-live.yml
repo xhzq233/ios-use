@@ -1,0 +1,74 @@
+name: PlayCover Integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_non_live:
+        description: "Run the account-mutating integration gate"
+        required: false
+        default: false
+        type: boolean
+      run_live:
+        description: "Run launch-recovery and Runtime stress"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  non-live:
+    if: ${{ inputs.run_non_live }}
+    runs-on: [self-hosted, macOS, arm64, playcover-live]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Cache pinned upstream audit checkouts
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ios-use-playcover-upstream-audit
+          key: ${{ runner.os }}-${{ runner.arch }}-playcover-upstreams-7190cc9-d688f6-e6d3aa
+
+      - name: Run non-live PlayCover integration
+        env:
+          IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
+          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
+          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
+        run: bash scripts/test_playcover_backend.sh --non-live
+
+  live:
+    if: ${{ inputs.run_live }}
+    runs-on: [self-hosted, macOS, arm64, playcover-live]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run core PlayCover live gate
+        shell: bash
+        env:
+          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
+          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/ios-use-playcover-live-$GITHUB_RUN_ID"
+          bash scripts/test_playcover_backend.sh --live 2>&1 |
+            tee "$RUNNER_TEMP/ios-use-playcover-live-$GITHUB_RUN_ID/run.log"
+
+      - name: Upload live log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playcover-live-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ios-use-playcover-live-${{ github.run_id }}/run.log
+          if-no-files-found: error
+          retention-days: 30

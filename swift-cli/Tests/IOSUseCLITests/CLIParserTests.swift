@@ -79,7 +79,7 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
-    func testParsesMacStartWithExplicitAppOrReuse()
+    func testParsesMacStartWithExplicitAppOrCurrentSlot()
         throws
     {
         XCTAssertEqual(
@@ -100,7 +100,6 @@ final class CLIParserTests: XCTestCase {
             try CLIParser.parse([
                 "start",
                 "--mac",
-                "--reuse",
                 "--log",
                 "--timeout",
                 "800ms",
@@ -108,7 +107,6 @@ final class CLIParserTests: XCTestCase {
             .start(
                 StartOptions(
                     mac: true,
-                    reuse: true,
                     log: true,
                     timeout: 0.8
                 )
@@ -260,36 +258,24 @@ final class CLIParserTests: XCTestCase {
                 )
             }
         }
-        XCTAssertThrowsError(
+        XCTAssertEqual(
             try CLIParser.parse([
-                "start",
-                "--mac",
-                "--reuse",
-                "--timeout",
-                "61s",
-            ])
-        ) { error in
-            XCTAssertEqual(
-                error as? CLIParseError,
-                .invalidValue("--timeout must be at most 60 seconds")
-            )
-        }
+                "start", "--mac", "--timeout", "61s",
+            ]),
+            .start(StartOptions(mac: true, timeout: 61))
+        )
         XCTAssertThrowsError(
-            try CLIParser.parse(["start", "SIM-1", "--mac", "--reuse"])
+            try CLIParser.parse(["start", "SIM-1", "--mac"])
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
                 .invalidValue("a device UDID cannot be used with --mac")
             )
         }
-        XCTAssertThrowsError(
-            try CLIParser.parse(["start", "--mac"])
-        ) { error in
-            XCTAssertEqual(
-                error as? CLIParseError,
-                .invalidValue("--mac requires exactly one of --app <app> or --reuse")
-            )
-        }
+        XCTAssertEqual(
+            try CLIParser.parse(["start", "--mac"]),
+            .start(StartOptions(mac: true))
+        )
         XCTAssertThrowsError(
             try CLIParser.parse(["start", "--mac", "--app", ""])
         ) { error in
@@ -309,7 +295,7 @@ final class CLIParserTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue("--mac requires exactly one of --app <app> or --reuse")
+                .unknownOption("--reuse")
             )
         }
         XCTAssertThrowsError(
@@ -317,7 +303,7 @@ final class CLIParserTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
+                .invalidValue("--app, --log, and --timeout require --mac")
             )
         }
         XCTAssertThrowsError(
@@ -325,7 +311,7 @@ final class CLIParserTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
+                .unknownOption("--reuse")
             )
         }
         XCTAssertThrowsError(
@@ -333,7 +319,7 @@ final class CLIParserTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
+                .invalidValue("--app, --log, and --timeout require --mac")
             )
         }
         XCTAssertThrowsError(
@@ -341,11 +327,11 @@ final class CLIParserTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
+                .invalidValue("--app, --log, and --timeout require --mac")
             )
         }
         XCTAssertThrowsError(
-            try CLIParser.parse(["start", "--mac", "--reuse", "--verbose"])
+            try CLIParser.parse(["start", "--mac", "--verbose"])
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
@@ -354,7 +340,7 @@ final class CLIParserTests: XCTestCase {
         }
         for arguments in [
             ["start", "--mac", "--app", "/work/Demo.app", "--frida"],
-            ["start", "--mac", "--reuse", "--frida"],
+            ["start", "--mac", "--frida"],
         ] {
             XCTAssertThrowsError(try CLIParser.parse(arguments)) { error in
                 XCTAssertEqual(
@@ -368,12 +354,8 @@ final class CLIParserTests: XCTestCase {
     func testRejectsDuplicateMacStartSelectors() {
         let duplicateArguments: [([String], CLIParseError)] = [
             (
-                ["start", "--mac", "--mac", "--reuse"],
+                ["start", "--mac", "--mac"],
                 .invalidValue("--mac may only be provided once")
-            ),
-            (
-                ["start", "--mac", "--reuse", "--reuse"],
-                .invalidValue("--reuse may only be provided once")
             ),
             (
                 [
@@ -395,7 +377,7 @@ final class CLIParserTests: XCTestCase {
         }
     }
 
-    func testMacStartHelpDocumentsExplicitSourceAndReuseModes() {
+    func testMacStartHelpDocumentsAutomaticAndCurrentSlotModes() {
         let result = IOSUseCLI().run(arguments: ["start", "--help"])
 
         XCTAssertEqual(result.exitCode, 0)
@@ -405,16 +387,16 @@ final class CLIParserTests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            result.stdout.contains("ios-use start --mac --reuse")
+            result.stdout.contains("ios-use start --mac [--log]")
         )
         XCTAssertTrue(
             result.stdout.contains(
-                "Use --app after every Debug rebuild"
+                "Use --app after a source rebuild"
             )
         )
         XCTAssertTrue(
             result.stdout.contains(
-                "Use --reuse only to launch"
+                "reuses an unchanged"
             )
         )
         XCTAssertFalse(
@@ -423,6 +405,7 @@ final class CLIParserTests: XCTestCase {
         XCTAssertFalse(
             result.stdout.contains("--frida")
         )
+        XCTAssertFalse(result.stdout.contains("--reuse"))
     }
 
     func testParsesDriverReadCommands() throws {
@@ -977,7 +960,6 @@ final class CLIParserTests: XCTestCase {
             try CLIParser.parseInvocation([
                 "start",
                 "--mac",
-                "--reuse",
                 "--log",
                 "--json",
             ]),
@@ -985,7 +967,6 @@ final class CLIParserTests: XCTestCase {
                 command: .start(
                     StartOptions(
                         mac: true,
-                        reuse: true,
                         log: true
                     )
                 ),

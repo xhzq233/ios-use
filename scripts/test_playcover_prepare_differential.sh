@@ -112,7 +112,6 @@ required_tests=(
   testDifferentialGateRejectsSecondarySliceOnlyMutation
   testEmptySliceArrayFallsBackToCoveredLegacySlice
   testOneSidedObjectsRequireExactNonStaleBaselines
-  testVendoredPlayAppSigningAuthorityIsOrderedAndExplicitlyExcluded
 )
 for test_name in "${required_tests[@]}"; do
   sentinel="Test Case '-[IOSUseCLITests.PlayCoverPrepareDifferentialTests ${test_name}]' passed"

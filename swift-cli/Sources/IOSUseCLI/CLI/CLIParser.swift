@@ -182,11 +182,6 @@ public enum CLIParser {
                     )
                 }
                 options.appPath = appPath
-            case "--reuse":
-                guard !options.reuse else {
-                    throw CLIParseError.invalidValue("--reuse may only be provided once")
-                }
-                options.reuse = true
             case "--log":
                 options.log = true
             case "--timeout":
@@ -195,9 +190,6 @@ public enum CLIParser {
                     label: "--timeout"
                 )
                 timeoutWasProvided = true
-                guard options.timeout <= 60 else {
-                    throw CLIParseError.invalidValue("--timeout must be at most 60 seconds")
-                }
             default:
                 if arg.hasPrefix("-") {
                     throw CLIParseError.unknownOption(arg)
@@ -215,17 +207,11 @@ public enum CLIParser {
             guard !options.verbose else {
                 throw CLIParseError.invalidValue("--verbose cannot be used with --mac")
             }
-            guard (options.appPath != nil) != options.reuse else {
-                throw CLIParseError.invalidValue(
-                    "--mac requires exactly one of --app <app> or --reuse"
-                )
-            }
         } else if options.appPath != nil
-                    || options.reuse
                     || options.log
                     || timeoutWasProvided {
             throw CLIParseError.invalidValue(
-                "--app, --reuse, --log, and --timeout require --mac"
+                "--app, --log, and --timeout require --mac"
             )
         }
         return options

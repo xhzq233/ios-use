@@ -2499,14 +2499,14 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
       "${cycle_name}_start" \
       start --mac --app "$LIVE_APP"
     if ! rg -q -- \
-        '^Mac App slot installed: .+\.app$' \
+        '^Mac App slot (installed|reused): .+\/App\.app$' \
         "$RUN_DIR/${cycle_name}_start.stdout"; then
-      fail_gate "the first external App start did not install its Bundle slot"
+      fail_gate "the first external App start did not resolve its Bundle slot"
     fi
   else
     run_cli \
       "${cycle_name}_start" \
-      start --mac --reuse
+      start --mac
     if ! rg -q -- \
         '^Mac App slot reused: .+\.app$' \
         "$RUN_DIR/${cycle_name}_start.stdout"; then

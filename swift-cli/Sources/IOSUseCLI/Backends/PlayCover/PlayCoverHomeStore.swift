@@ -3,7 +3,7 @@ import Foundation
 import Darwin
 #endif
 
-/// Home-local selection for `start --mac --reuse`.
+/// Home-local selection for a source-less `start --mac`.
 ///
 /// The Home selects one Bundle ID. The account-global slot is the only source
 /// of App/executable identity and is never copied into this record.

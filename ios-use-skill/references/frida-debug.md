@@ -252,7 +252,7 @@ original process state:
 
 ```bash
 ios-use stop
-ios-use start --mac --reuse
+ios-use start --mac
 ```
 
 Do not model native patching as load/unload. `debug --reset` removes Frida hooks

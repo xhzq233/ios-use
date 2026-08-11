@@ -27,7 +27,7 @@ enum PlayCoverDriverClientError:
         case .capabilityUnavailable(let command):
             return "Mac Runtime capability `\(command)` is unavailable"
         case .lifecycleCommandUnsupported(let command):
-            return "Mac backend does not support Driver `\(command)`; use `ios-use start --mac --reuse` and `ios-use stop` for App lifecycle"
+            return "Mac backend does not support Driver `\(command)`; use `ios-use start --mac` and `ios-use stop` for App lifecycle"
         }
     }
 }
@@ -110,33 +110,6 @@ final class PlayCoverDriverClient: DriverCommandClient {
                 .malformedRuntimePayload("screenshot response type")
         }
         return try mapScreenshot(result.screenshot)
-    }
-
-    func evidenceSnapshot() throws -> DriverEvidenceSnapshot {
-        guard case .screenshot(let result) = try request(
-            .screenshot,
-            arguments: .empty(),
-            timeout: PlayCoverRuntimeClient.screenshotTimeoutSeconds
-        ) else {
-            throw PlayCoverDriverClientError
-                .malformedRuntimePayload("screenshot response type")
-        }
-        let runtimeScreenshot = result.screenshot
-        let runtimeDOM = result.dom
-        let screenshot = try mapScreenshot(runtimeScreenshot)
-        guard runtimeScreenshot.snapshotGeneration
-                == runtimeDOM.snapshotGeneration,
-              screenshot.snapshotGeneration
-                == runtimeDOM.snapshotGeneration else {
-            throw PlayCoverDriverClientError
-                .malformedRuntimePayload(
-                    "atomic screenshot/DOM generation"
-                )
-        }
-        return DriverEvidenceSnapshot(
-            screenshot: screenshot,
-            dom: try mapDOM(runtimeDOM)
-        )
     }
 
     func dom(
@@ -517,33 +490,6 @@ final class PlayCoverDriverClient: DriverCommandClient {
             text: payload.text,
             button: payload.button,
             reason: payload.reason
-        )
-    }
-
-    struct OpenResult {
-        let delivered: Bool
-        let url: String
-    }
-
-    func openURL(_ url: String) throws -> OpenResult {
-        guard case .open(let payload) = try request(
-            .open,
-            arguments: .open(
-                PlayCoverRuntimeOpenArguments(url: url)
-            )
-        ) else {
-            throw PlayCoverDriverClientError
-                .malformedRuntimePayload("open response type")
-        }
-        guard payload.delivered else {
-            throw PlayCoverDriverClientError
-                .malformedRuntimePayload(
-                    "open delivery acknowledgement"
-                )
-        }
-        return OpenResult(
-            delivered: payload.delivered,
-            url: payload.url
         )
     }
 

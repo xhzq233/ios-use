@@ -1,0 +1,37 @@
+name: Mac Runtime
+
+on:
+  pull_request:
+    paths:
+      - "playcover-runtime/**"
+      - "scripts/build_playcover_runtime.sh"
+      - ".github/workflows/mac-runtime.yml"
+  push:
+    branches: [main]
+    paths:
+      - "playcover-runtime/**"
+      - "scripts/build_playcover_runtime.sh"
+      - ".github/workflows/mac-runtime.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  mac-runtime-build:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Build Mac Runtime
+        run: bash scripts/build_playcover_runtime.sh --output "$RUNNER_TEMP/IOSUsePlayRuntime.framework"

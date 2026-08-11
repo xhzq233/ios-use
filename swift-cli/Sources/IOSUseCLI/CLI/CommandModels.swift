@@ -102,24 +102,21 @@ public struct StartOptions: Equatable, Sendable {
     public var verbose = false
     public var mac = false
     public var appPath: String?
-    public var reuse = false
     public var log = false
-    public var timeout: Double = 15
+    public var timeout: Double = 60
 
     public init(
         udid: String? = nil,
         verbose: Bool = false,
         mac: Bool = false,
         appPath: String? = nil,
-        reuse: Bool = false,
         log: Bool = false,
-        timeout: Double = 15
+        timeout: Double = 60
     ) {
         self.udid = udid
         self.verbose = verbose
         self.mac = mac
         self.appPath = appPath
-        self.reuse = reuse
         self.log = log
         self.timeout = timeout
     }
