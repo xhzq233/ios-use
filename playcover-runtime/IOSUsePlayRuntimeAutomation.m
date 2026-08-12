@@ -64,6 +64,9 @@ static BOOL IOSUseAutomationDOMHasVisibleUIKitAlertMirror(
     NSDictionary<NSString *, id> *dom
 );
 static BOOL IOSUseAutomationRectHasArea(CGRect rect);
+static BOOL IOSUseAutomationElementIsActionable(
+    NSDictionary<NSString *, id> *element
+);
 static NSArray<NSDictionary<NSString *, id> *> *
 IOSUseAutomationUIKitAlertCandidates(
     UIAlertController *alert
@@ -82,6 +85,37 @@ static BOOL IOSUseAutomationFinitePoint(CGPoint point) {
 }
 
 static NSDictionary<NSString *, id> *
+IOSUseAutomationErrorWithDiagnostics(
+    NSString *code,
+    NSString *message,
+    NSString *category,
+    NSString *phase,
+    BOOL retryable,
+    NSDictionary<NSString *, id> * _Nullable target,
+    NSArray<NSDictionary<NSString *, id> *> *candidates,
+    NSUInteger candidateCount,
+    NSArray<NSString *> *suggestions
+) {
+    NSMutableDictionary<NSString *, id> *details = [@{
+        @"category": category,
+        @"phase": phase,
+        @"retryable": @(retryable),
+        @"fatal": @NO,
+        @"candidateCount": @(candidateCount),
+        @"candidates": candidates,
+        @"suggestions": suggestions,
+    } mutableCopy];
+    if (target != nil) {
+        details[@"target"] = target;
+    }
+    return @{
+        @"code": code,
+        @"message": message,
+        @"details": details,
+    };
+}
+
+static NSDictionary<NSString *, id> *
 IOSUseAutomationErrorWithCandidateCount(
     NSString *code,
     NSString *message,
@@ -92,23 +126,17 @@ IOSUseAutomationErrorWithCandidateCount(
     NSArray<NSDictionary<NSString *, id> *> *candidates,
     NSUInteger candidateCount
 ) {
-    NSMutableDictionary<NSString *, id> *details = [@{
-        @"category": category,
-        @"phase": phase,
-        @"retryable": @(retryable),
-        @"fatal": @NO,
-        @"candidateCount": @(candidateCount),
-        @"candidates": candidates,
-        @"suggestions": @[],
-    } mutableCopy];
-    if (target != nil) {
-        details[@"target"] = target;
-    }
-    return @{
-        @"code": code,
-        @"message": message,
-        @"details": details,
-    };
+    return IOSUseAutomationErrorWithDiagnostics(
+        code,
+        message,
+        category,
+        phase,
+        retryable,
+        target,
+        candidates,
+        candidateCount,
+        @[]
+    );
 }
 
 static NSDictionary<NSString *, id> *IOSUseAutomationError(
@@ -484,6 +512,41 @@ static NSDictionary<NSString *, id> *IOSUseAutomationElementJSON(
     };
 }
 
+static NSDictionary<NSString *, id> *
+IOSUseAutomationNotHittableError(
+    NSString *message,
+    NSString *phase,
+    BOOL retryable,
+    NSDictionary<NSString *, id> *target,
+    IOSUseAutomationCandidate * _Nullable candidate,
+    NSString *rejectedBy,
+    NSArray<NSString *> *suggestions
+) {
+    NSMutableArray<NSDictionary<NSString *, id> *> *candidates =
+        [NSMutableArray arrayWithCapacity:1];
+    NSDictionary<NSString *, id> *element =
+        IOSUseAutomationElementJSON(candidate);
+    if (element.count > 0) {
+        [candidates addObject:@{
+            @"element": element,
+            @"rejectedBy": rejectedBy.length > 0
+                ? @[rejectedBy]
+                : @[],
+        }];
+    }
+    return IOSUseAutomationErrorWithDiagnostics(
+        @"element_not_hittable",
+        message,
+        @"interaction",
+        phase,
+        retryable,
+        target,
+        candidates,
+        candidates.count,
+        suggestions
+    );
+}
+
 static BOOL IOSUseAutomationTargetValid(
     NSDictionary<NSString *, id> *target
 ) {
@@ -740,6 +803,98 @@ IOSUseAutomationSelectElements(
     return matches;
 }
 
+static BOOL IOSUseAutomationUsefulLandmark(
+    NSDictionary<NSString *, id> *element,
+    NSString *app,
+    NSInteger tier,
+    NSString **label
+) {
+    if (![element isKindOfClass:NSDictionary.class] ||
+        ![element[@"state"][@"visible"] boolValue]) {
+        return NO;
+    }
+    NSInteger elementType = [element[@"elementType"] integerValue];
+    BOOL allowed = NO;
+    if (tier == 0) {
+        allowed = IOSUseAutomationElementIsActionable(element) &&
+            elementType != 75;
+    } else if (tier == 1) {
+        allowed = elementType == 48;
+    } else if (tier == 2) {
+        allowed = elementType == 75;
+    }
+    if (!allowed) {
+        return NO;
+    }
+    NSString *candidate = [element[@"label"]
+        stringByTrimmingCharactersInSet:
+            NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (candidate.length == 0 || candidate.length > 120 ||
+        (app.length > 0 && [candidate hasPrefix:app])) {
+        return NO;
+    }
+    NSString *identifier = element[@"identifier"];
+    if ([identifier isKindOfClass:NSString.class] &&
+        [candidate isEqualToString:identifier] &&
+        [candidate containsString:@"_"]) {
+        return NO;
+    }
+    if (label != NULL) {
+        *label = candidate;
+    }
+    return YES;
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseAutomationNotFoundError(
+    NSDictionary<NSString *, id> *target,
+    NSDictionary<NSString *, id> *dom
+) {
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    NSMutableArray<NSDictionary<NSString *, id> *> *shown =
+        [NSMutableArray arrayWithCapacity:5];
+    NSUInteger candidateCount = 0;
+    NSString *app = [dom[@"app"] isKindOfClass:NSString.class]
+        ? dom[@"app"]
+        : @"";
+    for (NSInteger tier = 0; tier < 3; tier += 1) {
+        for (NSDictionary<NSString *, id> *element in dom[@"elements"]) {
+            NSString *label = nil;
+            if (!IOSUseAutomationUsefulLandmark(
+                    element,
+                    app,
+                    tier,
+                    &label
+                ) ||
+                [seen containsObject:label]) {
+                continue;
+            }
+            [seen addObject:label];
+            candidateCount += 1;
+            if (shown.count < 5) {
+                [shown addObject:@{
+                    @"element": element,
+                    @"rejectedBy": @[@"label_mismatch"],
+                }];
+            }
+        }
+    }
+    NSArray<NSString *> *suggestions = candidateCount > 0
+        ? @[@"inspect the current-page candidates and navigate before retrying"]
+        : @[@"refresh the DOM and verify the current page before retrying"];
+    return IOSUseAutomationErrorWithDiagnostics(
+        @"element_not_found",
+        @"target did not resolve in a fresh live snapshot",
+        @"lookup",
+        @"lookup",
+        YES,
+        target,
+        shown,
+        candidateCount,
+        suggestions
+    );
+}
+
 static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
     NSDictionary<NSString *, id> *target,
     NSDictionary<NSString *, id> *dom,
@@ -820,19 +975,17 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
                 }];
             }
             if (commandError != NULL) {
-                *commandError = IOSUseAutomationError(
-                    matches.count > 1
-                        ? @"element_ambiguous"
-                        : @"element_not_found",
-                    matches.count > 1
-                        ? @"target resolved to multiple live elements"
-                        : @"target did not resolve in a fresh live snapshot",
-                    @"lookup",
-                    @"lookup",
-                    YES,
-                    target,
-                    candidates
-                );
+                *commandError = matches.count > 1
+                    ? IOSUseAutomationError(
+                        @"element_ambiguous",
+                        @"target resolved to multiple live elements",
+                        @"lookup",
+                        @"lookup",
+                        YES,
+                        target,
+                        candidates
+                    )
+                    : IOSUseAutomationNotFoundError(target, dom);
             }
             return nil;
         }
@@ -914,14 +1067,14 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
     }
     if (resolvedWindow == nil || resolvedHit == nil) {
         if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"element_not_hittable",
+            *commandError = IOSUseAutomationNotHittableError(
                 @"fresh target point has no live hit-test view",
-                @"interaction",
                 @"hit-test",
                 YES,
                 target,
-                @[]
+                selected,
+                @"no_live_hit_view",
+                @[@"wait for layout or choose a visible actionable target"]
             );
         }
         return nil;
@@ -1589,28 +1742,28 @@ static BOOL IOSUseAutomationTapTargetPreflight(
             isKindOfClass:NSNumber.class] &&
         ![candidate.serialized[@"state"][@"enabled"] boolValue]) {
         if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"element_not_hittable",
+            *commandError = IOSUseAutomationNotHittableError(
                 @"fresh semantic target is disabled",
-                @"interaction",
                 @"identity",
                 NO,
                 target,
-                @[]
+                candidate,
+                @"disabled",
+                @[@"wait for the target to become enabled"]
             );
         }
         return NO;
     }
     if (!IOSUseAutomationRectHasArea(candidate.frame)) {
         if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"element_not_hittable",
+            *commandError = IOSUseAutomationNotHittableError(
                 @"fresh semantic target has no finite live frame",
-                @"interaction",
                 @"hit-test",
                 YES,
                 target,
-                @[]
+                candidate,
+                @"zero_area_frame",
+                @[@"wait for layout or choose a visible actionable ancestor"]
             );
         }
         return NO;
@@ -1678,14 +1831,14 @@ static BOOL IOSUseAutomationPlaceTap(
          IOSUseAutomationDOMHasVisibleUIKitAlertMirror(dom)) &&
         !exactNativeAlertVisible) {
         if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"element_not_hittable",
+            *commandError = IOSUseAutomationNotHittableError(
                 @"the visible native alert mirror could not be bound to one exact AppKit panel and action geometry",
-                @"interaction",
                 @"identity",
                 YES,
                 target,
-                @[]
+                candidate,
+                @"blocked_by_alert",
+                @[@"dismiss the visible alert before retrying"]
             );
         }
         return NO;
@@ -1701,14 +1854,14 @@ static BOOL IOSUseAutomationPlaceTap(
                 IOSUseAutomationNativeAlertActionAtPoint(requested);
             if (nativeAction == nil) {
                 if (commandError != NULL) {
-                    *commandError = IOSUseAutomationError(
-                        @"element_not_hittable",
+                    *commandError = IOSUseAutomationNotHittableError(
                         @"absolute tap is blocked by the visible native alert and does not identify exactly one action",
-                        @"interaction",
                         @"hit-test",
                         YES,
                         target,
-                        @[]
+                        candidate,
+                        @"blocked_by_alert",
+                        @[@"target one exact alert action or dismiss the alert"]
                     );
                 }
                 return NO;
@@ -1757,14 +1910,14 @@ static BOOL IOSUseAutomationPlaceTap(
                 [dom[@"snapshotGeneration"]
                     unsignedLongLongValue]) {
             if (commandError != NULL) {
-                *commandError = IOSUseAutomationError(
-                    @"element_not_hittable",
+                *commandError = IOSUseAutomationNotHittableError(
                     @"absolute tap point has no live hit-test view",
-                    @"interaction",
                     @"hit-test",
                     YES,
                     target,
-                    @[]
+                    candidate,
+                    @"no_live_hit_view",
+                    @[@"refresh the DOM and choose a current semantic target"]
                 );
             }
             return NO;
@@ -1793,14 +1946,14 @@ static BOOL IOSUseAutomationPlaceTap(
             );
         if (nativeAction == nil) {
             if (commandError != NULL) {
-                *commandError = IOSUseAutomationError(
-                    @"element_not_hittable",
+                *commandError = IOSUseAutomationNotHittableError(
                     @"semantic tap is blocked by the visible native alert and the target is not its exact current action proxy",
-                    @"interaction",
                     @"identity",
                     YES,
                     target,
-                    @[]
+                    candidate,
+                    @"blocked_by_alert",
+                    @[@"target one exact alert action or dismiss the alert"]
                 );
             }
             return NO;
@@ -1836,14 +1989,14 @@ static BOOL IOSUseAutomationPlaceTap(
             unambiguousFrame.size.height <= 0 ||
             !CGRectContainsPoint(unambiguousFrame, requested)) {
             if (commandError != NULL) {
-                *commandError = IOSUseAutomationError(
-                    @"element_not_hittable",
+                *commandError = IOSUseAutomationNotHittableError(
                     @"native alert tap placement is outside the exact current action frame",
-                    @"interaction",
                     @"hit-test",
                     YES,
                     target,
-                    @[]
+                    candidate,
+                    @"explicit_point_outside_target",
+                    @[@"remove the explicit offset and use automatic placement"]
                 );
             }
             return NO;
@@ -1864,14 +2017,14 @@ static BOOL IOSUseAutomationPlaceTap(
     if (interactionView == nil ||
         [interactionView isKindOfClass:UIWindow.class]) {
         if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"element_not_hittable",
+            *commandError = IOSUseAutomationNotHittableError(
                 @"fresh semantic target has no bounded live interaction owner",
-                @"interaction",
                 @"identity",
                 YES,
                 target,
-                @[]
+                candidate,
+                @"missing_interaction_owner",
+                @[@"choose the nearest unique actionable ancestor"]
             );
         }
         return NO;
@@ -1910,14 +2063,14 @@ static BOOL IOSUseAutomationPlaceTap(
                 requested
             )) {
             if (commandError != NULL) {
-                *commandError = IOSUseAutomationError(
-                    @"element_not_hittable",
+                *commandError = IOSUseAutomationNotHittableError(
                     @"explicit tap placement is not owned by the fresh semantic target",
-                    @"interaction",
                     @"hit-test",
                     YES,
                     target,
-                    @[]
+                    candidate,
+                    @"explicit_point_not_owned",
+                    @[@"remove the explicit offset and use automatic placement"]
                 );
             }
             return NO;
@@ -1943,14 +2096,14 @@ static BOOL IOSUseAutomationPlaceTap(
     CGRect visibleFrame = CGRectIntersection(frame, logicalScreen);
     if (!IOSUseAutomationRectHasArea(visibleFrame)) {
         if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"element_not_hittable",
+            *commandError = IOSUseAutomationNotHittableError(
                 @"fresh semantic target does not intersect the logical screen",
-                @"interaction",
                 @"hit-test",
                 YES,
                 target,
-                @[]
+                candidate,
+                @"outside_app_bounds",
+                @[@"scroll the target into view before retrying"]
             );
         }
         return NO;
@@ -2029,14 +2182,14 @@ static BOOL IOSUseAutomationPlaceTap(
         return YES;
     }
     if (commandError != NULL) {
-        *commandError = IOSUseAutomationError(
-            @"element_not_hittable",
+        *commandError = IOSUseAutomationNotHittableError(
             @"fresh semantic target has no exposed owned hit-test point",
-            @"interaction",
             @"hit-test",
             YES,
             target,
-            @[]
+            candidate,
+            @"no_exposed_owned_hit_point",
+            @[@"wait for overlays to clear or choose an exposed actionable ancestor"]
         );
     }
     return NO;
@@ -2450,14 +2603,14 @@ static BOOL IOSUseAutomationUnsupportedTouchBlockedByNativeAlert(
         return NO;
     }
     if (commandError != NULL) {
-        *commandError = IOSUseAutomationError(
-            @"element_not_hittable",
+        *commandError = IOSUseAutomationNotHittableError(
             @"a visible native alert blocks this touch command; use tap or dismissAlert on one exact alert action",
-            @"interaction",
             @"identity",
             YES,
             target,
-            @[]
+            nil,
+            @"blocked_by_alert",
+            @[@"target one exact alert action or dismiss the alert"]
         );
     }
     return YES;

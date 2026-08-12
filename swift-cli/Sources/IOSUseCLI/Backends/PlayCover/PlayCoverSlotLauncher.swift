@@ -369,7 +369,7 @@ enum PlayCoverSlotLauncher {
                     callbackError = error
                 }
             }
-            let candidates = NSRunningApplication.runningApplications(
+            let observedCandidates = NSRunningApplication.runningApplications(
                 withBundleIdentifier: slot.metadata.bundleIdentifier
             ).filter { !$0.isTerminated }.compactMap {
                 application -> PlayCoverSlotLaunchIdentityCandidate? in
@@ -395,15 +395,23 @@ enum PlayCoverSlotLauncher {
                         processStartTime(application.processIdentifier),
                     source: .authenticatedRuntime
                 )
-            }.filter {
-                runtimePingAuthenticates(
-                    $0,
-                    slot: slot,
-                    sessionID: sessionID,
-                    runtimeSocketPath: runtimeSocketPath,
-                    deadline: deadline
-                )
             }
+            // A logging Runtime intentionally waits for the host-owned stdio
+            // descriptor before it starts the command loop, so pinging it here
+            // deadlocks until the Runtime's bootstrap timeout expires. The
+            // observed process identity is checked again by LOCAL_PEERPID when
+            // the descriptor is sent and by the authenticated hello afterward.
+            let candidates = stdioLog == nil
+                ? observedCandidates.filter {
+                    runtimePingAuthenticates(
+                        $0,
+                        slot: slot,
+                        sessionID: sessionID,
+                        runtimeSocketPath: runtimeSocketPath,
+                        deadline: deadline
+                    )
+                }
+                : observedCandidates
             guard candidates.count <= 1 else {
                 throw PlayCoverBackendError.launchFailed(
                     "multiple App processes authenticated one launch session"

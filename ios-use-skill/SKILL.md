@@ -5,6 +5,37 @@ description: "Use when a task explicitly requires running, scripting, or trouble
 
 # ios-use Operational Playbook
 
+## Preserve repeatable workflows early
+
+Treat a working command sequence as a reusable asset. As soon as an
+exploratory route succeeds, preserve its stable labels, waits, and any debug
+setup in a named `.sh` script in the App's project instead of rediscovering the
+same route later.
+
+This is a strong recommendation when a route repeats, installs debug hooks, or
+may continue across turns or sessions. It is not a gate for a genuinely
+one-off action. Persist semantic labels rather than coordinates, make setup
+idempotent, and use fail-fast execution so later mutations do not run after an
+earlier failure.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+entry_label='入口'
+target_label='目标'
+visible_anchor='当前可见项'
+
+ios-use waitFor "$entry_label" --timeout 10s
+ios-use tap "$entry_label" --dom
+ios-use swipe --to "$target_label" --from "$visible_anchor" --dom
+ios-use tap "$target_label" --dom
+```
+
+Keep page-dependent UI actions sequential. Parallelize only independent
+read-only observations. For a short dependent sequence, joining commands with
+`&&` provides the same fail-fast behavior without requiring a script.
+
 ## Install or update ios-use
 
 Use the same command for both the initial installation and every update:
@@ -135,36 +166,6 @@ For changing labels, pass a stable substring instead of copying one transient va
 ```bash
 ios-use waitFor "优化身形线条中" --match contains --gone --timeout 55s
 ```
-
-### Compose repeatable workflows with shell
-
-Build repeatable shell workflows from stable semantic labels returned by `dom`. DOM
-snapshots, frames, and layout can change; persist their labels in scripts, never
-their coordinates.
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-bundle_id='com.example.app'
-entry_label='入口'
-target_label='目标'
-visible_anchor='当前可见项'
-
-ios-use activateApp "$bundle_id" --dom
-ios-use waitFor "$entry_label" --timeout 10s
-ios-use tap "$entry_label" --dom
-ios-use swipe --to "$target_label" --from "$visible_anchor" --dom
-ios-use tap "$target_label" --dom
-```
-
-- After an exploratory route succeeds, preserve its displayed labels and waits in
-  a reusable `.sh` script for that App.
-- Join short dependent command sequences with `&&`; in scripts, use fail-fast
-  behavior so a later mutation does not run after an earlier failure.
-- Use `waitFor` for loading and action `--dom` output for current state. Keep
-  page-dependent UI actions sequential; parallelize only independent read-only
-  observations.
 
 ## 4. Use targets deliberately
 

@@ -2590,6 +2590,34 @@ assert_json dom_initial '
   (($header.frame[3] - 129) | fabs) <= 0.5
 '
 
+missing_stdout="$RUN_DIR/missing_target.stdout"
+missing_stderr="$RUN_DIR/missing_target.stderr"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$MATRIX_VERSION" \
+  "missing_target" \
+  'tap missing target --json (expected current-page diagnostics)' \
+  "$missing_stdout" \
+  "$missing_stderr" >>"$MANIFEST"
+if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+    tap "__ios_use_missing_fixture_target__" --json \
+    >"$missing_stdout" 2>"$missing_stderr"; then
+  echo \
+    "[playcover-fixture-live] FAIL: missing target unexpectedly resolved" \
+    >&2
+  exit 1
+fi
+assert_failure_json missing_target '
+  .ok == false and
+  .error.category == "lookup" and
+  .error.code == "element_not_found" and
+  .error.phase == "lookup" and
+  (.data.candidates | length) > 0 and
+  (.data.candidates | length) <= 5 and
+  .data.candidateCount >= (.data.candidates | length) and
+  all(.data.candidates[]; .rejectedBy == ["label_mismatch"]) and
+  (.data.suggestions | length) > 0
+'
+
 record_case ui_tree_navigation ui-tree \
   --target 'fixture.uikit.navigation-bar' --depth 5 --json
 assert_json ui_tree_navigation '
@@ -2665,7 +2693,12 @@ fi
 assert_failure_json tap_explicit_covered '
   .ok == false and
   .error.code == "element_not_hittable" and
-  .error.phase == "hit-test"
+  .error.phase == "hit-test" and
+  .data.candidateCount == 1 and
+  .data.candidates[0].label == "Increment" and
+  .data.candidates[0].rejectedBy == ["explicit_point_not_owned"] and
+  .data.suggestions ==
+    ["remove the explicit offset and use automatic placement"]
 '
 record_case tap_covered_post_dom dom --json
 assert_evidence tap_covered_post_dom 'Count 3'
@@ -2694,7 +2727,11 @@ fi
 assert_failure_json disabled_target '
   .ok == false and
   .error.code == "element_not_hittable" and
-  .error.phase == "identity"
+  .error.phase == "identity" and
+  .data.candidateCount == 1 and
+  .data.candidates[0].label == "Disabled Target" and
+  .data.candidates[0].rejectedBy == ["disabled"] and
+  .data.suggestions == ["wait for the target to become enabled"]
 '
 
 record_case window_overlay_same_show \
@@ -2994,6 +3031,11 @@ record_case open_url open "iosusefixture://acceptance/v1" \
   --dom --json
 assert_evidence open_url '"dom"'
 assert_evidence open_url 'iosusefixture://acceptance/v1'
+assert_json open_url '
+  .data.schemeLookupVerified == true and
+  .data.registeredHandlers == ["com.iosuse.playfixture.stablev1"] and
+  .data.dom.app == "com.iosuse.playfixture.stablev1"
+'
 
 for probe in \
   "Full TL" "Full TR" "Full BL" "Full BR"; do

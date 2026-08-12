@@ -74,7 +74,7 @@ enum OpenURLService {
                     category: IOSUseErrorCategory.action,
                     code: "open_dispatch_unresolved",
                     phase: IOSUseErrorPhase.dispatch,
-                    retryable: true,
+                    retryable: false,
                     fatal: false,
                     mutationMayHaveApplied: true
                 )
@@ -270,8 +270,8 @@ enum OpenURLService {
                     url: base.url,
                     targetUdid: base.targetUdid,
                     deviceType: base.deviceType,
-                    registeredHandlers: [],
-                    schemeLookupVerified: true
+                    registeredHandlers: base.registeredHandlers,
+                    schemeLookupVerified: base.schemeLookupVerified
                 )
             } catch {
                 throw ReadinessError(
@@ -502,7 +502,7 @@ enum OpenURLService {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         configuration.addsToRecentItems = false
-        configuration.promptsUserIfNeeded = true
+        configuration.promptsUserIfNeeded = false
         configuration.createsNewApplicationInstance = false
         let box = MacOpenCompletionBox()
         let semaphore = DispatchSemaphore(value: 0)

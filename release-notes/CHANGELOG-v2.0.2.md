@@ -11,6 +11,14 @@
 - UI command failures report actionable targets, candidates, rejection
   reasons, suggestions, and alert details directly instead of writing an
   automatic failure evidence bundle.
+- Mac `start --log` now completes normally and captures the App's Runtime and
+  stdout/stderr output in the reported per-session log.
+- Mac lookup failures now include bounded current-page landmarks, while unsafe
+  taps include the matched element, rejection reason, and cause-specific next
+  step.
+- Mac `open --dom` now reports the same verified active-App handler as `open`,
+  avoids interactive system prompts, and does not recommend retrying an
+  unresolved URL whose effects may already have applied.
 - The default Mac readiness timeout is 60 seconds; an explicit positive
   `--timeout` may be longer.
 - Hosted CI now routes Swift, Driver, Mac Runtime, and script checks only when

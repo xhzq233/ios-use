@@ -381,6 +381,12 @@ public enum PlayCoverService {
         expected: PlayCoverStdioLogIdentity?
     ) throws {
         if let expected {
+            let reportedPath = state.path ?? "none"
+            let reportedDevice = state.device.map(String.init) ?? "none"
+            let reportedInode = state.inode.map(String.init) ?? "none"
+            let reportedFailureStage = state.failureStage ?? "none"
+            let reportedErrorNumber =
+                state.errorNumber.map(String.init) ?? "none"
             guard state.status == "redirected",
                   state.path.map(PlayCoverRuntimeClient.canonicalPath)
                     == PlayCoverRuntimeClient.canonicalPath(expected.path),
@@ -389,7 +395,14 @@ public enum PlayCoverService {
                   state.failureStage == nil,
                   state.errorNumber == nil else {
                 throw PlayCoverBackendError.stdioLogFailed(
-                    "Runtime stdio redirection does not match the session log"
+                    "Runtime reported status=\(state.status), "
+                        + "path=\(reportedPath), "
+                        + "device=\(reportedDevice), "
+                        + "inode=\(reportedInode), "
+                        + "failureStage=\(reportedFailureStage), "
+                        + "errno=\(reportedErrorNumber); "
+                        + "expected path=\(expected.path), "
+                        + "device=\(expected.device), inode=\(expected.inode)"
                 )
             }
             return
