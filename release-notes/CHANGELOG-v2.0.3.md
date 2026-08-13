@@ -31,9 +31,12 @@
 
 ## Breaking Behavior
 
+- Removed `start --mac --frida`. The Frida debug Engine is now resident in
+  every Mac App, so existing commands should simply drop that option.
 - Removed `start --mac --reuse`. Use `start --mac` for the current slot or
   `start --mac --app <source.app>` for automatic source-aware reuse/update.
-- Mac slots created by 2.0.1 or 2.0.2 are not migrated. Run one explicit
+- Mac App caches and slots created by v2.0.0 through v2.0.2 are not migrated.
+  Run one explicit
   `start --mac --app <source.app>` to rebuild each slot as `App.app` with the
   v2.0.3 Runtime.
 - JSON failures no longer contain `evidenceManifest`, and UI failures no
@@ -43,8 +46,6 @@
 
 - The v2.0.1 and v2.0.2 binary releases were withdrawn because of the Mac
   Runtime regression. Upgrade affected installations to v2.0.3.
-- After upgrading, run `start --mac --app <source.app>` once to rebuild the
-  managed App with the v2.0.3 Runtime.
 
 ## Notes
 
