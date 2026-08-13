@@ -654,17 +654,19 @@ int main(void) {
             YES,
             nil
         );
-        IOSUsePlayHookRegistryRecordPreMainInvocation("dyld.uname");
+        IOSUsePlayHookRegistryRecordPreMainInvocation(
+            "dyld.active-platform"
+        );
         IOSUsePlayHookRegistryDeclareObservedWrapper(
-            @"dyld.uname",
+            @"dyld.active-platform",
             @"dyld-interpose",
             @"libSystem",
-            @"uname",
-            @"int(struct utsname *)"
+            @"dyld_get_active_platform",
+            @"int(void)"
         );
         passed &= IOSUseHookRequire(
             IOSUsePlayHookRegistryEntryReady(
-                @"dyld.uname"
+                @"dyld.active-platform"
             ) &&
                 IOSUsePlayHookRegistryRequiredReady(),
             @"pre-main invocation was not retained until declaration"

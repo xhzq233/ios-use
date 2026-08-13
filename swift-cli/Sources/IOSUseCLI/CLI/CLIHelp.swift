@@ -127,6 +127,8 @@ enum CLIHelp {
             installed slot automatically. Omit --app to launch this Home's
             current installed App.
             Every Mac App includes the resident Frida debug Engine.
+            On macOS 26 or newer, start prints a compatibility warning and
+            continues; Mac UI interaction is not fully supported and may crash.
             --log captures target-App stdout/stderr from the injected Runtime
             onward in an owner-only per-session file retained after stop,
             crash, or launch failure.

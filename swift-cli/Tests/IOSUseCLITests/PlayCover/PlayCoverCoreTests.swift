@@ -182,6 +182,27 @@ final class PlayCoverCoreTests: XCTestCase {
         )
     }
 
+    func testMacBackendCompatibilityWarningStartsAtMacOS26() {
+        XCTAssertNil(
+            IOSUseCLI.macBackendCompatibilityWarning(
+                for: OperatingSystemVersion(
+                    majorVersion: 25,
+                    minorVersion: 9,
+                    patchVersion: 0
+                )
+            )
+        )
+        XCTAssertNotNil(
+            IOSUseCLI.macBackendCompatibilityWarning(
+                for: OperatingSystemVersion(
+                    majorVersion: 26,
+                    minorVersion: 0,
+                    patchVersion: 0
+                )
+            )
+        )
+    }
+
     func testDirectLaunchEnvironmentCarriesOnlyCurrentSlotIdentity() {
         let environment = PlayCoverSlotLauncher.launchEnvironmentForTesting(
             source: [

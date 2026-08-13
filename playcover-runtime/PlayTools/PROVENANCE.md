@@ -105,9 +105,10 @@ gate.
 
 ### Clean-iOS identity boundary
 
-The Runtime preserves the native Catalyst platform signals exposed by
-`NSProcessInfo` and dyld because Apple frameworks consume the same process-wide
-APIs during scene creation. Device model, idiom, screen, orientation, and touch
+The Runtime restores the v2.0.0 dyld active-platform interpose and reports
+`PLATFORM_IOS` for App compatibility. `NSProcessInfo` keeps its native
+Catalyst values because Apple frameworks consume those process-wide APIs during
+scene creation. Device model, idiom, screen, orientation, and touch
 compatibility remain the fixed iPhone contract. `PlayLoader.m` reuses its
 existing `open`/`stat`/`access` interposition point to return `ENOENT` for a
 fixed set of shell, SSH, Cydia, MobileSubstrate, apt, cycript, Frida-server, and
@@ -117,5 +118,6 @@ rules.
 The ios-use Runtime captures its private session revision and PlayChain root
 before initialization, then removes all `IOS_USE_PLAY_*` bootstrap variables
 and empty environment entries. `PlayedAppleDB.swift` reads only the captured
-values. This contract intentionally does not hide Catalyst, hide loaded images,
-rewrite the Mach-O platform, or implement generic anti-debug behavior.
+values. This contract intentionally does not swizzle `NSProcessInfo`, hide
+loaded images, rewrite the Mach-O platform, or implement generic anti-debug
+behavior.

@@ -72,6 +72,10 @@ ios-use config --mac
 ios-use start --mac --app <App.app>
 ```
 
+On macOS 26 or newer, `start --mac` warns and continues, but Mac UI interaction
+is not fully supported and may crash. Prefer a validated older macOS host, a
+real device, or a Simulator for reliable automation.
+
 `config --mac` asks for macOS authentication. If authentication is cancelled,
 rerun the same command. This setup is shared across `IOS_USE_HOME` values.
 

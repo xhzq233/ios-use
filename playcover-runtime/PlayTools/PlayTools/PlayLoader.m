@@ -24,6 +24,17 @@
 // With a null terminator
 #define DEVICE_MODEL IOS_USE_PLAY_DEVICE_PRODUCT_TYPE
 #define OEM_ID IOS_USE_PLAY_DEVICE_HARDWARE_TARGET
+#define PLATFORM_IOS 2
+
+// Define dyld_get_active_platform function for interpose
+int dyld_get_active_platform(void);
+int pt_dyld_get_active_platform(void) {
+    IOSUsePlayHookRegistryRecordPreMainInvocation(
+        "dyld.active-platform"
+    );
+    return PLATFORM_IOS;
+}
+
 // Change the machine output by uname to match expected output on iOS
 static int pt_uname(struct utsname *uts) {
     IOSUsePlayHookRegistryRecordPreMainInvocation("dyld.uname");
@@ -106,6 +117,7 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
 }
 
 // Interpose the functions create the wrapper
+DYLD_INTERPOSE(pt_dyld_get_active_platform, dyld_get_active_platform)
 DYLD_INTERPOSE(pt_uname, uname)
 DYLD_INTERPOSE(pt_sysctlbyname, sysctlbyname)
 DYLD_INTERPOSE(pt_sysctl, sysctl)
@@ -442,6 +454,13 @@ DYLD_INTERPOSE(pt_usleep, usleep)
 @implementation PlayLoader
 
 + (void)load {
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"dyld.active-platform",
+        @"dyld-interpose",
+        @"libSystem",
+        @"dyld_get_active_platform",
+        @"int(void)"
+    );
     IOSUsePlayHookRegistryDeclareObservedWrapper(
         @"dyld.uname",
         @"dyld-interpose",

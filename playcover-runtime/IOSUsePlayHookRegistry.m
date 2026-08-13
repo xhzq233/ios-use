@@ -48,6 +48,7 @@ typedef struct {
 
 static IOSUsePlayPreMainInvocationCounter
     IOSUsePlayPreMainInvocationCounters[] = {
+        {"dyld.active-platform", 0},
         {"dyld.uname", 0},
         {"dyld.sysctl", 0},
         {"dyld.sysctlbyname", 0},

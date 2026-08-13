@@ -76,11 +76,11 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     func testVersionFlagPrintsPinnedPublicVersion() {
-        XCTAssertEqual(IOSUseCLI.version, "2.0.2")
+        XCTAssertEqual(IOSUseCLI.version, "2.0.3")
         for flag in ["--version", "-V"] {
             let result = IOSUseCLI().run(arguments: [flag])
             XCTAssertEqual(result.exitCode, 0)
-            XCTAssertEqual(result.stdout, "2.0.2\n")
+            XCTAssertEqual(result.stdout, "2.0.3\n")
             XCTAssertTrue(result.stderr.isEmpty)
         }
     }

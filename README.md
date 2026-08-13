@@ -89,7 +89,7 @@ bytes. To install a
 specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.0.2
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.0.3
 ```
 
 Intel Macs are unsupported because the Mac Runtime and converted iPhone Apps
@@ -214,6 +214,11 @@ contract is compiled into the Runtime and host from one header:
 `iPhone16,2`, 430 x 932 logical points, 3x scale, and 1290 x 2796 native
 pixels.
 
+The Mac backend is not fully supported on macOS 26 or newer. `start --mac`
+prints a warning and continues, but UI interaction can still crash. For
+reliable automation, use a validated older macOS release, a real device, or a
+Simulator.
+
 ```bash
 bash scripts/build_swift_cli.sh --debug
 
@@ -242,7 +247,7 @@ updates it when needed. Every Mac App includes the Frida debug Engine, so
 `ios-use debug` is always available. Later, `start --mac` launches the current
 App remembered by this `IOS_USE_HOME` without requiring its source path.
 
-v2.0.2 does not migrate or auto-launch Mac Apps installed by older versions, and
+v2.0.3 does not migrate or auto-launch Mac Apps installed by older versions, and
 it never deletes old caches for you. After upgrading, stop any running Mac
 session and run `start --mac --app` once for each Bundle you want to keep using.
 Run `ios-use du` to see leftover caches you can remove yourself.
