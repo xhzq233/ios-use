@@ -12,6 +12,10 @@
 #import <string.h>
 #import <unistd.h>
 
+#ifndef IOS_USE_PLAY_ENABLE_HOVER
+#define IOS_USE_PLAY_ENABLE_HOVER 0
+#endif
+
 static const CGFloat IOSUseBridgeDeviceLogicalWidth =
     (CGFloat)IOSUsePlayDeviceLogicalWidth;
 static const CGFloat IOSUseBridgeDeviceLogicalHeight =
@@ -2816,10 +2820,25 @@ static BOOL IOSUseBridgeInstallMouseLocalMonitor(void) {
         );
         return NO;
     }
-    // NSEventTypeLeftMouseDown == 1 and LeftMouseUp == 2. NSEventMask is
-    // defined as one shifted by NSEventType in pinned PlayTools/AppKit.
+    // NSEventMask is defined as one shifted by NSEventType in pinned
+    // PlayTools/AppKit. Hover is disabled by default; define
+    // IOS_USE_PLAY_ENABLE_HOVER=1 when compiling the Runtime to restore it.
     NSUInteger mask = ((NSUInteger)1 << 1) | ((NSUInteger)1 << 2);
+#if !IOS_USE_PLAY_ENABLE_HOVER
+    // MouseMoved, MouseEntered, MouseExited, and CursorUpdate.
+    mask |= ((NSUInteger)1 << 5) |
+        ((NSUInteger)1 << 8) |
+        ((NSUInteger)1 << 9) |
+        ((NSUInteger)1 << 17);
+#endif
     id handler = ^id(id event) {
+        NSInteger eventType = IOSUseBridgeInteger(event, @"type");
+#if !IOS_USE_PLAY_ENABLE_HOVER
+        if (eventType == 5 || eventType == 8 ||
+            eventType == 9 || eventType == 17) {
+            return nil;
+        }
+#endif
         CGEventRef cgEvent = [event respondsToSelector:
             NSSelectorFromString(@"CGEvent")]
             ? ((IOSUseBridgeSendCGEvent)objc_msgSend)(
@@ -2890,7 +2909,6 @@ static BOOL IOSUseBridgeInstallMouseLocalMonitor(void) {
                 cgEvent,
                 kCGEventSourceUnixProcessID
             );
-        NSInteger eventType = IOSUseBridgeInteger(event, @"type");
         NSString *phase = eventType == 1
             ? @"down"
             : eventType == 2 ? @"up" : @"unknown";
