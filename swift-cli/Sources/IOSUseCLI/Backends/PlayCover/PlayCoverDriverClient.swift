@@ -970,7 +970,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch(mismatch.1)
         }
-        try validateSimulatorScaleHost(geometry.host)
+        try validateNativeCatalystHost(geometry.host)
     }
 
     private static func validNaturalSafeArea(
@@ -995,271 +995,81 @@ final class PlayCoverDriverClient: DriverCommandClient {
             && safeArea.left + safeArea.right <= logicalSize.width
     }
 
-    private static func validateSimulatorScaleHost(
+    private static func validateNativeCatalystHost(
         _ host: PlayCoverRuntimeHostGeometry?
     ) throws {
         guard let host else {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch(
-                    "simulator-scale host diagnostics"
+                    "native Catalyst host diagnostics"
                 )
         }
-        guard let backingPixelCanvasRect =
-                host.backingPixelCanvasRect,
-              let backingScaleFactor = host.backingScaleFactor,
-              let halfPixelTolerance = host.halfPixelTolerance,
-              backingScaleFactor.isFinite,
-              backingScaleFactor > 0,
-              backingScaleFactor <= 4,
-              halfPixelTolerance.isFinite,
-              halfPixelTolerance > 0,
-              host.displayScale.isFinite,
-              host.displayScale > 0,
-              abs(
-                  halfPixelTolerance -
-                      0.5 / backingScaleFactor
-              ) <= 0.000_001 else {
+        let backingScale = host.backingScaleFactor
+        guard backingScale.isFinite,
+              backingScale > 0,
+              backingScale <= 4 else {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch(
-                    "simulator-scale host display scale"
+                    "native Catalyst backing scale"
                 )
         }
-        let geometryTolerance = halfPixelTolerance
-        let logicalTolerance =
-            halfPixelTolerance / host.displayScale
-        guard logicalTolerance.isFinite, logicalTolerance > 0 else {
-            throw PlayCoverDriverClientError
-                .runtimeGeometryMismatch(
-                    "simulator-scale host display scale"
-                )
-        }
-        let logicalEdgeTolerance = logicalTolerance
+        let geometryTolerance = 0.5 / backingScale
         func withinHost(_ lhs: Double, _ rhs: Double) -> Bool {
             abs(lhs - rhs) <= geometryTolerance
         }
-        func withinLogical(_ lhs: Double, _ rhs: Double) -> Bool {
-            abs(lhs - rhs) <= logicalEdgeTolerance
-        }
-        func backingAligned(_ value: Double) -> Bool {
-            let pixels = value * backingScaleFactor
-            return abs(pixels - pixels.rounded()) <= 0.000_001
-        }
-        let expectedCanvasWidth =
-            Self.logicalSize.width * host.displayScale
-        let expectedCanvasHeight =
-            Self.logicalSize.height * host.displayScale
-        let leftMargin =
-            host.canvasRect.x - host.contentBounds.x
-        let rightMargin =
-            host.contentBounds.x + host.contentBounds.width -
-                host.canvasRect.x - host.canvasRect.width
-        let bottomMargin =
-            host.canvasRect.y - host.contentBounds.y
-        let topMargin =
-            host.contentBounds.y + host.contentBounds.height -
-                host.canvasRect.y - host.canvasRect.height
-        let horizontalSurplus = max(0, leftMargin + rightMargin)
-        let verticalSurplus = max(0, bottomMargin + topMargin)
-        // UIKitMacHelper can fold both centered subpixel edge margins into
-        // one positive private render-view extent. Derive each axis from the
-        // actual host surplus, bound it by those same two half-pixel edges,
-        // and keep origins/undersize at one-edge tolerance. Input still uses
-        // the ideal canvas transform rather than this raster extent.
-        let privateWidthTolerance = max(
-            logicalEdgeTolerance,
-            min(
-                horizontalSurplus / host.displayScale,
-                logicalEdgeTolerance * 2
-            )
-        )
-        let privateHeightTolerance = max(
-            logicalEdgeTolerance,
-            min(
-                verticalSurplus / host.displayScale,
-                logicalEdgeTolerance * 2
-            )
-        )
-        let privateRenderRects = [
-            host.sceneRenderViewFrame,
-            host.sceneRenderViewBounds,
-            host.inputRenderViewFrame,
-            host.inputRenderViewBounds,
-        ]
-        let privateRenderRectsAgree =
-            privateRenderRects.dropFirst().allSatisfy {
-                approximatelyEqual(
-                    $0.x,
-                    privateRenderRects[0].x
-                ) &&
-                    approximatelyEqual(
-                        $0.y,
-                        privateRenderRects[0].y
-                    ) &&
-                    approximatelyEqual(
-                        $0.width,
-                        privateRenderRects[0].width
-                    ) &&
-                    approximatelyEqual(
-                        $0.height,
-                        privateRenderRects[0].height
-                    )
-            }
+        let fixedBackingIsSupported =
+            approximatelyEqual(host.fixedBackingScale, 0) ||
+            approximatelyEqual(host.fixedBackingScale, 3)
+        let rasterMatchesPolicy =
+            approximatelyEqual(host.fixedBackingScale, 0)
+                ? approximatelyEqual(
+                    host.sceneRasterizationScale,
+                    backingScale
+                )
+                : approximatelyEqual(
+                    host.sceneRasterizationScale,
+                    3
+                )
         let checks: [(Bool, String)] = [
             (
                 host.status == "configured" && host.hostPolicy,
-                "simulator-scale host policy"
+                "native Catalyst host policy"
             ),
             (
-                host.opaque && host.publicTitleBar && host.titleVisible &&
-                    host.resizable,
-                "simulator-scale host presentation"
+                host.opaque && host.publicTitleBar &&
+                    host.titleVisible && !host.resizable,
+                "native Catalyst host presentation"
             ),
             (
                 !host.title.isEmpty && host.title == host.titleExpected,
-                "simulator-scale host title"
-            ),
-            (
-                host.displayScale.isFinite && host.displayScale > 0 &&
-                    host.inverseDisplayScale.isFinite &&
-                    host.inverseDisplayScale > 0 &&
-                    approximatelyEqual(
-                        host.displayScale * host.inverseDisplayScale,
-                        1
-                    ) &&
-                    host.idiomScale.isFinite &&
-                    approximatelyEqual(host.idiomScale, 1) &&
-                    approximatelyEqual(host.windowScale, 1) &&
-                    !host.downscaleWindowIfNecessary,
-                "simulator-scale host display scale"
-            ),
-            (
-                validHostFrame(host.canvasBounds) &&
-                    abs(host.canvasBounds.x) <= logicalEdgeTolerance &&
-                    abs(host.canvasBounds.y) <= logicalEdgeTolerance &&
-                    withinLogical(
-                        host.canvasBounds.width,
-                        Self.logicalSize.width
-                    ) &&
-                    withinLogical(
-                        host.canvasBounds.height,
-                        Self.logicalSize.height
-                    ),
-                "simulator-scale fixed canvas bounds"
-            ),
-            (
-                fixedLogicalCanvasRect(
-                    host.renderViewBounds,
-                    tolerance: logicalTolerance
-                ),
-                "simulator-scale logical render-view bounds"
-            ),
-            (
-                pixelQuantizedPrivateCanvasRect(
-                    host.sceneRenderViewFrame,
-                    originTolerance: logicalEdgeTolerance,
-                    positiveWidthTolerance: privateWidthTolerance,
-                    positiveHeightTolerance: privateHeightTolerance
-                ),
-                "simulator-scale logical scene-render frame"
-            ),
-            (
-                pixelQuantizedPrivateCanvasRect(
-                    host.sceneRenderViewBounds,
-                    originTolerance: logicalEdgeTolerance,
-                    positiveWidthTolerance: privateWidthTolerance,
-                    positiveHeightTolerance: privateHeightTolerance
-                ),
-                "simulator-scale logical scene-render bounds"
-            ),
-            (
-                pixelQuantizedPrivateCanvasRect(
-                    host.inputRenderViewFrame,
-                    originTolerance: logicalEdgeTolerance,
-                    positiveWidthTolerance: privateWidthTolerance,
-                    positiveHeightTolerance: privateHeightTolerance
-                ),
-                "simulator-scale logical input-render frame"
-            ),
-            (
-                pixelQuantizedPrivateCanvasRect(
-                    host.inputRenderViewBounds,
-                    originTolerance: logicalEdgeTolerance,
-                    positiveWidthTolerance: privateWidthTolerance,
-                    positiveHeightTolerance: privateHeightTolerance
-                ),
-                "simulator-scale logical input-render bounds"
-            ),
-            (
-                privateRenderRectsAgree,
-                "simulator-scale private render-view consistency"
+                "native Catalyst host title"
             ),
             (
                 validHostFrame(host.frame) &&
-                    validHostFrame(host.contentBounds) &&
-                    validHostFrame(host.canvasRect) &&
-                    validHostFrame(backingPixelCanvasRect) &&
-                    backingAligned(backingPixelCanvasRect.x) &&
-                    backingAligned(backingPixelCanvasRect.y) &&
-                    backingAligned(
-                        backingPixelCanvasRect.x +
-                            backingPixelCanvasRect.width
-                    ) &&
-                    backingAligned(
-                        backingPixelCanvasRect.y +
-                            backingPixelCanvasRect.height
-                    ) &&
-                    withinHost(
-                        host.canvasRect.width,
-                        expectedCanvasWidth
-                    ) &&
-                    withinHost(
-                        host.canvasRect.height,
-                        expectedCanvasHeight
-                    ) &&
-                    hostFrameContains(
-                        host.contentBounds,
-                        host.canvasRect,
-                        tolerance: geometryTolerance
-                    ) &&
-                    leftMargin >= -geometryTolerance &&
-                    rightMargin >= -geometryTolerance &&
-                    bottomMargin >= -geometryTolerance &&
-                    topMargin >= -geometryTolerance &&
-                    leftMargin + rightMargin <=
-                        geometryTolerance * 2 &&
-                    bottomMargin + topMargin <=
-                        geometryTolerance * 2 &&
-                    withinHost(leftMargin, rightMargin) &&
-                    withinHost(bottomMargin, topMargin) &&
-                    hostFrameContains(
-                        host.contentBounds,
-                        backingPixelCanvasRect,
-                        tolerance: geometryTolerance
-                    ) &&
-                    withinHost(
-                        backingPixelCanvasRect.x,
-                        host.canvasRect.x
-                    ) &&
-                    withinHost(
-                        backingPixelCanvasRect.y,
-                        host.canvasRect.y
-                    ) &&
-                    withinHost(
-                        backingPixelCanvasRect.x +
-                            backingPixelCanvasRect.width,
-                        host.canvasRect.x + host.canvasRect.width
-                    ) &&
-                    withinHost(
-                        backingPixelCanvasRect.y +
-                            backingPixelCanvasRect.height,
-                        host.canvasRect.y + host.canvasRect.height
-                    ),
-                "simulator-scale host canvas layout"
+                    validHostFrame(host.contentBounds),
+                "native Catalyst host geometry"
+            ),
+            (
+                fixedLogicalCanvasRect(
+                    host.canvasBounds,
+                    tolerance: 0.01
+                ),
+                "fixed UIKit canvas bounds"
+            ),
+            (
+                host.sceneRasterizationScale.isFinite &&
+                    host.sceneRasterizationScale > 0 &&
+                    host.fixedBackingScale.isFinite &&
+                    fixedBackingIsSupported &&
+                    rasterMatchesPolicy,
+                "native Catalyst scene backing"
             ),
             (
                 host.capture.ready && host.capture.error == nil &&
                     (host.capture.hostWindowNumber ?? 0) > 0 &&
-                    validHostFrame(host.capture.hostContentCGWindowRect) &&
+                    validHostFrame(
+                        host.capture.hostContentCGWindowRect
+                    ) &&
                     validHostFrame(host.capture.hostCGWindowBounds) &&
                     validHostFrame(host.capture.canvasCGWindowRect) &&
                     withinHost(
@@ -1278,14 +1088,6 @@ final class PlayCoverDriverClient: DriverCommandClient {
                         host.capture.hostContentCGWindowRect.height,
                         host.contentBounds.height
                     ) &&
-                    withinHost(
-                        host.capture.canvasCGWindowRect.width,
-                        backingPixelCanvasRect.width
-                    ) &&
-                    withinHost(
-                        host.capture.canvasCGWindowRect.height,
-                        backingPixelCanvasRect.height
-                    ) &&
                     hostFrameContains(
                         host.capture.hostCGWindowBounds,
                         host.capture.hostContentCGWindowRect,
@@ -1298,19 +1100,21 @@ final class PlayCoverDriverClient: DriverCommandClient {
                     ) &&
                     withinHost(
                         host.capture.canvasCGWindowRect.x,
-                        host.capture.hostContentCGWindowRect.x +
-                            backingPixelCanvasRect.x -
-                            host.contentBounds.x
+                        host.capture.hostContentCGWindowRect.x
                     ) &&
                     withinHost(
                         host.capture.canvasCGWindowRect.y,
-                        host.capture.hostContentCGWindowRect.y +
-                            (host.contentBounds.y +
-                                host.contentBounds.height -
-                                backingPixelCanvasRect.y -
-                                backingPixelCanvasRect.height)
+                        host.capture.hostContentCGWindowRect.y
+                    ) &&
+                    withinHost(
+                        host.capture.canvasCGWindowRect.width,
+                        host.capture.hostContentCGWindowRect.width
+                    ) &&
+                    withinHost(
+                        host.capture.canvasCGWindowRect.height,
+                        host.capture.hostContentCGWindowRect.height
                     ),
-                "simulator-scale host canvas capture"
+                "native Catalyst content capture"
             ),
         ]
         if let mismatch = checks.first(where: { !$0.0 }) {
@@ -1337,29 +1141,6 @@ final class PlayCoverDriverClient: DriverCommandClient {
             abs(frame.height - logicalSize.height) <= tolerance
     }
 
-    private static func pixelQuantizedPrivateCanvasRect(
-        _ frame: PlayCoverRuntimeFrame,
-        originTolerance: Double,
-        positiveWidthTolerance: Double,
-        positiveHeightTolerance: Double
-    ) -> Bool {
-        let widthDelta = frame.width - logicalSize.width
-        let heightDelta = frame.height - logicalSize.height
-        let maximumXDelta =
-            frame.x + frame.width - logicalSize.width
-        let maximumYDelta =
-            frame.y + frame.height - logicalSize.height
-        return abs(frame.x) <= originTolerance &&
-            abs(frame.y) <= originTolerance &&
-            widthDelta >= -originTolerance &&
-            widthDelta <= positiveWidthTolerance + 0.000_001 &&
-            heightDelta >= -originTolerance &&
-            heightDelta <= positiveHeightTolerance + 0.000_001 &&
-            maximumXDelta >= -originTolerance &&
-            maximumXDelta <= positiveWidthTolerance + 0.000_001 &&
-            maximumYDelta >= -originTolerance &&
-            maximumYDelta <= positiveHeightTolerance + 0.000_001
-    }
 
     private static func hostFrameContains(
         _ container: PlayCoverRuntimeFrame,
@@ -1398,7 +1179,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
               approximatelyEqual(fullFrame.scale, Self.deviceScale),
               fullFrame.uncropped,
               fullFrame.safeAreaCropped == false,
-              fullFrame.identityMapping else {
+              fullFrame.nativeCanvas else {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch("screenshot full frame")
         }
@@ -1607,7 +1388,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
             "scale": .number(fullFrame.scale),
             "uncropped": .bool(fullFrame.uncropped),
             "safeAreaCropped": .bool(fullFrame.safeAreaCropped),
-            "identityMapping": .bool(fullFrame.identityMapping),
+            "nativeCanvas": .bool(fullFrame.nativeCanvas),
         ])
     }
 

@@ -88,7 +88,7 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
                     "scale": .number(Double(IOSUsePlayDeviceScale)),
                     "uncropped": .bool(true),
                     "safeAreaCropped": .bool(false),
-                    "identityMapping": .bool(true),
+                    "nativeCanvas": .bool(true),
                 ]),
             ]
         )
@@ -118,7 +118,7 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
         }
         XCTAssertEqual(fullFrame["uncropped"], .boolean(true))
         XCTAssertEqual(fullFrame["safeAreaCropped"], .boolean(false))
-        XCTAssertEqual(fullFrame["identityMapping"], .boolean(true))
+        XCTAssertEqual(fullFrame["nativeCanvas"], .boolean(true))
     }
 
     func testRuntimeJSONEvidenceConversionPreservesShape() {

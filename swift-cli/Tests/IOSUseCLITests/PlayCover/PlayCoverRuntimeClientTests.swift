@@ -1630,7 +1630,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             "scale": Int(IOSUsePlayDeviceScale),
             "uncropped": true,
             "safeAreaCropped": false,
-            "identityMapping": true,
+            "nativeCanvas": true,
         ]
     }
 

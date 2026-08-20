@@ -1041,21 +1041,18 @@ static BOOL HostContentCGWindowRect(
     return YES;
 }
 
-static BOOL RunSimulatorScaleHostCanvasSmoke(
+static BOOL RunNativeCatalystCanvasSmoke(
     CGSHWCaptureWindowListFunction capture,
     CGSMainConnectionIDFunction mainConnection
 ) {
     NSScreen *screen = NSScreen.mainScreen;
-    CGFloat requestedDisplayScale = 0.75;
-    CGSize contentSize = CGSizeMake(
-        IOSUsePlayDeviceLogicalWidth * requestedDisplayScale,
-        IOSUsePlayDeviceLogicalHeight * requestedDisplayScale
-    );
-    if (screen == nil || screen.visibleFrame.size.width < contentSize.width ||
+    CGSize contentSize = CGSizeMake(331, 718);
+    if (screen == nil ||
+        screen.visibleFrame.size.width < contentSize.width ||
         screen.visibleFrame.size.height < contentSize.height) {
         fprintf(
             stderr,
-            "[cgshw-smoke] screen cannot fit Simulator-scale host\n"
+            "[cgshw-smoke] screen cannot fit native Catalyst host\n"
         );
         return NO;
     }
@@ -1067,52 +1064,28 @@ static BOOL RunSimulatorScaleHostCanvasSmoke(
     );
     NSWindowStyleMask style = NSWindowStyleMaskTitled |
         NSWindowStyleMaskClosable |
-        NSWindowStyleMaskMiniaturizable |
-        NSWindowStyleMaskResizable;
+        NSWindowStyleMaskMiniaturizable;
     NSWindow *window = [[NSWindow alloc]
         initWithContentRect:contentRect
                   styleMask:style
                     backing:NSBackingStoreBuffered
                       defer:NO];
-    window.title = @"Simulator Scale Host Smoke";
-    window.contentAspectRatio = NSMakeSize(
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
-    );
-    window.contentMinSize = NSMakeSize(
-        IOSUsePlayDeviceLogicalWidth *
-            IOSUsePlayHostCanvasMinimumDisplayScale,
-        IOSUsePlayDeviceLogicalHeight *
-            IOSUsePlayHostCanvasMinimumDisplayScale
-    );
+    window.title = @"Native Catalyst Canvas Smoke";
     window.movable = YES;
-    NSView *hostContent = [[NSView alloc]
-        initWithFrame:NSMakeRect(0, 0, contentSize.width, contentSize.height)];
-    window.contentView = hostContent;
+    NSView *nativeContent = [[NSView alloc]
+        initWithFrame:NSMakeRect(
+            0,
+            0,
+            contentSize.width,
+            contentSize.height
+        )];
+    nativeContent.wantsLayer = YES;
+    nativeContent.layer.backgroundColor = NSColor.greenColor.CGColor;
+    window.contentView = nativeContent;
     [window setContentSize:contentSize];
     [window orderFront:nil];
     [window displayIfNeeded];
     PumpRunLoop(0.2);
-    IOSUsePlayHostCanvasLayout layout;
-    NSString *layoutFailure = nil;
-    BOOL layoutReady = IOSUsePlayResolveHostCanvasLayout(
-        hostContent.bounds,
-        window.backingScaleFactor,
-        &layout,
-        &layoutFailure
-    );
-    NSView *canvas = [[NSView alloc] initWithFrame:layout.canvasRect];
-    canvas.bounds = NSMakeRect(
-        0,
-        0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
-    );
-    canvas.wantsLayer = YES;
-    canvas.layer.backgroundColor = NSColor.greenColor.CGColor;
-    [hostContent addSubview:canvas];
-    [window displayIfNeeded];
-    PumpRunLoop(0.1);
 
     CGRect hostCGBounds = CGRectZero;
     CGRect contentCGBounds = CGRectZero;
@@ -1123,19 +1096,10 @@ static BOOL RunSimulatorScaleHostCanvasSmoke(
     );
     BOOL contentReady = HostContentCGWindowRect(
         window,
-        hostContent,
+        nativeContent,
         &contentCGBounds
     );
-    CGRect canvasCGBounds = CGRectNull;
-    NSString *canvasFailure = nil;
-    BOOL canvasReady = layoutReady && contentReady &&
-        IOSUsePlayResolveCanvasCGWindowRect(
-            contentCGBounds,
-            layout,
-            &canvasCGBounds,
-            &canvasFailure
-        );
-    CGImageRef raw = metadataReady && canvasReady
+    CGImageRef raw = metadataReady && contentReady
         ? CaptureWindow(
             capture,
             mainConnection,
@@ -1145,13 +1109,13 @@ static BOOL RunSimulatorScaleHostCanvasSmoke(
     CGRect logicalRect = CGRectNull;
     NSDictionary<NSString *, id> *cropEvidence = nil;
     NSString *cropFailure = nil;
-    CGImageRef normalized = raw == NULL ? NULL :
-        IOSUsePlayCropAndNormalizeCanvasCapture(
+    CGImageRef normalized = raw == NULL
+        ? NULL
+        : IOSUsePlayCropAndNormalizeCanvasCapture(
             raw,
             hostCGBounds,
-            canvasCGBounds,
-            layout.displayScale,
-            layout.backingScaleFactor,
+            contentCGBounds,
+            window.backingScaleFactor,
             &logicalRect,
             &cropEvidence,
             &cropFailure
@@ -1159,40 +1123,8 @@ static BOOL RunSimulatorScaleHostCanvasSmoke(
     uint8_t center[4] = {0};
     NSDictionary<NSString *, NSNumber *> *sourceCrop =
         cropEvidence[@"sourcePixelCropRect"];
-    BOOL cropExcludesHost = [cropEvidence[@"canvasOnly"] boolValue] &&
-        [cropEvidence[@"hostDecorationsExcluded"] boolValue] &&
-        [sourceCrop[@"y"] doubleValue] > 0;
-    BOOL singleScaleReady =
-        fabs(canvas.bounds.size.width - IOSUsePlayDeviceLogicalWidth) < 0.01 &&
-        fabs(canvas.bounds.size.height - IOSUsePlayDeviceLogicalHeight) < 0.01 &&
-        fabs(canvas.frame.origin.x - layout.canvasRect.origin.x) < 0.01 &&
-        fabs(canvas.frame.origin.y - layout.canvasRect.origin.y) < 0.01 &&
-        fabs(canvas.frame.size.width - layout.canvasRect.size.width) < 0.01 &&
-        fabs(canvas.frame.size.height - layout.canvasRect.size.height) < 0.01 &&
-        fabs(layout.displayScale - requestedDisplayScale) < 0.01;
-    CGFloat leftMargin =
-        NSMinX(canvas.frame) - NSMinX(hostContent.bounds);
-    CGFloat rightMargin =
-        NSMaxX(hostContent.bounds) - NSMaxX(canvas.frame);
-    CGFloat bottomMargin =
-        NSMinY(canvas.frame) - NSMinY(hostContent.bounds);
-    CGFloat topMargin =
-        NSMaxY(hostContent.bounds) - NSMaxY(canvas.frame);
-    BOOL centeredRoundingReady =
-        leftMargin >= -0.01 && rightMargin >= -0.01 &&
-        bottomMargin >= -0.01 && topMargin >= -0.01 &&
-        fabs(leftMargin - rightMargin) < 0.01 &&
-        fabs(bottomMargin - topMargin) < 0.01 &&
-        leftMargin + rightMargin < 1 &&
-        bottomMargin + topMargin < 1;
-    CGFloat contentAspect =
-        window.contentAspectRatio.width /
-        window.contentAspectRatio.height;
-    CGFloat deviceAspect =
-        (CGFloat)IOSUsePlayDeviceLogicalWidth /
-        (CGFloat)IOSUsePlayDeviceLogicalHeight;
-    BOOL passed = layoutReady && metadataReady && contentReady &&
-        canvasReady && raw != NULL && normalized != NULL &&
+    BOOL passed = metadataReady && contentReady &&
+        raw != NULL && normalized != NULL &&
         CGRectEqualToRect(
             logicalRect,
             CGRectMake(
@@ -1205,31 +1137,28 @@ static BOOL RunSimulatorScaleHostCanvasSmoke(
         CGImageGetWidth(normalized) == IOSUsePlayDeviceNativeWidth &&
         CGImageGetHeight(normalized) == IOSUsePlayDeviceNativeHeight &&
         SampleCenter(normalized, center) && PixelIsGreen(center) &&
-        cropExcludesHost && singleScaleReady && centeredRoundingReady &&
+        [cropEvidence[@"canvasOnly"] boolValue] &&
+        [cropEvidence[@"hostDecorationsExcluded"] boolValue] &&
+        [sourceCrop[@"y"] doubleValue] > 0 &&
+        window.contentView == nativeContent &&
         window.opaque && !window.titlebarAppearsTransparent &&
         window.hasShadow &&
         window.titleVisibility == NSWindowTitleVisible &&
-        fabs(contentAspect - deviceAspect) < 0.0001 &&
         (window.styleMask & NSWindowStyleMaskTitled) != 0 &&
-        (window.styleMask & NSWindowStyleMaskResizable) != 0;
+        (window.styleMask & NSWindowStyleMaskResizable) == 0;
     fprintf(
         stderr,
-        "[cgshw-smoke] simulator-scale-host raw=%zux%zu normalized=%zux%zu "
-        "scale=%.3f crop-y=%.1f single-scale=%d centered-rounding=%d opaque=%d title=%d title-visible=%d resizable=%d "
-        "host=(%.1f,%.1f,%.1f,%.1f) content=(%.1f,%.1f,%.1f,%.1f) "
-        "canvas-cg=(%.1f,%.1f,%.1f,%.1f) logical=(%.1f,%.1f,%.1f,%.1f) pass=%d%s%s\n",
+        "[cgshw-smoke] native-catalyst-host raw=%zux%zu "
+        "normalized=%zux%zu crop-y=%.1f nonresizable=%d "
+        "host=(%.1f,%.1f,%.1f,%.1f) "
+        "content=(%.1f,%.1f,%.1f,%.1f) "
+        "logical=(%.1f,%.1f,%.1f,%.1f) pass=%d%s%s\n",
         raw == NULL ? 0 : CGImageGetWidth(raw),
         raw == NULL ? 0 : CGImageGetHeight(raw),
         normalized == NULL ? 0 : CGImageGetWidth(normalized),
         normalized == NULL ? 0 : CGImageGetHeight(normalized),
-        layout.displayScale,
         [sourceCrop[@"y"] doubleValue],
-        singleScaleReady,
-        centeredRoundingReady,
-        window.opaque,
-        (window.styleMask & NSWindowStyleMaskTitled) != 0,
-        window.titleVisibility == NSWindowTitleVisible,
-        (window.styleMask & NSWindowStyleMaskResizable) != 0,
+        (window.styleMask & NSWindowStyleMaskResizable) == 0,
         hostCGBounds.origin.x,
         hostCGBounds.origin.y,
         hostCGBounds.size.width,
@@ -1238,23 +1167,13 @@ static BOOL RunSimulatorScaleHostCanvasSmoke(
         contentCGBounds.origin.y,
         contentCGBounds.size.width,
         contentCGBounds.size.height,
-        canvasCGBounds.origin.x,
-        canvasCGBounds.origin.y,
-        canvasCGBounds.size.width,
-        canvasCGBounds.size.height,
         logicalRect.origin.x,
         logicalRect.origin.y,
         logicalRect.size.width,
         logicalRect.size.height,
         passed,
-        layoutFailure == nil && canvasFailure == nil && cropFailure == nil
-            ? ""
-            : " failure=",
-        cropFailure != nil
-            ? cropFailure.UTF8String
-            : (canvasFailure != nil
-                ? canvasFailure.UTF8String
-                : (layoutFailure == nil ? "" : layoutFailure.UTF8String))
+        cropFailure == nil ? "" : " failure=",
+        cropFailure == nil ? "" : cropFailure.UTF8String
     );
     if (normalized != NULL) {
         CGImageRelease(normalized);
@@ -1323,7 +1242,7 @@ int main(void) {
             mainConnection
         );
         BOOL metal = RunMetalSmoke(capture, mainConnection);
-        BOOL simulatorScaleHost = RunSimulatorScaleHostCanvasSmoke(
+        BOOL nativeCatalystCanvas = RunNativeCatalystCanvasSmoke(
             capture,
             mainConnection
         );
@@ -1340,7 +1259,7 @@ int main(void) {
             !layer ||
             !originAndZOrder ||
             !metal ||
-            !simulatorScaleHost ||
+            !nativeCatalystCanvas ||
             !permissionStayedDenied) {
             return 1;
         }

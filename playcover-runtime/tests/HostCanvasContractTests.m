@@ -35,240 +35,74 @@ static BOOL IOSUseHostCanvasTestRequire(BOOL condition, NSString *message) {
     return condition;
 }
 
-static BOOL IOSUseHostCanvasTestLayout(
-    CGRect bounds,
-    CGFloat backingScale,
-    CGFloat expectedScale,
-    CGRect expectedCanvas,
-    IOSUsePlayHostCanvasLayout *layout
-) {
-    NSString *failure = nil;
-    IOSUsePlayHostCanvasLayout resolved = {0};
-    BOOL ready = IOSUsePlayResolveHostCanvasLayout(
-        bounds,
-        backingScale,
-        &resolved,
-        &failure
+static BOOL IOSUseHostCanvasTestNativeMapping(void) {
+    CGRect content = CGRectMake(5, 7, 331, 718);
+    CGPoint logicalPoint = CGPointMake(NAN, NAN);
+    CGRect logicalRect = CGRectNull;
+    NSString *pointFailure = nil;
+    NSString *rectFailure = nil;
+    NSString *outsideFailure = nil;
+    BOOL pointReady = IOSUsePlayMapHostContentPointToDevice(
+        content,
+        CGPointMake(
+            CGRectGetMinX(content) + content.size.width * 0.5,
+            CGRectGetMinY(content) + content.size.height * 0.75
+        ),
+        &logicalPoint,
+        &pointFailure
     );
-    BOOL passed = ready && failure == nil &&
+    CGRect expectedLogicalRect = CGRectMake(20, 100, 100, 50);
+    CGFloat hostMinimumX = CGRectGetMinX(content) +
+        expectedLogicalRect.origin.x /
+            IOSUsePlayDeviceLogicalWidth * content.size.width;
+    CGFloat hostMaximumY = CGRectGetMaxY(content) -
+        expectedLogicalRect.origin.y /
+            IOSUsePlayDeviceLogicalHeight * content.size.height;
+    CGRect hostRect = CGRectMake(
+        hostMinimumX,
+        hostMaximumY -
+            expectedLogicalRect.size.height /
+                IOSUsePlayDeviceLogicalHeight * content.size.height,
+        expectedLogicalRect.size.width /
+            IOSUsePlayDeviceLogicalWidth * content.size.width,
+        expectedLogicalRect.size.height /
+            IOSUsePlayDeviceLogicalHeight * content.size.height
+    );
+    BOOL rectReady = IOSUsePlayMapHostContentRectToDevice(
+        content,
+        hostRect,
+        &logicalRect,
+        &rectFailure
+    );
+    CGPoint ignored = CGPointZero;
+    BOOL outsideRejected = !IOSUsePlayMapHostContentPointToDevice(
+        content,
+        CGPointMake(CGRectGetMaxX(content) + 1, CGRectGetMidY(content)),
+        &ignored,
+        &outsideFailure
+    );
+    BOOL passed = pointReady && pointFailure == nil &&
         IOSUseHostCanvasTestApproximatelyEqual(
-            resolved.displayScale,
-            expectedScale
+            logicalPoint.x,
+            IOSUsePlayDeviceLogicalWidth * 0.5
         ) &&
         IOSUseHostCanvasTestApproximatelyEqual(
-            resolved.inverseDisplayScale,
-            1.0 / expectedScale
+            logicalPoint.y,
+            IOSUsePlayDeviceLogicalHeight * 0.25
         ) &&
+        rectReady && rectFailure == nil &&
         IOSUseHostCanvasTestRectEquals(
-            resolved.canvasRect,
-            expectedCanvas
+            logicalRect,
+            expectedLogicalRect
         ) &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            resolved.backingScaleFactor,
-            backingScale
-        ) &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            resolved.halfPixelTolerance,
-            0.5 / backingScale
-        ) &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            CGRectGetMidX(resolved.canvasRect),
-            CGRectGetMidX(bounds)
-        ) &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            CGRectGetMidY(resolved.canvasRect),
-            CGRectGetMidY(bounds)
-        );
-    if (layout != NULL) {
-        *layout = resolved;
-    }
+        outsideRejected && outsideFailure != nil;
     return IOSUseHostCanvasTestRequire(
         passed,
         [NSString stringWithFormat:
-            @"layout %.0fx%.0f did not preserve a fixed canvas: %@",
-            bounds.size.width,
-            bounds.size.height,
-            failure ?: @"unexpected geometry"
-        ]
-    );
-}
-
-static BOOL IOSUseHostCanvasTestResizeRounding(void) {
-    IOSUsePlayHostCanvasLayout layout = {0};
-    NSString *failure = nil;
-    BOOL ready = IOSUsePlayResolveHostCanvasLayout(
-        CGRectMake(0, 0, 400, 867),
-        2,
-        &layout,
-        &failure
-    );
-    CGFloat expectedHeight =
-        400.0 * IOSUsePlayDeviceLogicalHeight /
-        IOSUsePlayDeviceLogicalWidth;
-    CGFloat bottomMargin = CGRectGetMinY(layout.canvasRect);
-    CGFloat topMargin = 867.0 - CGRectGetMaxY(layout.canvasRect);
-    BOOL passed = ready && failure == nil &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            layout.displayScale,
-            400.0 / IOSUsePlayDeviceLogicalWidth
-        ) &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            layout.canvasRect.size.width,
-            400
-        ) &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            layout.canvasRect.size.height,
-            expectedHeight
-        ) &&
-        fabs(bottomMargin - topMargin) <=
-            IOSUseHostCanvasTestTolerance &&
-        bottomMargin >= 0 && topMargin >= 0 &&
-        bottomMargin + topMargin < 1;
-    return IOSUseHostCanvasTestRequire(
-        passed,
-        [NSString stringWithFormat:
-            @"400x867 resize rounding was not centered below 1pt: %@",
-            failure ?: @"unexpected geometry"
-        ]
-    );
-}
-
-static BOOL IOSUseHostCanvasTestBootstrapAspectTarget(void) {
-    IOSUsePlayHostCanvasLayout initial = {0};
-    IOSUsePlayHostCanvasLayout restored = {0};
-    IOSUsePlayHostCanvasLayout normalized = {0};
-    NSString *initialFailure = nil;
-    NSString *initialQuantizationFailure = nil;
-    NSString *restoredFailure = nil;
-    NSString *restoredQuantizationFailure = nil;
-    NSString *lowScaleFailure = nil;
-    NSString *lowScaleQuantizationFailure = nil;
-    NSString *normalizedFailure = nil;
-    NSString *normalizedQuantizationFailure = nil;
-    BOOL initialReady = IOSUsePlayResolveHostCanvasLayout(
-        CGRectMake(0, 0, 422, 916),
-        2,
-        &initial,
-        &initialFailure
-    );
-    CGFloat verticalSurplus =
-        916.0 - initial.canvasRect.size.height;
-    BOOL initialRequiresNormalization = initialReady &&
-        !IOSUsePlayHostCanvasFitsPixelQuantizedContent(
-            initial,
-            &initialQuantizationFailure
-        );
-    BOOL restoredReady = IOSUsePlayResolveHostCanvasLayout(
-        CGRectMake(0, 0, 422, 915),
-        2,
-        &restored,
-        &restoredFailure
-    );
-    CGFloat restoredVerticalSurplus =
-        915.0 - restored.canvasRect.size.height;
-    BOOL restoredIsPixelQuantized = restoredReady &&
-        IOSUsePlayHostCanvasFitsPixelQuantizedContent(
-            restored,
-            &restoredQuantizationFailure
-        );
-    IOSUsePlayHostCanvasLayout lowScale = {0};
-    BOOL lowScaleReady = IOSUsePlayResolveHostCanvasLayout(
-        CGRectMake(0, 0, 218, 473),
-        2,
-        &lowScale,
-        &lowScaleFailure
-    );
-    BOOL lowScaleIsPixelQuantized = lowScaleReady &&
-        IOSUsePlayHostCanvasFitsPixelQuantizedContent(
-            lowScale,
-            &lowScaleQuantizationFailure
-        );
-    CGRect normalizedBounds = CGRectMake(
-        0,
-        0,
-        initial.canvasRect.size.width,
-        initial.canvasRect.size.height
-    );
-    BOOL normalizedReady = initialReady &&
-        IOSUsePlayResolveHostCanvasLayout(
-            normalizedBounds,
-            2,
-            &normalized,
-            &normalizedFailure
-        );
-    BOOL normalizedIsPixelQuantized = normalizedReady &&
-        IOSUsePlayHostCanvasFitsPixelQuantizedContent(
-            normalized,
-            &normalizedQuantizationFailure
-        );
-    BOOL passed = initialReady && initialFailure == nil &&
-        verticalSurplus > 0.5 &&
-        initialRequiresNormalization &&
-        initialQuantizationFailure != nil &&
-        restoredReady && restoredFailure == nil &&
-        restoredVerticalSurplus > restored.halfPixelTolerance &&
-        restoredVerticalSurplus <=
-            restored.halfPixelTolerance * 2 &&
-        restoredIsPixelQuantized &&
-        restoredQuantizationFailure == nil &&
-        lowScaleReady && lowScaleFailure == nil &&
-        lowScaleIsPixelQuantized &&
-        lowScaleQuantizationFailure == nil &&
-        normalizedReady && normalizedFailure == nil &&
-        normalizedIsPixelQuantized &&
-        normalizedQuantizationFailure == nil &&
-        IOSUseHostCanvasTestRectEquals(
-            normalized.canvasRect,
-            normalizedBounds
-        ) &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            normalized.displayScale,
-            initial.displayScale
-        );
-    return IOSUseHostCanvasTestRequire(
-        passed,
-        [NSString stringWithFormat:
-            @"2x bootstrap/restored aspect quantization was invalid: "
-             "%@ / %@ / %@ / %@",
-            initialFailure ?: @"initial geometry",
-            initialQuantizationFailure ?: @"initial accepted",
-            restoredFailure ?: @"restored geometry",
-            normalizedFailure ?: @"normalized geometry"
-        ]
-    );
-}
-
-static BOOL IOSUseHostCanvasTestRoundTrip(
-    IOSUsePlayHostCanvasLayout layout,
-    CGPoint logicalPoint
-) {
-    CGPoint hostPoint = CGPointZero;
-    CGPoint roundTrip = CGPointZero;
-    NSString *forwardFailure = nil;
-    NSString *inverseFailure = nil;
-    BOOL forward = IOSUsePlayMapCanvasPointToHostContent(
-        layout,
-        logicalPoint,
-        &hostPoint,
-        &forwardFailure
-    );
-    BOOL inverse = forward && IOSUsePlayMapHostContentPointToCanvas(
-        layout,
-        hostPoint,
-        &roundTrip,
-        &inverseFailure
-    );
-    CGFloat error = hypot(
-        roundTrip.x - logicalPoint.x,
-        roundTrip.y - logicalPoint.y
-    );
-    return IOSUseHostCanvasTestRequire(
-        inverse && error <= 0.5,
-        [NSString stringWithFormat:
-            @"host/canvas round trip failed (%.3f): %@ %@",
-            error,
-            forwardFailure ?: @"",
-            inverseFailure ?: @""
+            @"native Catalyst content mapping failed: %@ / %@ / %@",
+            pointFailure ?: @"point",
+            rectFailure ?: @"rect",
+            outsideFailure ?: @"outside accepted"
         ]
     );
 }
@@ -465,7 +299,6 @@ static BOOL IOSUseHostCanvasTestCropAtBackingScale(
             source,
             sourceBounds,
             canvasBounds,
-            1,
             backingScale,
             &logicalRect,
             &evidence,
@@ -549,7 +382,6 @@ static BOOL IOSUseHostCanvasTestRejectsNonAlignedCrop(void) {
             source,
             sourceBounds,
             canvasBounds,
-            1,
             2,
             &logicalRect,
             &evidence,
@@ -579,8 +411,6 @@ static BOOL IOSUseHostCanvasTestAcceptsQuantizedSourceExtent(void) {
     // to the returned source raster, so neither condition may reject a
     // full-source, exactly aligned canvas.
     CGRect sourceBounds = CGRectMake(10.25, 20.25, 430.25, 932.5);
-    CGFloat displayScale =
-        sourceBounds.size.width / IOSUsePlayDeviceLogicalWidth;
     CGImageRef source = IOSUseHostCanvasTestCreateRawCapture(
         860,
         1865,
@@ -595,7 +425,6 @@ static BOOL IOSUseHostCanvasTestAcceptsQuantizedSourceExtent(void) {
             source,
             sourceBounds,
             sourceBounds,
-            displayScale,
             2,
             &logicalRect,
             &evidence,
@@ -655,7 +484,6 @@ static BOOL IOSUseHostCanvasTestDoesNotStretchMissingEdgePixel(void) {
             source,
             sourceBounds,
             canvasBounds,
-            1,
             2,
             &logicalRect,
             &evidence,
@@ -687,387 +515,35 @@ static BOOL IOSUseHostCanvasTestDoesNotStretchMissingEdgePixel(void) {
     );
 }
 
-static BOOL IOSUseHostCanvasTestRestoredQuantizedWindow(
-    CGFloat contentWidthPoints,
-    CGFloat contentHeightPoints,
-    CGFloat backingScale
-) {
-    CGRect contentBounds = CGRectMake(
-        0,
-        0,
-        contentWidthPoints,
-        contentHeightPoints
-    );
-    IOSUsePlayHostCanvasLayout layout = {0};
-    NSString *layoutFailure = nil;
-    BOOL layoutReady = IOSUsePlayResolveHostCanvasLayout(
-        contentBounds,
-        backingScale,
-        &layout,
-        &layoutFailure
-    );
-    CGFloat expectedScale =
-        contentBounds.size.width / IOSUsePlayDeviceLogicalWidth;
-    CGFloat expectedIdealHeight =
-        IOSUsePlayDeviceLogicalHeight * expectedScale;
-    CGRect expectedPixelCanvas = contentBounds;
-    CGFloat hostHeight = contentHeightPoints + 28;
-    CGRect hostCGWindowBounds = CGRectMake(
-        40,
-        10,
-        contentWidthPoints,
-        hostHeight
-    );
-    CGRect hostContentCGWindowRect = CGRectMake(
-        40,
-        38,
-        contentWidthPoints,
-        contentHeightPoints
-    );
-    CGRect canvasCGWindowRect = CGRectNull;
-    NSString *projectionFailure = nil;
-    BOOL projectionReady = layoutReady &&
-        IOSUsePlayResolveCanvasCGWindowRect(
-            hostContentCGWindowRect,
-            layout,
-            &canvasCGWindowRect,
-            &projectionFailure
-        );
-
-    size_t sourceWidth =
-        (size_t)llround(contentWidthPoints * backingScale);
-    size_t sourceHeight =
-        (size_t)llround(hostHeight * backingScale);
-    size_t titleBarHeight = (size_t)llround(28 * backingScale);
-    size_t contentHeight =
-        (size_t)llround(contentHeightPoints * backingScale);
-    CGImageRef source = IOSUseHostCanvasTestCreateRawCapture(
-        sourceWidth,
-        sourceHeight,
-        CGRectMake(
-            0,
-            titleBarHeight,
-            sourceWidth,
-            contentHeight
-        )
-    );
-    CGRect logicalRect = CGRectNull;
-    NSDictionary<NSString *, id> *evidence = nil;
-    NSString *cropFailure = nil;
-    CGImageRef normalized =
-        source == NULL || !projectionReady
-        ? NULL
-        : IOSUsePlayCropAndNormalizeCanvasCapture(
-            source,
-            hostCGWindowBounds,
-            canvasCGWindowRect,
-            expectedScale,
-            backingScale,
-            &logicalRect,
-            &evidence,
-            &cropFailure
-        );
-    NSDictionary<NSString *, NSNumber *> *sourceCrop =
-        evidence[@"sourcePixelCropRect"];
-    CGPoint inputLogicalPoint = CGPointMake(NAN, NAN);
-    NSString *inputFailure = nil;
-    BOOL inputReady = layoutReady &&
-        IOSUsePlayMapHostContentPointToCanvas(
-            layout,
-            CGPointMake(0, 0),
-            &inputLogicalPoint,
-            &inputFailure
-        );
-    CGRect accessibilityLogicalRect = CGRectNull;
-    NSString *accessibilityFailure = nil;
-    BOOL accessibilityReady = layoutReady &&
-        IOSUsePlayMapHostContentRectToCanvas(
-            layout,
-            contentBounds,
-            &accessibilityLogicalRect,
-            &accessibilityFailure
-        );
-    BOOL edgePixelsAreCanvasOnly =
-        IOSUseHostCanvasTestSampleIsGreen(normalized, 0, 0) &&
-        IOSUseHostCanvasTestSampleIsGreen(
-            normalized,
-            IOSUsePlayDeviceNativeWidth - 1,
-            0
-        ) &&
-        IOSUseHostCanvasTestSampleIsGreen(
-            normalized,
-            0,
-            IOSUsePlayDeviceNativeHeight - 1
-        ) &&
-        IOSUseHostCanvasTestSampleIsGreen(
-            normalized,
-            IOSUsePlayDeviceNativeWidth - 1,
-            IOSUsePlayDeviceNativeHeight - 1
-        ) &&
-        IOSUseHostCanvasTestSampleIsGreen(
-            normalized,
-            IOSUsePlayDeviceNativeWidth / 2,
-            0
-        ) &&
-        IOSUseHostCanvasTestSampleIsGreen(
-            normalized,
-            IOSUsePlayDeviceNativeWidth / 2,
-            IOSUsePlayDeviceNativeHeight - 1
-        ) &&
-        IOSUseHostCanvasTestSampleIsGreen(
-            normalized,
-            0,
-            IOSUsePlayDeviceNativeHeight / 2
-        ) &&
-        IOSUseHostCanvasTestSampleIsGreen(
-            normalized,
-            IOSUsePlayDeviceNativeWidth - 1,
-            IOSUsePlayDeviceNativeHeight / 2
-        );
-    BOOL passed = layoutReady && layoutFailure == nil &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            layout.canvasRect.size.height,
-            expectedIdealHeight
-        ) &&
-        IOSUseHostCanvasTestRectEquals(
-            layout.backingPixelCanvasRect,
-            expectedPixelCanvas
-        ) &&
-        projectionReady && projectionFailure == nil &&
-        IOSUseHostCanvasTestRectEquals(
-            canvasCGWindowRect,
-            hostContentCGWindowRect
-        ) &&
-        normalized != NULL && cropFailure == nil &&
-        [sourceCrop[@"x"] integerValue] == 0 &&
-        [sourceCrop[@"y"] unsignedLongLongValue] == titleBarHeight &&
-        [sourceCrop[@"width"] unsignedLongLongValue] == sourceWidth &&
-        [sourceCrop[@"height"] unsignedLongLongValue] == contentHeight &&
-        edgePixelsAreCanvasOnly &&
-        inputReady && inputFailure == nil &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            inputLogicalPoint.x,
-            0
-        ) &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            inputLogicalPoint.y,
-            IOSUsePlayDeviceLogicalHeight
-        ) &&
-        accessibilityReady && accessibilityFailure == nil &&
-        IOSUseHostCanvasTestRectEquals(
-            accessibilityLogicalRect,
-            CGRectMake(
-                0,
-                0,
-                IOSUsePlayDeviceLogicalWidth,
-                IOSUsePlayDeviceLogicalHeight
-            )
-        ) &&
-        IOSUseHostCanvasTestRectEquals(
-            logicalRect,
-            CGRectMake(
-                0,
-                0,
-                IOSUsePlayDeviceLogicalWidth,
-                IOSUsePlayDeviceLogicalHeight
-            )
-        );
-    if (normalized != NULL) {
-        CGImageRelease(normalized);
-    }
-    if (source != NULL) {
-        CGImageRelease(source);
-    }
-    return IOSUseHostCanvasTestRequire(
-        passed,
-        [NSString stringWithFormat:
-            @"restored %.0fx%.0f window lost %.0fx backing pixels: "
-             "%@ / %@ / %@",
-            contentWidthPoints,
-            contentHeightPoints,
-            backingScale,
-            layoutFailure ?: @"layout",
-            projectionFailure ?: @"projection",
-            cropFailure ?: @"crop"
-        ]
-    );
-}
-
-static BOOL IOSUseHostCanvasTestHalfPixelBoundary(void) {
-    IOSUsePlayHostCanvasLayout layout = {0};
-    NSString *layoutFailure = nil;
-    BOOL layoutReady = IOSUsePlayResolveHostCanvasLayout(
-        CGRectMake(0, 0, 316, 685),
-        2,
-        &layout,
-        &layoutFailure
-    );
-    CGRect accepted = CGRectNull;
-    CGRect rejected = CGRectNull;
-    NSString *acceptedFailure = nil;
-    NSString *rejectedFailure = nil;
-    BOOL atBoundaryAccepted = layoutReady &&
-        IOSUsePlayResolveCanvasCGWindowRect(
-            CGRectMake(40, 38, 316, 685.25),
-            layout,
-            &accepted,
-            &acceptedFailure
-        );
-    BOOL overBoundaryRejected = layoutReady &&
-        !IOSUsePlayResolveCanvasCGWindowRect(
-            CGRectMake(40, 38, 316, 685.2501),
-            layout,
-            &rejected,
-            &rejectedFailure
-        );
-    NSString *invalidScaleFailure = nil;
-    BOOL invalidScaleRejected = !IOSUsePlayResolveHostCanvasLayout(
-        CGRectMake(0, 0, 316, 685),
-        0,
-        NULL,
-        &invalidScaleFailure
-    );
-    return IOSUseHostCanvasTestRequire(
-        layoutReady && layoutFailure == nil &&
-            atBoundaryAccepted && acceptedFailure == nil &&
-            overBoundaryRejected && rejectedFailure != nil &&
-            invalidScaleRejected && invalidScaleFailure != nil,
-        [NSString stringWithFormat:
-            @"half-backing-pixel boundary was not fail-closed: %@ / %@ / %@",
-            layoutFailure ?: @"layout",
-            rejectedFailure ?: @"over-boundary accepted",
-            invalidScaleFailure ?: @"invalid backing scale accepted"
-        ]
-    );
-}
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         (void)argv;
         if (argc != 1) {
-            fprintf(
-                stderr,
-                "usage: HostCanvasContractTests\n"
-            );
+            fprintf(stderr, "usage: HostCanvasContractTests\n");
             return 2;
         }
-        IOSUsePlayHostCanvasLayout unitLayout;
-        IOSUsePlayHostCanvasLayout resizedLayout;
-        IOSUsePlayHostCanvasLayout minimumLayout;
-        BOOL unitReady = IOSUseHostCanvasTestLayout(
-            CGRectMake(0, 0, 430, 932),
-            1,
-            1,
-            CGRectMake(0, 0, 430, 932),
-            &unitLayout
-        );
-        BOOL resizeReady = IOSUseHostCanvasTestLayout(
-            CGRectMake(0, 0, 645, 1398),
-            2,
-            1.5,
-            CGRectMake(0, 0, 645, 1398),
-            &resizedLayout
-        );
-        BOOL minimumReady = IOSUseHostCanvasTestLayout(
-            CGRectMake(0, 0, 215, 466),
-            1,
-            0.5,
-            CGRectMake(0, 0, 215, 466),
-            &minimumLayout
-        );
-        BOOL resizeRoundingReady =
-            IOSUseHostCanvasTestResizeRounding();
-        BOOL bootstrapAspectReady =
-            IOSUseHostCanvasTestBootstrapAspectTarget();
-        NSString *undersizedFailure = nil;
-        BOOL undersizedRejected = !IOSUsePlayResolveHostCanvasLayout(
-            CGRectMake(0, 0, 214.9, 466),
-            1,
-            NULL,
-            &undersizedFailure
-        ) && undersizedFailure != nil;
-        BOOL unitRoundTrip = IOSUseHostCanvasTestRoundTrip(
-            unitLayout,
-            CGPointMake(215.25, 466.75)
-        );
-        BOOL resizedRoundTrip = IOSUseHostCanvasTestRoundTrip(
-            resizedLayout,
-            CGPointMake(13.5, 901.25)
-        );
-        CGPoint ignoredPoint = CGPointZero;
-        NSString *outsideFailure = nil;
-        BOOL outsideRejected = !IOSUsePlayMapHostContentPointToCanvas(
-            resizedLayout,
-            CGPointMake(
-                CGRectGetMaxX(resizedLayout.hostContentBounds) + 1,
-                CGRectGetMidY(resizedLayout.hostContentBounds)
-            ),
-            &ignoredPoint,
-            &outsideFailure
-        ) && outsideFailure != nil;
-        CGRect resizedCanvasCG = CGRectNull;
-        NSString *canvasCGFailure = nil;
-        BOOL canvasCGReady = IOSUsePlayResolveCanvasCGWindowRect(
-            CGRectMake(50, 100, 645, 1398),
-            resizedLayout,
-            &resizedCanvasCG,
-            &canvasCGFailure
-        ) && IOSUseHostCanvasTestRectEquals(
-            resizedCanvasCG,
-            CGRectMake(50, 100, 645, 1398)
-        );
-        CGRect fullLogical = CGRectNull;
-        NSString *fullLogicalFailure = nil;
-        BOOL fullLogicalReady = canvasCGReady &&
-            IOSUsePlayResolveCGWindowRectInCanvas(
-                resizedCanvasCG,
-                resizedCanvasCG,
-                resizedLayout.displayScale,
-                resizedLayout.backingScaleFactor,
-                &fullLogical,
-                &fullLogicalFailure
-            ) && IOSUseHostCanvasTestRectEquals(
-                fullLogical,
-                CGRectMake(0, 0, 430, 932)
-        );
-        CGRect accessibilityHostRect = CGRectMake(
-            30,
-            1173,
-            150,
-            75
-        );
-        CGRect accessibilityLogicalRect = CGRectNull;
-        NSString *accessibilityFailure = nil;
-        BOOL accessibilityTransformReady =
-            IOSUsePlayMapHostContentRectToCanvas(
-                resizedLayout,
-                accessibilityHostRect,
-                &accessibilityLogicalRect,
-                &accessibilityFailure
-            ) && IOSUseHostCanvasTestRectEquals(
-                accessibilityLogicalRect,
-                CGRectMake(20, 100, 100, 50)
-        );
-        CGRect alertButtonHostRect = CGRectMake(
-            150,
-            1008,
-            90,
-            45
-        );
-        CGRect alertButtonLogicalRect = CGRectNull;
-        NSString *alertButtonFailure = nil;
-        BOOL alertButtonTransformReady =
-            IOSUsePlayMapHostContentRectToCanvas(
-                resizedLayout,
-                alertButtonHostRect,
-                &alertButtonLogicalRect,
-                &alertButtonFailure
-            ) && IOSUseHostCanvasTestRectEquals(
-                alertButtonLogicalRect,
-                CGRectMake(100, 230, 60, 30)
-            );
-        BOOL multiScreenTransformReady =
+        BOOL nativeMapping =
+            IOSUseHostCanvasTestNativeMapping();
+        BOOL multiScreen =
             IOSUseHostCanvasTestDisplayCoordinateTransforms();
+        CGRect logicalFrame = CGRectNull;
+        NSString *frameFailure = nil;
+        BOOL nativeFrame = IOSUsePlayResolveCGWindowRectInCanvas(
+            CGRectMake(50, 100, 331, 718),
+            CGRectMake(50, 100, 331, 718),
+            2,
+            &logicalFrame,
+            &frameFailure
+        ) && IOSUseHostCanvasTestRectEquals(
+            logicalFrame,
+            CGRectMake(
+                0,
+                0,
+                IOSUsePlayDeviceLogicalWidth,
+                IOSUsePlayDeviceLogicalHeight
+            )
+        );
         BOOL crop1x = IOSUseHostCanvasTestCropAtBackingScale(1);
         BOOL crop2x = IOSUseHostCanvasTestCropAtBackingScale(2);
         BOOL fractionalCrop =
@@ -1076,65 +552,22 @@ int main(int argc, const char *argv[]) {
             IOSUseHostCanvasTestAcceptsQuantizedSourceExtent();
         BOOL missingEdgePixel =
             IOSUseHostCanvasTestDoesNotStretchMissingEdgePixel();
-        BOOL restored1x =
-            IOSUseHostCanvasTestRestoredQuantizedWindow(
-                316,
-                685,
-                1
-            );
-        BOOL restored2x =
-            IOSUseHostCanvasTestRestoredQuantizedWindow(
-                316,
-                685,
-                2
-            );
-        BOOL restored422x915 =
-            IOSUseHostCanvasTestRestoredQuantizedWindow(
-                422,
-                915,
-                2
-            );
-        BOOL restored218x473 =
-            IOSUseHostCanvasTestRestoredQuantizedWindow(
-                218,
-                473,
-                2
-            );
-        BOOL halfPixelBoundary =
-            IOSUseHostCanvasTestHalfPixelBoundary();
-        BOOL passed = unitReady && resizeReady && minimumReady &&
-            resizeRoundingReady && bootstrapAspectReady &&
-            undersizedRejected && unitRoundTrip && resizedRoundTrip &&
-            outsideRejected && canvasCGReady &&
-            fullLogicalReady && accessibilityTransformReady &&
-            alertButtonTransformReady && multiScreenTransformReady &&
+        BOOL passed = nativeMapping && multiScreen && nativeFrame &&
             crop1x && crop2x && fractionalCrop &&
-            quantizedSource && missingEdgePixel &&
-            restored1x && restored2x && restored422x915 &&
-            restored218x473 && halfPixelBoundary;
+            quantizedSource && missingEdgePixel;
         fprintf(
             stderr,
-            "[host-canvas-contract] scale1=%d resize=%d min=%d rounding=%d bootstrap=%d outside=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d quantized-source=%d missing-edge=%d restored1x=%d restored2x=%d restored422x915=%d restored218x473=%d half-pixel=%d pass=%d\n",
-            unitReady,
-            resizeReady,
-            minimumReady,
-            resizeRoundingReady,
-            bootstrapAspectReady,
-            outsideRejected,
-            canvasCGReady && fullLogicalReady,
-            accessibilityTransformReady,
-            alertButtonTransformReady,
-            multiScreenTransformReady,
+            "[host-canvas-contract] native-map=%d multiscreen=%d "
+            "native-frame=%d crop1x=%d crop2x=%d fractional=%d "
+            "quantized-source=%d missing-edge=%d pass=%d\n",
+            nativeMapping,
+            multiScreen,
+            nativeFrame,
             crop1x,
             crop2x,
             fractionalCrop,
             quantizedSource,
             missingEdgePixel,
-            restored1x,
-            restored2x,
-            restored422x915,
-            restored218x473,
-            halfPixelBoundary,
             passed
         );
         return passed ? 0 : 1;

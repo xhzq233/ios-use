@@ -576,6 +576,9 @@ enum PlayCoverSlotLauncher {
         allowed["IOS_USE_PLAY_RUNTIME_SOCKET"] = runtimeSocketPath
         allowed["IOS_USE_PLAY_INSTALL_REVISION"] = installRevision
         allowed["IOS_USE_PLAYCHAIN_ROOT"] = playChainPath
+        if source["IOS_USE_PLAY_ENABLE_3X_BACKING"] == "1" {
+            allowed["IOS_USE_PLAY_ENABLE_3X_BACKING"] = "1"
+        }
         if stdioLog != nil {
             allowed["IOS_USE_PLAY_STDIO_LOG"] = "1"
         }

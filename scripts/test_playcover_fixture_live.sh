@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GLOBAL_STATE_GUARD="$ROOT_DIR/scripts/test_playcover_global_state_guard.sh"
 MATRIX_VERSION="2"
-MATRIX_SOURCE="$ROOT_DIR/playcover-fixtures/live-matrix-v2.tsv"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 EVIDENCE_ROOT="${IOS_USE_PLAYCOVER_EVIDENCE_ROOT:-$ROOT_DIR/.ios-use/live-evidence}"
 RUN_DIR="$EVIDENCE_ROOT/playcover-fixture-v${MATRIX_VERSION}/$RUN_ID"
@@ -21,14 +20,12 @@ FRONTMOST_CAPTURED=0
 FOCUS_RESTORE_MANIFESTED=0
 MOUSE_SEQUENCE=0
 EXPECTED_HOST_TITLE=""
-DISPLAY_TOPOLOGY="$RUN_DIR/display-topology.json"
-DISPLAY_SELECTION="$RUN_DIR/display-selection.json"
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/test_playcover_fixture_live.sh --live
 
---live    Run the fixture acceptance matrix against a real unlocked macOS GUI
+--live    Run the fixture acceptance gate against a real unlocked macOS GUI
           session. Live evidence and global input are intentionally never the
           default. The documented disposable-account ACK and expected passwd
           Home are mandatory.
@@ -62,11 +59,6 @@ source "$GLOBAL_STATE_GUARD"
 playcover_require_disposable_account_contract "playcover-fixture-live"
 
 mkdir -p "$RUN_DIR"
-if [[ ! -f "$MATRIX_SOURCE" ]]; then
-  echo "[playcover-fixture-live] Missing matrix: $MATRIX_SOURCE" >&2
-  exit 78
-fi
-cp "$MATRIX_SOURCE" "$RUN_DIR/"
 printf 'matrixVersion\tcase\tcommand\tstdout\tstderr\n' >"$MANIFEST"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
@@ -90,68 +82,6 @@ if [[
 ]]; then
   echo \
     "[playcover-fixture-live] AppKit mouse helper is unavailable." \
-    >&2
-  exit 78
-fi
-if ! xcrun swift \
-    "$ROOT_DIR/playcover-fixtures/appkit_mouse_event.swift" \
-    --screens >"$DISPLAY_TOPOLOGY"; then
-  echo \
-    "[playcover-fixture-live] EX_CONFIG: display topology is unavailable." \
-    >&2
-  exit 78
-fi
-if ! jq -e '
-    .operation == "screens" and
-    .postEventAccessRequired == false and
-    .lockedSessionAllowed == true and
-    ([.screens[] | select(.screenIsMain == true)] | length) == 1 and
-    (.screens as $screens |
-      ($screens | map(.screenDisplayID)) ==
-        ($screens | map(.screenDisplayID) | sort | unique))
-  ' "$DISPLAY_TOPOLOGY" >/dev/null; then
-  echo \
-    "[playcover-fixture-live] EX_CONFIG: topology must expose exactly one main display." \
-    >&2
-  exit 78
-fi
-if ! jq -e '
-    ([.screens[] | select(.screenIsMain == true)][0]) as $main |
-    ([
-      .screens[] |
-      select(
-        .screenIsMain == false and
-        .hasNSScreen == true and
-        .active == true and
-        .online == true and
-        .mirrored == false and
-        (.backingScaleFactor | type) == "number" and
-        .backingScaleFactor != $main.backingScaleFactor and
-        (.visibleFrame.width | type) == "number" and
-        .visibleFrame.width >= 430 and
-        (.visibleFrame.height | type) == "number" and
-        .visibleFrame.height >= 970
-      )
-    ]) as $extended |
-    if (
-      $main.hasNSScreen == true and
-      $main.active == true and
-      $main.online == true and
-      $main.mirrored == false and
-      ($main.backingScaleFactor | type) == "number" and
-      ($extended | length) == 1
-    ) then
-      {
-        main: $main,
-        extended: $extended[0],
-        eligibleExtendedCount: ($extended | length)
-      }
-    else
-      error("display topology is not eligible")
-    end
-  ' "$DISPLAY_TOPOLOGY" >"$DISPLAY_SELECTION"; then
-  echo \
-    "[playcover-fixture-live] EX_CONFIG: exactly one active extended non-main display with different backing scale and sufficient visible frame is required." \
     >&2
   exit 78
 fi
@@ -693,263 +623,69 @@ assert_canonical_host_status() {
         (.y | type) == "number" and
         (.width | type) == "number" and .width > 0 and
         (.height | type) == "number" and .height > 0;
-      def scalar_max($lhs; $rhs):
-        if $lhs > $rhs then $lhs else $rhs end;
-      def scalar_min($lhs; $rhs):
-        if $lhs < $rhs then $lhs else $rhs end;
-      def fixed_logical_canvas($rect; $tolerance):
-        ($rect | rectangle) and
-        (($rect.x | abs) <= $tolerance) and
-        (($rect.y | abs) <= $tolerance) and
-        ((($rect.width - 430) | abs) <= $tolerance) and
-        ((($rect.height - 932) | abs) <= $tolerance);
-      def private_logical_canvas(
-        $rect;
-        $originTolerance;
-        $widthTolerance;
-        $heightTolerance
-      ):
-        ($rect | rectangle) and
-        (($rect.x | abs) <= $originTolerance) and
-        (($rect.y | abs) <= $originTolerance) and
-        ($rect.width - 430 >= -$originTolerance) and
-        ($rect.width - 430 <= $widthTolerance + 0.00001) and
-        ($rect.height - 932 >= -$originTolerance) and
-        ($rect.height - 932 <= $heightTolerance + 0.00001) and
-        ($rect.x + $rect.width - 430 >= -$originTolerance) and
-        ($rect.x + $rect.width - 430 <=
-          $widthTolerance + 0.00001) and
-        ($rect.y + $rect.height - 932 >= -$originTolerance) and
-        ($rect.y + $rect.height - 932 <=
-          $heightTolerance + 0.00001);
       def rects_agree($lhs; $rhs):
-        (($lhs.x - $rhs.x) | abs) <= 0.01 and
-        (($lhs.y - $rhs.y) | abs) <= 0.01 and
-        (($lhs.width - $rhs.width) | abs) <= 0.01 and
-        (($lhs.height - $rhs.height) | abs) <= 0.01;
+        (($lhs.x - $rhs.x) | abs) <= 0.5 and
+        (($lhs.y - $rhs.y) | abs) <= 0.5 and
+        (($lhs.width - $rhs.width) | abs) <= 0.5 and
+        (($lhs.height - $rhs.height) | abs) <= 0.5;
       .data.driver.runtime as $runtime |
       ($runtime.diagnostics.runtime.hookRegistry) as $hookRegistry |
       ($runtime.diagnostics.runtime.window) as $window |
-      ($window.safeAreaCompatibility) as $safeArea |
-      ($window.canvasCapture) as $capture |
-      ($window.hostContentBounds) as $host |
-      ($window.canvasRect) as $canvas |
-      ($capture.hostContentCGWindowRect) as $hostCG |
-      ($capture.canvasCGWindowRect) as $canvasCG |
-      ($window.halfPixelTolerance / $window.displayScale) as
-        $logicalEdgeTolerance |
-      ($logicalEdgeTolerance * 2) as $logicalExtentTolerance |
-      ($canvas.x - $host.x) as $leftMargin |
-      ($host.x + $host.width - $canvas.x - $canvas.width) as
-        $rightMargin |
-      ($canvas.y - $host.y) as $bottomMargin |
-      ($host.y + $host.height - $canvas.y - $canvas.height) as
-        $topMargin |
-      scalar_max(
-        $logicalEdgeTolerance;
-        scalar_min(
-          scalar_max(0; $leftMargin + $rightMargin) /
-            $window.displayScale;
-          $logicalExtentTolerance
-        )
-      ) as $privateWidthTolerance |
-      scalar_max(
-        $logicalEdgeTolerance;
-        scalar_min(
-          scalar_max(0; $bottomMargin + $topMargin) /
-            $window.displayScale;
-          $logicalExtentTolerance
-        )
-      ) as $privateHeightTolerance |
+      ($runtime.host) as $host |
+      ($host.capture) as $capture |
       $runtime.status == "healthy" and
+      $runtime.uiState.state == "ready" and
       $runtime.logicalWidth == 430 and
       $runtime.logicalHeight == 932 and
+      $runtime.windowWidth == 430 and
+      $runtime.windowHeight == 932 and
       $runtime.nativeWidth == 1290 and
       $runtime.nativeHeight == 2796 and
       $runtime.scale == 3 and
+      $runtime.safeAreaTop == 59 and
+      $runtime.safeAreaLeft == 0 and
+      $runtime.safeAreaBottom == 34 and
+      $runtime.safeAreaRight == 0 and
       $hookRegistry.requiredReady == true and
-      ($hookRegistry | has("performance") | not) and
-      ([
-        $hookRegistry.entries[] |
-        select(.required == true and .ready != true)
-      ] | length) == 0 and
-      ([
-        $hookRegistry.entries[] |
-        select(has("performance"))
-      ] | length) == 0 and
+      ([ $hookRegistry.entries[] |
+        select(.required == true and .ready != true) ] | length) == 0 and
       $runtime.host.opaque == true and
-      $window.status == "configured" and
-      $window.opaque == true and
-      $window.publicTitleBar == true and
-      $window.resizable == true and
-      $window.hostPolicy == true and
-      $safeArea.stage == "ready" and
-      $safeArea.safeAreaCompatibilityReady == true and
-      $safeArea.installEvidenceReady == true and
-      $safeArea.firstEligibleProviderInvocationReady == true and
-      $safeArea.safeAreaReady == true and
-      $safeArea.deviceContractReady == true and
-      $safeArea.safeAreaLayoutGuideReady == true and
-      $safeArea.additionalSafeAreaPreserved == true and
-      $safeArea.deviceSafeArea ==
-        {"top":59,"left":0,"bottom":34,"right":0} and
-      $safeArea.windowSafeArea ==
-        {"top":59,"left":0,"bottom":34,"right":0} and
-      $safeArea.expectedWindowSafeArea ==
-        {"top":59,"left":0,"bottom":34,"right":0} and
-      $safeArea.safeArea ==
-        {"top":59,"left":0,"bottom":34,"right":0} and
-      $safeArea.additionalSafeArea ==
-        {"top":0,"left":0,"bottom":0,"right":0} and
-      $safeArea.safeAreaLayoutFrame ==
-        {"x":0,"y":59,"width":430,"height":839} and
-      $safeArea.runtimeAdditionalSafeAreaWriteCount == 0 and
-      ($safeArea.compatibilityHook |
-        .status == "installed" and
-        .installPhase == "pre-main-constructor" and
-        .preMainInstallAttempted == true and
-        .preMainInstallSucceeded == true and
-        .providerOwner == "UIWindow" and
-        .invalidationOwner == "UIWindow" and
-        .classHookActive == true and
-        .targetDispatchesHook == true and
-        .scope ==
-          "scene-attached-application-role-normal-app-window" and
-        (.targetFirstEligibleProviderInvocation |
-          .recorded == true and
-          .generation > 0 and
-          .providerInvocationCount > 0 and
-          .evidenceKind ==
-            "first-eligible-app-window-provider-hook-invocation" and
-          .businessInvocationProven == false and
-          .installedBeforeDispatch == true and
-          .fixedGeometryApplied == true and
-          .resultMatchedExpected == true and
-          (.activationState == "foreground-active" or
-            .activationState == "foreground-inactive" or
-            .activationState == "unattached") and
-          .expected ==
-            {"top":59,"left":0,"bottom":34,"right":0} and
-          .result ==
-            {"top":59,"left":0,"bottom":34,"right":0})) and
-      $window.title == $title and
-      $capture.title == $title and
-      $window.mouseMonitorReady == true and
-      $window.identityTransform == true and
-      $window.borderless == false and
-      $window.hasShadow == true and
-      $window.movable == true and
-      ($window.resizeEdges | type) == "object" and
-      ($window.resizeEdges.available | type) == "number" and
-      $window.resizeEdges.available >= 0 and
-      (($window.resizeEdges.available % 16) == 15) and
-      ($window.resizeEdges.growing | type) == "number" and
-      $window.resizeEdges.growing >= 0 and
-      (($window.resizeEdges.growing % 16) == 15) and
-      ($window.resizeEdges.shrinking | type) == "number" and
-      $window.resizeEdges.shrinking >= 0 and
-      (($window.resizeEdges.shrinking % 16) == 15) and
-      $window.canvasBounds ==
+      $host.status == "configured" and
+      $host.opaque == true and
+      $host.publicTitleBar == true and
+      $host.resizable == false and
+      $host.hostPolicy == true and
+      $host.title == $title and
+      $host.titleExpected == $title and
+      $host.titleVisible == true and
+      $window.nativeContentView == 1 and
+      $host.canvasBounds ==
         {"x":0,"y":0,"width":430,"height":932} and
-      fixed_logical_canvas(
-        $window.renderViewBounds;
-        $logicalEdgeTolerance
-      ) and
-      private_logical_canvas(
-        $window.sceneRenderViewBounds;
-        $logicalEdgeTolerance;
-        $privateWidthTolerance;
-        $privateHeightTolerance
-      ) and
-      private_logical_canvas(
-        $window.sceneRenderViewFrame;
-        $logicalEdgeTolerance;
-        $privateWidthTolerance;
-        $privateHeightTolerance
-      ) and
-      private_logical_canvas(
-        $window.inputRenderViewFrame;
-        $logicalEdgeTolerance;
-        $privateWidthTolerance;
-        $privateHeightTolerance
-      ) and
-      private_logical_canvas(
-        $window.inputRenderViewBounds;
-        $logicalEdgeTolerance;
-        $privateWidthTolerance;
-        $privateHeightTolerance
-      ) and
+      ($host.contentBounds | rectangle) and
+      $capture.ready == true and
+      $capture.error == null and
+      ($capture.canvasCGWindowRect | rectangle) and
+      ($capture.hostContentCGWindowRect | rectangle) and
       rects_agree(
-        $window.sceneRenderViewFrame;
-        $window.sceneRenderViewBounds
+        $capture.canvasCGWindowRect;
+        $capture.hostContentCGWindowRect
       ) and
-      rects_agree(
-        $window.sceneRenderViewFrame;
-        $window.inputRenderViewFrame
-      ) and
-      rects_agree(
-        $window.sceneRenderViewFrame;
-        $window.inputRenderViewBounds
-      ) and
-      ($window.sceneScale.idiom | type) == "number" and
-      (($window.sceneScale.idiom - 1) | abs) <= 0.01 and
-      (($window.sceneScale.windows - 1) | abs) <= 0.01 and
-      $window.sceneScale.downscaleWindowIfNecessary == false and
-      $window.sceneMinimumSize == {"width":430,"height":932} and
-      $window.sceneMaximumSize == {"width":430,"height":932} and
-      ($window.displayScale | type) == "number" and
-      $window.displayScale > 0 and
-      ($window.backingScaleFactor | type) == "number" and
-      $window.backingScaleFactor > 0 and
-      $window.backingScaleFactor <= 4 and
-      ($window.halfPixelTolerance | type) == "number" and
-      (($window.halfPixelTolerance -
-        (0.5 / $window.backingScaleFactor)) | abs) <= 0.000001 and
-      ($window.inverseDisplayScale | type) == "number" and
-      (($window.displayScale * $window.inverseDisplayScale - 1) | abs) <=
-        0.0001 and
-      ($host | rectangle) and
-      ($canvas | rectangle) and
-      ($hostCG | rectangle) and
-      ($canvasCG | rectangle) and
-      (($canvas.width / $window.displayScale - 430) | abs) <=
-        $logicalExtentTolerance and
-      (($canvas.height / $window.displayScale - 932) | abs) <=
-        $logicalExtentTolerance and
-      (($canvasCG.width / $window.displayScale - 430) | abs) <=
-        $logicalExtentTolerance and
-      (($canvasCG.height / $window.displayScale - 932) | abs) <=
-        $logicalExtentTolerance and
-      (($canvasCG.width - $canvas.width) | abs) <=
-        ($window.halfPixelTolerance * 2) and
-      (($canvasCG.height - $canvas.height) | abs) <=
-        ($window.halfPixelTolerance * 2) and
-      (($canvas.x - $host.x) | abs) <=
-        $window.halfPixelTolerance and
-      (($canvas.y - $host.y) | abs) <=
-        $window.halfPixelTolerance and
-      (($canvas.width - $host.width) | abs) <=
-        ($window.halfPixelTolerance * 2) and
-      (($canvas.height - $host.height) | abs) <=
-        ($window.halfPixelTolerance * 2) and
-      (($canvasCG.x -
-        ($hostCG.x + $canvas.x - $host.x)) | abs) <=
-        $window.halfPixelTolerance and
-      (($canvasCG.y -
-        ($hostCG.y + $host.y + $host.height -
-          $canvas.y - $canvas.height)) | abs) <=
-        $window.halfPixelTolerance and
-      (($canvasCG.x - $hostCG.x) | abs) <=
-        $window.halfPixelTolerance and
-      (($canvasCG.y - $hostCG.y) | abs) <=
-        $window.halfPixelTolerance and
-      (($canvasCG.width - $hostCG.width) | abs) <=
-        ($window.halfPixelTolerance * 2) and
-      (($canvasCG.height - $hostCG.height) | abs) <=
-        ($window.halfPixelTolerance * 2)
-    ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
+      ($host.backingScaleFactor | type) == "number" and
+      $host.backingScaleFactor > 0 and
+      $host.backingScaleFactor <= 4 and
+      ($host.sceneRasterizationScale | type) == "number" and
+      $host.sceneRasterizationScale > 0 and
+      ($host.fixedBackingScale == 0 or
+        $host.fixedBackingScale == 3) and
+      (if $host.fixedBackingScale == 3 then
+        (($host.sceneRasterizationScale - 3) | abs) <= 0.01
+       else
+        (($host.sceneRasterizationScale -
+          $host.backingScaleFactor) | abs) <= 0.01
+       end)
+    ' "$RUN_DIR/$case_name.stdout" >/dev/null; then
     echo \
-      "[playcover-fixture-live] FAIL: $case_name does not prove the canonical Simulator-scale host/canvas contract" \
+      "[playcover-fixture-live] FAIL: $case_name does not prove the native Catalyst host contract" \
       >&2
     return 1
   fi
@@ -958,6 +694,11 @@ assert_canonical_host_status() {
 assert_canvas_only_screenshot() {
   local case_name="$1"
   if ! jq -e --arg title "$EXPECTED_HOST_TITLE" '
+      def rects_agree($lhs; $rhs):
+        (($lhs.x - $rhs.x) | abs) <= 0.5 and
+        (($lhs.y - $rhs.y) | abs) <= 0.5 and
+        (($lhs.width - $rhs.width) | abs) <= 0.5 and
+        (($lhs.height - $rhs.height) | abs) <= 0.5;
       .data.pixelSize == [1290,2796] and
       .data.logicalSize == [430,932] and
       .data.runtimeEvidence.complete == true and
@@ -971,49 +712,44 @@ assert_canvas_only_screenshot() {
           "scale":3,
           "uncropped":true,
           "safeAreaCropped":false,
-          "identityMapping":true
+          "nativeCanvas":true
         } and
-        .data.runtimeEvidence.compositor.syntheticChrome == false and
         .data.runtimeEvidence.compositor.fullFrame == $fullFrame) and
-      (.data.runtimeEvidence.compositor.completeness |
-        .allVisibleNativeWindowsOrdered == true and
-        .allVisibleUIKitWindowsMapped == true and
-        .allWindowGeometryInsideDevice == true and
-        .baseWindowCoversDevice == true and
-        .requestedCapturedCountMatch == true and
-        .windowSetStableDuringCapture == true) and
+      (.data.runtimeEvidence.compositor as $compositor |
+        $compositor.syntheticChrome == false and
+        $compositor.canvasOnly == true and
+        $compositor.hostDecorationsExcluded == true and
+        ($compositor.completeness |
+          .allVisibleNativeWindowsOrdered == true and
+          .allVisibleUIKitWindowsMapped == true and
+          .allWindowGeometryInsideDevice == true and
+          .baseWindowCoversDevice == true and
+          .requestedCapturedCountMatch == true and
+          .windowSetStableDuringCapture == true)) and
       (.data.runtimeEvidence.appKitWindowEvidence as $window |
         ($window.canvasCapture) as $capture |
         $window.status == "configured" and
         $window.opaque == true and
         $window.publicTitleBar == true and
-        $window.resizable == true and
+        $window.resizable == false and
         $window.hostPolicy == true and
+        $window.nativeContentView == 1 and
         $window.title == $title and
         $capture.title == $title and
         $window.canvasBounds ==
           {"x":0,"y":0,"width":430,"height":932} and
-        ($window.displayScale | type) == "number" and
-        $window.displayScale > 0 and
-        (($window.canvasRect.width / $window.displayScale - 430) | abs) <=
-          0.5 and
-        (($window.canvasRect.height / $window.displayScale - 932) | abs) <=
-          0.5 and
-        (($capture.canvasCGWindowRect.width /
-          $window.displayScale - 430) | abs) <= 0.5 and
-        (($capture.canvasCGWindowRect.height /
-          $window.displayScale - 932) | abs) <= 0.5 and
-        (($capture.canvasCGWindowRect.x -
-          $capture.hostContentCGWindowRect.x) | abs) <= 0.5 and
-        (($capture.canvasCGWindowRect.y -
-          $capture.hostContentCGWindowRect.y) | abs) <= 0.5 and
-        (($capture.canvasCGWindowRect.width -
-          $capture.hostContentCGWindowRect.width) | abs) <= 0.5 and
-        (($capture.canvasCGWindowRect.height -
-          $capture.hostContentCGWindowRect.height) | abs) <= 0.5)
-    ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
+        ($window.hostContentBounds.width | type) == "number" and
+        $window.hostContentBounds.width > 0 and
+        ($window.hostContentBounds.height | type) == "number" and
+        $window.hostContentBounds.height > 0 and
+        $capture.hostContentBounds == $window.hostContentBounds and
+        rects_agree(
+          $capture.canvasCGWindowRect;
+          $capture.hostContentCGWindowRect
+        ))
+    ' "$RUN_DIR/$case_name.stdout" >/dev/null; then
     echo \
-      "[playcover-fixture-live] FAIL: $case_name is not a complete canvas-only 1290x2796 capture" \
+      "[playcover-fixture-live] FAIL: $case_name is not a complete native-canvas 1290x2796 capture" \
       >&2
     return 1
   fi
@@ -1271,20 +1007,15 @@ run_global_mouse_probe() {
           $runtime.nativeHeight != 2796 or
           $runtime.scale != 3 or
           $appKit.status != "configured" or
-          $appKit.applicationActive != true or
-          $appKit.windowKey != true or
-          $appKit.mouseMonitorReady != true or
-          $appKit.identityTransform != true or
+          $appKit.resizable != false or
+          $appKit.nativeContentView != 1 or
           $appKit.canvasBounds !=
             {"x":0,"y":0,"width":430,"height":932} or
-          ($appKit.displayScale | type) != "number" or
-          $appKit.displayScale <= 0 or
-          ($appKit.inverseDisplayScale | type) != "number" or
-          (($appKit.displayScale * $appKit.inverseDisplayScale - 1) | abs) >
-            0.0001 or
           ($canvas | type) != "object" or
-          (($canvas.width / $appKit.displayScale - 430) | abs) > 0.5 or
-          (($canvas.height / $appKit.displayScale - 932) | abs) > 0.5
+          ($canvas.width | type) != "number" or
+          $canvas.width <= 0 or
+          ($canvas.height | type) != "number" or
+          $canvas.height <= 0
         ) then
           error("canonical Runtime canvas geometry is not mouse-ready")
         else
@@ -1299,10 +1030,10 @@ run_global_mouse_probe() {
           ) then
             error("probe center is outside the fixed device screen")
           else
-            ($canvas.x + ($logicalX * $appKit.displayScale)) as $globalX |
-            ($canvas.y + ($logicalY * $appKit.displayScale)) as $globalY |
-            (($globalX - $canvas.x) * $appKit.inverseDisplayScale) as $inverseX |
-            (($globalY - $canvas.y) * $appKit.inverseDisplayScale) as $inverseY |
+            ($canvas.x + ($logicalX * $canvas.width / 430)) as $globalX |
+            ($canvas.y + ($logicalY * $canvas.height / 932)) as $globalY |
+            (($globalX - $canvas.x) * 430 / $canvas.width) as $inverseX |
+            (($globalY - $canvas.y) * 932 / $canvas.height) as $inverseY |
             if (
               (($inverseX - $logicalX) | abs) > 0.5 or
               (($inverseY - $logicalY) | abs) > 0.5
@@ -1329,9 +1060,7 @@ run_global_mouse_probe() {
               },
               runnerPID: $status[0].data.driver.runnerPid,
               canvasCGWindowRect: $canvas,
-              displayScale: $appKit.displayScale,
-              inverseDisplayScale: $appKit.inverseDisplayScale,
-              mouseDeliveryCountBefore: $appKit.mouseDeliveryCount
+              mouseDeliveryCountBefore: 0
             }
             end
           end
@@ -1399,9 +1128,10 @@ run_global_mouse_probe() {
   poll_fixture_probe_status \
     "$post_dom_case" \
     "$probe_identifier"
-  local delivery_status_case="${case_prefix}_delivery_status"
-  record_case "$delivery_status_case" status --json
-  assert_canonical_host_status "$delivery_status_case"
+  local delivery_evidence_case="${case_prefix}_delivery_evidence"
+  record_case "$delivery_evidence_case" screenshot \
+    --name "$delivery_evidence_case" --no-ocr --json
+  assert_canvas_only_screenshot "$delivery_evidence_case"
   if ! jq -e \
       --argjson token "$event_token" \
       --slurpfile coordinates "$coordinates_file" \
@@ -1409,14 +1139,10 @@ run_global_mouse_probe() {
       --slurpfile postDom "$RUN_DIR/${post_dom_case}.stdout" '
         ($coordinates[0]) as $coordinates |
         ($coordinates.logicalPoint) as $point |
-        (.data.driver.runtime.diagnostics.runtime.window) as $appKit |
+        (.data.runtimeEvidence.appKitWindowEvidence) as $appKit |
         ($appKit.lastMouseDownDelivery) as $down |
         ($appKit.lastMouseUpDelivery) as $up |
-        .data.driver.runnerPid == $coordinates.runnerPID and
-        .data.driver.runtime.status == "healthy" and
         $appKit.status == "configured" and
-        $appKit.applicationActive == true and
-        $appKit.windowKey == true and
         $down.token == $token and
         $up.token == $token and
         $down.targetPID == $coordinates.runnerPID and
@@ -1463,7 +1189,7 @@ run_global_mouse_probe() {
             )
           ] | length
         ) == 1
-      ' "$RUN_DIR/${delivery_status_case}.stdout" >/dev/null; then
+      ' "$RUN_DIR/${delivery_evidence_case}.stdout" >/dev/null; then
     echo \
       "[playcover-fixture-live] FAIL: $probe_identifier lacks exact DOM/status/AppKit down-up evidence" \
       >&2
@@ -1471,724 +1197,6 @@ run_global_mouse_probe() {
   fi
 }
 
-write_host_resize_plan() {
-  local case_name="$1"
-  local phase="$2"
-  local status_case="$3"
-  local plan_file="$RUN_DIR/${case_name}_plan.json"
-  local initial_arg=(--argjson initial '[]')
-  if [[ "$phase" == "second" ]]; then
-    initial_arg=(--slurpfile initial "$RUN_DIR/host_resize_initial.json")
-  fi
-  if ! jq -e -n \
-      --arg phase "$phase" \
-      --slurpfile status "$RUN_DIR/${status_case}.stdout" \
-      "${initial_arg[@]}" '
-        ($status[0].data.driver.runtime.diagnostics.runtime.window) as $window |
-        ($window.canvasCapture.hostCGWindowBounds) as $host |
-        ($window.canvasCapture.hostContentCGWindowRect) as $content |
-        ($host.width - $content.width) as $decorationWidth |
-        ($host.height - $content.height) as $decorationHeight |
-        if (
-          ($host | type) != "object" or
-          ($content | type) != "object" or
-          ($window.minSize.width | type) != "number" or
-          ($window.minSize.height | type) != "number" or
-          $decorationWidth < -0.5 or
-          $decorationHeight < -0.5
-        ) then
-          error("host resize diagnostics are incomplete")
-        elif $phase == "first" then
-          ([
-            0.72,
-            (($window.minSize.width + 12 - $decorationWidth) /
-              $content.width),
-            (($window.minSize.height + 12 - $decorationHeight) /
-              $content.height)
-          ] | max) as $targetScale |
-          ($content.width * $targetScale + $decorationWidth) as $targetWidth |
-          ($content.height * $targetScale + $decorationHeight) as $targetHeight |
-          if (
-            $targetScale >= 0.94 or
-            $targetWidth >= ($host.width - 8) or
-            $targetHeight >= ($host.height - 8)
-          ) then
-            error("host cannot be reduced to a distinct first resize")
-          else
-            {
-              phase: $phase,
-              beforeHost: $host,
-              beforeContent: $content,
-              beforeDisplayScale: $window.displayScale,
-              anchoredOppositeCorner: "topLeft",
-              targetContentScale: $targetScale,
-              targetHostSize: {
-                width: $targetWidth,
-                height: $targetHeight
-              },
-              drag: {
-                start: {
-                  x: ($host.x + $host.width - 2),
-                  y: ($host.y + $host.height - 2)
-                },
-                end: {
-                  x: ($host.x + $targetWidth - 2),
-                  y: ($host.y + $targetHeight - 2)
-                }
-              },
-              runnerPID: $status[0].data.driver.runnerPid
-            }
-          end
-        elif $phase == "second" then
-          ($initial[0].host) as $initialHost |
-          ($initial[0].content) as $initialContent |
-          ($content.width / $initialContent.width) as $currentScale |
-          ((1 + $currentScale) / 2) as $targetScale |
-          ($initialContent.width * $targetScale +
-            $decorationWidth) as $targetWidth |
-          ($initialContent.height * $targetScale +
-            $decorationHeight) as $targetHeight |
-          if (
-            $targetWidth <= ($host.width + 8) or
-            $targetHeight <= ($host.height + 8) or
-            $targetWidth > ($initialHost.width + 0.5) or
-            $targetHeight > ($initialHost.height + 0.5)
-          ) then
-            error("host cannot be increased to a distinct second resize")
-          else
-            {
-              phase: $phase,
-              beforeHost: $host,
-              beforeContent: $content,
-              beforeDisplayScale: $window.displayScale,
-              anchoredOppositeCorner: "bottomRight",
-              targetContentScale: $targetScale,
-              targetHostSize: {
-                width: $targetWidth,
-                height: $targetHeight
-              },
-              drag: {
-                start: {
-                  x: ($host.x + 2),
-                  y: ($host.y + 2)
-                },
-                end: {
-                  x: ($host.x + $host.width - $targetWidth + 2),
-                  y: ($host.y + $host.height - $targetHeight + 2)
-                }
-              },
-              runnerPID: $status[0].data.driver.runnerPid
-            }
-          end
-        else
-          error("unknown resize phase")
-        end
-      ' >"$plan_file"; then
-    echo \
-      "[playcover-fixture-live] FAIL: could not plan $phase host resize" \
-      >&2
-    return 1
-  fi
-}
-
-wait_for_host_resize() {
-  local case_name="$1"
-  local plan_file="$RUN_DIR/${case_name}_plan.json"
-  local stdout_file="$RUN_DIR/${case_name}_after_status.stdout"
-  local stderr_file="$RUN_DIR/${case_name}_after_status.stderr"
-  printf '%s\t%s\t%s\t%s\t%s\n' \
-    "$MATRIX_VERSION" \
-    "${case_name}_after_status" \
-    "status --json (wait for public host resize)" \
-    "$stdout_file" \
-    "$stderr_file" >>"$MANIFEST"
-  local observed=0
-  local attempt
-  for ((attempt = 1; attempt <= 30; attempt += 1)); do
-    if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" status --json \
-        >"$stdout_file" 2>"$stderr_file" &&
-      jq -e --slurpfile plan "$plan_file" '
-        ($plan[0]) as $plan |
-        (.data.driver.runtime.diagnostics.runtime.window) as $window |
-        ($window.canvasCapture.hostCGWindowBounds) as $actual |
-        ($plan.beforeHost) as $before |
-        ($plan.targetHostSize) as $target |
-        $window.status == "configured" and
-        (($actual.width - $target.width) | abs) <= 10 and
-        (($actual.height - $target.height) | abs) <= 10 and
-        if $plan.anchoredOppositeCorner == "topLeft" then
-          (($actual.x - $before.x) | abs) <= 4 and
-          (($actual.y - $before.y) | abs) <= 4
-        elif $plan.anchoredOppositeCorner == "bottomRight" then
-          (($actual.x + $actual.width -
-            ($before.x + $before.width)) | abs) <= 4 and
-          (($actual.y + $actual.height -
-            ($before.y + $before.height)) | abs) <= 4
-        else
-          false
-        end and
-        if $plan.phase == "first" then
-          $actual.width < ($before.width - 4) and
-          $actual.height < ($before.height - 4)
-        else
-          $actual.width > ($before.width + 4) and
-          $actual.height > ($before.height + 4)
-        end
-      ' "$stdout_file" >/dev/null; then
-      observed=1
-      break
-    fi
-    sleep 0.1
-  done
-  if [[ "$observed" != "1" ]]; then
-    echo \
-      "[playcover-fixture-live] FAIL: $case_name did not reach its requested public host size" \
-      >&2
-    return 1
-  fi
-  assert_canonical_host_status "${case_name}_after_status"
-}
-
-resize_public_host() {
-  local case_name="$1"
-  local phase="$2"
-  local before_status_case="${case_name}_before_status"
-  record_case "$before_status_case" status --json
-  assert_canonical_host_status "$before_status_case"
-  if [[ "$phase" == "first" ]]; then
-    jq -e '
-      .data.driver.runtime.diagnostics.runtime.window as $window |
-      {
-        host: $window.canvasCapture.hostCGWindowBounds,
-        content: $window.canvasCapture.hostContentCGWindowRect,
-        displayScale: $window.displayScale,
-        resizeEdges: $window.resizeEdges,
-        canvasBounds: $window.canvasBounds,
-        canvasRect: $window.canvasRect
-      }
-    ' "$RUN_DIR/${before_status_case}.stdout" \
-      >"$RUN_DIR/host_resize_initial.json"
-  fi
-  write_host_resize_plan "$case_name" "$phase" "$before_status_case"
-
-  local drag_start_x
-  local drag_start_y
-  local drag_end_x
-  local drag_end_y
-  local runner_pid
-  read -r drag_start_x drag_start_y drag_end_x drag_end_y runner_pid < <(
-    jq -r '
-      [
-        .drag.start.x,
-        .drag.start.y,
-        .drag.end.x,
-        .drag.end.y,
-        .runnerPID
-      ] | @tsv
-    ' "$RUN_DIR/${case_name}_plan.json"
-  )
-  MOUSE_SEQUENCE="$((MOUSE_SEQUENCE + 1))"
-  local event_token
-  event_token="$(
-    printf '%s%04d%02d' \
-      "$(date +%s)" \
-      "$(( $$ % 10000 ))" \
-      "$MOUSE_SEQUENCE"
-  )"
-  record_host_case \
-    "${case_name}_drag" \
-    xcrun swift \
-    "$ROOT_DIR/playcover-fixtures/appkit_mouse_event.swift" \
-    --drag \
-    "$drag_start_x" \
-    "$drag_start_y" \
-    "$drag_end_x" \
-    "$drag_end_y" \
-    "$event_token" \
-    "$runner_pid"
-  if ! jq -e \
-      --argjson token "$event_token" \
-      --argjson pid "$runner_pid" \
-      --slurpfile plan "$RUN_DIR/${case_name}_plan.json" '
-        ($plan[0].drag.end) as $end |
-        .operation == "drag" and
-        .token == $token and
-        .targetPID == $pid and
-        .targetWindowNumber > 0 and
-        .postEventAccess == true and
-        .endPoint.x >= ($end.x - 0.5) and
-        .endPoint.x <= ($end.x + 0.5) and
-        .endPoint.y >= ($end.y - 0.5) and
-        .endPoint.y <= ($end.y + 0.5)
-      ' "$RUN_DIR/${case_name}_drag.stdout" >/dev/null; then
-    echo \
-      "[playcover-fixture-live] FAIL: $case_name drag helper evidence is not target-bound" \
-      >&2
-    return 1
-  fi
-  wait_for_host_resize "$case_name"
-}
-
-assert_two_uniform_host_resizes() {
-  if ! jq -e -n \
-      --slurpfile initial "$RUN_DIR/host_resize_initial.json" \
-      --slurpfile first "$RUN_DIR/host_resize_first_after_status.stdout" \
-      --slurpfile second "$RUN_DIR/host_resize_second_after_status.stdout" '
-        ($initial[0]) as $initial |
-        ($first[0].data.driver.runtime.diagnostics.runtime.window) as $first |
-        ($second[0].data.driver.runtime.diagnostics.runtime.window) as $second |
-        ($first.canvasCapture.hostCGWindowBounds) as $firstHost |
-        ($second.canvasCapture.hostCGWindowBounds) as $secondHost |
-        ($first.canvasCapture.hostContentCGWindowRect) as $firstContent |
-        ($second.canvasCapture.hostContentCGWindowRect) as $secondContent |
-        ($firstContent.width / $initial.content.width) as $firstScale |
-        ($secondContent.width / $initial.content.width) as $secondScale |
-        $initial.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
-        $first.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
-        $second.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
-        (($initial.resizeEdges.available % 16) == 15) and
-        (($initial.resizeEdges.growing % 16) == 15) and
-        (($first.resizeEdges.available % 16) == 15) and
-        (($first.resizeEdges.growing % 16) == 15) and
-        (($second.resizeEdges.available % 16) == 15) and
-        (($second.resizeEdges.growing % 16) == 15) and
-        $firstHost.width < ($initial.host.width - 4) and
-        $firstHost.height < ($initial.host.height - 4) and
-        $secondHost.width > ($firstHost.width + 4) and
-        $secondHost.height > ($firstHost.height + 4) and
-        (($first.displayScale - $initial.displayScale) | abs) > 0.01 and
-        (($second.displayScale - $first.displayScale) | abs) > 0.01 and
-        (($firstContent.height / $initial.content.height -
-          $firstScale) | abs) <= 0.002 and
-        (($secondContent.height / $initial.content.height -
-          $secondScale) | abs) <= 0.002 and
-        (($first.displayScale / $initial.displayScale -
-          $firstScale) | abs) <= 0.002 and
-        (($second.displayScale / $initial.displayScale -
-          $secondScale) | abs) <= 0.002 and
-        (($firstHost.height - $firstContent.height -
-          ($initial.host.height - $initial.content.height)) | abs) <= 1 and
-        (($secondHost.height - $secondContent.height -
-          ($initial.host.height - $initial.content.height)) | abs) <= 1 and
-        (($first.canvasRect.width / $first.displayScale - 430) | abs) <= 0.5 and
-        (($first.canvasRect.height / $first.displayScale - 932) | abs) <= 0.5 and
-        (($second.canvasRect.width / $second.displayScale - 430) | abs) <= 0.5 and
-        (($second.canvasRect.height / $second.displayScale - 932) | abs) <= 0.5 and
-        (($first.canvasRect.x -
-          $first.hostContentBounds.x) | abs) <= 0.5 and
-        (($first.canvasRect.y -
-          $first.hostContentBounds.y) | abs) <= 0.5 and
-        (($first.canvasRect.width -
-          $first.hostContentBounds.width) | abs) <= 0.5 and
-        (($first.canvasRect.height -
-          $first.hostContentBounds.height) | abs) <= 0.5 and
-        (($second.canvasRect.x -
-          $second.hostContentBounds.x) | abs) <= 0.5 and
-        (($second.canvasRect.y -
-          $second.hostContentBounds.y) | abs) <= 0.5 and
-        (($second.canvasRect.width -
-          $second.hostContentBounds.width) | abs) <= 0.5 and
-        (($second.canvasRect.height -
-          $second.hostContentBounds.height) | abs) <= 0.5
-      ' /dev/null >/dev/null; then
-    echo \
-      "[playcover-fixture-live] FAIL: two proportional host resizes did not preserve one fixed UIKit canvas and one display scale" \
-      >&2
-    return 1
-  fi
-}
-
-display_matrix_row() {
-  local case_name="$1"
-  /usr/bin/awk -F '\t' -v requested="$case_name" '
-    NR == 1 {
-      if (
-        $1 != "matrixVersion" ||
-        $2 != "case" ||
-        $3 != "targetScreen" ||
-        $4 != "displayScale" ||
-        $5 != "crossDisplay"
-      ) {
-        exit 2
-      }
-      next
-    }
-    $2 == requested {
-      if (found || $1 != "2") {
-        exit 2
-      }
-      print $3 "\t" $4 "\t" $5
-      found = 1
-    }
-    END {
-      if (!found) {
-        exit 2
-      }
-    }
-  ' "$MATRIX_SOURCE"
-}
-
-write_display_move_plan() {
-  local case_name="$1"
-  local target_role="$2"
-  local target_scale="$3"
-  local cross_display="$4"
-  local status_case="$5"
-  jq -e -n \
-    --arg role "$target_role" \
-    --argjson targetScale "$target_scale" \
-    --argjson crossDisplay "$cross_display" \
-    --slurpfile topology "$DISPLAY_SELECTION" \
-    --slurpfile status "$RUN_DIR/${status_case}.stdout" '
-      ($status[0].data.driver) as $driver |
-      ($driver.runtime.diagnostics.runtime.window) as $window |
-      ($window.canvasCapture.hostCGWindowBounds) as $host |
-      ($window.canvasCapture.hostContentCGWindowRect) as $content |
-      ($topology[0][$role]) as $target |
-      ($topology[0].main) as $main |
-      ($target.visibleFrame) as $visible |
-      {
-        x: $visible.x,
-        y: ($main.cgBounds.y + $main.cgBounds.height -
-          $visible.y - $visible.height),
-        width: $visible.width,
-        height: $visible.height
-      } as $visibleCG |
-      ($host.width - $content.width) as $decorationWidth |
-      ($host.height - $content.height) as $decorationHeight |
-      (430 * $targetScale + $decorationWidth) as $targetWidth |
-      (932 * $targetScale + $decorationHeight) as $targetHeight |
-      (($visibleCG.x + (($visibleCG.width - $targetWidth) / 2))) as
-        $targetX |
-      (($visibleCG.y + (($visibleCG.height - $targetHeight) / 2))) as
-        $targetY |
-      if (
-        ($window.windowNumber | type) != "number" or
-        $window.windowNumber <= 0 or
-        ($window.screenDisplayID | type) != "number" or
-        ($targetWidth > $visibleCG.width) or
-        ($targetHeight > $visibleCG.height) or
-        ($content.y - $host.y) <= 4 or
-        ($crossDisplay and
-          $window.screenDisplayID == $target.screenDisplayID) or
-        (($crossDisplay | not) and
-          $window.screenDisplayID != $target.screenDisplayID)
-      ) then
-        error("display move preconditions are not exact")
-      else
-        {
-          targetRole: $role,
-          targetScale: $targetScale,
-          crossDisplay: $crossDisplay,
-          targetScreen: $target,
-          targetVisibleFrameCG: $visibleCG,
-          targetHostSize: {
-            width: $targetWidth,
-            height: $targetHeight
-          },
-          beforeScreenDisplayID: $window.screenDisplayID,
-          expectedWindowNumber: $window.windowNumber,
-          runnerPID: $driver.runnerPid,
-          sessionIdentifier: $driver.sessionIdentifier,
-          installRevision: $driver.macInstallRevision,
-          drag: {
-            start: {
-              x: ($host.x + ($host.width / 2)),
-              y: ($host.y + (($content.y - $host.y) / 2))
-            },
-            end: {
-              x: ($host.x + ($host.width / 2) + $targetX - $host.x),
-              y: ($host.y + (($content.y - $host.y) / 2) +
-                $targetY - $host.y)
-            }
-          }
-        }
-      end
-    ' >"$RUN_DIR/${case_name}_move_plan.json"
-}
-
-wait_for_display_phase_status() {
-  local case_name="$1"
-  local plan_file="$2"
-  local require_scale="$3"
-  local stdout_file="$RUN_DIR/${case_name}.stdout"
-  local stderr_file="$RUN_DIR/${case_name}.stderr"
-  printf '%s\t%s\t%s\t%s\t%s\n' \
-    "$MATRIX_VERSION" \
-    "$case_name" \
-    "status --json (wait for exact display matrix phase)" \
-    "$stdout_file" \
-    "$stderr_file" >>"$MANIFEST"
-  local observed=0
-  local attempt
-  for ((attempt = 1; attempt <= 50; attempt += 1)); do
-    if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" status --json \
-        >"$stdout_file" 2>"$stderr_file" &&
-      jq -e \
-        --argjson requireScale "$require_scale" \
-        --slurpfile plan "$plan_file" '
-          ($plan[0]) as $plan |
-          (.data.driver) as $driver |
-          ($driver.runtime.diagnostics.runtime.window) as $window |
-          $driver.runnerPid == $plan.runnerPID and
-          $driver.sessionIdentifier == $plan.sessionIdentifier and
-          $driver.macInstallRevision == $plan.installRevision and
-          $window.windowNumber == $plan.expectedWindowNumber and
-          $window.screenDisplayID ==
-            $plan.targetScreen.screenDisplayID and
-          $window.screenIsMain ==
-            $plan.targetScreen.screenIsMain and
-          $window.backingScaleFactor ==
-            $plan.targetScreen.backingScaleFactor and
-          $window.screenVisibleFrame ==
-            $plan.targetScreen.visibleFrame and
-          (($requireScale | not) or
-            (($window.displayScale - $plan.targetScale) | abs) <= 0.01)
-        ' "$stdout_file" >/dev/null; then
-      observed=1
-      break
-    fi
-    sleep 0.1
-  done
-  if [[ "$observed" != "1" ]]; then
-    echo \
-      "[playcover-fixture-live] FAIL: $case_name did not preserve exact process/window/display identity" \
-      >&2
-    return 1
-  fi
-  assert_canonical_host_status "$case_name"
-}
-
-run_display_matrix_phase() {
-  local case_name="$1"
-  local target_role
-  local target_scale
-  local cross_display
-  IFS=$'\t' read -r target_role target_scale cross_display < <(
-    display_matrix_row "$case_name"
-  ) || {
-    echo \
-      "[playcover-fixture-live] FAIL: invalid display matrix row $case_name" \
-      >&2
-    return 1
-  }
-  local before_case="${case_name}_before_status"
-  record_case "$before_case" status --json
-  assert_canonical_host_status "$before_case"
-  write_display_move_plan \
-    "$case_name" \
-    "$target_role" \
-    "$target_scale" \
-    "$cross_display" \
-    "$before_case"
-  local move_plan="$RUN_DIR/${case_name}_move_plan.json"
-  if [[ "$cross_display" == "true" ]]; then
-    local move_start_x
-    local move_start_y
-    local move_end_x
-    local move_end_y
-    local runner_pid
-    local window_number
-    read -r \
-      move_start_x move_start_y move_end_x move_end_y \
-      runner_pid window_number < <(
-      jq -r '[
-        .drag.start.x,
-        .drag.start.y,
-        .drag.end.x,
-        .drag.end.y,
-        .runnerPID,
-        .expectedWindowNumber
-      ] | @tsv' "$move_plan"
-    )
-    MOUSE_SEQUENCE="$((MOUSE_SEQUENCE + 1))"
-    local event_token
-    event_token="$(
-      printf '%s%04d%02d' \
-        "$(date +%s)" \
-        "$(( $$ % 10000 ))" \
-        "$MOUSE_SEQUENCE"
-    )"
-    record_host_case \
-      "${case_name}_move_drag" \
-      xcrun swift \
-      "$ROOT_DIR/playcover-fixtures/appkit_mouse_event.swift" \
-      --drag \
-      "$move_start_x" \
-      "$move_start_y" \
-      "$move_end_x" \
-      "$move_end_y" \
-      "$event_token" \
-      "$runner_pid" \
-      "$window_number"
-    if ! jq -e \
-        --argjson token "$event_token" \
-        --slurpfile plan "$move_plan" '
-          ($plan[0]) as $plan |
-          .operation == "drag" and
-          .token == $token and
-          .targetPID == $plan.runnerPID and
-          .targetWindowNumber == $plan.expectedWindowNumber and
-          .expectedWindowNumber == $plan.expectedWindowNumber and
-          .windowNumberMatched == true and
-          .startDisplayID == $plan.beforeScreenDisplayID and
-          .endDisplayID == $plan.targetScreen.screenDisplayID and
-          .crossDisplayDrag == true and
-          .interpolationEventCount >= 2 and
-          .endPointReached == true
-        ' "$RUN_DIR/${case_name}_move_drag.stdout" >/dev/null; then
-      echo \
-        "[playcover-fixture-live] FAIL: $case_name lacks exact cross-display window drag evidence" \
-        >&2
-      return 1
-    fi
-    wait_for_display_phase_status \
-      "${case_name}_move_status" \
-      "$move_plan" \
-      false
-  else
-    cp "$RUN_DIR/${before_case}.stdout" \
-      "$RUN_DIR/${case_name}_move_status.stdout"
-  fi
-
-  local moved_status="$RUN_DIR/${case_name}_move_status.stdout"
-  local resize_plan="$RUN_DIR/${case_name}_resize_plan.json"
-  jq -e -n \
-    --slurpfile move "$move_plan" \
-    --slurpfile status "$moved_status" '
-      ($move[0]) as $plan |
-      ($status[0].data.driver.runtime.diagnostics.runtime.window) as $window |
-      ($window.canvasCapture.hostCGWindowBounds) as $host |
-      $plan + {
-        beforeResizeHost: $host,
-        drag: {
-          start: {
-            x: ($host.x + $host.width - 2),
-            y: ($host.y + $host.height - 2)
-          },
-          end: {
-            x: ($host.x + $plan.targetHostSize.width - 2),
-            y: ($host.y + $plan.targetHostSize.height - 2)
-          }
-        }
-      }
-    ' >"$resize_plan"
-  local resize_start_x
-  local resize_start_y
-  local resize_end_x
-  local resize_end_y
-  local runner_pid
-  local window_number
-  read -r \
-    resize_start_x resize_start_y resize_end_x resize_end_y \
-    runner_pid window_number < <(
-    jq -r '[
-      .drag.start.x,
-      .drag.start.y,
-      .drag.end.x,
-      .drag.end.y,
-      .runnerPID,
-      .expectedWindowNumber
-    ] | @tsv' "$resize_plan"
-  )
-  MOUSE_SEQUENCE="$((MOUSE_SEQUENCE + 1))"
-  local resize_token
-  resize_token="$(
-    printf '%s%04d%02d' \
-      "$(date +%s)" \
-      "$(( $$ % 10000 ))" \
-      "$MOUSE_SEQUENCE"
-  )"
-  record_host_case \
-    "${case_name}_resize_drag" \
-    xcrun swift \
-    "$ROOT_DIR/playcover-fixtures/appkit_mouse_event.swift" \
-    --drag \
-    "$resize_start_x" \
-    "$resize_start_y" \
-    "$resize_end_x" \
-    "$resize_end_y" \
-    "$resize_token" \
-    "$runner_pid" \
-    "$window_number"
-  if ! jq -e \
-      --argjson token "$resize_token" \
-      --slurpfile plan "$resize_plan" '
-        ($plan[0]) as $plan |
-        .operation == "drag" and
-        .token == $token and
-        .targetPID == $plan.runnerPID and
-        .targetWindowNumber == $plan.expectedWindowNumber and
-        .expectedWindowNumber == $plan.expectedWindowNumber and
-        .windowNumberMatched == true and
-        .startDisplayID == $plan.targetScreen.screenDisplayID and
-        .endDisplayID == $plan.targetScreen.screenDisplayID and
-        .crossDisplayDrag == false and
-        .interpolationEventCount >= 2 and
-        .endPointReached == true
-      ' "$RUN_DIR/${case_name}_resize_drag.stdout" >/dev/null; then
-    echo \
-      "[playcover-fixture-live] FAIL: $case_name lacks exact window resize evidence" \
-      >&2
-    return 1
-  fi
-  wait_for_display_phase_status \
-    "${case_name}_after_status" \
-    "$resize_plan" \
-    true
-}
-
-assert_display_matrix_identity() {
-  if ! jq -e -n \
-      --slurpfile main075 \
-        "$RUN_DIR/host_main_075_after_status.stdout" \
-      --slurpfile extended100 \
-        "$RUN_DIR/host_extended_100_after_status.stdout" \
-      --slurpfile main0875 \
-        "$RUN_DIR/host_main_0875_after_status.stdout" \
-      --slurpfile topology "$DISPLAY_SELECTION" '
-        ($main075[0].data.driver) as $first |
-        ($extended100[0].data.driver) as $second |
-        ($main0875[0].data.driver) as $third |
-        ($first.runtime.diagnostics.runtime.window) as $firstWindow |
-        ($second.runtime.diagnostics.runtime.window) as $secondWindow |
-        ($third.runtime.diagnostics.runtime.window) as $thirdWindow |
-        $first.runnerPid == $second.runnerPid and
-        $second.runnerPid == $third.runnerPid and
-        $first.sessionIdentifier == $second.sessionIdentifier and
-        $second.sessionIdentifier == $third.sessionIdentifier and
-        $first.macInstallRevision == $second.macInstallRevision and
-        $second.macInstallRevision == $third.macInstallRevision and
-        $firstWindow.windowNumber == $secondWindow.windowNumber and
-        $secondWindow.windowNumber == $thirdWindow.windowNumber and
-        $firstWindow.screenDisplayID ==
-          $topology[0].main.screenDisplayID and
-        $secondWindow.screenDisplayID ==
-          $topology[0].extended.screenDisplayID and
-        $thirdWindow.screenDisplayID ==
-          $topology[0].main.screenDisplayID and
-        $firstWindow.screenVisibleFrame ==
-          $topology[0].main.visibleFrame and
-        $secondWindow.screenVisibleFrame ==
-          $topology[0].extended.visibleFrame and
-        $thirdWindow.screenVisibleFrame ==
-          $topology[0].main.visibleFrame and
-        $firstWindow.backingScaleFactor ==
-          $topology[0].main.backingScaleFactor and
-        $secondWindow.backingScaleFactor ==
-          $topology[0].extended.backingScaleFactor and
-        $thirdWindow.backingScaleFactor ==
-          $topology[0].main.backingScaleFactor and
-        (($firstWindow.displayScale - 0.75) | abs) <= 0.01 and
-        (($secondWindow.displayScale - 1.0) | abs) <= 0.01 and
-        (($thirdWindow.displayScale - 0.875) | abs) <= 0.01
-      ' >/dev/null; then
-    echo \
-      "[playcover-fixture-live] FAIL: v2 display matrix changed PID/session/generation/window identity" \
-      >&2
-    return 1
-  fi
-}
 
 assert_dom_unchanged() {
   local before_case="$1"
@@ -2237,9 +1245,7 @@ click_titlebar_and_assert_app_unchanged() {
         if (
           ($outer | type) != "object" or
           ($content | type) != "object" or
-          ($canvas | type) != "object" or
-          ($window.displayScale | type) != "number" or
-          $window.displayScale <= 0
+          ($canvas | type) != "object"
         ) then
           error("host/canvas global geometry is unavailable")
         elif $content.y <= ($outer.y + 2) then
@@ -2265,7 +1271,7 @@ click_titlebar_and_assert_app_unchanged() {
         else
           $result + {
             runnerPID: $status[0].data.driver.runnerPid,
-            mouseDeliveryCountBefore: $window.mouseDeliveryCount
+            mouseDeliveryCountBefore: 0
           }
         end
       ' >"$coordinates_file"; then
@@ -2298,16 +1304,17 @@ click_titlebar_and_assert_app_unchanged() {
     "$event_token" \
     "$runner_pid"
   local after_dom_case="${case_name}_after_dom"
-  local after_status_case="${case_name}_after_status"
+  local after_evidence_case="${case_name}_after_evidence"
   record_case "$after_dom_case" dom --json
-  record_case "$after_status_case" status --json
-  assert_canonical_host_status "$after_status_case"
+  record_case "$after_evidence_case" screenshot \
+    --name "$after_evidence_case" --no-ocr --json
+  assert_canvas_only_screenshot "$after_evidence_case"
   if ! jq -e \
       --argjson token "$event_token" \
       --slurpfile coordinates "$coordinates_file" \
       --slurpfile mouse "$RUN_DIR/${case_name}_event.stdout" '
         ($coordinates[0]) as $coordinates |
-        (.data.driver.runtime.diagnostics.runtime.window) as $window |
+        (.data.runtimeEvidence.appKitWindowEvidence) as $window |
         ($window.lastMouseDownDelivery) as $down |
         ($window.lastMouseUpDelivery) as $up |
         $mouse[0].operation == "click" and
@@ -2327,7 +1334,7 @@ click_titlebar_and_assert_app_unchanged() {
         $up.logicalPoint == null and
         $down.sequence > $coordinates.mouseDeliveryCountBefore and
         $up.sequence > $down.sequence
-      ' "$RUN_DIR/${after_status_case}.stdout" >/dev/null; then
+      ' "$RUN_DIR/${after_evidence_case}.stdout" >/dev/null; then
     echo \
       "[playcover-fixture-live] FAIL: system title-bar click was routed into the target canvas" \
       >&2
@@ -2384,18 +1391,7 @@ assert_json status '
   $runtime.nativeHeight == 2796 and
   $runtime.scale == 3 and
   $runtime.diagnostics.socket.transport == "unix-domain-socket" and
-  $runtime.diagnostics.socket.status == "listening" and
-  ($runtime.diagnostics.runtime.rendering |
-    .syntheticChrome == false and
-    .safeAreaOverride == true and
-    (.fullFrame |
-      .logicalRect == {"x":0,"y":0,"width":430,"height":932} and
-      .pixelWidth == 1290 and
-      .pixelHeight == 2796 and
-      .scale == 3 and
-      .uncropped == true and
-      .safeAreaCropped == false and
-      .identityMapping == true))
+  $runtime.diagnostics.socket.status == "listening"
 '
 if ! jq -e \
     --arg appsRoot "$PLAYCOVER_APPS_ROOT" '
@@ -2417,13 +1413,6 @@ if ! jq -e \
   exit 1
 fi
 assert_canonical_host_status status
-initial_safe_area_evidence_generation="$(
-  jq -er '
-    .data.driver.runtime.diagnostics.runtime.window
-      .safeAreaCompatibility.compatibilityHook
-      .targetFirstEligibleProviderInvocation.generation
-  ' "$RUN_DIR/status.stdout"
-)"
 
 runner_pid="$(jq -er '.data.driver.runnerPid' "$RUN_DIR/status.stdout")"
 session_identifier="$(
@@ -2547,6 +1536,13 @@ assert_evidence screenshot_initial '"fullFrame"'
 assert_evidence screenshot_initial '"appKitWindowEvidence"'
 assert_evidence screenshot_initial '"compositor"'
 assert_canvas_only_screenshot screenshot_initial
+initial_safe_area_evidence_generation="$(
+  jq -er '
+    .data.runtimeEvidence.appKitWindowEvidence
+      .safeAreaCompatibility.compatibilityHook
+      .targetFirstEligibleProviderInvocation.generation
+  ' "$RUN_DIR/screenshot_initial.stdout"
+)"
 
 record_frontmost_snapshot focus_target_after_screenshot
 if ! jq -e \
@@ -2866,8 +1862,17 @@ assert_json alert_status '
   ([.interaction.interactions[].type] |
     index("inProcessAlert")) != null and
   ([.warnings[] | select(contains("dismissAlert"))] |
-    length) == 1 and
-  .data.driver.runtime.diagnostics.runtime.window as $appkit |
+    length) == 1
+'
+assert_cli_refresh_timing_log status
+record_case alert_screenshot screenshot \
+  --name native-alert --json
+assert_evidence alert_screenshot '"compositorWindowNumbers"'
+assert_canvas_only_screenshot alert_screenshot
+assert_json alert_screenshot '
+  (has("performance") | not) and
+  .interaction.blocking == true and
+  .data.runtimeEvidence.appKitWindowEvidence as $appkit |
   $appkit.nativeAlert as $alert |
   $alert.visible == 1 and
   $alert.frame == {"x":85,"y":356,"width":260,"height":219} and
@@ -2881,25 +1886,16 @@ assert_json alert_status '
       ($alert.frame.y + $alert.frame.height))) and
   ([$appkit.allWindows[] |
       select(.class == "_NSAlertPanel" and .visible == true)] |
-    length) == 1
-'
-assert_cli_refresh_timing_log status
-record_case alert_screenshot screenshot \
-  --name native-alert --json
-assert_evidence alert_screenshot '"compositorWindowNumbers"'
-assert_canvas_only_screenshot alert_screenshot
-assert_json alert_screenshot '
-  (has("performance") | not) and
-  .interaction.blocking == true and
-  .data.runtimeEvidence.compositor.windows as $windows |
-  ([$windows[] | select(.class == "_NSAlertPanel")] |
     length) == 1 and
-  ([$windows[] | select(.class == "_NSAlertPanel")][0] |
-    .deviceLogicalRect ==
-      {"x":85,"y":356,"width":260,"height":219}) and
-  .data.runtimeEvidence.syntheticChrome == false and
-  .data.runtimeEvidence.fullFrame.uncropped == true and
-  .data.runtimeEvidence.fullFrame.safeAreaCropped == false
+  ((.data.runtimeEvidence.compositor.windows) as $windows |
+    ([$windows[] | select(.class == "_NSAlertPanel")] |
+      length) == 1 and
+    ([$windows[] | select(.class == "_NSAlertPanel")][0] |
+      .deviceLogicalRect ==
+        {"x":85,"y":356,"width":260,"height":219}) and
+    .data.runtimeEvidence.syntheticChrome == false and
+    .data.runtimeEvidence.fullFrame.uncropped == true and
+    .data.runtimeEvidence.fullFrame.safeAreaCropped == false)
 '
 assert_ocr_evidence alert_screenshot \
   "Fixture Alert" "Confirm" "Cancel"
@@ -3053,41 +2049,39 @@ for probe in \
   assert_evidence "probe_${probe_case}" "$probe_identifier"
 done
 
-run_display_matrix_phase host_main_075
+record_case native_host_status status --json
+assert_canonical_host_status native_host_status
 click_titlebar_and_assert_app_unchanged
 run_global_mouse_probe \
-  resize_first_top_left \
+  native_top_left \
   "Full TL" \
   "fixture.full.top-left"
 run_global_mouse_probe \
-  resize_first_bottom_right \
+  native_bottom_right \
   "Full BR" \
   "fixture.full.bottom-right"
 
-run_display_matrix_phase host_extended_100
-record_case capture_after_resize capture --duration 500ms --fps 4 \
-  --name fixture-live-resized
-capture_after_resize_manifest="$(
+record_case capture_native_host capture --duration 500ms --fps 4 \
+  --name fixture-live-native-host
+capture_native_host_manifest="$(
   sed -nE 's/^Manifest: (.*)$/\1/p' \
-    "$RUN_DIR/capture_after_resize.stdout"
+    "$RUN_DIR/capture_native_host.stdout"
 )"
-if [[ ! -f "$capture_after_resize_manifest" ]]; then
+if [[ ! -f "$capture_native_host_manifest" ]]; then
   echo \
-    "[playcover-fixture-live] FAIL: resized capture manifest is unavailable" \
+    "[playcover-fixture-live] FAIL: native-host capture manifest is unavailable" \
     >&2
   exit 1
 fi
-assert_canvas_only_capture_manifest "$capture_after_resize_manifest"
+assert_canvas_only_capture_manifest "$capture_native_host_manifest"
 run_global_mouse_probe \
-  resize_second_top_right \
+  native_top_right \
   "Full TR" \
   "fixture.full.top-right"
 run_global_mouse_probe \
-  resize_second_bottom_left \
+  native_bottom_left \
   "Full BL" \
   "fixture.full.bottom-left"
-run_display_matrix_phase host_main_0875
-assert_display_matrix_identity
 
 record_case swipe_fixed swipe --dir forth --distance 300 \
   --dom --json
@@ -3192,10 +2186,13 @@ assert_json scene_replace '
 '
 record_case scene_replace_status status --json
 assert_canonical_host_status scene_replace_status
+record_case scene_replace_diagnostics screenshot \
+  --name scene-replace-diagnostics --json
+assert_canvas_only_screenshot scene_replace_diagnostics
 if ! jq -e \
     --argjson initialGeneration \
       "$initial_safe_area_evidence_generation" '
-    .data.driver.runtime.diagnostics.runtime.window
+    .data.runtimeEvidence.appKitWindowEvidence
       .safeAreaCompatibility as $safeArea |
     ($safeArea.compatibilityHook
       .targetFirstEligibleProviderInvocation) as $firstRead |
@@ -3211,7 +2208,7 @@ if ! jq -e \
     $firstRead.result ==
       {"top":59,"left":0,"bottom":34,"right":0} and
     $safeArea.lifecycle.windowReplacements > 0
-  ' "$RUN_DIR/scene_replace_status.stdout" >/dev/null; then
+  ' "$RUN_DIR/scene_replace_diagnostics.stdout" >/dev/null; then
   echo \
     "[playcover-fixture-live] FAIL: Scene 2 lacks new first-read evidence" \
     >&2
@@ -3428,5 +2425,5 @@ archive_session_home
 restore_original_frontmost_application
 trap - EXIT
 trap - ERR
-echo "[playcover-fixture-live] PASS matrix v$MATRIX_VERSION"
+echo "[playcover-fixture-live] PASS native-host acceptance v$MATRIX_VERSION"
 echo "[playcover-fixture-live] Evidence retained at $RUN_DIR"

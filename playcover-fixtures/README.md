@@ -53,12 +53,12 @@ IOS_USE_HOME=/path/to/isolated-fixture-home \
 
 Live mode consumes the active session without starting or stopping it. It
 requires an unlocked GUI session and Accessibility/PostEvent permission for the
-invoking terminal, and uses the popup button's fresh DOM frame plus Runtime
-`canvasCGWindowRect` and `displayScale` to derive the global mouse point. It
-never maps target coordinates from the outer host window. Set
-`IOS_USE_POPUP_EVIDENCE_DIR` to a new
-path when the JSON responses and mouse-event record must be retained instead
-of using an automatically removed temporary directory.
+invoking terminal, and maps the popup button's fresh DOM frame through the
+Runtime `canvasCGWindowRect` onto the fixed 430 x 932 logical canvas to derive
+the global mouse point. It never maps target coordinates from the outer host
+window. Set `IOS_USE_POPUP_EVIDENCE_DIR` to a new path when the JSON responses
+and mouse-event record must be retained instead of using an automatically
+removed temporary directory.
 
 The production-linked compositor behavior gate does not need a GUI session or
 a built fixture App:
@@ -67,12 +67,11 @@ a built fixture App:
 bash scripts/test_playcover_cgshw_compositor.sh --deterministic-only
 ```
 
-The fixture matrix is deliberately opt-in. In an unlocked GUI session it
-verifies the ordinary opaque system title-bar window, real proportional drags
-from opposite host corners with a single uniform display scale, a fixed
-430x932 UIKit canvas that
-fills the content area, fixed canvas-only screenshot/capture output, and a
-title-bar click that does not change the App DOM:
+The fixture live gate is deliberately opt-in. In an unlocked GUI session it
+verifies the ordinary opaque system title-bar window, the fixed 430x932 UIKit
+canvas, fixed canvas-only screenshot/capture output, real global AppKit mouse
+delivery into the canvas, and a title-bar click that does not change the App
+DOM:
 
 ```bash
 bash scripts/test_playcover_fixture_live.sh --live

@@ -18,78 +18,21 @@ typedef struct {
     CGFloat backingScale;
 } IOSUsePlayWindowPlanEntry;
 
-/// The ordinary AppKit window is deliberately not the device. Only this fixed
-/// logical canvas belongs to UIKit, automation coordinates, and screenshots.
-/// `canvasRect` uses the host content view's bottom-left coordinate system,
-/// while logical points use the device's usual top-left coordinate system.
-/// `canvasRect` is the ideal uniform render transform.
-/// `backingPixelCanvasRect` is the nearest backing-pixel rectangle and is the
-/// authoritative projection/crop boundary.
-typedef struct {
-    CGRect hostContentBounds;
-    CGRect canvasRect;
-    CGRect backingPixelCanvasRect;
-    CGFloat displayScale;
-    CGFloat inverseDisplayScale;
-    CGFloat backingScaleFactor;
-    CGFloat halfPixelTolerance;
-} IOSUsePlayHostCanvasLayout;
-
-FOUNDATION_EXPORT CGFloat const IOSUsePlayHostCanvasMinimumDisplayScale;
-
-/// Calculates the one display-only transform for a resizable AppKit host.
-/// The canvas is centered in the content rectangle; host resize never changes
-/// its 430x932 local logical bounds.
-FOUNDATION_EXPORT BOOL IOSUsePlayResolveHostCanvasLayout(
+/// Normalizes an observed point/rectangle in Catalyst's native AppKit content
+/// coordinates into the fixed iPhone logical model. These helpers do not
+/// participate in display layout; they exist only for native input and
+/// evidence geometry.
+FOUNDATION_EXPORT BOOL IOSUsePlayMapHostContentPointToDevice(
     CGRect hostContentBounds,
-    CGFloat backingScaleFactor,
-    IOSUsePlayHostCanvasLayout * _Nullable layout,
-    NSString * _Nullable * _Nullable failure
-);
-
-/// Returns whether every ideal canvas edge is within one half backing pixel
-/// of the host content edge. AppKit may restore an integral-point content
-/// size whose total surplus exceeds one half pixel even though each centered
-/// edge is still a valid nearest-pixel projection.
-FOUNDATION_EXPORT BOOL IOSUsePlayHostCanvasFitsPixelQuantizedContent(
-    IOSUsePlayHostCanvasLayout layout,
-    NSString * _Nullable * _Nullable failure
-);
-
-/// Converts between AppKit host-content coordinates (bottom-left) and the
-/// fixed target logical coordinates (top-left). Points outside the canvas are
-/// not target hit tests.
-FOUNDATION_EXPORT BOOL IOSUsePlayMapHostContentPointToCanvas(
-    IOSUsePlayHostCanvasLayout layout,
     CGPoint hostContentPoint,
-    CGPoint * _Nullable canvasLogicalPoint,
+    CGPoint * _Nullable deviceLogicalPoint,
     NSString * _Nullable * _Nullable failure
 );
 
-FOUNDATION_EXPORT BOOL IOSUsePlayMapCanvasPointToHostContent(
-    IOSUsePlayHostCanvasLayout layout,
-    CGPoint canvasLogicalPoint,
-    CGPoint * _Nullable hostContentPoint,
-    NSString * _Nullable * _Nullable failure
-);
-
-/// Maps a fully visible AppKit host-content rectangle to top-left fixed
-/// canvas coordinates. Callers that accept a partially visible AX/native
-/// control must intersect with `layout.canvasRect` before using this helper.
-FOUNDATION_EXPORT BOOL IOSUsePlayMapHostContentRectToCanvas(
-    IOSUsePlayHostCanvasLayout layout,
+FOUNDATION_EXPORT BOOL IOSUsePlayMapHostContentRectToDevice(
+    CGRect hostContentBounds,
     CGRect hostContentRect,
-    CGRect * _Nullable canvasLogicalRect,
-    NSString * _Nullable * _Nullable failure
-);
-
-/// Resolves the fixed canvas in global CoreGraphics top-left coordinates from
-/// the host content rect. This keeps the title bar outside every capture crop
-/// even when AppKit and CGWindow origins differ.
-FOUNDATION_EXPORT BOOL IOSUsePlayResolveCanvasCGWindowRect(
-    CGRect hostContentCGWindowRect,
-    IOSUsePlayHostCanvasLayout layout,
-    CGRect * _Nullable canvasCGWindowRect,
+    CGRect * _Nullable deviceLogicalRect,
     NSString * _Nullable * _Nullable failure
 );
 
@@ -110,7 +53,6 @@ FOUNDATION_EXPORT BOOL IOSUsePlayResolveAppKitScreenRectInCGWindowCoordinates(
 FOUNDATION_EXPORT BOOL IOSUsePlayResolveCGWindowRectInCanvas(
     CGRect sourceCGWindowBounds,
     CGRect canvasCGWindowRect,
-    CGFloat displayScale,
     CGFloat backingScaleFactor,
     CGRect * _Nullable deviceLogicalRect,
     NSString * _Nullable * _Nullable failure
@@ -127,7 +69,6 @@ IOSUsePlayCropAndNormalizeCanvasCapture(
     CGImageRef source,
     CGRect sourceCGWindowBounds,
     CGRect canvasCGWindowRect,
-    CGFloat displayScale,
     CGFloat backingScaleFactor,
     CGRect * _Nullable deviceLogicalRect,
     NSDictionary<NSString *, id> * _Nullable * _Nullable evidence,

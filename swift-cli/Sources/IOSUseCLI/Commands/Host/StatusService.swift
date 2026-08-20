@@ -451,7 +451,7 @@ public enum StatusService {
                     } else {
                         if payload.geometry.host?.hostPolicy == false {
                             parts.append(
-                                "simulator-scale host policy: mismatch"
+                                "native Catalyst host policy: mismatch"
                             )
                         }
                         if let captureError =
@@ -721,10 +721,11 @@ public enum StatusService {
             "hostPolicy": .boolean(host.hostPolicy),
             "frame": frame(host.frame),
             "contentBounds": frame(host.contentBounds),
-            "canvasRect": frame(host.canvasRect),
             "canvasBounds": frame(host.canvasBounds),
-            "displayScale": .double(host.displayScale),
-            "inverseDisplayScale": .double(host.inverseDisplayScale),
+            "backingScaleFactor": .double(host.backingScaleFactor),
+            "sceneRasterizationScale":
+                .double(host.sceneRasterizationScale),
+            "fixedBackingScale": .double(host.fixedBackingScale),
             "opaque": .boolean(host.opaque),
             "publicTitleBar": .boolean(host.publicTitleBar),
             "titleVisible": .boolean(host.titleVisible),

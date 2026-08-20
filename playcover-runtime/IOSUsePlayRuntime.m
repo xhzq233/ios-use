@@ -2,8 +2,8 @@
 // IOSUsePlayRuntime
 //
 // Headless automation Runtime built from the pinned PlayTools implementation.
-// Runtime identity is intentionally limited to two launch-environment values;
-// device geometry is a compile-time contract in IOSUsePlayDevice.h.
+// Runtime identity and device geometry remain fixed contracts. Optional host
+// presentation choices are captured before private launch values are hidden.
 //
 
 #import "IOSUsePlayRuntime.h"
@@ -341,7 +341,7 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeFullFrameEvidence(void) {
         @"scale": @(IOSUsePlayDeviceScale),
         @"uncropped": @YES,
         @"safeAreaCropped": @NO,
-        @"identityMapping": @YES,
+        @"nativeCanvas": @YES,
     };
 }
 
@@ -495,6 +495,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(
 
 void IOSUsePlayRuntimeInitializeAfterStdio(void) {
     @autoreleasepool {
+        [IOSUsePlayAppKitBridge captureSceneBackingLaunchEnvironment];
         // Required API hooks must be installed synchronously before
         // UIApplicationMain permits App/SDK first reads. Scene/window
         // reconciliation remains a later, main-thread lifecycle operation.
@@ -523,10 +524,6 @@ void IOSUsePlayRuntimeInitializeAfterStdio(void) {
                 : @"required-hook-failed",
             IOSUseRuntimeRequiredHookFailure
         );
-        // UIKitMacHelper chooses its 0.77 iOS-on-Mac compatibility scale
-        // before the first scene exists. Install the fixed identity scale
-        // before UIApplicationMain creates UINSSceneViewController.
-        [IOSUsePlayAppKitBridge installFixedSceneScale:NULL];
         IOSUseInstallPhotosAuthorizationHooks();
         NSNotificationCenter *center =
             NSNotificationCenter.defaultCenter;

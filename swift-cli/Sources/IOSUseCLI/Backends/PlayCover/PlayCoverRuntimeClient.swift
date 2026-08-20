@@ -102,11 +102,9 @@ struct PlayCoverRuntimeSafeArea: Codable, Equatable, Sendable {
     let right: Double
 }
 
-/// The public AppKit host is intentionally independent from the fixed UIKit
-/// device canvas.  It is still part of Runtime readiness: without this
-/// contract a resizable host could report a healthy 430x932 UIKit scene while
-/// its visible canvas, title, capture crop, or inverse input transform is
-/// invalid.
+/// Catalyst owns the physical AppKit content size and backing. UIKit keeps the
+/// fixed phone model, while capture evidence proves that host decoration is
+/// excluded from target pixels.
 struct PlayCoverRuntimeHostCaptureGeometry: Codable, Equatable, Sendable {
     let ready: Bool
     let error: String?
@@ -121,21 +119,10 @@ struct PlayCoverRuntimeHostGeometry: Codable, Equatable, Sendable {
     let hostPolicy: Bool
     let frame: PlayCoverRuntimeFrame
     let contentBounds: PlayCoverRuntimeFrame
-    let canvasRect: PlayCoverRuntimeFrame
-    var backingPixelCanvasRect: PlayCoverRuntimeFrame? = nil
     let canvasBounds: PlayCoverRuntimeFrame
-    let renderViewBounds: PlayCoverRuntimeFrame
-    let sceneRenderViewFrame: PlayCoverRuntimeFrame
-    let sceneRenderViewBounds: PlayCoverRuntimeFrame
-    let inputRenderViewFrame: PlayCoverRuntimeFrame
-    let inputRenderViewBounds: PlayCoverRuntimeFrame
-    let displayScale: Double
-    let inverseDisplayScale: Double
-    var backingScaleFactor: Double? = nil
-    var halfPixelTolerance: Double? = nil
-    let idiomScale: Double
-    let windowScale: Double
-    let downscaleWindowIfNecessary: Bool
+    let backingScaleFactor: Double
+    let sceneRasterizationScale: Double
+    let fixedBackingScale: Double
     let opaque: Bool
     let publicTitleBar: Bool
     let titleVisible: Bool
@@ -501,7 +488,7 @@ struct PlayCoverRuntimeFullFrame: Codable, Equatable, Sendable {
     let scale: Double
     let uncropped: Bool
     let safeAreaCropped: Bool
-    let identityMapping: Bool
+    let nativeCanvas: Bool
 }
 
 struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {

@@ -127,6 +127,8 @@ enum CLIHelp {
             installed slot automatically. Omit --app to launch this Home's
             current installed App.
             Every Mac App includes the resident Frida debug Engine.
+            IOS_USE_PLAY_ENABLE_3X_BACKING=1 requests 3x scene backing for
+            that Mac launch; omit it to let Catalyst choose the Retina backing.
             On macOS 26 or newer, start prints a compatibility warning and
             continues; Mac UI interaction is not fully supported and may crash.
             --log captures target-App stdout/stderr from the injected Runtime

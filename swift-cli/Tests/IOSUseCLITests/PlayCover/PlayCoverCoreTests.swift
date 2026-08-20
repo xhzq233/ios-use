@@ -203,7 +203,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
     }
 
-    func testDirectLaunchEnvironmentCarriesOnlyCurrentSlotIdentity() {
+    func testDirectLaunchEnvironmentCarriesSanitizedRuntimeConfiguration() {
         let environment = PlayCoverSlotLauncher.launchEnvironmentForTesting(
             source: [
                 "HOME": "/Users/example",
@@ -211,6 +211,7 @@ final class PlayCoverCoreTests: XCTestCase {
                 "SECRET_TOKEN": "must-not-leak",
                 "IOS_USE_PLAY_GENERATION_KEY": "obsolete",
                 "IOS_USE_PLAY_FRIDA": "obsolete",
+                "IOS_USE_PLAY_ENABLE_3X_BACKING": "1",
             ],
             sessionID: "session-id",
             runtimeSocketPath: "/private/tmp/runtime.sock",
@@ -235,6 +236,10 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertEqual(
             environment["IOS_USE_PLAYCHAIN_ROOT"],
             "/Users/example/Library/PlayChain"
+        )
+        XCTAssertEqual(
+            environment["IOS_USE_PLAY_ENABLE_3X_BACKING"],
+            "1"
         )
     }
 

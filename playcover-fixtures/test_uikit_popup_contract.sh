@@ -107,22 +107,32 @@ jq -e '
   $window.status == "configured" and
   $window.opaque == true and
   $window.publicTitleBar == true and
-  $window.resizable == true and
+  $window.resizable == false and
   $window.hostPolicy == true and
+  $window.nativeContentView == 1 and
   $window.title == "IOSUsePlayFixture" and
   $window.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
-  ($window.displayScale | type) == "number" and
-  $window.displayScale > 0 and
-  ($window.inverseDisplayScale | type) == "number" and
-  (($window.displayScale * $window.inverseDisplayScale - 1) | abs) <= 0.0001 and
-  ($window.hostContentBounds | type) == "object" and
-  ($window.canvasRect | type) == "object" and
-  (($window.canvasRect.width / $window.displayScale - 430) | abs) <= 0.5 and
-  (($window.canvasRect.height / $window.displayScale - 932) | abs) <= 0.5 and
+  ($window.hostContentBounds.width | type) == "number" and
+  $window.hostContentBounds.width > 0 and
+  ($window.hostContentBounds.height | type) == "number" and
+  $window.hostContentBounds.height > 0 and
+  $capture.hostContentBounds == $window.hostContentBounds and
+  ($window.backingScaleFactor | type) == "number" and
+  $window.backingScaleFactor > 0 and
+  ($window.sceneRasterizationScale | type) == "number" and
+  $window.sceneRasterizationScale > 0 and
+  ($window.fixedBackingScale == 0 or $window.fixedBackingScale == 3) and
+  (if $window.fixedBackingScale == 3 then
+    (($window.sceneRasterizationScale - 3) | abs) <= 0.01
+   else
+    (($window.sceneRasterizationScale - $window.backingScaleFactor) | abs) <= 0.01
+   end) and
   ($capture.canvasCGWindowRect | type) == "object" and
   ($capture.hostContentCGWindowRect | type) == "object" and
-  (($capture.canvasCGWindowRect.width / $window.displayScale - 430) | abs) <= 0.5 and
-  (($capture.canvasCGWindowRect.height / $window.displayScale - 932) | abs) <= 0.5
+  (($capture.canvasCGWindowRect.x - $capture.hostContentCGWindowRect.x) | abs) <= 0.5 and
+  (($capture.canvasCGWindowRect.y - $capture.hostContentCGWindowRect.y) | abs) <= 0.5 and
+  (($capture.canvasCGWindowRect.width - $capture.hostContentCGWindowRect.width) | abs) <= 0.5 and
+  (($capture.canvasCGWindowRect.height - $capture.hostContentCGWindowRect.height) | abs) <= 0.5
 ' "$IOS_USE_POPUP_TEMP/status.json" >/dev/null ||
   fail_contract "active fixture lacks the canonical healthy Runtime host/canvas geometry"
 
@@ -234,13 +244,12 @@ if ! jq -e \
         error("expected exactly one visible popup confirmation button")
       elif (
         $window.canvasBounds != {"x":0,"y":0,"width":430,"height":932} or
-        ($window.displayScale | type) != "number" or
-        $window.displayScale <= 0 or
-        ($window.inverseDisplayScale | type) != "number" or
-        (($window.displayScale * $window.inverseDisplayScale - 1) | abs) > 0.0001 or
+        $window.resizable != false or
         ($canvas | type) != "object" or
-        (($canvas.width / $window.displayScale - 430) | abs) > 0.5 or
-        (($canvas.height / $window.displayScale - 932) | abs) > 0.5
+        ($canvas.width | type) != "number" or
+        $canvas.width <= 0 or
+        ($canvas.height | type) != "number" or
+        $canvas.height <= 0
       ) then
         error("canonical canvas geometry is unavailable")
       else
@@ -253,10 +262,10 @@ if ! jq -e \
         ) then
           error("popup confirmation center is outside the fixed canvas")
         else
-          ($canvas.x + ($logicalX * $window.displayScale)) as $globalX |
-          ($canvas.y + ($logicalY * $window.displayScale)) as $globalY |
-          (($globalX - $canvas.x) * $window.inverseDisplayScale) as $inverseX |
-          (($globalY - $canvas.y) * $window.inverseDisplayScale) as $inverseY |
+          ($canvas.x + ($logicalX * $canvas.width / 430)) as $globalX |
+          ($canvas.y + ($logicalY * $canvas.height / 932)) as $globalY |
+          (($globalX - $canvas.x) * 430 / $canvas.width) as $inverseX |
+          (($globalY - $canvas.y) * 932 / $canvas.height) as $inverseY |
           if (
             (($inverseX - $logicalX) | abs) > 0.5 or
             (($inverseY - $logicalY) | abs) > 0.5
@@ -266,8 +275,6 @@ if ! jq -e \
             {
               logicalPoint: {x: $logicalX, y: $logicalY},
               globalPoint: {x: $globalX, y: $globalY},
-              displayScale: $window.displayScale,
-              inverseDisplayScale: $window.inverseDisplayScale,
               canvasCGWindowRect: $canvas,
               runnerPID: $status[0].data.driver.runnerPid,
               snapshotGeneration: $buttons[0].snapshotGeneration
@@ -343,13 +350,14 @@ done
 [[ "$IOS_USE_POPUP_GLOBAL_CONFIRMED" == "1" ]] ||
   fail_contract "global AppKit mouse did not activate the popup confirmation button"
 
-run_cli global-delivery-status status --json
+run_cli global-delivery-evidence screenshot \
+  --name uikit-popup-global-delivery --no-ocr --json
 jq -e \
   --argjson token "$IOS_USE_POPUP_EVENT_TOKEN" \
   --slurpfile coordinates "$IOS_USE_POPUP_COORDINATES" \
   --slurpfile mouse "$IOS_USE_POPUP_TEMP/global-mouse.json" '
     ($coordinates[0].logicalPoint) as $point |
-    (.data.driver.runtime.diagnostics.runtime.window) as $window |
+    (.data.runtimeEvidence.appKitWindowEvidence) as $window |
     ($window.lastMouseDownDelivery) as $down |
     ($window.lastMouseUpDelivery) as $up |
     $window.status == "configured" and
@@ -369,7 +377,7 @@ jq -e \
     (($down.logicalPoint.y - $point.y) | abs) <= 0.5 and
     (($up.logicalPoint.x - $point.x) | abs) <= 0.5 and
     (($up.logicalPoint.y - $point.y) | abs) <= 0.5
-  ' "$IOS_USE_POPUP_TEMP/global-delivery-status.json" >/dev/null ||
+  ' "$IOS_USE_POPUP_TEMP/global-delivery-evidence.json" >/dev/null ||
   fail_contract "global popup mouse delivery did not round-trip through the canvas within 0.5pt"
 
 run_cli global-after \

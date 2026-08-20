@@ -1183,158 +1183,48 @@ final class PlayCoverDriverClientTests: XCTestCase {
         )
     }
 
-    private func makeSimulatorScaleHostGeometry(
+    private func makeNativeCatalystHostGeometry(
         status: String = "configured",
         hostPolicy: Bool = true,
         title: String = "Fixture",
         titleExpected: String = "Fixture",
         captureReady: Bool = true,
         captureError: String? = nil,
-        displayScale: Double = 0.75,
-        inverseDisplayScale: Double? = nil,
         backingScaleFactor: Double = 2,
-        halfPixelTolerance: Double? = nil,
+        sceneRasterizationScale: Double = 2,
+        fixedBackingScale: Double = 0,
         opaque: Bool = true,
-        contentWidth: Double? = nil,
-        contentHeight: Double? = nil,
+        resizable: Bool = false,
+        contentWidth: Double = 331,
+        contentHeight: Double = 718,
         hostFrameWidth: Double? = nil,
-        canvasWidth: Double? = nil,
-        canvasHeight: Double? = nil,
-        backingPixelCanvasX: Double? = nil,
-        backingPixelCanvasY: Double? = nil,
-        backingPixelCanvasWidth: Double? = nil,
-        backingPixelCanvasHeight: Double? = nil,
-        renderViewWidth: Double? = nil,
-        renderViewHeight: Double? = nil,
-        sceneRenderViewFrameWidth: Double? = nil,
-        sceneRenderViewFrameHeight: Double? = nil,
-        sceneRenderViewWidth: Double? = nil,
-        sceneRenderViewHeight: Double? = nil,
-        inputRenderViewFrameWidth: Double? = nil,
-        inputRenderViewFrameHeight: Double? = nil,
-        inputRenderViewBoundsWidth: Double? = nil,
-        inputRenderViewBoundsHeight: Double? = nil,
-        privateRenderOriginX: Double = 0,
-        privateRenderOriginY: Double = 0,
-        idiomScale: Double = 1,
-        windowScale: Double? = nil,
-        downscaleWindowIfNecessary: Bool = false,
-        canvasY: Double = 0,
         canvasCGX: Double = 40,
-        canvasCGY: Double? = nil
+        canvasCGY: Double = 38
     ) -> PlayCoverRuntimeHostGeometry {
-        let resolvedContentWidth =
-            contentWidth ?? 430 * displayScale
-        let resolvedContentHeight =
-            contentHeight ?? 932 * displayScale
-        let resolvedHostFrameWidth =
-            hostFrameWidth ?? resolvedContentWidth
-        let resolvedCanvasWidth =
-            canvasWidth ?? resolvedContentWidth
-        let resolvedCanvasHeight =
-            canvasHeight ?? 932 * displayScale
-        let resolvedInverseDisplayScale =
-            inverseDisplayScale ?? 1 / displayScale
-        let resolvedHalfPixelTolerance =
-            halfPixelTolerance ?? 0.5 / backingScaleFactor
-        let idealCanvasX = 0.0
-        let idealCanvasMaximumX = idealCanvasX + resolvedCanvasWidth
-        let idealCanvasMaximumY = canvasY + resolvedCanvasHeight
-        let resolvedBackingPixelCanvasX =
-            backingPixelCanvasX ??
-            (idealCanvasX * backingScaleFactor).rounded() /
-                backingScaleFactor
-        let resolvedBackingPixelCanvasY =
-            backingPixelCanvasY ??
-            (canvasY * backingScaleFactor).rounded() /
-                backingScaleFactor
-        let resolvedBackingPixelCanvasMaximumX =
-            (idealCanvasMaximumX * backingScaleFactor).rounded() /
-                backingScaleFactor
-        let resolvedBackingPixelCanvasMaximumY =
-            (idealCanvasMaximumY * backingScaleFactor).rounded() /
-                backingScaleFactor
-        let resolvedBackingPixelCanvasWidth =
-            backingPixelCanvasWidth ??
-            resolvedBackingPixelCanvasMaximumX -
-                resolvedBackingPixelCanvasX
-        let resolvedBackingPixelCanvasHeight =
-            backingPixelCanvasHeight ??
-            resolvedBackingPixelCanvasMaximumY -
-                resolvedBackingPixelCanvasY
-        let resolvedCanvasCGY = canvasCGY ??
-            38 + resolvedContentHeight -
-                resolvedBackingPixelCanvasY -
-                resolvedBackingPixelCanvasHeight
+        let frameWidth = hostFrameWidth ?? contentWidth
         return .init(
             status: status,
             hostPolicy: hostPolicy,
             frame: .init(
                 x: 40,
-                y: 30,
-                width: resolvedHostFrameWidth,
-                height: resolvedContentHeight + 28
+                y: 10,
+                width: frameWidth,
+                height: contentHeight + 28
             ),
             contentBounds: .init(
                 x: 0,
                 y: 0,
-                width: resolvedContentWidth,
-                height: resolvedContentHeight
-            ),
-            canvasRect: .init(
-                x: idealCanvasX,
-                y: canvasY,
-                width: resolvedCanvasWidth,
-                height: resolvedCanvasHeight
-            ),
-            backingPixelCanvasRect: .init(
-                x: resolvedBackingPixelCanvasX,
-                y: resolvedBackingPixelCanvasY,
-                width: resolvedBackingPixelCanvasWidth,
-                height: resolvedBackingPixelCanvasHeight
+                width: contentWidth,
+                height: contentHeight
             ),
             canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
-            renderViewBounds: .init(
-                x: 0,
-                y: 0,
-                width: renderViewWidth ?? 430,
-                height: renderViewHeight ?? 932
-            ),
-            sceneRenderViewFrame: .init(
-                x: privateRenderOriginX,
-                y: privateRenderOriginY,
-                width: sceneRenderViewFrameWidth ?? 430,
-                height: sceneRenderViewFrameHeight ?? 932
-            ),
-            sceneRenderViewBounds: .init(
-                x: privateRenderOriginX,
-                y: privateRenderOriginY,
-                width: sceneRenderViewWidth ?? 430,
-                height: sceneRenderViewHeight ?? 932
-            ),
-            inputRenderViewFrame: .init(
-                x: privateRenderOriginX,
-                y: privateRenderOriginY,
-                width: inputRenderViewFrameWidth ?? 430,
-                height: inputRenderViewFrameHeight ?? 932
-            ),
-            inputRenderViewBounds: .init(
-                x: privateRenderOriginX,
-                y: privateRenderOriginY,
-                width: inputRenderViewBoundsWidth ?? 430,
-                height: inputRenderViewBoundsHeight ?? 932
-            ),
-            displayScale: displayScale,
-            inverseDisplayScale: resolvedInverseDisplayScale,
             backingScaleFactor: backingScaleFactor,
-            halfPixelTolerance: resolvedHalfPixelTolerance,
-            idiomScale: idiomScale,
-            windowScale: windowScale ?? 1,
-            downscaleWindowIfNecessary: downscaleWindowIfNecessary,
+            sceneRasterizationScale: sceneRasterizationScale,
+            fixedBackingScale: fixedBackingScale,
             opaque: opaque,
             publicTitleBar: true,
             titleVisible: true,
-            resizable: true,
+            resizable: resizable,
             title: title,
             titleExpected: titleExpected,
             capture: .init(
@@ -1343,20 +1233,20 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 hostContentCGWindowRect: .init(
                     x: 40,
                     y: 38,
-                    width: resolvedContentWidth,
-                    height: resolvedContentHeight
+                    width: contentWidth,
+                    height: contentHeight
                 ),
                 hostCGWindowBounds: .init(
                     x: 40,
                     y: 10,
-                    width: resolvedHostFrameWidth,
-                    height: resolvedContentHeight + 28
+                    width: frameWidth,
+                    height: contentHeight + 28
                 ),
                 canvasCGWindowRect: .init(
                     x: canvasCGX,
-                    y: resolvedCanvasCGY,
-                    width: resolvedBackingPixelCanvasWidth,
-                    height: resolvedBackingPixelCanvasHeight
+                    y: canvasCGY,
+                    width: contentWidth,
+                    height: contentHeight
                 ),
                 hostWindowNumber: 17
             )
@@ -1388,7 +1278,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 height: Double(IOSUsePlayDeviceLogicalHeight)
             ),
             safeArea: safeArea,
-            host: makeSimulatorScaleHostGeometry()
+            host: makeNativeCatalystHostGeometry()
         )
     }
 
@@ -1430,678 +1320,69 @@ final class PlayCoverDriverClientTests: XCTestCase {
         }
     }
 
-    func testFixedDeviceAcceptsSimulatorHundredPercentScale()
-        throws
-    {
-        let geometry = makeGeometry()
-        let hundredPercentGeometry = PlayCoverRuntimeGeometry(
-            logical: geometry.logical,
-            native: geometry.native,
-            scale: geometry.scale,
-            window: geometry.window,
-            safeArea: geometry.safeArea,
-            host: makeSimulatorScaleHostGeometry(
-                displayScale: 1,
-                inverseDisplayScale: 1
-            )
-        )
-
-        XCTAssertNoThrow(
-            try PlayCoverDriverClient.validateFixedDevice(
-                hundredPercentGeometry,
-                stage: "ready"
-            )
-        )
-        XCTAssertEqual(
-            hundredPercentGeometry.host?.contentBounds,
-            .init(x: 0, y: 0, width: 430, height: 932)
-        )
-        XCTAssertEqual(
-            hundredPercentGeometry.host?.canvasRect,
-            .init(x: 0, y: 0, width: 430, height: 932)
-        )
-        XCTAssertEqual(hundredPercentGeometry.host?.frame.width, 430)
-        XCTAssertEqual(hundredPercentGeometry.host?.frame.height, 960)
-    }
-
-    func testFixedDeviceRequiresBootstrapHostAspectNormalization()
-        throws
-    {
+    func testFixedDeviceAcceptsNativeCatalystBacking() throws {
         let base = makeGeometry()
-        let displayScale = 422.0 / 430.0
-        let canvasHeight = 932.0 * displayScale
-        func geometry(
-            contentHeight: Double,
-            privateRenderHeight: Double? = nil,
-            privateRenderOriginY: Double = 0
-        )
-            -> PlayCoverRuntimeGeometry
-        {
-            let canvasY = (contentHeight - canvasHeight) / 2
-            let resolvedPrivateRenderHeight =
-                privateRenderHeight ?? contentHeight / displayScale
-            return PlayCoverRuntimeGeometry(
-                logical: base.logical,
-                native: base.native,
-                scale: base.scale,
-                window: base.window,
-                safeArea: base.safeArea,
-                host: makeSimulatorScaleHostGeometry(
-                    displayScale: displayScale,
-                    backingScaleFactor: 2,
-                    contentWidth: 422,
-                    contentHeight: contentHeight,
-                    canvasWidth: 422,
-                    canvasHeight: canvasHeight,
-                    sceneRenderViewFrameHeight:
-                        resolvedPrivateRenderHeight,
-                    sceneRenderViewHeight:
-                        resolvedPrivateRenderHeight,
-                    inputRenderViewFrameHeight:
-                        resolvedPrivateRenderHeight,
-                    inputRenderViewBoundsHeight:
-                        resolvedPrivateRenderHeight,
-                    privateRenderOriginY: privateRenderOriginY,
-                    canvasY: canvasY
-                )
-            )
-        }
-
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                geometry(
-                    contentHeight: 916,
-                    privateRenderHeight: 932
-                ),
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host canvas layout"
-                )
-            )
-        }
         XCTAssertNoThrow(
             try PlayCoverDriverClient.validateFixedDevice(
-                geometry(contentHeight: 915),
+                base,
                 stage: "ready"
             )
         )
-        XCTAssertEqual(
-            geometry(contentHeight: 915).host?.halfPixelTolerance,
-            0.25
-        )
-        let restoredPrivateHeight = 915.0 / displayScale
-        XCTAssertGreaterThan(
-            restoredPrivateHeight - 932,
-            0.25 / displayScale
-        )
-        XCTAssertLessThanOrEqual(
-            restoredPrivateHeight - 932,
-            0.5
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                geometry(
-                    contentHeight: 915,
-                    privateRenderHeight:
-                        restoredPrivateHeight + 0.000_1
-                ),
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale logical scene-render frame"
-                )
-            )
-        }
-        let logicalEdgeTolerance = 0.25 / displayScale
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                geometry(
-                    contentHeight: 915,
-                    privateRenderHeight: restoredPrivateHeight,
-                    privateRenderOriginY: logicalEdgeTolerance
-                ),
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale logical scene-render frame"
-                )
-            )
-        }
-        let lowScale = 218.0 / 430.0
-        let lowScaleCanvasHeight = 932.0 * lowScale
-        let lowScalePrivateHeight = 473.0 / lowScale
-        let lowScaleGeometry = PlayCoverRuntimeGeometry(
+        let threeX = PlayCoverRuntimeGeometry(
             logical: base.logical,
             native: base.native,
             scale: base.scale,
             window: base.window,
             safeArea: base.safeArea,
-            host: makeSimulatorScaleHostGeometry(
-                displayScale: lowScale,
-                backingScaleFactor: 2,
-                contentWidth: 218,
-                contentHeight: 473,
-                canvasWidth: 218,
-                canvasHeight: lowScaleCanvasHeight,
-                sceneRenderViewFrameHeight: lowScalePrivateHeight,
-                sceneRenderViewHeight: lowScalePrivateHeight,
-                inputRenderViewFrameHeight: lowScalePrivateHeight,
-                inputRenderViewBoundsHeight: lowScalePrivateHeight,
-                canvasY: (473 - lowScaleCanvasHeight) / 2
+            host: makeNativeCatalystHostGeometry(
+                sceneRasterizationScale: 3,
+                fixedBackingScale: 3
             )
         )
-        XCTAssertGreaterThan(lowScalePrivateHeight - 932, 0.5)
         XCTAssertNoThrow(
             try PlayCoverDriverClient.validateFixedDevice(
-                lowScaleGeometry,
+                threeX,
                 stage: "ready"
             )
         )
+        XCTAssertEqual(base.host?.contentBounds.width, 331)
+        XCTAssertEqual(base.host?.contentBounds.height, 718)
+        XCTAssertEqual(base.host?.resizable, false)
     }
 
-    func testFixedDeviceAcceptsRestoredQuantizedHostAt1xAnd2x()
-        throws
-    {
-        let displayScale = 316.0 / 430.0
-        let idealHeight = 932.0 * displayScale
-        let idealY = (685.0 - idealHeight) / 2
-        for backingScaleFactor in [1.0, 2.0] {
-            let host = makeSimulatorScaleHostGeometry(
-                displayScale: displayScale,
-                backingScaleFactor: backingScaleFactor,
-                contentWidth: 316,
-                contentHeight: 685,
-                canvasWidth: 316,
-                canvasHeight: idealHeight,
-                backingPixelCanvasX: 0,
-                backingPixelCanvasY: 0,
-                backingPixelCanvasWidth: 316,
-                backingPixelCanvasHeight: 685,
-                canvasY: idealY
-            )
-            XCTAssertNoThrow(
-                try PlayCoverDriverClient.validateFixedDevice(
-                    PlayCoverRuntimeGeometry(
-                        logical: makeGeometry().logical,
-                        native: makeGeometry().native,
-                        scale: makeGeometry().scale,
-                        window: makeGeometry().window,
-                        safeArea: makeGeometry().safeArea,
-                        host: host
-                    ),
-                    stage: "ready"
-                ),
-                "restored 316x685 host should pass at \(backingScaleFactor)x"
-            )
-            XCTAssertEqual(host.contentBounds.height, 685)
-            XCTAssertEqual(host.backingPixelCanvasRect?.height, 685)
-            XCTAssertEqual(host.capture.canvasCGWindowRect.height, 685)
-        }
-    }
-
-    func testFixedDeviceRejectsGeometryBeyondHalfBackingPixel()
-        throws
-    {
-        let displayScale = 316.0 / 430.0
-        let idealHeight = 932.0 * displayScale
-        let idealY = (685.0 - idealHeight) / 2
+    func testFixedDeviceRejectsInvalidNativeCatalystHost() throws {
         let base = makeGeometry()
-        func geometry(canvasCGY: Double) -> PlayCoverRuntimeGeometry {
-            .init(
-                logical: base.logical,
-                native: base.native,
-                scale: base.scale,
-                window: base.window,
-                safeArea: base.safeArea,
-                host: makeSimulatorScaleHostGeometry(
-                    displayScale: displayScale,
-                    backingScaleFactor: 2,
-                    contentWidth: 316,
-                    contentHeight: 685,
-                    canvasWidth: 316,
-                    canvasHeight: idealHeight,
-                    backingPixelCanvasX: 0,
-                    backingPixelCanvasY: 0,
-                    backingPixelCanvasWidth: 316,
-                    backingPixelCanvasHeight: 685,
-                    canvasY: idealY,
-                    canvasCGY: canvasCGY
-                )
-            )
-        }
-        XCTAssertNoThrow(
-            try PlayCoverDriverClient.validateFixedDevice(
-                geometry(canvasCGY: 38.25),
-                stage: "ready"
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                geometry(canvasCGY: 38.2501),
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host canvas capture"
-                )
-            )
-        }
-    }
-
-    func testFixedDeviceUsesDerivedLogicalTreeTolerance()
-        throws
-    {
-        let displayScale = 316.0 / 430.0
-        let idealHeight = 932.0 * displayScale
-        let idealY = (685.0 - idealHeight) / 2
-        let logicalTolerance = 0.25 / displayScale
-        let base = makeGeometry()
-        func geometry(renderViewWidth: Double)
-            -> PlayCoverRuntimeGeometry
-        {
-            .init(
-                logical: base.logical,
-                native: base.native,
-                scale: base.scale,
-                window: base.window,
-                safeArea: base.safeArea,
-                host: makeSimulatorScaleHostGeometry(
-                    displayScale: displayScale,
-                    backingScaleFactor: 2,
-                    contentWidth: 316,
-                    contentHeight: 685,
-                    canvasWidth: 316,
-                    canvasHeight: idealHeight,
-                    backingPixelCanvasX: 0,
-                    backingPixelCanvasY: 0,
-                    backingPixelCanvasWidth: 316,
-                    backingPixelCanvasHeight: 685,
-                    renderViewWidth: renderViewWidth,
-                    canvasY: idealY
-                )
-            )
-        }
-
-        XCTAssertNoThrow(
-            try PlayCoverDriverClient.validateFixedDevice(
-                geometry(
-                    renderViewWidth:
-                        430 + logicalTolerance - 0.000_1
-                ),
-                stage: "ready"
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                geometry(
-                    renderViewWidth:
-                        430 + logicalTolerance + 0.000_1
-                ),
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale logical render-view bounds"
-                )
-            )
-        }
-    }
-
-    func testFixedDeviceRejectsMissingOrInvalidSimulatorScaleHost()
-        throws
-    {
-        var missingHost = makeGeometry()
-        missingHost = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: nil
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                missingHost,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host diagnostics"
-                )
-            )
-        }
-
-        let invalidHost = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(hostPolicy: false)
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                invalidHost,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host policy"
-                )
-            )
-        }
-
-        for host in [
-            makeSimulatorScaleHostGeometry(idiomScale: 0),
-            makeSimulatorScaleHostGeometry(idiomScale: 0.77),
-            makeSimulatorScaleHostGeometry(windowScale: 0.75),
-            makeSimulatorScaleHostGeometry(
-                downscaleWindowIfNecessary: true
+        let invalidHosts: [PlayCoverRuntimeHostGeometry?] = [
+            nil,
+            makeNativeCatalystHostGeometry(hostPolicy: false),
+            makeNativeCatalystHostGeometry(resizable: true),
+            makeNativeCatalystHostGeometry(
+                sceneRasterizationScale: 3,
+                fixedBackingScale: 0
             ),
-        ] {
-            let invalidScale = PlayCoverRuntimeGeometry(
-                logical: missingHost.logical,
-                native: missingHost.native,
-                scale: missingHost.scale,
-                window: missingHost.window,
-                safeArea: missingHost.safeArea,
+            makeNativeCatalystHostGeometry(canvasCGX: 41),
+            makeNativeCatalystHostGeometry(hostFrameWidth: 320),
+            makeNativeCatalystHostGeometry(opaque: false),
+        ]
+        for host in invalidHosts {
+            let geometry = PlayCoverRuntimeGeometry(
+                logical: base.logical,
+                native: base.native,
+                scale: base.scale,
+                window: base.window,
+                safeArea: base.safeArea,
                 host: host
             )
             XCTAssertThrowsError(
                 try PlayCoverDriverClient.validateFixedDevice(
-                    invalidScale,
+                    geometry,
                     stage: "ready"
-                )
-            ) { error in
-                XCTAssertEqual(
-                    error as? PlayCoverDriverClientError,
-                    .runtimeGeometryMismatch(
-                        "simulator-scale host display scale"
-                    )
-                )
-            }
-        }
-
-        let clippedRenderView = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(
-                renderViewWidth: 300,
-                renderViewHeight: 600
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                clippedRenderView,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale logical render-view bounds"
-                )
-            )
-        }
-
-        let clippedSceneRenderViewFrame = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(
-                sceneRenderViewFrameWidth: 300,
-                sceneRenderViewFrameHeight: 600
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                clippedSceneRenderViewFrame,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale logical scene-render frame"
-                )
-            )
-        }
-
-        let clippedSceneRenderView = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(
-                sceneRenderViewWidth: 300,
-                sceneRenderViewHeight: 600
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                clippedSceneRenderView,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale logical scene-render bounds"
-                )
-            )
-        }
-
-        let clippedInputRenderViewFrame = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(
-                inputRenderViewFrameWidth: 300,
-                inputRenderViewFrameHeight: 600
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                clippedInputRenderViewFrame,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale logical input-render frame"
-                )
-            )
-        }
-
-        let clippedInputRenderViewBounds = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(
-                inputRenderViewBoundsWidth: 300,
-                inputRenderViewBoundsHeight: 600
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                clippedInputRenderViewBounds,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale logical input-render bounds"
-                )
-            )
-        }
-
-        let invalidCapture = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(
-                captureReady: false,
-                captureError: "canvas unavailable"
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                invalidCapture,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host canvas capture"
-                )
-            )
-        }
-
-        let titleMismatch = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(title: "Wrong")
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                titleMismatch,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host title"
-                )
-            )
-        }
-
-        let shiftedCapture = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(canvasCGX: 41)
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                shiftedCapture,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host canvas capture"
-                )
-            )
-        }
-
-        let hostBoundsMismatch = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(hostFrameWidth: 321.5)
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                hostBoundsMismatch,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host canvas capture"
-                )
-            )
-        }
-
-        let nonOpaqueHost = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(opaque: false)
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                nonOpaqueHost,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host presentation"
-                )
-            )
-        }
-
-        let insetCanvasHost = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(canvasWidth: 320)
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                insetCanvasHost,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host canvas layout"
                 )
             )
         }
     }
 
-    func testRuntimeGeometryDecodesSimulatorScaleHostFromJSON()
+    func testRuntimeGeometryDecodesNativeCatalystHostFromJSON()
         throws
     {
         let json = Data(
@@ -2114,28 +1395,20 @@ final class PlayCoverDriverClientTests: XCTestCase {
               "safeArea":{"top":0,"left":0,"bottom":0,"right":0},
               "host":{
                 "status":"configured","hostPolicy":true,
-                "frame":{"x":40,"y":30,"width":322.5,"height":727},
-                "contentBounds":{"x":0,"y":0,"width":322.5,"height":699},
-                "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
-                "backingPixelCanvasRect":{"x":0,"y":0,"width":322.5,"height":699},
+                "frame":{"x":40,"y":10,"width":331,"height":746},
+                "contentBounds":{"x":0,"y":0,"width":331,"height":718},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
-                "renderViewBounds":{"x":0,"y":0,"width":430,"height":932},
-                "sceneRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
-                "sceneRenderViewBounds":{"x":0,"y":0,"width":430,"height":932},
-                "inputRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
-                "inputRenderViewBounds":{"x":0,"y":0,"width":430,"height":932},
-                "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
-                "backingScaleFactor":2,"halfPixelTolerance":0.25,
-                "idiomScale":1,"windowScale":1,
-                "downscaleWindowIfNecessary":false,
+                "backingScaleFactor":2,
+                "sceneRasterizationScale":2,
+                "fixedBackingScale":0,
                 "opaque":true,
-                "publicTitleBar":true,"titleVisible":true,"resizable":true,
+                "publicTitleBar":true,"titleVisible":true,"resizable":false,
                 "title":"Fixture","titleExpected":"Fixture",
                 "capture":{
                   "ready":true,"error":null,"hostWindowNumber":17,
-                  "hostContentCGWindowRect":{"x":40,"y":38,"width":322.5,"height":699},
-                  "hostCGWindowBounds":{"x":40,"y":10,"width":322.5,"height":727},
-                  "canvasCGWindowRect":{"x":40,"y":38,"width":322.5,"height":699}
+                  "hostContentCGWindowRect":{"x":40,"y":38,"width":331,"height":718},
+                  "hostCGWindowBounds":{"x":40,"y":10,"width":331,"height":746},
+                  "canvasCGWindowRect":{"x":40,"y":38,"width":331,"height":718}
                 }
               }
             }
@@ -2146,13 +1419,10 @@ final class PlayCoverDriverClientTests: XCTestCase {
             from: json
         )
         XCTAssertEqual(geometry.host?.status, "configured")
-        XCTAssertEqual(geometry.host?.opaque, true)
         XCTAssertEqual(geometry.host?.backingScaleFactor, 2)
-        XCTAssertEqual(geometry.host?.halfPixelTolerance, 0.25)
-        XCTAssertEqual(
-            geometry.host?.backingPixelCanvasRect?.height,
-            699
-        )
+        XCTAssertEqual(geometry.host?.sceneRasterizationScale, 2)
+        XCTAssertEqual(geometry.host?.fixedBackingScale, 0)
+        XCTAssertEqual(geometry.host?.resizable, false)
         XCTAssertEqual(geometry.host?.capture.ready, true)
         XCTAssertEqual(geometry.host?.capture.hostWindowNumber, 17)
     }
@@ -2160,10 +1430,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
     func testRuntimeGeometryDecodesUnavailableCanvasCaptureFromJSON()
         throws
     {
-        // Runtime must retain a schema-valid host object while the AppKit
-        // canvas has no CG capture geometry yet.  Otherwise `status` loses
-        // the capture error during JSON decoding and misreports identity as
-        // unverified.
         let json = Data(
             """
             {
@@ -2174,22 +1440,14 @@ final class PlayCoverDriverClientTests: XCTestCase {
               "safeArea":{"top":0,"left":0,"bottom":0,"right":0},
               "host":{
                 "status":"configured","hostPolicy":true,
-                "frame":{"x":40,"y":30,"width":322.5,"height":727},
-                "contentBounds":{"x":0,"y":0,"width":322.5,"height":699},
-                "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
-                "backingPixelCanvasRect":{"x":0,"y":0,"width":322.5,"height":699},
+                "frame":{"x":40,"y":10,"width":331,"height":746},
+                "contentBounds":{"x":0,"y":0,"width":331,"height":718},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
-                "renderViewBounds":{"x":0,"y":0,"width":430,"height":932},
-                "sceneRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
-                "sceneRenderViewBounds":{"x":0,"y":0,"width":430,"height":932},
-                "inputRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
-                "inputRenderViewBounds":{"x":0,"y":0,"width":430,"height":932},
-                "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
-                "backingScaleFactor":2,"halfPixelTolerance":0.25,
-                "idiomScale":1,"windowScale":1,
-                "downscaleWindowIfNecessary":false,
+                "backingScaleFactor":2,
+                "sceneRasterizationScale":2,
+                "fixedBackingScale":0,
                 "opaque":true,
-                "publicTitleBar":true,"titleVisible":true,"resizable":true,
+                "publicTitleBar":true,"titleVisible":true,"resizable":false,
                 "title":"Fixture","titleExpected":"Fixture",
                 "capture":{
                   "ready":false,"error":"canvas capture unavailable",
@@ -2206,26 +1464,17 @@ final class PlayCoverDriverClientTests: XCTestCase {
             PlayCoverRuntimeGeometry.self,
             from: json
         )
-        XCTAssertEqual(geometry.host?.status, "configured")
         XCTAssertEqual(geometry.host?.capture.ready, false)
         XCTAssertEqual(
             geometry.host?.capture.error,
             "canvas capture unavailable"
         )
-        XCTAssertEqual(geometry.host?.capture.canvasCGWindowRect.width, 0)
         XCTAssertThrowsError(
             try PlayCoverDriverClient.validateFixedDevice(
                 geometry,
                 stage: "ready"
             )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host canvas capture"
-                )
-            )
-        }
+        )
     }
 
     private func makePayload(
@@ -2572,7 +1821,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
         scale: Double = Double(IOSUsePlayDeviceScale),
         uncropped: Bool = true,
         safeAreaCropped: Bool = false,
-        identityMapping: Bool = true
+        nativeCanvas: Bool = true
     ) -> PlayCoverRuntimeFullFrame {
         .init(
             logicalRect: logicalRect,
@@ -2581,7 +1830,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             scale: scale,
             uncropped: uncropped,
             safeAreaCropped: safeAreaCropped,
-            identityMapping: identityMapping
+            nativeCanvas: nativeCanvas
         )
     }
 
@@ -2600,7 +1849,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             "scale": .number(fullFrame.scale),
             "uncropped": .bool(fullFrame.uncropped),
             "safeAreaCropped": .bool(fullFrame.safeAreaCropped),
-            "identityMapping": .bool(fullFrame.identityMapping),
+            "nativeCanvas": .bool(fullFrame.nativeCanvas),
         ])
     }
 

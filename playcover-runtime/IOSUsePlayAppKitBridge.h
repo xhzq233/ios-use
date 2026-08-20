@@ -7,8 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// framework rather than PlayTools' separate macOS AKInterface bundle.
 @interface IOSUsePlayAppKitBridge : NSObject
 
-+ (BOOL)installFixedSceneScale:
-    (NSError * _Nullable * _Nullable)error;
++ (void)captureSceneBackingLaunchEnvironment;
 + (void)scheduleFixedWindowConfiguration;
 + (BOOL)configureFixedWindow:(NSError * _Nullable * _Nullable)error;
 + (NSInteger)screenCount;
