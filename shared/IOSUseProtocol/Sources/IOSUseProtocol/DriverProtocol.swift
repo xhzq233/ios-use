@@ -353,6 +353,13 @@ public enum IOSUseErrorPhase {
 
 }
 
+public enum IOSUseDeviceOrientation: String, CaseIterable, Sendable {
+    case portrait
+    case portraitUpsideDown = "portrait-upside-down"
+    case landscapeLeft = "landscape-left"
+    case landscapeRight = "landscape-right"
+}
+
 public enum IOSUseCandidateRejection {
     public static let snapshotInvisible = "snapshot_invisible"
     public static let ancestorInvisible = "ancestor_invisible"
@@ -368,6 +375,7 @@ public enum DriverCommand: String, CaseIterable, Sendable {
     case activateApp
     case terminateApp
     case home
+    case rotate
     case proxyCAPush
     case screenshot
     case dom
@@ -413,6 +421,12 @@ public enum TerminateAppCommand: DriverCommandBinding {
     public typealias Args = ForyTerminateAppArgs
     public typealias Payload = ForyEmptyPayload
     public static let command = DriverCommand.terminateApp
+}
+
+public enum RotateCommand: DriverCommandBinding {
+    public typealias Args = ForyRotateArgs
+    public typealias Payload = ForyRotatePayload
+    public static let command = DriverCommand.rotate
 }
 
 public enum DomCommand: DriverCommandBinding {
@@ -490,6 +504,8 @@ public extension DriverCommand {
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyTerminateAppArgs.self), payloadTypeName: nil, mutatesUI: true)
         case .home:
             DriverCommandMetadata(command: self, argsTypeName: nil, payloadTypeName: nil, mutatesUI: true)
+        case .rotate:
+            DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyRotateArgs.self), payloadTypeName: String(describing: ForyRotatePayload.self), mutatesUI: true)
         case .proxyCAPush:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyProxyCAPushArgs.self), payloadTypeName: String(describing: ForyProxyPayload.self), mutatesUI: true)
         case .screenshot:

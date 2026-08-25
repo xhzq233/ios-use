@@ -22,7 +22,7 @@ enum CLIHelp {
 
         Commands:
           du, status, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
-          activateApp, terminateApp, home, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
+          activateApp, terminateApp, home, rotate, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
     }
@@ -419,6 +419,16 @@ enum CLIHelp {
                 usage: "ios-use home",
                 summary: "Press the Home button.",
                 footer: "The Mac backend has no Home action. Use start/status/stop; restart it with stop, then start --mac."
+            )
+        case "rotate":
+            return driverHelp(
+                usage: "ios-use rotate --to <orientation> [--dom [duration]]",
+                summary: "Rotate the device and verify the resulting orientation.",
+                options: [
+                    "--to <orientation>  portrait, portrait-upside-down, landscape-left, or landscape-right",
+                    "--dom [duration]    Return a fresh DOM after rotation; bare values default to ms; minimum 100ms",
+                ],
+                footer: "The Mac backend does not support device rotation."
             )
         case "open":
             return """

@@ -101,7 +101,7 @@ deletes old caches for you; run `ios-use du` to see what you can remove.
   expired. Refresh before expiry instead of deferring renewal across sessions.
 - Run `start` before `dom`, `ui-tree`, `tap`, `longpress`, `swipe`, `input`, `waitFor`,
   `screenshot`, `capture`, `home`, `dismissAlert`, default `activateApp`,
-  `open --dom`, or device-backed proxy commands.
+  `open --dom`, `rotate`, or device-backed proxy commands.
 - Treat the device selected by `start` as the target for all UI commands. To switch
   devices, run `ios-use stop`, then `ios-use start <new-udid>`.
 - After `start --mac`, supported commands continue using that Mac session until
@@ -194,6 +194,18 @@ ios-use input --tap "搜索" --content "蓝牙"
 - On mutation failure, read the inline target, candidate, rejection, suggestion,
   and alert fields first. Request a fresh `dom` or named `screenshot` only when
   the next decision needs more UI context.
+
+### Rotate a real device or Simulator
+
+```bash
+ios-use rotate --to landscape-right --dom --json
+```
+
+Supported orientations are `portrait`, `portrait-upside-down`, `landscape-left`,
+and `landscape-right`. The command changes the simulated physical orientation;
+an App that supports only portrait can remain portrait. Use `--dom` to inspect the
+resulting App layout. `rotate` requires an active real-device or Simulator Driver
+and is unavailable on the Mac backend.
 
 ## 5. Control Apps and inspect their logs
 

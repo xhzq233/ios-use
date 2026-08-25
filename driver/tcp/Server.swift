@@ -377,6 +377,9 @@ import Foundation
         case .home:
             return try AppCommands.home()
 
+        case .rotate(let args):
+            return try DeviceCommands.rotate(args)
+
         case .proxyCAPush(let args):
             return try ProxyCommands.proxyCAPush(args)
 
@@ -431,6 +434,9 @@ struct CommandInvocation {
 
         case .home:
             self.arguments = .home
+
+        case .rotate:
+            self.arguments = .rotate(try codec.deserialize(payload, as: ForyRotateArgs.self))
 
         case .proxyCAPush:
             self.arguments = .proxyCAPush(try codec.deserialize(payload, as: ForyProxyCAPushArgs.self))
@@ -502,6 +508,7 @@ struct CommandInvocation {
         case activateApp(ForyActivateAppArgs)
         case terminateApp(ForyTerminateAppArgs)
         case home
+        case rotate(ForyRotateArgs)
         case proxyCAPush(ForyProxyCAPushArgs)
         case screenshot
         case dom(ForyDomArgs)

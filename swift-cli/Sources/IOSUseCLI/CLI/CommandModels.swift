@@ -339,6 +339,7 @@ public enum DriverAction: Equatable, Sendable {
     case activateApp(bundleId: String)
     case terminateApp(bundleId: String)
     case home
+    case rotate(orientation: IOSUseDeviceOrientation, postDom: PostDomMode?)
     case dismissAlert(DismissAlertOptions)
 
     public var name: String {
@@ -353,6 +354,7 @@ public enum DriverAction: Equatable, Sendable {
         case .activateApp: return "activateApp"
         case .terminateApp: return "terminateApp"
         case .home: return "home"
+        case .rotate: return "rotate"
         case .dismissAlert: return "dismissAlert"
         }
     }
