@@ -6,8 +6,9 @@ CLI, two driver IPAs, the Mac resource archive, and their checksum manifest.
 ## 1. Pin the version
 
 Update `IOSUseCLI.version` in
-`swift-cli/Sources/IOSUseCLI/CLI/Version.swift`, its intentionally pinned
-tests, and `release-notes/CHANGELOG-vX.Y.Z.md`. The binary and tag must match:
+`swift-cli/Sources/IOSUseCLI/CLI/Version.swift`, the README install example,
+and `release-notes/CHANGELOG-vX.Y.Z.md`. The release build verifies that the
+binary and tag match:
 
 ```text
 IOSUseCLI.version = "X.Y.Z"
