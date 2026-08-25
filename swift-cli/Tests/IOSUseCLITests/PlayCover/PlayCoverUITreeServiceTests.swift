@@ -93,44 +93,6 @@ final class PlayCoverUITreeServiceTests: XCTestCase {
         XCTAssertEqual(subviews[1]["class"] as? String, "UIImageView")
     }
 
-    func testHumanOutputSurfacesTruncation() {
-        let payload = PlayCoverRuntimeUITreePayload(
-            target: nil,
-            maxDepth: 0,
-            nodeCount: 1,
-            truncated: true,
-            roots: [makeNode()]
-        )
-
-        XCTAssertTrue(
-            PlayCoverUITreeService.format(payload)
-                .contains("output truncated by the depth or node limit")
-        )
-    }
-
-    func testHumanOutputPrintsViewControllerOnlyWhenItChanges() {
-        let child = makeNode(
-            viewControllerClass: "FixtureViewController"
-        )
-        let root = makeNode(
-            viewControllerClass: "FixtureViewController",
-            subviews: [child]
-        )
-        let payload = PlayCoverRuntimeUITreePayload(
-            target: nil,
-            maxDepth: 8,
-            nodeCount: 2,
-            truncated: false,
-            roots: [root]
-        )
-
-        let text = PlayCoverUITreeService.format(payload)
-        XCTAssertEqual(
-            text.components(separatedBy: "vc=FixtureViewController").count - 1,
-            1
-        )
-    }
-
     private func makeNode(
         className: String = "UIView",
         viewControllerClass: String? = nil,

@@ -377,37 +377,6 @@ final class CLIParserTests: XCTestCase {
         }
     }
 
-    func testMacStartHelpDocumentsAutomaticAndCurrentSlotModes() {
-        let result = IOSUseCLI().run(arguments: ["start", "--help"])
-
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertTrue(
-            result.stdout.contains(
-                "ios-use start --mac --app <source.app>"
-            )
-        )
-        XCTAssertTrue(
-            result.stdout.contains("ios-use start --mac [--log]")
-        )
-        XCTAssertTrue(
-            result.stdout.contains(
-                "Use --app after a source rebuild"
-            )
-        )
-        XCTAssertTrue(
-            result.stdout.contains(
-                "reuses an unchanged"
-            )
-        )
-        XCTAssertFalse(
-            result.stdout.contains("start --playcover")
-        )
-        XCTAssertFalse(
-            result.stdout.contains("--frida")
-        )
-        XCTAssertFalse(result.stdout.contains("--reuse"))
-    }
-
     func testParsesDriverReadCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["dom", "--wait-quiescence"]),

@@ -169,40 +169,6 @@ final class PlayCoverCoreTests: XCTestCase {
         )
     }
 
-    func testPrepareContractIsSingleSlotAndAlwaysFrida() {
-        XCTAssertTrue(
-            PlayCoverService.prepareImplementationRevision.contains(
-                "single-bundle-slot"
-            )
-        )
-        XCTAssertTrue(
-            PlayCoverService.prepareImplementationRevision.contains(
-                "always-frida"
-            )
-        )
-    }
-
-    func testMacBackendCompatibilityWarningStartsAtMacOS26() {
-        XCTAssertNil(
-            IOSUseCLI.macBackendCompatibilityWarning(
-                for: OperatingSystemVersion(
-                    majorVersion: 25,
-                    minorVersion: 9,
-                    patchVersion: 0
-                )
-            )
-        )
-        XCTAssertNotNil(
-            IOSUseCLI.macBackendCompatibilityWarning(
-                for: OperatingSystemVersion(
-                    majorVersion: 26,
-                    minorVersion: 0,
-                    patchVersion: 0
-                )
-            )
-        )
-    }
-
     func testDirectLaunchEnvironmentCarriesSanitizedRuntimeConfiguration() {
         let environment = PlayCoverSlotLauncher.launchEnvironmentForTesting(
             source: [

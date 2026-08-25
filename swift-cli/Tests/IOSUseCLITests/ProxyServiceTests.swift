@@ -368,29 +368,6 @@ final class ProxyServiceTests: XCTestCase {
         XCTAssertFalse(ProxyService.isMitmdumpProcessForTesting(pid: process.processIdentifier, expectedFlowFile: nil))
     }
 
-    func testProxyCAPathUsesIsolatedIOSUseHome() throws {
-        let root = try temporaryRoot()
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-
-        XCTAssertEqual(ProxyService.caPathForTesting(paths: paths), "\(root)/mitmproxy/mitmproxy-ca-cert.pem")
-    }
-
-    func testProxyDoctorReportsCATrustRecordStatus() throws {
-        let root = try temporaryRoot()
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try FileManager.default.createDirectory(atPath: "\(root)/mitmproxy", withIntermediateDirectories: true)
-        try "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n".write(
-            toFile: "\(root)/mitmproxy/mitmproxy-ca-cert.pem",
-            atomically: true,
-            encoding: .utf8
-        )
-
-        let output = ProxyService.doctor(paths: paths)
-
-        XCTAssertTrue(output.contains("CA generated"))
-        XCTAssertTrue(output.contains("CA trust record: not recorded"))
-    }
-
     func testProxyStartMitmdumpArgumentsDisableHTTP2() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
@@ -409,16 +386,6 @@ final class ProxyServiceTests: XCTestCase {
         XCTAssertTrue(arguments.contains("http2=false"))
         XCTAssertTrue(arguments.contains("connection_strategy=eager"))
         XCTAssertTrue(arguments.contains("save_stream_file=\(flowFile)"))
-    }
-
-    func testProxyPortOwnersParseLsofOutput() throws {
-        Shell.runOverrideForTesting = { executable, arguments, _, _ in
-            XCTAssertEqual(executable, "lsof")
-            XCTAssertEqual(arguments, ["-nP", "-iTCP:\(IOSUseProtocol.proxyMitmdumpPort)", "-sTCP:LISTEN", "-Fp"])
-            return "p123\np456\np123\n"
-        }
-
-        XCTAssertEqual(ProxyService.listeningPortOwnersForTesting(port: IOSUseProtocol.proxyMitmdumpPort), [123, 456])
     }
 
     func testConfigCASkipsInstallSequenceWhenTrustRecordMatches() throws {

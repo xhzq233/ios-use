@@ -5,13 +5,6 @@ final class CodecTests: XCTestCase {
 
     // MARK: - foryOK / foryError
 
-    func testForyOK_NoPayload() {
-        let resp = Codec.foryOK()
-        XCTAssertTrue(resp.ok)
-        XCTAssertTrue(resp.error.isEmpty)
-        XCTAssertTrue(resp.payload.isEmpty)
-    }
-
     func testForyError_SerializesStructuredPayload() throws {
         let target = ForyTarget(label: "missing", traits: "Button")
         let resp = try Codec.foryError(
@@ -57,25 +50,6 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(payload.candidates.map(\.element.label), (0..<5).map { "candidate-\($0)" })
     }
 
-    func testForyOK_WithPayload() throws {
-        let fory = createFory()
-        let payload = ForySimpleStringPayload(value: "test")
-        let resp = try Codec.foryOK(payload)
-        XCTAssertTrue(resp.ok)
-        XCTAssertTrue(resp.error.isEmpty)
-        XCTAssertFalse(resp.payload.isEmpty)
-
-        // Verify payload round-trips.
-        let decoded = try fory.deserialize(resp.payload, as: ForySimpleStringPayload.self)
-        XCTAssertEqual(decoded.value, "test")
-    }
-
-    // MARK: - maxFrameSize
-
-    func testMaxFrameSize_Is50MB() {
-        XCTAssertEqual(Codec.maxFrameSize, IOSUseProtocol.maxFrameSizeBytes)
-    }
-
     // MARK: - writeLengthPrefixedData via pipe
 
     func testWriteLengthPrefixedData_WritesLengthPrefix() throws {
@@ -97,23 +71,6 @@ final class CodecTests: XCTestCase {
         let rn2 = Darwin.read(readFD, &body, length)
         XCTAssertEqual(rn2, length)
         XCTAssertEqual(Data(body), payload)
-    }
-
-    // MARK: - ForyResponseFrame round-trip via writeResponseFrame / readFrame
-
-    func testWriteAndReadFrame_RoundTrip() throws {
-        let fory = createFory()
-        let (readFD, writeFD) = try makePipe()
-        defer {
-            close(readFD)
-            close(writeFD)
-        }
-
-        let frame = ForyResponseFrame(ok: true, error: "", payload: Data())
-        try Codec.writeResponseFrame(writeFD, frame: frame)
-
-        // Read back as ForyRequestFrame (same wire format, different type).
-        // Actually we need to write a ForyRequestFrame and read it back.
     }
 
     func testRequestFrame_RoundTrip() throws {

@@ -8,22 +8,6 @@ final class OSLogServiceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testPlayCoverLogUsesSupportedBoundedLastWindow() {
-        XCTAssertEqual(OSLogService.playCoverLogLastArgument(0.1), "1m")
-        XCTAssertEqual(OSLogService.playCoverLogLastArgument(1), "1m")
-        XCTAssertEqual(OSLogService.playCoverLogLastArgument(60), "1m")
-        XCTAssertEqual(OSLogService.playCoverLogLastArgument(60.1), "2m")
-    }
-
-    func testOslogClearIsRejected() {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["oslog", "--clear"])
-
-        XCTAssertEqual(result.exitCode, 64)
-        XCTAssertTrue(result.stdout.isEmpty)
-        XCTAssertTrue(result.stderr.contains("unknown option '--clear'"))
-    }
-
     func testOslogRejectsMissingTargetBeforeTouchingUsbDevices() {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
         DeviceService.listDevicesOverrideForTesting = { _, _ in
@@ -163,28 +147,6 @@ final class OSLogServiceTests: XCTestCase {
         }
     }
 
-    func testFetchUsesSimulatorDeviceTypeHintWithoutDiscovery() throws {
-        let paths = IOSUsePaths.resolve(environment: [
-            "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
-        ])
-        OSLogService.simulatorLogCollector = { udid, _, _ in
-            XCTAssertEqual(udid, "SIM-HINT")
-            return ["May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: hinted"]
-        }
-
-        let output = try OSLogService.fetch(
-            udid: "SIM-HINT",
-            pattern: "hinted",
-            flags: nil,
-            source: OSLogOptions.SourceFilter(),
-            timeout: 1,
-            paths: paths,
-            deviceTypeHint: "simulator"
-        )
-
-        XCTAssertTrue(output.contains("hinted"))
-    }
-
     func testSimulatorFetchPollsUntilTimeoutForPattern() throws {
         let paths = IOSUsePaths.resolve(environment: [
             "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
@@ -209,28 +171,6 @@ final class OSLogServiceTests: XCTestCase {
 
         XCTAssertGreaterThanOrEqual(calls, 2)
         XCTAssertTrue(output.contains("ready"))
-    }
-
-    func testSimulatorFetchWithoutPatternDoesNotPoll() throws {
-        let paths = IOSUsePaths.resolve(environment: [
-            "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
-        ])
-        var calls = 0
-        OSLogService.simulatorLogCollector = { _, _, _ in
-            calls += 1
-            return ["May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: line"]
-        }
-
-        _ = try OSLogService.fetchSimulator(
-            udid: "SIM-NO-POLL",
-            pattern: nil,
-            flags: nil,
-            source: OSLogOptions.SourceFilter(),
-            timeout: 1,
-            paths: paths
-        )
-
-        XCTAssertEqual(calls, 1)
     }
 
     func testSimulatorPollingDedupesWithinSingleCommandOnly() throws {

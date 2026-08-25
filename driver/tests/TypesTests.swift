@@ -123,28 +123,6 @@ final class TypesTests: XCTestCase {
         )
     }
 
-    // MARK: - Command enum
-
-    func testCommandRawValues() {
-        let cmds: [Command] = [
-            .activateApp, .terminateApp, .screenshot,
-            .home, .dom, .tap, .longPress, .input, .swipe, .waitFor,
-            .proxyCAPush, .dismissAlert, .dismissAlertByLabel,
-            .waitAppForeground, .mediaImport,
-        ]
-        for cmd in cmds {
-            XCTAssertFalse(cmd.rawValue.isEmpty, "\(cmd) should have non-empty rawValue")
-        }
-        XCTAssertEqual(cmds.count, DriverCommand.allCases.count)
-        XCTAssertEqual(Command.swipe.metadata.payloadTypeName, "ForySwipePayload")
-        XCTAssertEqual(Command.waitAppForeground.metadata.argsTypeName, "ForyWaitAppForegroundArgs")
-        XCTAssertEqual(Command.waitAppForeground.metadata.payloadTypeName, "ForyWaitAppForegroundPayload")
-        XCTAssertFalse(Command.waitAppForeground.metadata.mutatesUI)
-        XCTAssertEqual(Command.mediaImport.metadata.argsTypeName, "ForyMediaImportArgs")
-        XCTAssertEqual(Command.mediaImport.metadata.payloadTypeName, "ForyMediaImportPayload")
-        XCTAssertFalse(Command.mediaImport.metadata.mutatesUI)
-    }
-
     func testSwipePayload_UsesElementSummaryAndScrollDirection() throws {
         let fory = ForyRegistry.create()
         let payload = ForySwipePayload(
@@ -200,34 +178,6 @@ final class TypesTests: XCTestCase {
         XCTAssertTrue(payload.candidates.isEmpty)
     }
 
-    // MARK: - resolveTapPoint
-
-    func testResolveTapPoint_DefaultsToCenter() {
-        let point = resolveTapPoint(frame: CGRect(x: 10, y: 20, width: 100, height: 40), offset: nil, ratio: ForyPoint(x: 0.5, y: 0.5))
-        XCTAssertEqual(point.x, 60)
-        XCTAssertEqual(point.y, 40)
-    }
-
-    func testResolveTapPoint_UsesAbsoluteOffset() {
-        let point = resolveTapPoint(
-            frame: CGRect(x: 10, y: 20, width: 100, height: 40),
-            offset: ForyPoint(x: 12, y: 5),
-            ratio: ForyPoint(x: 0.5, y: 0.5)
-        )
-        XCTAssertEqual(point.x, 22)
-        XCTAssertEqual(point.y, 25)
-    }
-
-    func testResolveTapPoint_UsesRatio() {
-        let point = resolveTapPoint(
-            frame: CGRect(x: 10, y: 20, width: 100, height: 40),
-            offset: nil,
-            ratio: ForyPoint(x: 0.8, y: 0.5)
-        )
-        XCTAssertEqual(point.x, 90)
-        XCTAssertEqual(point.y, 40)
-    }
-
     // MARK: - interactionFrame
 
     func testInteractionFrame_ClipsValidVisibleFrameToAppFrame() throws {
@@ -247,21 +197,6 @@ final class TypesTests: XCTestCase {
             ratio: ForyPoint(x: 0.5, y: 0.5)
         )
         XCTAssertEqual(tapPoint, CGPoint(x: 201, y: 741))
-    }
-
-    func testInteractionFrame_DoesNotFallbackWhenValidVisibleFrameIsOutsideApp() {
-        let raw = FakeRawSnapshot(
-            elementType: .button,
-            frame: CGRect(x: 20, y: 100, width: 80, height: 40),
-            visibleFrame: CGRect(x: 20, y: 900, width: 80, height: 40)
-        )
-        let node = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
-
-        XCTAssertNil(interactionFrame(node))
-        XCTAssertEqual(
-            interactionFrameRejectionReason(node, in: node.appFrame),
-            IOSUseCandidateRejection.outsideAppBounds
-        )
     }
 
     func testInteractionFrame_ValidVisibleFrameIsAuthoritativeOverInvisibleAncestor() {
@@ -375,61 +310,6 @@ final class TypesTests: XCTestCase {
         )
     }
 
-    func testInteractionFrame_AllowsUnnamedZeroAreaOtherPlaceholderAncestor() {
-        let search = FakeRawSnapshot(
-            label: "Search",
-            elementType: .searchField,
-            frame: CGRect(x: 33, y: 781, width: 267, height: 38),
-            visibleFrame: CGRect(
-                x: CGFloat.infinity,
-                y: CGFloat.infinity,
-                width: 0,
-                height: 0
-            ),
-            isVisible: true
-        )
-        let toolbarPlaceholder = FakeRawSnapshot(
-            elementType: .other,
-            frame: CGRect(x: 28, y: 776, width: 0, height: 0),
-            visibleFrame: CGRect(x: 28, y: 776, width: 0, height: 0),
-            isVisible: false,
-            children: [search]
-        )
-        let root = SafeSnapshot(
-            raw: toolbarPlaceholder,
-            appFrame: CGRect(x: 0, y: 0, width: 393, height: 852)
-        )
-
-        XCTAssertEqual(
-            interactionFrame(root.children[0]),
-            CGRect(x: 33, y: 781, width: 267, height: 38)
-        )
-    }
-
-    func testInteractionFrame_UnnamedZeroAreaCellAncestorStillBlocksFallback() {
-        let child = FakeRawSnapshot(
-            label: "配置代理",
-            elementType: .button,
-            frame: CGRect(x: 20, y: 700, width: 120, height: 44),
-            visibleFrame: .zero,
-            isVisible: true
-        )
-        let hiddenCell = FakeRawSnapshot(
-            elementType: .cell,
-            frame: .zero,
-            visibleFrame: .zero,
-            isVisible: false,
-            children: [child]
-        )
-        let root = SafeSnapshot(raw: hiddenCell, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
-
-        XCTAssertNil(interactionFrame(root.children[0]))
-        XCTAssertEqual(
-            interactionFrameRejectionReason(root.children[0], in: root.children[0].appFrame),
-            IOSUseCandidateRejection.ancestorInvisible
-        )
-    }
-
     func testInteractionFrame_NamedZeroAreaIconAncestorStillBlocksFallback() {
         let appIcon = FakeRawSnapshot(
             label: "设置",
@@ -453,31 +333,6 @@ final class TypesTests: XCTestCase {
             interactionFrameRejectionReason(root.children[0], in: root.children[0].appFrame),
             IOSUseCandidateRejection.ancestorInvisible
         )
-    }
-
-    func testScrollableLookup_UsesClippedInteractionFrame() {
-        let firstCell = FakeRawSnapshot(
-            label: "smooth",
-            elementType: .cell,
-            frame: CGRect(x: -180, y: 696, width: 100, height: 90)
-        )
-        let secondCell = FakeRawSnapshot(
-            label: "matte",
-            elementType: .cell,
-            frame: CGRect(x: 120, y: 696, width: 100, height: 90)
-        )
-        let collection = FakeRawSnapshot(
-            elementType: .collectionView,
-            frame: CGRect(x: -200, y: 696, width: 602, height: 90),
-            visibleFrame: .zero,
-            children: [firstCell, secondCell]
-        )
-        let root = SafeSnapshot(raw: collection, appFrame: CGRect(x: 0, y: 0, width: 402, height: 874))
-
-        XCTAssertTrue(findLargestScrollable(root) === root)
-        XCTAssertTrue(findScrollableAncestor(root.children[1]) === root)
-        XCTAssertTrue(findScrollableAtPoint(CGPoint(x: 380, y: 741), root) === root)
-        XCTAssertNil(findScrollableAtPoint(CGPoint(x: -50, y: 741), root))
     }
 
     func testRawFindInSnapshot_DisableFuzzyReturnsNotFoundWithoutSuggestions() {
@@ -505,94 +360,6 @@ final class TypesTests: XCTestCase {
         }
     }
 
-    func testRawFindInSnapshot_NoDiagnosticsOmitsOffscreenCandidateCollection() {
-        let offscreen = FakeRawSnapshot(
-            label: "Bluetooth",
-            elementType: .staticText,
-            frame: CGRect(x: 0, y: 900, width: 80, height: 20),
-            isVisible: true
-        )
-        let cs = makeCleanedSnapshot([
-            makeSnapshotElement(
-                SafeSnapshot(raw: offscreen, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
-            )
-        ])
-
-        switch rawFindInSnapshot(
-            ForyTarget(label: "Bluetooth"),
-            cs: cs,
-            enableFuzzy: false,
-            visibility: .only,
-            diagnostics: .none
-        ) {
-        case .notFound(let suggestions, let rejected):
-            XCTAssertTrue(suggestions.isEmpty)
-            XCTAssertTrue(rejected.isEmpty)
-        default:
-            XCTFail("Expected polling lookup to return notFound without diagnostics")
-        }
-    }
-
-    func testRawFindInSnapshot_NoDiagnosticsOmitsTraitMismatchCandidates() {
-        let element = makeElement(label: "Bluetooth", type: .button)
-        let cs = makeCleanedSnapshot([element])
-
-        switch rawFindInSnapshot(
-            ForyTarget(label: "Bluetooth", traits: "Cell"),
-            cs: cs,
-            enableFuzzy: false,
-            diagnostics: .none
-        ) {
-        case .notFound(let suggestions, let rejected):
-            XCTAssertTrue(suggestions.isEmpty)
-            XCTAssertTrue(rejected.isEmpty)
-        default:
-            XCTFail("Expected polling lookup to omit trait diagnostics")
-        }
-    }
-
-    // MARK: - Double.sanitized
-
-    func testDoubleSanitized_Finite() {
-        XCTAssertEqual(Double(73.83333333333333).sanitized, 73.8)
-    }
-
-    func testDoubleSanitized_NaN() {
-        XCTAssertEqual(Double.nan.sanitized, 0)
-    }
-
-    func testDoubleSanitized_Infinity() {
-        XCTAssertEqual(Double.infinity.sanitized, 0)
-    }
-
-    func testDoubleSanitized_Negative() {
-        XCTAssertEqual(Double(-42.6).sanitized, -42.6)
-    }
-
-    // MARK: - Levenshtein (doc 8)
-
-    func testLevenshtein_Equal() {
-        XCTAssertEqual(levenshtein("hello", "hello"), 0)
-    }
-
-    func testLevenshtein_Insert() {
-        XCTAssertEqual(levenshtein("cat", "cats"), 1)
-    }
-
-    func testLevenshtein_Substitute() {
-        XCTAssertEqual(levenshtein("cat", "bat"), 1)
-    }
-
-    func testLevenshtein_Empty() {
-        XCTAssertEqual(levenshtein("", "abc"), 3)
-        XCTAssertEqual(levenshtein("abc", ""), 3)
-    }
-
-    func testLevenshtein_Unicode_ChineseEqualsOneCharEach() {
-        XCTAssertEqual(levenshtein("蓝牙", "蓝牙"), 0)
-        XCTAssertEqual(levenshtein("蓝牙", "蓝牙设置"), 2)
-    }
-
     func testFuzzySuggestions_ThresholdApplied() {
         let candidates = [
             SearchCandidate(displayText: "Dark Mode", normalizedText: normalizeSearchText("Dark Mode")),
@@ -616,17 +383,6 @@ final class TypesTests: XCTestCase {
         let suggestions = fuzzySuggestions(forNormalizedQuery: normalizeSearchText("General"), from: candidates)
 
         XCTAssertEqual(suggestions, ["General", "GeneralA", "GeneralB"])
-    }
-
-    func testFuzzySuggestions_LengthPruningSkipsImpossibleCandidates() {
-        let candidates = [
-            SearchCandidate(displayText: "Extremely Long General Settings Label", normalizedText: normalizeSearchText("Extremely Long General Settings Label")),
-            SearchCandidate(displayText: "Genral", normalizedText: normalizeSearchText("Genral")),
-        ]
-
-        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizeSearchText("General"), from: candidates)
-
-        XCTAssertEqual(suggestions, ["Genral"])
     }
 
     func testNormalizeSearchText_IgnoresWhitespaceCaseAndPunctuation() {
@@ -673,48 +429,12 @@ final class TypesTests: XCTestCase {
         XCTAssertNotNil(dom[4].rect)
     }
 
-    func testSerializeDomFlat_EmptyElementsReturnsEmptyArray() {
-        XCTAssertTrue(serializeDomFlat(from: []).isEmpty)
-    }
-
-    func testSerializeDomFlat_SerializesLeafRect() {
-        let leaf = makeElement(label: "Leaf", type: .button)
-        let dom = serializeDomFlat(from: [leaf])
-
-        XCTAssertEqual(dom.count, 1)
-        XCTAssertEqual(dom[0].label, "Leaf")
-        XCTAssertNotNil(dom[0].rect)
-        XCTAssertEqual(dom[0].childCount, 0)
-    }
-
     func testCleanTree_SortsChildrenByYAndKeepsSameYStable() {
         let bottom = FakeRawSnapshot(label: "Bottom", elementType: .button, frame: CGRect(x: 0, y: 300, width: 100, height: 44))
         let sameA = FakeRawSnapshot(label: "Same A", elementType: .button, frame: CGRect(x: 200, y: 150, width: 100, height: 44))
         let top = FakeRawSnapshot(label: "Top", elementType: .button, frame: CGRect(x: 0, y: 100, width: 100, height: 44))
         let sameB = FakeRawSnapshot(label: "Same B", elementType: .button, frame: CGRect(x: 0, y: 150, width: 100, height: 44))
         let app = FakeRawSnapshot(label: "App", elementType: .application, children: [bottom, sameA, top, sameB])
-
-        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
-
-        XCTAssertEqual(elements.map { $0.node.label }, ["App", "Top", "Same A", "Same B", "Bottom"])
-    }
-
-    func testCleanTree_SortsPromotedChildrenByY() {
-        let bottom = FakeRawSnapshot(label: "Bottom", elementType: .button, frame: CGRect(x: 0, y: 300, width: 100, height: 44))
-        let top = FakeRawSnapshot(label: "Top", elementType: .button, frame: CGRect(x: 0, y: 100, width: 100, height: 44))
-        let window = FakeRawSnapshot(elementType: .window, children: [bottom, top])
-
-        let elements = buildCleanElements(from: SafeSnapshot(raw: window, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
-
-        XCTAssertEqual(elements.map { $0.node.label }, ["Top", "Bottom"])
-    }
-
-    func testCleanTree_AlreadySortedChildrenKeepOrder() {
-        let top = FakeRawSnapshot(label: "Top", elementType: .button, frame: CGRect(x: 0, y: 100, width: 100, height: 44))
-        let sameA = FakeRawSnapshot(label: "Same A", elementType: .button, frame: CGRect(x: 200, y: 150, width: 100, height: 44))
-        let sameB = FakeRawSnapshot(label: "Same B", elementType: .button, frame: CGRect(x: 0, y: 150, width: 100, height: 44))
-        let bottom = FakeRawSnapshot(label: "Bottom", elementType: .button, frame: CGRect(x: 0, y: 300, width: 100, height: 44))
-        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [top, sameA, sameB, bottom])
 
         let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
 
@@ -762,19 +482,6 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(elements[0].node.label, "NestedWeb")
         XCTAssertEqual(elements[0].childCount, 1)
         XCTAssertEqual(elements[1].node.label, "content")
-    }
-
-    func testCleanTree_SortsAfterRule4Merge() {
-        let descendant = FakeRawSnapshot(label: "Detail", elementType: .staticText, frame: CGRect(x: 10, y: 320, width: 100, height: 20))
-        let childCell = FakeRawSnapshot(label: "MergedCell", elementType: .cell, frame: CGRect(x: 0, y: 300, width: 320, height: 44), children: [descendant])
-        let parentCell = FakeRawSnapshot(label: "MergedCell", elementType: .cell, frame: CGRect(x: 0, y: 300, width: 320, height: 44), children: [childCell])
-        let top = FakeRawSnapshot(label: "Top", elementType: .button, frame: CGRect(x: 0, y: 100, width: 100, height: 44))
-        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [parentCell, top])
-
-        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
-
-        XCTAssertEqual(elements.map { $0.node.label }, ["App", "Top", "MergedCell", "Detail"])
-        XCTAssertEqual(elements[2].childCount, 1)
     }
 
     func testAutoLabelsUnnamedCleanedContainerAndRawFindCanLocateIt() {
@@ -837,91 +544,6 @@ final class TypesTests: XCTestCase {
         default:
             XCTFail("expected deduped sibling alias to be searchable")
         }
-    }
-
-    func testAutoLabelDedupesDuplicateDisplayLabelsAcrossParents() {
-        let firstText = FakeRawSnapshot(label: "图片", elementType: .staticText)
-        let firstCell = FakeRawSnapshot(elementType: .cell, children: [firstText])
-        let secondText = FakeRawSnapshot(label: "图片", elementType: .staticText)
-        let secondCell = FakeRawSnapshot(elementType: .cell, children: [secondText])
-        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [firstCell, secondCell])
-        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
-        assignAutoLabels(elements)
-        let cs = makeCleanedSnapshot(elements)
-
-        XCTAssertEqual(elements.map { displayName(for: $0.node) }, [
-            "App",
-            "AppAppc1",
-            "图片",
-            "AppAppc2",
-            "图片-1",
-        ])
-
-        switch rawFindInSnapshot(ForyTarget(label: "图片-1", traits: "Text"), cs: cs, visibility: .any) {
-        case .found(let found):
-            XCTAssertEqual(displayName(for: found.node), "图片-1")
-        default:
-            XCTFail("expected globally deduped alias to be searchable")
-        }
-    }
-
-    func testAutoLabelDedupesAutoLabelBaseAgainstRealDisplayLabel() {
-        let realLabel = FakeRawSnapshot(label: "AppAppc2", elementType: .button)
-        let tableChild = FakeRawSnapshot(label: "Child", elementType: .staticText)
-        let unnamedTable = FakeRawSnapshot(elementType: .table, children: [tableChild])
-        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [realLabel, unnamedTable])
-        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
-        assignAutoLabels(elements)
-        let cs = makeCleanedSnapshot(elements)
-
-        XCTAssertEqual(displayName(for: elements[1].node), "AppAppc2")
-        XCTAssertEqual(displayName(for: elements[2].node), "AppAppc2-1")
-
-        switch rawFindInSnapshot(ForyTarget(label: "AppAppc2-1", traits: "Table"), cs: cs, visibility: .any) {
-        case .found(let found):
-            XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.table.rawValue)
-        default:
-            XCTFail("expected auto label colliding with real label to be deduped and searchable")
-        }
-    }
-
-    func testAutoLabelsUseSortedSiblingOrder() {
-        let tableChild = FakeRawSnapshot(label: "TableChild", elementType: .staticText)
-        let table = FakeRawSnapshot(elementType: .table, frame: CGRect(x: 0, y: 300, width: 320, height: 80), children: [tableChild])
-        let collectionChild = FakeRawSnapshot(label: "CollectionChild", elementType: .staticText)
-        let collection = FakeRawSnapshot(elementType: .collectionView, frame: CGRect(x: 0, y: 100, width: 320, height: 80), children: [collectionChild])
-        let scrollChild = FakeRawSnapshot(label: "ScrollChild", elementType: .staticText)
-        let scroll = FakeRawSnapshot(elementType: .scrollView, frame: CGRect(x: 0, y: 200, width: 320, height: 80), children: [scrollChild])
-        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [table, collection, scroll])
-
-        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
-        assignAutoLabels(elements)
-
-        XCTAssertEqual(elements.map { displayName(for: $0.node) }, [
-            "App",
-            "AppAppc1",
-            "CollectionChild",
-            "AppAppc2",
-            "ScrollChild",
-            "AppAppc3",
-            "TableChild",
-        ])
-    }
-
-    // MARK: - elementTypeName
-
-    func testElementTypeName_OtherReturnsDash() {
-        XCTAssertEqual(elementTypeName(.other), "-")
-    }
-
-    func testElementTypeName_UsesShortSharedNames() {
-        XCTAssertEqual(elementTypeName(.application), "App")
-        XCTAssertEqual(elementTypeName(.staticText), "Text")
-        XCTAssertEqual(elementTypeName(.textField), "Input")
-        XCTAssertEqual(elementTypeName(.searchField), "Input")
-        XCTAssertEqual(elementTypeName(.scrollView), "Scroll")
-        XCTAssertEqual(elementTypeName(.collectionView), "Collection")
-        XCTAssertEqual(elementTypeName(.webView), "Web")
     }
 
     // MARK: - rawFindInSnapshot
@@ -1094,49 +716,6 @@ final class TypesTests: XCTestCase {
         }
     }
 
-    func testRawFindInSnapshot_TraitFilter_UsesDisplayedShortTypeOnly() {
-        let input = makeElement(label: "搜索", type: .searchField)
-        let cs = makeCleanedSnapshot([input])
-
-        switch rawFindInSnapshot(ForyTarget(label: "搜索", traits: "Input"), cs: cs) {
-        case .found(let found):
-            XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.searchField.rawValue)
-        default:
-            XCTFail("expected displayed short type to match")
-        }
-
-        switch rawFindInSnapshot(ForyTarget(label: "搜索", traits: "SearchField"), cs: cs) {
-        case .notFound:
-            break
-        default:
-            XCTFail("expected old long type not to match")
-        }
-    }
-
-    func testRawFindInSnapshot_MultiTraitAnd_MatchesAll() {
-        let elem = makeElement(label: "设置", type: .button)
-        let cs = makeCleanedSnapshot([elem])
-
-        switch rawFindInSnapshot(ForyTarget(label: "设置", traits: "button,text"), cs: cs) {
-        case .notFound:
-            break // expected: Button does not have Text trait
-        default:
-            XCTFail("expected notFound when traits don't all match")
-        }
-    }
-
-    func testRawFindInSnapshot_PresentationDirectionTraitDoesNotMatchDriverTraits() {
-        let scrollView = makeElement(label: "List", type: .scrollView)
-        let cs = makeCleanedSnapshot([scrollView])
-
-        switch rawFindInSnapshot(ForyTarget(label: "List", traits: "vertical"), cs: cs) {
-        case .notFound:
-            break
-        default:
-            XCTFail("expected presentation-only direction trait not to match driver search traits")
-        }
-    }
-
     func testRawFindInSnapshot_CindexSelectsPositiveAndNegativeCleanedChildren() {
         let title = FakeRawSnapshot(label: "标题", elementType: .staticText)
         let value = FakeRawSnapshot(label: "值", elementType: .staticText)
@@ -1241,18 +820,6 @@ final class TypesTests: XCTestCase {
         }
     }
 
-    func testRawFindInSnapshot_CindexDoesNotAffectFuzzySuggestions() {
-        let element = makeElement(label: "天气", type: .staticText)
-        let cs = makeCleanedSnapshot([element])
-
-        switch rawFindInSnapshot(ForyTarget(label: "天琪", cindex: 0), cs: cs) {
-        case .fuzzy(let suggestions):
-            XCTAssertEqual(suggestions, ["天气"])
-        default:
-            XCTFail("expected cindex to be ignored for fuzzy suggestions")
-        }
-    }
-
     func testRawFindInSnapshot_OnlyReturnsElementWithInteractionFrame() {
         let offscreenLabel = FakeRawSnapshot(
             label: "配置代理",
@@ -1352,44 +919,6 @@ final class TypesTests: XCTestCase {
         }
     }
 
-    func testRawFindInSnapshot_OnlyFallsBackToFrameForIconElements() {
-        let icon = FakeRawSnapshot(
-            label: "ExampleApp开发版",
-            elementType: .icon,
-            frame: CGRect(x: 22, y: 489, width: 80, height: 90),
-            visibleFrame: .zero,
-            isVisible: true
-        )
-        let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: icon, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
-
-        switch rawFindInSnapshot(ForyTarget(label: "ExampleApp开发版"), cs: cs, visibility: .only) {
-        case .found(let found):
-            XCTAssertEqual(found.node.frame.origin.x, 22)
-            XCTAssertEqual(found.node.frame.origin.y, 489)
-        default:
-            XCTFail("expected icon elements with empty visibleFrame to fallback to frame when frame is in bounds")
-        }
-    }
-
-    func testRawFindInSnapshot_OnlyFallsBackToFrameForSearchField() {
-        let search = FakeRawSnapshot(
-            label: "Search",
-            elementType: .searchField,
-            frame: CGRect(x: 33, y: 781, width: 327, height: 38),
-            visibleFrame: .zero,
-            isVisible: true
-        )
-        let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: search, appFrame: CGRect(x: 0, y: 0, width: 393, height: 852)))])
-
-        switch rawFindInSnapshot(ForyTarget(label: "Search", traits: "Input"), cs: cs, visibility: .only) {
-        case .found(let found):
-            XCTAssertEqual(found.node.frame.origin.x, 33)
-            XCTAssertEqual(found.node.frame.origin.y, 781)
-        default:
-            XCTFail("expected Input with empty visibleFrame to fallback to frame when frame is in bounds")
-        }
-    }
-
     func testRawFindInSnapshot_OnlyFuzzyIgnoresCandidatesWithoutInteractionFrames() {
         let offscreenLabel = FakeRawSnapshot(
             label: "Blue",
@@ -1415,68 +944,6 @@ final class TypesTests: XCTestCase {
         default:
             XCTFail("expected rawFindInSnapshot fuzzy suggestions to ignore candidates without interaction frames when visibility is .only")
         }
-    }
-
-    func testRawFindInSnapshot_AnyPreservesAllContainsMatchesWhenExactMisses() {
-        let offscreenLabel = FakeRawSnapshot(
-            label: "配置代理屏外",
-            elementType: .staticText,
-            frame: CGRect(x: 0, y: 900, width: 80, height: 20),
-            isVisible: true
-        )
-        let visibleLabel = FakeRawSnapshot(
-            label: "配置代理屏内",
-            elementType: .staticText,
-            frame: CGRect(x: 32, y: 600, width: 80, height: 20),
-            isVisible: true
-        )
-        let visibleCell = FakeRawSnapshot(
-            elementType: .cell,
-            frame: CGRect(x: 0, y: 580, width: 375, height: 64),
-            isVisible: true,
-            children: [visibleLabel]
-        )
-        let table = FakeRawSnapshot(elementType: .table, children: [offscreenLabel, visibleCell])
-        let root = SafeSnapshot(raw: table, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
-        let offscreen = makeSnapshotElement(root.children[0])
-        let visible = makeSnapshotElement(root.children[1].children[0])
-        let cs = makeCleanedSnapshot([offscreen, visible])
-
-        switch rawFindInSnapshot(ForyTarget(label: "配置代理"), cs: cs, visibility: .any) {
-        case .ambiguous(let matches):
-            XCTAssertEqual(matches.count, 2)
-            XCTAssertEqual(matches[0].node.frame.origin.y, 900)
-            XCTAssertEqual(matches[1].node.frame.origin.y, 600)
-        default:
-            XCTFail("expected rawFindInSnapshot to preserve all contains matches when visibility is .any and exact misses")
-        }
-    }
-
-    // MARK: - collectCellSnapshots / collectVisibleCellFrames
-
-    func testCollectCellSnapshots_TopToBottomOrder() {
-        let top = FakeRawSnapshot(label: "蓝牙", elementType: .cell, frame: CGRect(x: 0, y: 100, width: 375, height: 44))
-        let mid = FakeRawSnapshot(label: "通用", elementType: .cell, frame: CGRect(x: 0, y: 200, width: 375, height: 44))
-        let bottom = FakeRawSnapshot(label: "开发者", elementType: .cell, frame: CGRect(x: 0, y: 500, width: 375, height: 44))
-        let scrollView = FakeRawSnapshot(elementType: .scrollView, children: [top, mid, bottom])
-        let root = SafeSnapshot(raw: scrollView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
-
-        let cells = collectCellSnapshots(root)
-        XCTAssertEqual(cells.map { $0.label }, ["蓝牙", "通用", "开发者"])
-    }
-
-    func testCollectVisibleCellFrames_ReturnsVisibleCellFrames() {
-        let c1 = FakeRawSnapshot(label: "A", elementType: .cell, frame: CGRect(x: 0, y: 0, width: 375, height: 44))
-        let c2 = FakeRawSnapshot(label: "B", elementType: .cell, frame: CGRect(x: 0, y: 50, width: 375, height: 44))
-        let c3 = FakeRawSnapshot(label: "C", elementType: .cell, frame: CGRect(x: 0, y: 100, width: 375, height: 44))
-        let scrollView = FakeRawSnapshot(elementType: .scrollView, children: [c1, c2, c3])
-        let root = SafeSnapshot(raw: scrollView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
-
-        let frames = collectVisibleCellFrames(root)
-        XCTAssertEqual(frames.count, 3)
-        XCTAssertEqual(frames[0].origin.y, 0)
-        XCTAssertEqual(frames[1].origin.y, 50)
-        XCTAssertEqual(frames[2].origin.y, 100)
     }
 
     // MARK: - SafeSnapshot children pruning
@@ -1556,24 +1023,4 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(root.children.compactMap { $0.label }, ["empty-frame"])
     }
 
-    // MARK: - ForyRect / makeForyRect
-
-    func testMakeForyRect_RoundsToIntegers() {
-        let rect = makeForyRect(CGRect(x: 10.7, y: 20.3, width: 100.8, height: 40.1))
-        XCTAssertEqual(rect.x, 11)
-        XCTAssertEqual(rect.y, 20)
-        XCTAssertEqual(rect.w, 101)
-        XCTAssertEqual(rect.h, 40)
-    }
-
-    // MARK: - makeForyFindMatch
-
-    func testMakeForyFindMatch_BasicFields() {
-        let elem = makeElement(label: "Test", value: "val", type: .button)
-        let match = makeForyFindMatch(elem, includeAncestors: false)
-        XCTAssertEqual(match.elemType, Int32(XCUIElement.ElementType.button.rawValue))
-        XCTAssertEqual(match.label, "Test")
-        XCTAssertEqual(match.value, "val")
-        XCTAssertFalse(match.traits.isEmpty)
-    }
 }

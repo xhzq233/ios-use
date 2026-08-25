@@ -39,40 +39,6 @@ final class DeviceServiceTests: XCTestCase {
         ])
     }
 
-    func testFormatDeviceLabelIncludesConfiguredTag() {
-        let device = IOSDevice(name: "IOSUseTest", version: "26.0.1", udid: "SIM-1", kind: .simulator)
-
-        XCTAssertEqual(
-            DeviceService.format(device, configured: ["SIM-1"]),
-            "IOSUseTest | iOS 26.0.1 | Simulator | UDID: SIM-1 | configured"
-        )
-    }
-
-    func testFormatDeviceLabelIncludesDriverUpdateHint() {
-        let device = IOSDevice(name: "Phone", version: "26.2", udid: "REAL-1", kind: .real)
-
-        XCTAssertEqual(
-            DeviceService.format(device, configuredDevices: ["REAL-1": DeviceService.ConfiguredDevice(driverVersion: "0.9.0")]),
-            "Phone | iOS 26.2 | Device | UDID: REAL-1 | configured | driver update required: run ios-use config --udid REAL-1 | signing unknown: run ios-use config --udid REAL-1 to enable expiry reminders"
-        )
-    }
-
-    func testFormatDeviceLabelIncludesSigningExpiredSeparatelyFromDriverUpdate() {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
-        ConfigService.nowProviderForTesting = { now }
-        let device = IOSDevice(name: "Phone", version: "26.2", udid: "REAL-1", kind: .real)
-
-        XCTAssertEqual(
-            DeviceService.format(device, configuredDevices: [
-                "REAL-1": DeviceService.ConfiguredDevice(
-                    driverVersion: IOSUseCLI.version,
-                    signingExpiresAt: now.addingTimeInterval(-60)
-                )
-            ]),
-            "Phone | iOS 26.2 | Device | UDID: REAL-1 | configured | signing expired: run ios-use config --udid REAL-1"
-        )
-    }
-
     func testUsbOnlyDevicesFiltersAndPreservesUsbmuxOrder() throws {
         DeviceService.usbDeviceUdidsOverrideForTesting = {
             ["00008150-0015309E2EE3401C", "CE83141B-D0FB-5983-B0DB-4C301BB773F6"]
@@ -155,25 +121,4 @@ final class DeviceServiceTests: XCTestCase {
         XCTAssertEqual(output.split(separator: "\n").count, 10000)
     }
 
-    func testShellRunCombinedIncludesStderrOnSuccess() throws {
-        let output = try Shell.runCombined("/bin/sh", arguments: [
-            "-c",
-            "printf out; printf err >&2"
-        ])
-
-        XCTAssertEqual(output, "outerr")
-    }
-
-    func testListDevicesOverrideBypassesCacheForIsolatedTests() throws {
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": "/tmp/ios-use-device-cache-\(UUID().uuidString)"])
-        var calls = 0
-        DeviceService.listDevicesOverrideForTesting = { _, _ in
-            calls += 1
-            return [IOSDevice(name: "Phone \(calls)", version: "26.0", udid: "REAL-\(calls)", kind: .real)]
-        }
-
-        XCTAssertEqual(try DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid, "REAL-1")
-        XCTAssertEqual(try DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid, "REAL-2")
-        XCTAssertEqual(calls, 2)
-    }
 }

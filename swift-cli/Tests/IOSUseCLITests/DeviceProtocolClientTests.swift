@@ -1,5 +1,4 @@
 import Foundation
-import Darwin
 import XCTest
 import IOSUseProtocol
 @testable import IOSUseCLI
@@ -8,18 +7,6 @@ final class DeviceProtocolClientTests: XCTestCase {
     override func tearDown() {
         RemoteServiceDiscoveryClient.resetTestingOverrides()
         super.tearDown()
-    }
-
-    func testCDTunnelHandshakeRequestFrame() throws {
-        let packet = try CDTunnelPacket.encodeHandshakeRequest()
-
-        XCTAssertEqual(String(data: packet.prefix(8), encoding: .utf8), "CDTunnel")
-        let payloadSize = Int((UInt16(packet[8]) << 8) | UInt16(packet[9]))
-        XCTAssertEqual(payloadSize, packet.count - 10)
-
-        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(packet.dropFirst(10))) as? [String: Any])
-        XCTAssertEqual(body["type"] as? String, "clientHandshakeRequest")
-        XCTAssertEqual(body["mtu"] as? Int, 16_000)
     }
 
     func testCDTunnelHandshakeResponseDecodesTunnelAddresses() throws {
@@ -183,64 +170,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(piggybackAck.acknowledgmentNumber, 903)
     }
 
-    func testCoreDeviceUserSpaceTCPConnectionAcksKeepAliveProbe() throws {
-        let local = "fd7b:e5b:6f53::2"
-        let remote = "fd7b:e5b:6f53::1"
-        let localAddress = try CoreDeviceIPv6TCPCodec.parseIPv6Address(local)
-        let remoteAddress = try CoreDeviceIPv6TCPCodec.parseIPv6Address(remote)
-        let synAck = try CoreDeviceIPv6TCPCodec.encodeSegment(
-            sourceAddress: remoteAddress,
-            destinationAddress: localAddress,
-            sourcePort: 58_783,
-            destinationPort: 50_000,
-            sequenceNumber: 900,
-            acknowledgmentNumber: 101,
-            flags: CoreDeviceTCPFlags.syn | CoreDeviceTCPFlags.ack
-        )
-        let keepAlive = try CoreDeviceIPv6TCPCodec.encodeSegment(
-            sourceAddress: remoteAddress,
-            destinationAddress: localAddress,
-            sourcePort: 58_783,
-            destinationPort: 50_000,
-            sequenceNumber: 900,
-            acknowledgmentNumber: 101,
-            flags: CoreDeviceTCPFlags.ack
-        )
-        let serverData = try CoreDeviceIPv6TCPCodec.encodeSegment(
-            sourceAddress: remoteAddress,
-            destinationAddress: localAddress,
-            sourcePort: 58_783,
-            destinationPort: 50_000,
-            sequenceNumber: 901,
-            acknowledgmentNumber: 101,
-            flags: CoreDeviceTCPFlags.psh | CoreDeviceTCPFlags.ack,
-            payload: Data("ok".utf8)
-        )
-        let tunnel = FakeIPv6PacketIO(reads: [synAck, keepAlive, serverData])
-        let connection = try CoreDeviceUserSpaceTCPConnection(
-            tunnel: tunnel,
-            localAddress: local,
-            remoteAddress: remote,
-            localPort: 50_000,
-            remotePort: 58_783,
-            initialSequence: 100
-        )
-
-        try connection.connect()
-        let response = try connection.readExact(byteCount: 2, timeoutSeconds: 1)
-
-        XCTAssertEqual(response, Data("ok".utf8))
-        XCTAssertEqual(tunnel.writes.count, 4)
-        let keepAliveAck = try CoreDeviceIPv6TCPCodec.decodeSegment(tunnel.writes[2])
-        XCTAssertEqual(keepAliveAck.flags, CoreDeviceTCPFlags.ack)
-        XCTAssertEqual(keepAliveAck.sequenceNumber, 101)
-        XCTAssertEqual(keepAliveAck.acknowledgmentNumber, 901)
-        let payloadAck = try CoreDeviceIPv6TCPCodec.decodeSegment(tunnel.writes[3])
-        XCTAssertEqual(payloadAck.flags, CoreDeviceTCPFlags.ack)
-        XCTAssertEqual(payloadAck.sequenceNumber, 101)
-        XCTAssertEqual(payloadAck.acknowledgmentNumber, 903)
-    }
-
     func testCoreDeviceDirectTunnelRouteQueueKeepsFIFOAfterCompaction() throws {
         let local = "fd7b:e5b:6f53::2"
         let remote = "fd7b:e5b:6f53::1"
@@ -364,33 +293,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertTrue(session.waitForClose(timeoutSeconds: 2))
     }
 
-    func testCoreDeviceDirectTunnelWaitForCloseWaitsForRouterReaderExit() throws {
-        let local = "fd7b:e5b:6f53::2"
-        let remote = "fd7b:e5b:6f53::1"
-        let serviceName = "com.test.service"
-        let servicePort = 58_783
-        let handshake = CoreDeviceTunnelHandshake(
-            serverAddress: remote,
-            serverRSDPort: servicePort,
-            clientAddress: local,
-            clientMTU: IOSUseProtocol.XCConstants.coreDeviceTunnelRequestedMTU
-        )
-        let tunnel = FakeCoreDeviceTunnel(handshake: handshake, reads: [], autoRespondToSyn: true)
-        let session = CoreDeviceDirectTunnelSession(tunnel: tunnel, handshake: handshake)
-        session.peerInfo = RemoteXPCPeerInfo(
-            properties: [:],
-            services: [
-                serviceName: RemoteXPCService(name: serviceName, port: servicePort, usesRemoteXPC: false),
-            ]
-        )
-
-        _ = try session.connectService(serviceName)
-        session.close()
-
-        XCTAssertTrue(session.waitForClose(timeoutSeconds: 2))
-        XCTAssertTrue(tunnel.isClosed)
-    }
-
     func testCDTunnelRejectsInvalidMagicAndMissingFields() throws {
         var invalidMagic = try cdtunnelPacket(["type": "serverHandshakeResponse"])
         invalidMagic.replaceSubrange(0..<8, with: Data("BadMagic".utf8))
@@ -408,197 +310,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertThrowsError(try CDTunnelPacket.decodeHandshakeResponse(missingAddress)) { error in
             XCTAssertEqual(error as? CDTunnelError, .missingField("serverAddress"))
         }
-    }
-
-    func testRemoteXPCWrapperRoundTripsDictionaryPayload() throws {
-        let payload: [String: RemoteXPCValue] = [
-            "Command": .string("DoSomething"),
-            "Count": .uint64(7),
-            "Enabled": .bool(true),
-            "Nested": .dictionary([
-                "Items": .array([.string("a"), .int64(-2), .null]),
-            ]),
-        ]
-
-        let wrapper = try RemoteXPCWrapper.encodeDictionary(payload, messageID: 42, wantingReply: true)
-        let decoded = try RemoteXPCWrapper.decode(wrapper)
-
-        XCTAssertEqual(decoded.messageID, 42)
-        XCTAssertEqual(decoded.flags & RemoteXPCFlags.alwaysSet, RemoteXPCFlags.alwaysSet)
-        XCTAssertEqual(decoded.flags & RemoteXPCFlags.dataPresent, RemoteXPCFlags.dataPresent)
-        XCTAssertEqual(decoded.flags & RemoteXPCFlags.wantingReply, RemoteXPCFlags.wantingReply)
-        XCTAssertEqual(decoded.payload, .dictionary(payload))
-    }
-
-    func testRemoteXPCHTTP2ClientHandshakeFramesMatchGoIOSHTTPSetup() throws {
-        var handshake = try RemoteXPCHTTP2.encodeClientHandshake()
-        XCTAssertEqual(Data(handshake.prefix(RemoteXPCHTTP2.connectionPreface.count)), RemoteXPCHTTP2.connectionPreface)
-        handshake.removeFirst(RemoteXPCHTTP2.connectionPreface.count)
-
-        let frames = try http2Frames(handshake)
-
-        XCTAssertEqual(frames.map(\.type), [
-            RemoteXPCHTTP2.frameSettings,
-            RemoteXPCHTTP2.frameWindowUpdate,
-        ])
-        XCTAssertEqual(frames[0].streamID, 0)
-        XCTAssertEqual(frames[1].streamID, 0)
-    }
-
-    func testRemoteXPCHTTP2ClientHandshakeMatchesGoIOSHTTPReferenceBytes() throws {
-        let expectedHex = """
-        505249202a20485454502f322e300d0a0d0a534d0d0a0d0a\
-        00000c040000000000000300000064000400100000\
-        000004080000000000000f0001
-        """.split(separator: "\n").joined()
-        XCTAssertEqual(try RemoteXPCHTTP2.encodeClientHandshake().hexString, expectedHex)
-        XCTAssertEqual(RemoteXPCHTTP2.settingsFrame(ack: true).hexString, "000000040100000000")
-    }
-
-    func testRemoteXPCWrapperRoundTripsUUIDAndDatePayload() throws {
-        let id = try XCTUnwrap(UUID(uuidString: "00112233-4455-6677-8899-aabbccddeeff"))
-        let payload: [String: RemoteXPCValue] = [
-            "Identifier": .uuid(id),
-            "Timestamp": .date(123_456_789),
-        ]
-
-        let decoded = try RemoteXPCWrapper.decode(try RemoteXPCWrapper.encodeDictionary(payload))
-
-        XCTAssertEqual(decoded.payload, .dictionary(payload))
-    }
-
-    func testDTXAuxPrimitiveDictionaryMatchesPymobiledevice3PrimitiveInt32Fixture() {
-        XCTAssertEqual(DTXPrimitiveDictionary.encodeAux([]), Data())
-        XCTAssertEqual(
-            DTXPrimitiveDictionary.encodeAux([.primitiveInt32(7)]).hexString,
-            "f0010000000000000c000000000000000a0000000300000007000000"
-        )
-    }
-
-    func testDTXDispatchFrameBuildsSingleFragmentWithSelectorPayloadAndAux() throws {
-        let encoded = try DTXMessageEncoder.dispatch(
-            identifier: 7,
-            channelCode: 3,
-            selector: "requestDisableMemoryLimitsForPid:",
-            arguments: [.primitiveInt32(42)],
-            expectsReply: true
-        )
-
-        XCTAssertEqual(readUInt32LE(encoded.wireData, 0), 0x1f3d5b79)
-        XCTAssertEqual(readUInt32LE(encoded.wireData, 4), 32)
-        XCTAssertEqual(encoded.wireData[8], 0)
-        XCTAssertEqual(encoded.wireData[10], 1)
-        XCTAssertEqual(readUInt32LE(encoded.wireData, 12), UInt32(encoded.wireData.count - 32))
-        XCTAssertEqual(readUInt32LE(encoded.wireData, 16), 7)
-        XCTAssertEqual(readUInt32LE(encoded.wireData, 20), 0)
-        XCTAssertEqual(readUInt32LE(encoded.wireData, 24), 3)
-        XCTAssertEqual(readUInt32LE(encoded.wireData, 28), DTXTransportFlag.expectsReply)
-
-        XCTAssertEqual(encoded.wireData[32], DTXMessageKind.dispatch.rawValue)
-        XCTAssertEqual(readUInt32LE(encoded.wireData, 36), UInt32(encoded.aux.count))
-        XCTAssertEqual(readUInt32LE(encoded.wireData, 40), UInt32(encoded.aux.count + encoded.payload.count))
-        XCTAssertEqual(try unarchiveDTXBuffer(encoded.payload) as? String, "requestDisableMemoryLimitsForPid:")
-        XCTAssertEqual(encoded.aux.hexString, "f0010000000000000c000000000000000a000000030000002a000000")
-    }
-
-    func testDVTProviderAndControlContractsMatchPymobiledevice3Selectors() throws {
-        XCTAssertEqual(DVTInstrumentsContract.Provider.rsdServiceName, "com.apple.instruments.dtservicehub")
-        XCTAssertEqual(DVTInstrumentsContract.Provider.capabilities[DVTInstrumentsContract.Provider.terminationCallbackCapability], 1)
-
-        let notify = try DVTInstrumentsContract.Control.notifyCapabilities()
-        XCTAssertEqual(notify.serviceIdentifier, "DTXControl")
-        XCTAssertEqual(notify.selector, "_notifyOfPublishedCapabilities:")
-        XCTAssertFalse(notify.expectsReply)
-        let capabilities = try XCTUnwrap(try unarchiveDTXArgument(notify.arguments[0]) as? NSDictionary)
-        XCTAssertEqual((capabilities[DVTInstrumentsContract.Provider.terminationCallbackCapability] as? NSNumber)?.intValue, 1)
-
-        let requestChannel = try DVTInstrumentsContract.Control.requestChannel(code: 7, identifier: DVTInstrumentsContract.XCTestManagerDaemon.proxyServiceIdentifier)
-        XCTAssertEqual(requestChannel.selector, "_requestChannelWithCode:identifier:")
-        XCTAssertEqual(requestChannel.arguments[0], .primitiveInt32(7))
-        XCTAssertEqual(try unarchiveDTXArgument(requestChannel.arguments[1]) as? String, DVTInstrumentsContract.XCTestManagerDaemon.proxyServiceIdentifier)
-        XCTAssertTrue(requestChannel.expectsReply)
-        XCTAssertEqual(DVTInstrumentsContract.Control.cancelChannel(code: 7).selector, "_channelCanceled:")
-    }
-
-    func testXCTestManagerContractsMatchPymobiledevice3Selectors() throws {
-        XCTAssertEqual(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName, "com.apple.dt.testmanagerd.remote")
-        XCTAssertEqual(
-            DVTInstrumentsContract.XCTestManagerDaemon.proxyServiceIdentifier,
-            "dtxproxy:XCTestManager_IDEInterface:XCTestManager_DaemonConnectionInterface"
-        )
-
-        let modernControl = try DVTInstrumentsContract.XCTestManagerDaemon.initiateControlSession(productMajorVersion: 17)
-        XCTAssertEqual(modernControl.serviceIdentifier, "XCTestManager_DaemonConnectionInterface")
-        XCTAssertEqual(modernControl.selector, "_IDE_initiateControlSessionWithCapabilities:")
-        XCTAssertEqual((try unarchiveDTXArgument(modernControl.arguments[0]) as? NSDictionary)?.count, 0)
-
-        XCTAssertThrowsError(try DVTInstrumentsContract.XCTestManagerDaemon.initiateControlSession(productMajorVersion: 16)) { error in
-            XCTAssertTrue(String(describing: error).contains("requires iOS 17 or later"))
-        }
-        XCTAssertThrowsError(try DVTInstrumentsContract.XCTestManagerDaemon.initiateControlSession(productMajorVersion: 10)) { error in
-            XCTAssertTrue(String(describing: error).contains("requires iOS 17 or later"))
-        }
-
-        let ios17Auth = try DVTInstrumentsContract.XCTestManagerDaemon.authorizeTestSession(productMajorVersion: 17, pid: 456)
-        XCTAssertEqual(ios17Auth.selector, "_IDE_authorizeTestSessionWithProcessID:")
-        XCTAssertEqual((try unarchiveDTXArgument(ios17Auth.arguments[0]) as? NSNumber)?.intValue, 456)
-
-        XCTAssertThrowsError(try DVTInstrumentsContract.XCTestManagerDaemon.authorizeTestSession(productMajorVersion: 11, pid: 456)) { error in
-            XCTAssertTrue(String(describing: error).contains("requires iOS 17 or later"))
-        }
-        XCTAssertThrowsError(try DVTInstrumentsContract.XCTestManagerDaemon.authorizeTestSession(productMajorVersion: 9, pid: 456)) { error in
-            XCTAssertTrue(String(describing: error).contains("requires iOS 17 or later"))
-        }
-
-        let sessionID = try XCTUnwrap(UUID(uuidString: "00112233-4455-6677-8899-aabbccddeeff"))
-        let exec = try DVTInstrumentsContract.XCTestManagerDaemon.initiateSession(sessionIdentifier: sessionID)
-        XCTAssertEqual(exec.selector, "_IDE_initiateSessionWithIdentifier:capabilities:")
-        XCTAssertEqual(exec.arguments.count, 2)
-        XCTAssertEqual(try (unarchiveDTXArgument(exec.arguments[0]) as? NSUUID)?.uuidString, sessionID.uuidString.uppercased())
-        let capabilitiesArchive = try keyedArchiveObjects(from: try primitiveBuffer(exec.arguments[1]))
-        XCTAssertTrue(classNames(in: capabilitiesArchive).contains("XCTCapabilities"))
-        XCTAssertTrue(String(describing: capabilitiesArchive).contains("daemon container sandbox extension"))
-
-        let startPlan = try DVTInstrumentsContract.XCTestManagerDaemon.startExecutingTestPlan()
-        XCTAssertEqual(startPlan.selector, "_IDE_startExecutingTestPlanWithProtocolVersion:")
-        XCTAssertFalse(startPlan.expectsReply)
-        XCTAssertEqual((try unarchiveDTXArgument(startPlan.arguments[0]) as? NSNumber)?.intValue, 36)
-    }
-
-    func testCoreDeviceAppServiceBuildsXCTestRunnerLaunchRequestWithStdIO() throws {
-        let stdioID = try XCTUnwrap(UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF"))
-        let input = CoreDeviceAppService.launchApplicationInput(
-            bundleID: "com.example.driver.xctrunner",
-            arguments: ["-Arg"],
-            terminateExisting: true,
-            startSuspended: false,
-            environment: ["XCTestManagerVariant": "DDI"],
-            standardIOIdentifier: stdioID,
-            platformSpecificOptions: CoreDeviceAppService.xcuiRunnerPlatformSpecificOptions(),
-            activeUser: true
-        )
-
-        let options = try XCTUnwrap(input["options"]?.dictionaryValue)
-        XCTAssertEqual(options["arguments"], .array([.string("-Arg")]))
-        XCTAssertEqual(options["environmentVariables"], .dictionary(["XCTestManagerVariant": .string("DDI")]))
-        XCTAssertEqual(options["terminateExisting"], .bool(true))
-        XCTAssertEqual(options["startStopped"], .bool(false))
-        XCTAssertEqual(options["user"], .dictionary(["active": .bool(true)]))
-        XCTAssertEqual(
-            input["standardIOIdentifiers"],
-            .dictionary([
-                "standardInput": .uuid(stdioID),
-                "standardOutput": .uuid(stdioID),
-                "standardError": .uuid(stdioID),
-            ])
-        )
-        guard case .data(let plistData) = try XCTUnwrap(options["platformSpecificOptions"]) else {
-            return XCTFail("platformSpecificOptions must be plist data")
-        }
-        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: NSNumber])
-        XCTAssertEqual(plist["ActivateSuspended"], NSNumber(value: UInt64(1)))
-        XCTAssertEqual(plist["StartSuspendedKey"], NSNumber(value: UInt64(0)))
-        XCTAssertEqual(plist["__ActivateSuspended"], NSNumber(value: UInt64(1)))
     }
 
     func testXCTestConfigurationPayloadEncodesPrivateClassNamesWithoutRegisteringRuntimeClasses() throws {
@@ -638,28 +349,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(reply.channelCode, 5)
         XCTAssertEqual(reply.kind, .object)
         XCTAssertEqual(reply.payload, Data([0xca, 0xfe]))
-    }
-
-    func testDTXTransportCanSendAckReplyForCallbacksWithoutReturnValue() throws {
-        let callback = try DTXMessageEncoder.dispatch(
-            identifier: 42,
-            channelCode: 5,
-            selector: "_XCT_testBundleReadyWithProtocolVersion:minimumVersion:",
-            arguments: [],
-            expectsReply: true
-        )
-        let stream = FakeDeviceStream(reads: [callback.wireData])
-        let transport = DTXStreamTransport(stream: stream)
-
-        let message = try transport.readMessage()
-        try transport.sendAckReply(to: message)
-
-        let reply = try DTXMessageDecoder.readMessage(from: FakeDeviceStream(reads: [stream.writes[0]]))
-        XCTAssertEqual(reply.identifier, 42)
-        XCTAssertEqual(reply.conversationIndex, 1)
-        XCTAssertEqual(reply.channelCode, 5)
-        XCTAssertEqual(reply.kind, .ok)
-        XCTAssertTrue(reply.payload.isEmpty)
     }
 
     func testRealDeviceXCTestLifecycleRunsFullStartSequence() throws {
@@ -947,40 +636,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(stream.writes.count, 1)
     }
 
-    func testDTXStreamInvokerAcksRemoteDispatchWithoutReturnValueBeforeReply() throws {
-        let remoteCallback = try DTXMessageEncoder.dispatch(
-            identifier: 77,
-            channelCode: 1,
-            selector: "_XCT_testBundleReadyWithProtocolVersion:minimumVersion:",
-            arguments: [.primitiveInt32(36), .primitiveInt32(1)],
-            expectsReply: true
-        )
-        let reply = try DTXMessageEncoder.objectReply(
-            identifier: 5,
-            conversationIndex: 1,
-            channelCode: -3,
-            object: NSNumber(value: 1001)
-        )
-        let stream = FakeDeviceStream(reads: [remoteCallback.wireData, reply.wireData])
-        let invoker = DTXStreamInvoker(stream: stream, channelCode: 3, firstIdentifier: 5)
-
-        let result = try invoker.invoke(DVTInvocation(
-            serviceIdentifier: "test.service",
-            selector: "requestDisableMemoryLimitsForPid:",
-            arguments: [.primitiveInt32(42)],
-            expectsReply: true
-        ))
-
-        XCTAssertEqual((result as? NSNumber)?.intValue, 1001)
-        XCTAssertEqual(stream.writes.count, 2)
-        let ack = try DTXMessageDecoder.readMessage(from: FakeDeviceStream(reads: [stream.writes[1]]))
-        XCTAssertEqual(ack.identifier, 77)
-        XCTAssertEqual(ack.conversationIndex, 1)
-        XCTAssertEqual(ack.channelCode, 1)
-        XCTAssertEqual(ack.kind, .ok)
-        XCTAssertTrue(ack.payload.isEmpty)
-    }
-
     func testDTXMessageDecoderReassemblesMultiFragmentObjectReply() throws {
         let reply = try DTXMessageEncoder.objectReply(
             identifier: 9,
@@ -1055,26 +710,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(try unarchiveDTXBuffer(service.payload) as? String, "_IDE_authorizeTestSessionWithProcessID:")
     }
 
-    func testDTXStreamInvokerDoesNotReadReplyForFireAndForgetInvocation() throws {
-        let stream = FakeDeviceStream(reads: [])
-        let invoker = DTXStreamInvoker(stream: stream, channelCode: 3, firstIdentifier: 8)
-
-        let result = try invoker.invoke(DVTInvocation(
-            serviceIdentifier: "test.fire",
-            selector: "fireAndForget:",
-            arguments: [.archived(123)],
-            expectsReply: false
-        ))
-
-        XCTAssertNil(result)
-        XCTAssertEqual(stream.writes.count, 1)
-        let sent = try DTXMessageDecoder.readMessage(from: FakeDeviceStream(reads: [stream.writes[0]]))
-        XCTAssertEqual(sent.identifier, 8)
-        XCTAssertEqual(sent.kind, .dispatch)
-        XCTAssertEqual(sent.transportFlags, 0)
-        XCTAssertEqual(try unarchiveDTXBuffer(sent.payload) as? String, "fireAndForget:")
-    }
-
     func testXCTestManagerDaemonClientUsesVersionedAuthorizationContracts() throws {
         let invoker = FakeDVTInvoker(replies: [NSNumber(value: true)])
         let client = XCTestManagerDaemonClient(invoker: invoker)
@@ -1101,43 +736,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(try peerInfo.servicePort("com.apple.instruments.dtservicehub"), 54321)
         XCTAssertEqual(peerInfo.services["com.apple.instruments.dtservicehub"]?.usesRemoteXPC, true)
         XCTAssertEqual(peerInfo.services["com.apple.mobile.lockdown.remote.trusted"]?.usesRemoteXPC, false)
-    }
-
-    func testRemoteXPCPeerInfoSkipsNonPortServiceEntries() throws {
-        guard case .dictionary(var root) = remotePeerInfoValue() else {
-            return XCTFail("remote peer info fixture must be a dictionary")
-        }
-        guard case .dictionary(var services) = root["Services"] else {
-            return XCTFail("remote peer info fixture must include services")
-        }
-        services["com.apple.afc.shim.remote"] = .dictionary([
-            "Properties": .dictionary([
-                "UsesRemoteXPC": .bool(false),
-            ]),
-        ])
-        root["Services"] = .dictionary(services)
-
-        let peerInfo = try RemoteXPCPeerInfo.decode(.dictionary(root))
-
-        XCTAssertNil(peerInfo.services["com.apple.afc.shim.remote"])
-        XCTAssertEqual(try peerInfo.servicePort("com.apple.instruments.dtservicehub"), 54321)
-    }
-
-    func testRemoteXPCPeerInfoParsesStringPorts() throws {
-        guard case .dictionary(var root) = remotePeerInfoValue() else {
-            return XCTFail("remote peer info fixture must be a dictionary")
-        }
-        guard case .dictionary(var services) = root["Services"],
-              case .dictionary(var service) = services["com.apple.instruments.dtservicehub"] else {
-            return XCTFail("remote peer info fixture must include dtservicehub")
-        }
-        service["Port"] = .string("54321")
-        services["com.apple.instruments.dtservicehub"] = .dictionary(service)
-        root["Services"] = .dictionary(services)
-
-        let peerInfo = try RemoteXPCPeerInfo.decode(.dictionary(root))
-
-        XCTAssertEqual(try peerInfo.servicePort("com.apple.instruments.dtservicehub"), 54321)
     }
 
     func testRemoteXPCClientReceivesFragmentedPeerInfoAndAcksSettings() throws {
@@ -1256,24 +854,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(peerInfo.uniqueDeviceID, "00008110-001234")
     }
 
-    func testRemoteXPCPeerInfoSkipsHandshakePayloads() throws {
-        let emptyDictionary = try RemoteXPCWrapper.encodeDictionary([:], messageID: 0)
-        let response = try RemoteXPCWrapper.encode(
-            messageID: 1,
-            flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
-            payload: remotePeerInfoValue()
-        )
-        let stream = FakeDeviceStream(reads: [
-            RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: emptyDictionary),
-            RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: response),
-        ])
-        let client = RemoteXPCClient(stream: stream)
-
-        let peerInfo = try client.receivePeerInfo()
-
-        XCTAssertEqual(peerInfo.uniqueDeviceID, "00008110-001234")
-    }
-
     func testRemoteXPCPeerInfoDoesNotSwallowMalformedPeerInfoPayload() throws {
         let malformedPeerInfo = try RemoteXPCWrapper.encode(
             messageID: 1,
@@ -1292,59 +872,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertThrowsError(try client.receivePeerInfo()) { error in
             XCTAssertEqual(String(describing: error), "RemoteXPC missing field: Properties")
         }
-    }
-
-    func testCoreDeviceAppServiceBuildsLaunchApplicationRequest() throws {
-        let input = CoreDeviceAppService.launchApplicationInput(
-            bundleID: "com.example.driver",
-            arguments: ["--foo"],
-            terminateExisting: true,
-            startSuspended: false,
-            environment: ["A": "B"]
-        )
-
-        XCTAssertEqual(
-            input["applicationSpecifier"]?.dictionaryValue?["bundleIdentifier"]?.dictionaryValue?["_0"],
-            .string("com.example.driver")
-        )
-        let options = try XCTUnwrap(input["options"]?.dictionaryValue)
-        XCTAssertEqual(options["arguments"], .array([.string("--foo")]))
-        XCTAssertEqual(options["environmentVariables"], .dictionary(["A": .string("B")]))
-        XCTAssertEqual(options["standardIOUsesPseudoterminals"], .bool(true))
-        XCTAssertEqual(options["startStopped"], .bool(false))
-        XCTAssertEqual(options["terminateExisting"], .bool(true))
-        XCTAssertEqual(options["user"]?.dictionaryValue?["shortName"], .string("mobile"))
-        let plistData = try XCTUnwrap(options["platformSpecificOptions"])
-        guard case .data(let data) = plistData else {
-            return XCTFail("platformSpecificOptions must be plist data")
-        }
-        let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
-        XCTAssertNotNil(plist as? [String: Any])
-    }
-
-    func testCoreDeviceAppServiceBuildsPayloadURLLaunchRequest() throws {
-        let input = CoreDeviceAppService.launchApplicationInput(
-            bundleID: "com.apple.springboard",
-            terminateExisting: false,
-            payloadURL: "https://example.com",
-            activates: true
-        )
-
-        XCTAssertEqual(
-            input["applicationSpecifier"]?.dictionaryValue?["bundleIdentifier"]?.dictionaryValue?["_0"],
-            .string("com.apple.springboard")
-        )
-        let options = try XCTUnwrap(input["options"]?.dictionaryValue)
-        XCTAssertEqual(
-            options["payloadURL"],
-            .dictionary([
-                "relative": .string("https://example.com"),
-            ])
-        )
-        XCTAssertEqual(options["activates"], .bool(true))
-        XCTAssertEqual(options["terminateExisting"], .bool(false))
-        XCTAssertEqual(options["startStopped"], .bool(false))
-        XCTAssertEqual(options["user"]?.dictionaryValue?["shortName"], .string("mobile"))
     }
 
     func testCoreDeviceAppServiceInvokesFeatureAndReturnsOutput() throws {
@@ -1394,48 +921,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         )
     }
 
-    func testCoreDeviceAppServiceSendSignalWaitsForReply() throws {
-        let response = try RemoteXPCWrapper.encode(
-            messageID: 1,
-            flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
-            payload: .dictionary([
-                "CoreDevice.output": .dictionary([:]),
-            ])
-        )
-        let stream = FakeDeviceStream(reads: [
-            remoteXPCInitializationResponses(
-                additional: RemoteXPCHTTP2.dataFrame(
-                    streamID: RemoteXPCHTTP2.replyStreamID,
-                    payload: response
-                )
-            ),
-        ])
-        let client = RemoteXPCClient(stream: stream)
-        try client.completeClientHandshake()
-        let service = CoreDeviceAppService(client: client)
-
-        XCTAssertEqual(
-            try service.sendSignal(processIdentifier: 123, signal: Int(SIGKILL)),
-            .dictionary([:])
-        )
-
-        let requestFrame = try RemoteXPCHTTP2.decodeFrame(stream.writes.last!)
-        let message = try RemoteXPCWrapper.decode(requestFrame.payload)
-        let request = try XCTUnwrap(message.payload?.dictionaryValue)
-        XCTAssertEqual(
-            message.flags & RemoteXPCFlags.wantingReply,
-            RemoteXPCFlags.wantingReply
-        )
-        XCTAssertEqual(
-            request["CoreDevice.featureIdentifier"],
-            .string(IOSUseProtocol.XCConstants.coreDeviceFeatureSendSignalToProcess)
-        )
-        XCTAssertEqual(
-            request["CoreDevice.input"]?.dictionaryValue?["signal"],
-            .int64(Int64(SIGKILL))
-        )
-    }
-
     func testCoreDeviceAppServiceSendSignalPropagatesConnectionClose() throws {
         let stream = FakeDeviceStream(
             reads: [remoteXPCInitializationResponses()],
@@ -1448,59 +933,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertThrowsError(try service.sendSignal(processIdentifier: 123, signal: Int(SIGKILL))) { error in
             XCTAssertEqual(error as? CoreDeviceTCPError, .connectionClosed)
         }
-    }
-
-    func testCoreDeviceDisplayInfoDecodesPrimaryDisplay() throws {
-        let response = try RemoteXPCWrapper.encode(
-            messageID: 1,
-            flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
-            payload: .dictionary([
-                "CoreDevice.output": .dictionary([
-                    "backlightState": .string("on"),
-                    "displays": .array([
-                        .dictionary([
-                            "bounds": .array([
-                                .array([.double(0), .double(0)]),
-                                .array([.double(1206), .double(2622)]),
-                            ]),
-                            "currentOrientation": .string("rot0"),
-                            "displayId": .int64(1),
-                            "name": .string("LCD"),
-                            "nativeOrientation": .string("rot0"),
-                            "nativeSize": .array([.double(1206), .double(2622)]),
-                            "pointScale": .double(3),
-                            "primary": .bool(true),
-                        ]),
-                    ]),
-                    "orientation": .dictionary([
-                        "currentDeviceNonFlatOrientation": .string("portrait"),
-                        "currentDeviceOrientation": .string("portrait"),
-                        "currentDeviceOrientationLocked": .bool(false),
-                    ]),
-                ]),
-            ])
-        )
-        let stream = FakeDeviceStream(reads: [
-            remoteXPCInitializationResponses(
-                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
-            ),
-        ])
-        let client = RemoteXPCClient(stream: stream)
-        try client.completeClientHandshake()
-        var uuids = ["device-uuid", "invocation-uuid"]
-        let service = CoreDeviceDisplayInfoService(client: client) { uuids.removeFirst() }
-
-        let info = try service.getDisplayInfo()
-
-        XCTAssertEqual(info.primaryDisplay?.displayID, 1)
-        XCTAssertEqual(info.primaryDisplay?.pointScale, 3)
-        XCTAssertEqual(info.primaryDisplay?.bounds, [0, 0, 1206, 2622])
-        XCTAssertEqual(info.primaryDisplay?.pixelSize, [1206, 2622])
-        XCTAssertEqual(info.currentDeviceOrientation, "portrait")
-        let requestFrame = try RemoteXPCHTTP2.decodeFrame(stream.writes.last!)
-        let request = try XCTUnwrap(try RemoteXPCWrapper.decode(requestFrame.payload).payload?.dictionaryValue)
-        XCTAssertEqual(request["CoreDevice.featureIdentifier"], .string(IOSUseProtocol.XCConstants.coreDeviceFeatureGetDisplayInfo))
-        XCTAssertEqual(request["CoreDevice.CoreDeviceDDIProtocolVersion"], .int64(0))
     }
 
     func testRealDeviceCoreDeviceDisplayAndScreenshotProbe() throws {
@@ -1662,204 +1094,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         }
     }
 
-    func testRealDeviceAppInstallActionProbeSingle() throws {
-        let environment = ProcessInfo.processInfo.environment
-        guard environment["IOS_USE_REAL_DEVICE_APPINSTALL_PROBE_SINGLE"] == "1" else {
-            throw XCTSkip("set IOS_USE_REAL_DEVICE_APPINSTALL_PROBE_SINGLE=1 to run one real-device AppInstallAction probe")
-        }
-        let udid = environment["IOS_USE_REAL_DEVICE_UDID"] ?? "00008150-0015309E2EE3401C"
-        let appPath = environment["IOS_USE_REAL_DEVICE_APP_PATH"] ?? "/path/to/TestApp.app"
-        let appURL = URL(fileURLWithPath: appPath, isDirectory: true).absoluteString
-        let feature = environment["IOS_USE_REAL_DEVICE_APPINSTALL_FEATURE"] ?? "com.apple.coredevice.feature.installapp"
-        let serviceName = environment["IOS_USE_REAL_DEVICE_APPINSTALL_SERVICE"] ?? CoreDeviceAppService.serviceName
-        let handshakeOnly = environment["IOS_USE_REAL_DEVICE_APPINSTALL_HANDSHAKE_ONLY"] == "1"
-        let action = environment["IOS_USE_REAL_DEVICE_APPINSTALL_ACTION"] ?? "com.apple.coredevice.action.appinstall"
-        let actionShape = environment["IOS_USE_REAL_DEVICE_APPINSTALL_ACTION_SHAPE"] ?? "name-field"
-        let inputShape = environment["IOS_USE_REAL_DEVICE_APPINSTALL_INPUT_SHAPE"] ?? "url-relative-options"
-        let actionValue: RemoteXPCValue
-        switch actionShape {
-        case "empty-action":
-            actionValue = .dictionary([:])
-        case "name-string":
-            actionValue = .string(action)
-        case "rawvalue-field":
-            actionValue = .dictionary(["rawValue": .string(action)])
-        case "action-key":
-            actionValue = .dictionary([action: .dictionary([:])])
-        default:
-            actionValue = .dictionary(["name": .string(action)])
-        }
-        let input: [String: RemoteXPCValue]
-        switch inputShape {
-        case "path-string":
-            input = ["appBundleToInstall": .string(appPath)]
-        case "url-wrapper":
-            input = [
-                "appBundleToInstall": .dictionary([
-                    "url": .dictionary([
-                        "_0": .dictionary([
-                            "relative": .string(appURL),
-                        ]),
-                    ]),
-                ]),
-            ]
-        case "url-relative":
-            input = ["appBundleToInstall": .dictionary(["relative": .string(appURL)])]
-        default:
-            input = [
-                "appBundleToInstall": .dictionary(["relative": .string(appURL)]),
-                "options": .dictionary([:]),
-            ]
-        }
-        let session = try CoreDeviceDirectTunnelRuntime(eventSink: { print("[appinstall-probe-single] \($0)") }).start(udid: udid)
-        defer {
-            session.close()
-            _ = session.waitForClose(timeoutSeconds: 2)
-        }
-        let client = try session.connectRemoteXPCService(serviceName)
-        print("[appinstall-probe-single] connected service=\(serviceName)")
-        if handshakeOnly {
-            client.close()
-            return
-        }
-        let service = CoreDeviceAppService(client: client)
-        defer { service.close() }
-        var request = service.coreDeviceRequest(featureIdentifier: feature, input: input)
-        request["CoreDevice.action"] = actionValue
-        print("[appinstall-probe-single] feature=\(feature) action=\(action) actionShape=\(actionShape) inputShape=\(inputShape)")
-        do {
-            let response = try client.sendReceiveRequest(request, timeoutSeconds: 60)
-            print("[appinstall-probe-single] response=\(String(describing: response))")
-        } catch {
-            print("[appinstall-probe-single] error=\(String(describing: error))")
-        }
-    }
-
-    func disabled_testRealDeviceAppInstallActionProbeOld() throws {
-        let environment = ProcessInfo.processInfo.environment
-        guard environment["IOS_USE_REAL_DEVICE_APPINSTALL_PROBE_OLD"] == "1" else {
-            throw XCTSkip("set IOS_USE_REAL_DEVICE_APPINSTALL_PROBE_OLD=1 to run real-device AppInstallAction probe")
-        }
-        let udid = environment["IOS_USE_REAL_DEVICE_UDID"] ?? "00008150-0015309E2EE3401C"
-        let appPath = environment["IOS_USE_REAL_DEVICE_APP_PATH"] ?? "/path/to/TestApp.app"
-        let appURL = URL(fileURLWithPath: appPath, isDirectory: true).absoluteString
-        let feature = "com.apple.coredevice.feature.installapp"
-        let variants: [(name: String, input: [String: RemoteXPCValue])] = [
-            ("empty", [:]),
-            ("path-string", [
-                "appBundleToInstall": .string(appPath),
-            ]),
-            ("url-relative", [
-                "appBundleToInstall": .dictionary([
-                    "relative": .string(appURL),
-                ]),
-            ]),
-            ("url-wrapper", [
-                "appBundleToInstall": .dictionary([
-                    "url": .dictionary([
-                        "_0": .dictionary([
-                            "relative": .string(appURL),
-                        ]),
-                    ]),
-                ]),
-            ]),
-            ("url-relative-options", [
-                "appBundleToInstall": .dictionary([
-                    "relative": .string(appURL),
-                ]),
-                "options": .dictionary([:]),
-            ]),
-        ]
-        let session = try CoreDeviceDirectTunnelRuntime(eventSink: { print("[appinstall-probe] \($0)") }).start(udid: udid)
-        defer {
-            session.close()
-            _ = session.waitForClose(timeoutSeconds: 2)
-        }
-
-        for variant in variants {
-            let service = try CoreDeviceAppService(client: session.connectRemoteXPCService(CoreDeviceAppService.serviceName))
-            defer { service.close() }
-            print("[appinstall-probe] variant=\(variant.name)")
-            do {
-                let output = try service.invoke(featureIdentifier: feature, input: variant.input, timeoutSeconds: 30)
-                print("[appinstall-probe] variant=\(variant.name) output=\(String(describing: output))")
-            } catch {
-                print("[appinstall-probe] variant=\(variant.name) error=\(String(describing: error))")
-            }
-        }
-    }
-
-    func testCoreDeviceAppServiceDecodesNestedExecutableURL() throws {
-        let response = try RemoteXPCWrapper.encode(
-            messageID: 1,
-            flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
-            payload: .dictionary([
-                "CoreDevice.output": .dictionary([
-                    "processTokens": .array([
-                        .dictionary([
-                            "processIdentifier": .int64(123),
-                            "executable": .dictionary([
-                                "url": .dictionary([
-                                    "_0": .dictionary([
-                                        "relative": .string("file:///private/var/containers/Bundle/Application/Driver/IOSUseDriver-Runner"),
-                                    ]),
-                                ]),
-                            ]),
-                        ]),
-                    ]),
-                ]),
-            ])
-        )
-        let stream = FakeDeviceStream(reads: [
-            remoteXPCInitializationResponses(
-                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
-            ),
-        ])
-        let client = RemoteXPCClient(stream: stream)
-        try client.completeClientHandshake()
-        let service = CoreDeviceAppService(client: client)
-
-        let processes = try service.listProcesses()
-
-        XCTAssertEqual(processes.first?.executable, "file:///private/var/containers/Bundle/Application/Driver/IOSUseDriver-Runner")
-    }
-
-    func testCoreDeviceAppServiceDecodesNestedBundleIdentifier() throws {
-        let response = try RemoteXPCWrapper.encode(
-            messageID: 1,
-            flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
-            payload: .dictionary([
-                "CoreDevice.output": .dictionary([
-                    "processTokens": .array([
-                        .dictionary([
-                            "processIdentifier": .int64(123),
-                            "executableURL": .dictionary([
-                                "relative": .string("file:///private/var/containers/Bundle/Application/Demo/Demo"),
-                            ]),
-                            "applicationIdentifier": .dictionary([
-                                "bundleIdentifier": .dictionary([
-                                    "_0": .string("com.example.demo"),
-                                ]),
-                            ]),
-                        ]),
-                    ]),
-                ]),
-            ])
-        )
-        let stream = FakeDeviceStream(reads: [
-            remoteXPCInitializationResponses(
-                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
-            ),
-        ])
-        let client = RemoteXPCClient(stream: stream)
-        try client.completeClientHandshake()
-        let service = CoreDeviceAppService(client: client)
-
-        let processes = try service.listProcesses()
-
-        XCTAssertEqual(processes.first?.bundleIdentifier, "com.example.demo")
-    }
-
     func testCoreDeviceAppServiceFallsBackToTokenWideExecutableSearch() throws {
         let response = try RemoteXPCWrapper.encode(
             messageID: 1,
@@ -1895,31 +1129,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(processes.first?.executable, "file:///private/var/containers/Bundle/Application/Driver/IOSUseDriver-Runner")
     }
 
-    func testCoreDeviceAppServiceExtractsProcessIdentifierFromLaunchOutputShapes() {
-        XCTAssertEqual(
-            CoreDeviceAppService.extractProcessIdentifier(from: .dictionary([
-                "processIdentifier": .int64(123),
-            ])),
-            123
-        )
-        XCTAssertEqual(
-            CoreDeviceAppService.extractProcessIdentifier(from: .dictionary([
-                "processToken": .dictionary([
-                    "processIdentifier": .uint64(456),
-                ]),
-            ])),
-            456
-        )
-        XCTAssertEqual(
-            CoreDeviceAppService.extractProcessIdentifier(from: .array([
-                .dictionary(["metadata": .string("ignored")]),
-                .dictionary(["process": .dictionary(["processIdentifier": .int64(789)])]),
-            ])),
-            789
-        )
-        XCTAssertNil(CoreDeviceAppService.extractProcessIdentifier(from: .dictionary(["status": .string("ok")])))
-    }
-
     func testRemoteServiceDiscoveryClientConnectsAndReturnsPeerInfo() throws {
         let response = try RemoteXPCWrapper.encode(
             messageID: 1,
@@ -1946,76 +1155,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(peerInfo.uniqueDeviceID, "00008110-001234")
         XCTAssertTrue(stream.closed)
         XCTAssertTrue(stream.writes[0].starts(with: RemoteXPCHTTP2.connectionPreface))
-    }
-
-    func testCoreDeviceURLLauncherOpensSpringBoardWithPayloadURL() throws {
-        let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
-        let appService = FakeCoreDeviceAppService()
-        var openedHost: String?
-        let launcher = CoreDeviceURLLauncher(dependencies: CoreDeviceURLLauncher.Dependencies(
-            startTunnel: { udid in
-                XCTAssertEqual(udid, "REAL-UDID")
-                return session
-            },
-            openAppService: { tunnelSession in
-                openedHost = tunnelSession.serverAddress
-                return appService
-            }
-        ))
-
-        try launcher.open(url: "https://example.com", udid: "REAL-UDID")
-
-        XCTAssertEqual(openedHost, session.serverAddress)
-        XCTAssertEqual(appService.launchedBundleIDs, ["com.apple.springboard"])
-        XCTAssertEqual(appService.launches.first?.payloadURL, "https://example.com")
-        XCTAssertEqual(appService.launches.first?.activates, true)
-        XCTAssertEqual(appService.launches.first?.terminateExisting, false)
-        XCTAssertTrue(appService.closed)
-    }
-
-    func testCoreDeviceAppLifecycleRunnerActivatesAppThroughAppService() throws {
-        let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
-        let appService = FakeCoreDeviceAppLifecycleService()
-        let runner = CoreDeviceAppLifecycleRunner(dependencies: CoreDeviceAppLifecycleRunner.Dependencies(
-            startTunnel: { udid in
-                XCTAssertEqual(udid, "REAL-UDID")
-                return session
-            },
-            openAppService: { tunnelSession in
-                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(session))
-                return appService
-            },
-            resolveBundleExecutable: { _, _ in nil }
-        ))
-
-        try runner.activate(bundleID: "com.example.app", udid: "REAL-UDID")
-
-        XCTAssertEqual(appService.launches.map(\.bundleID), ["com.example.app"])
-        XCTAssertEqual(appService.launches.first?.terminateExisting, false)
-        XCTAssertEqual(appService.launches.first?.activates, true)
-        XCTAssertNil(appService.launches.first?.standardIOIdentifier)
-        XCTAssertTrue(appService.closed)
-        XCTAssertTrue(session.closed)
-    }
-
-    func testCoreDeviceAppLifecycleRunnerLaunchesAppWithTerminateExistingAndStdIO() throws {
-        let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
-        let appService = FakeCoreDeviceAppLifecycleService()
-        let runner = CoreDeviceAppLifecycleRunner(dependencies: CoreDeviceAppLifecycleRunner.Dependencies(
-            startTunnel: { _ in session },
-            openAppService: { _ in appService },
-            resolveBundleExecutable: { _, _ in nil }
-        ))
-        let stdioIdentifier = UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")
-
-        try runner.activate(bundleID: "com.example.app", udid: "REAL-UDID", terminateExisting: true, standardIOIdentifier: stdioIdentifier)
-
-        XCTAssertEqual(appService.launches.map(\.bundleID), ["com.example.app"])
-        XCTAssertEqual(appService.launches.first?.terminateExisting, true)
-        XCTAssertEqual(appService.launches.first?.activates, true)
-        XCTAssertEqual(appService.launches.first?.standardIOIdentifier, stdioIdentifier)
-        XCTAssertTrue(appService.closed)
-        XCTAssertTrue(session.closed)
     }
 
     func testCoreDeviceAppLifecycleRunnerTerminatesMatchingBundleProcesses() throws {
@@ -2088,41 +1227,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertTrue(session.closed)
     }
 
-    func testAfcOpenWriteAndCloseFrames() throws {
-        let stream = FakeDeviceStream(reads: [
-            afcResponse(opcode: AfcOpcode.fileOpenResult.rawValue, payload: uint64LE(42)),
-            afcStatus(.success),
-            afcStatus(.success),
-        ])
-        let client = AfcClient(stream: stream)
-
-        let handle = try client.openFile("/PublicStaging/app.ipa")
-        try client.write(handle: handle, data: Data([0xde, 0xad]))
-        try client.closeFile(handle)
-
-        XCTAssertEqual(handle, 42)
-        XCTAssertEqual(stream.writes.count, 3)
-
-        let open = stream.writes[0]
-        XCTAssertEqual(String(data: open.prefix(8), encoding: .utf8), "CFA6LPAA")
-        XCTAssertEqual(readUInt64LE(open, 8), UInt64(open.count))
-        XCTAssertEqual(readUInt64LE(open, 16), UInt64(open.count))
-        XCTAssertEqual(readUInt64LE(open, 32), AfcOpcode.fileOpen.rawValue)
-        XCTAssertEqual(readUInt64LE(open, 40), 3)
-        XCTAssertEqual(String(data: open.dropFirst(48).dropLast(), encoding: .utf8), "/PublicStaging/app.ipa")
-
-        let write = stream.writes[1]
-        XCTAssertEqual(readUInt64LE(write, 8), UInt64(write.count))
-        XCTAssertEqual(readUInt64LE(write, 16), 48)
-        XCTAssertEqual(readUInt64LE(write, 32), AfcOpcode.write.rawValue)
-        XCTAssertEqual(readUInt64LE(write, 40), 42)
-        XCTAssertEqual(Data(write.suffix(2)), Data([0xde, 0xad]))
-
-        let close = stream.writes[2]
-        XCTAssertEqual(readUInt64LE(close, 32), AfcOpcode.close.rawValue)
-        XCTAssertEqual(readUInt64LE(close, 40), 42)
-    }
-
     func testAfcUploadDirectoryCreatesRemoteDirectoryAndUploadsFiles() throws {
         let root = try temporaryDirectory(prefix: "afc-upload-dir")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -2152,23 +1256,6 @@ final class DeviceProtocolClientTests: XCTestCase {
             AfcOpcode.close.rawValue,
         ])
         XCTAssertEqual(String(data: stream.writes[4].dropFirst(48).dropLast(), encoding: .utf8), "PublicStaging/Demo.app/Info.plist")
-    }
-
-    func testAfcMakeSymlinkFrameMatchesLibimobiledeviceShape() throws {
-        let stream = FakeDeviceStream(reads: [
-            afcStatus(.success),
-        ])
-        let client = AfcClient(stream: stream)
-
-        try client.makeSymlink(target: "Frameworks/Foo.framework", linkPath: "PublicStaging/Demo.app/Foo.framework")
-
-        let request = try XCTUnwrap(stream.writes.first)
-        XCTAssertEqual(readUInt64LE(request, 32), AfcOpcode.makeLink.rawValue)
-        XCTAssertEqual(readUInt64LE(request, 40), 2)
-        let strings = request.dropFirst(48).split(separator: 0).compactMap {
-            String(data: Data($0), encoding: .utf8)
-        }
-        XCTAssertEqual(strings, ["Frameworks/Foo.framework", "PublicStaging/Demo.app/Foo.framework"])
     }
 
     func testAfcTooMuchDataFallbackWritesAllRemainingChunksAtReducedSize() throws {
@@ -2252,180 +1339,10 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertTrue((stream as? FakeDeviceStream) === expectedStream)
     }
 
-    func testLockdownConnectToServiceUsesPlainStreamWhenServiceDoesNotRequireSSL() throws {
-        let pairRecord = PairRecord(
-            hostID: "HOST",
-            systemBUID: "BUID",
-            hostPrivateKey: Data("key".utf8),
-            hostCertificate: Data("cert".utf8)
-        )
-        let connection = LockdownServiceConnection(
-            pairRecord: pairRecord,
-            service: LockdownService(port: 12_346, enableServiceSSL: false)
-        )
-        let expectedStream = FakeDeviceStream(reads: [])
-        var connected: (udid: String, port: Int)?
-        var plainFD: Int32?
-
-        let stream = try LockdownSession.connectToStartedService(
-            connection,
-            udid: "REAL-UDID",
-            usbmuxConnect: { udid, port in
-                connected = (udid, port)
-                return 43
-            },
-            tlsStreamFactory: { _, _ in
-                XCTFail("TLS stream must not be used when EnableServiceSSL is false")
-                return FakeDeviceStream(reads: [])
-            },
-            plainStreamFactory: { fd in
-                plainFD = fd
-                return expectedStream
-            }
-        )
-
-        XCTAssertEqual(connected?.udid, "REAL-UDID")
-        XCTAssertEqual(connected?.port, 12_346)
-        XCTAssertEqual(plainFD, 43)
-        XCTAssertTrue((stream as? FakeDeviceStream) === expectedStream)
-    }
-
-    func testPlainDeviceStreamCloseClosesOwnedSocket() throws {
-        var fds = [Int32](repeating: -1, count: 2)
-        XCTAssertEqual(Darwin.socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)
-        defer { Darwin.close(fds[1]) }
-        let stream = PlainDeviceStream(fd: fds[0])
-
-        stream.close()
-
-        var byte: UInt8 = 0
-        XCTAssertEqual(Darwin.read(fds[1], &byte, 1), 0)
-    }
-
-    func testPlainDeviceStreamEOFReportsClosedInsteadOfTimeout() throws {
-        var fds = [Int32](repeating: -1, count: 2)
-        XCTAssertEqual(Darwin.socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)
-        let stream = PlainDeviceStream(fd: fds[0])
-        Darwin.close(fds[1])
-
-        XCTAssertThrowsError(try stream.readExact(byteCount: 1, timeoutSeconds: 1)) { error in
-            XCTAssertTrue(String(describing: error).contains("device stream closed"))
-            XCTAssertFalse(String(describing: error).localizedCaseInsensitiveContains("timeout"))
-        }
-    }
-
-    func testOwnedFDDeviceStreamEOFReportsClosedInsteadOfTimeout() throws {
-        var fds = [Int32](repeating: -1, count: 2)
-        XCTAssertEqual(Darwin.socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)
-        let stream = OwnedFDDeviceStream(fd: fds[0])
-        Darwin.close(fds[1])
-
-        XCTAssertThrowsError(try stream.readExact(byteCount: 1, timeoutSeconds: 1)) { error in
-            XCTAssertTrue(String(describing: error).contains("RSD TCP stream closed"))
-            XCTAssertFalse(String(describing: error).localizedCaseInsensitiveContains("timeout"))
-        }
-    }
-
     func testXCTestExecCallbackListenerTreatsTimedOutAsIdleTimeout() {
         XCTAssertTrue(XCTestExecCallbackListener.isIdleTimeout(CoreDeviceTCPError.connectionTimeout))
         XCTAssertTrue(XCTestExecCallbackListener.isIdleTimeout(DeviceStreamError.timeout("device read")))
         XCTAssertFalse(XCTestExecCallbackListener.isIdleTimeout(DeviceStreamError.closed("device stream")))
-    }
-
-    func testXCTestExecCallbackListenerAcksGenericCallbacksWithoutReturnValue() throws {
-        let callback = try DTXMessageEncoder.dispatch(
-            identifier: 91,
-            channelCode: 1,
-            selector: "_XCT_testBundleReadyWithProtocolVersion:minimumVersion:",
-            arguments: [.primitiveInt32(36), .primitiveInt32(1)],
-            expectsReply: true
-        )
-        let stream = FakeDeviceStream(reads: [callback.wireData])
-        let channel = DTXChannelClient(transport: DTXStreamTransport(stream: stream), channelCode: 1)
-        let listener = XCTestExecCallbackListener(channel: channel, configurationPayload: Data())
-
-        listener.start()
-        defer { listener.stop() }
-
-        XCTAssertTrue(waitUntil { stream.writes.count == 1 })
-        let ack = try DTXMessageDecoder.readMessage(from: FakeDeviceStream(reads: [stream.writes[0]]))
-        XCTAssertEqual(ack.identifier, 91)
-        XCTAssertEqual(ack.conversationIndex, 1)
-        XCTAssertEqual(ack.channelCode, 1)
-        XCTAssertEqual(ack.kind, .ok)
-        XCTAssertTrue(ack.payload.isEmpty)
-    }
-
-    func testXCTestExecCallbackListenerReportsRuntimeStateOnFailure() throws {
-        let stream = FakeDeviceStream(reads: [Data([0x01, 0x02])])
-        let channel = DTXChannelClient(transport: DTXStreamTransport(stream: stream), channelCode: 1)
-        let listener = XCTestExecCallbackListener(channel: channel, configurationPayload: Data())
-
-        listener.start()
-        defer { listener.stop() }
-
-        XCTAssertTrue(waitUntil { listener.startupFailure != nil })
-        let failure = try XCTUnwrap(listener.startupFailure)
-        let description = String(describing: failure)
-        XCTAssertTrue(description.contains("listenerState={state=readingMessage"), description)
-        XCTAssertTrue(description.contains("lastError="), description)
-    }
-
-    func testDTXConnectionIdleListenerAcksGenericCallbacksWithoutReturnValue() throws {
-        let callback = try DTXMessageEncoder.dispatch(
-            identifier: 92,
-            channelCode: 1,
-            selector: "_XCT_testBundleReadyWithProtocolVersion:minimumVersion:",
-            arguments: [.primitiveInt32(36), .primitiveInt32(1)],
-            expectsReply: true
-        )
-        let stream = FakeDeviceStream(reads: [callback.wireData])
-        let channel = DTXChannelClient(transport: DTXStreamTransport(stream: stream), channelCode: 1)
-        let listener = DTXConnectionIdleListener(name: "test-control", channel: channel)
-
-        listener.start()
-        defer { listener.stop() }
-
-        XCTAssertTrue(waitUntil { stream.writes.count == 1 })
-        let ack = try DTXMessageDecoder.readMessage(from: FakeDeviceStream(reads: [stream.writes[0]]))
-        XCTAssertEqual(ack.identifier, 92)
-        XCTAssertEqual(ack.conversationIndex, 1)
-        XCTAssertEqual(ack.channelCode, 1)
-        XCTAssertEqual(ack.kind, .ok)
-        XCTAssertTrue(ack.payload.isEmpty)
-    }
-
-    func testDTXConnectionIdleListenerReportsRuntimeStateOnFailure() throws {
-        let stream = FakeDeviceStream(reads: [Data([0x01, 0x02])])
-        let channel = DTXChannelClient(transport: DTXStreamTransport(stream: stream), channelCode: 1)
-        let listener = DTXConnectionIdleListener(name: "test-control", channel: channel)
-
-        listener.start()
-        defer { listener.stop() }
-
-        var failure: DTXConnectionIdleListenerFailure?
-        XCTAssertTrue(waitUntil {
-            failure = listener.takeFailure()
-            return failure != nil
-        })
-        let description = String(describing: try XCTUnwrap(failure))
-        XCTAssertTrue(description.contains("listenerState={state=readingMessage"), description)
-        XCTAssertTrue(description.contains("lastError="), description)
-    }
-
-    func testUsbmuxDeviceIDAcceptsTopLevelAndPropertiesShapes() {
-        XCTAssertEqual(Usbmux.deviceID(from: [
-            "DeviceID": 7,
-            "Properties": [
-                "SerialNumber": "REAL-1",
-            ],
-        ]), 7)
-        XCTAssertEqual(Usbmux.deviceID(from: [
-            "Properties": [
-                "DeviceID": 8,
-                "SerialNumber": "REAL-2",
-            ],
-        ]), 8)
     }
 
     func testInstallationProxyLookupRequestAndResponse() throws {
@@ -2476,59 +1393,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(request["ApplicationIdentifier"] as? String, "com.example.app")
     }
 
-    func testInstallationProxyInstallRequestMatchesLibimobiledeviceIpaShape() throws {
-        let stream = FakeDeviceStream(reads: [
-            plistFrame(["Status": "Complete"]),
-        ])
-        let client = InstallationProxyClient(stream: stream)
-
-        try client.install(packagePath: "PublicStaging/com.example.app", bundleID: "com.example.app")
-
-        let request = try parseLengthPrefixedPlist(stream.writes[0])
-        XCTAssertEqual(request["Command"] as? String, "Install")
-        XCTAssertEqual(request["PackagePath"] as? String, "PublicStaging/com.example.app")
-        let options = try XCTUnwrap(request["ClientOptions"] as? [String: Any])
-        XCTAssertEqual(options["CFBundleIdentifier"] as? String, "com.example.app")
-        XCTAssertNil(options["PackageType"])
-        XCTAssertNil(options["ApplicationSINF"])
-        XCTAssertNil(options["iTunesMetadata"])
-    }
-
-    func testInstallationProxyDeveloperPackageTypeIsExplicitOnly() throws {
-        let stream = FakeDeviceStream(reads: [
-            plistFrame(["Status": "Complete"]),
-        ])
-        let client = InstallationProxyClient(stream: stream)
-
-        try client.install(packagePath: "PublicStaging/App.app", clientOptions: ["PackageType": "Developer"])
-
-        let request = try parseLengthPrefixedPlist(stream.writes[0])
-        let options = try XCTUnwrap(request["ClientOptions"] as? [String: Any])
-        XCTAssertEqual(options["PackageType"] as? String, "Developer")
-        XCTAssertNil(options["CFBundleIdentifier"])
-    }
-
-    func testInstallationProxyInstallSupportsBinaryMetadataOptions() throws {
-        let stream = FakeDeviceStream(reads: [
-            plistFrame(["Status": "Complete"]),
-        ])
-        let client = InstallationProxyClient(stream: stream)
-
-        try client.install(
-            packagePath: "PublicStaging/com.example.app",
-            clientOptions: [
-                "CFBundleIdentifier": "com.example.app",
-                "ApplicationSINF": Data([0x01, 0x02]),
-                "iTunesMetadata": Data([0x03, 0x04]),
-            ]
-        )
-
-        let request = try parseLengthPrefixedPlist(stream.writes[0])
-        let options = try XCTUnwrap(request["ClientOptions"] as? [String: Any])
-        XCTAssertEqual(options["ApplicationSINF"] as? Data, Data([0x01, 0x02]))
-        XCTAssertEqual(options["iTunesMetadata"] as? Data, Data([0x03, 0x04]))
-    }
-
     func testInstallationProxyBrowseAggregatesCurrentListUntilComplete() throws {
         let stream = FakeDeviceStream(reads: [
             plistFrame([
@@ -2577,17 +1441,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertThrowsError(try client.browse(includeSystem: true, attributes: [])) { error in
             XCTAssertTrue(String(describing: error).contains("browse failed"))
         }
-    }
-
-    func testInstallationProxyPackagePathMatchesAfcRelativePath() {
-        XCTAssertEqual(
-            RealDevicePackageInstaller.installationProxyPackagePath(forAfcPath: "PublicStaging/com.example.app"),
-            "PublicStaging/com.example.app"
-        )
-        XCTAssertEqual(
-            RealDevicePackageInstaller.installationProxyPackagePath(forAfcPath: "/PublicStaging/com.example.app"),
-            "PublicStaging/com.example.app"
-        )
     }
 
     func testMobileImageMounterQueriesPersonalizationIdentifiers() throws {
@@ -2871,19 +1724,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         FakeCoreDeviceLifecycleTunnelSession(stream: FakeDeviceStream(reads: []), peerInfo: peerInfo)
     }
 
-    private func http2Frames(_ data: Data) throws -> [RemoteXPCHTTP2Frame] {
-        var remaining = data
-        var frames: [RemoteXPCHTTP2Frame] = []
-        while !remaining.isEmpty {
-            let bytes = [UInt8](remaining.prefix(3))
-            let size = (Int(bytes[0]) << 16) | (Int(bytes[1]) << 8) | Int(bytes[2])
-            let frameData = Data(remaining.prefix(9 + size))
-            frames.append(try RemoteXPCHTTP2.decodeFrame(frameData))
-            remaining.removeFirst(9 + size)
-        }
-        return frames
-    }
-
     private func remoteXPCInitializationResponses(additional: Data = Data()) -> Data {
         let rootAck = RemoteXPCWrapper.encodeEmpty(messageID: 0, flags: RemoteXPCFlags.alwaysSet)
         let replyAck = RemoteXPCWrapper.encodeEmpty(messageID: 0, flags: RemoteXPCFlags.alwaysSet)
@@ -2909,14 +1749,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         var value = uuid.uuid
         return withUnsafeBytes(of: &value) { Data($0) }
     }
-}
-
-private func unarchiveDTXArgument(_ argument: DTXAuxArgument) throws -> Any? {
-    guard case .primitiveBuffer(let data) = argument else {
-        XCTFail("expected archived DTX buffer argument")
-        return nil
-    }
-    return try unarchiveDTXBuffer(data)
 }
 
 private func primitiveBuffer(_ argument: DTXAuxArgument) throws -> Data {

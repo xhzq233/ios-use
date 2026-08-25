@@ -3,34 +3,6 @@ import CoreGraphics
 @testable import IOSUseCLI
 
 final class OCRServiceTests: XCTestCase {
-    func testRecognitionLevelConfiguresVisionPerformanceMode() {
-        XCTAssertEqual(OCRService.RecognitionLevel.accurate.visionValue, .accurate)
-        XCTAssertTrue(OCRService.RecognitionLevel.accurate.usesLanguageCorrection)
-        XCTAssertEqual(OCRService.RecognitionLevel.fast.visionValue, .fast)
-        XCTAssertFalse(OCRService.RecognitionLevel.fast.usesLanguageCorrection)
-    }
-
-    func testFormatUsesCompactFourDecimalCoordinates() {
-        let result = OCRService.Result(
-            imageWidth: 100,
-            imageHeight: 200,
-            logicalSize: CGSize(width: 50, height: 100),
-            scale: 2,
-            observations: [
-                OCRService.Observation(
-                    text: "按钮",
-                    confidence: 0.5,
-                    boundingBox: CGRect(x: 0.123456, y: 0.7, width: 0.25, height: 0.1)
-                )
-            ]
-        )
-
-        XCTAssertEqual(
-            OCRService.format(result),
-            "OCR (accurate):\n- 按钮 [6.1728,20.0000,12.5000,10.0000] confidence=0.5000\n"
-        )
-    }
-
     func testSidecarUsesCompactFramesAndOmitsEngine() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-ocr-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

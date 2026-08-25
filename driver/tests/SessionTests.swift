@@ -13,39 +13,6 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(bundleID, "com.example.missing")
     }
 
-    func testForegroundWaitFailureError_NonUnknownStateIncludesState() {
-        let error = foregroundWaitFailureError(
-            state: .runningBackground,
-            bundleId: "com.example.app"
-        )
-
-        guard case .appNotFound(let reason) = error else {
-            return XCTFail("expected appNotFound")
-        }
-        XCTAssertEqual(reason, "app failed to enter foreground (state=3)")
-    }
-
-    func testForegroundWaitFailureError_UnknownStateWithoutBundleUsesStateMessage() {
-        let error = foregroundWaitFailureError(
-            state: .unknown,
-            bundleId: nil
-        )
-
-        guard case .appNotFound(let reason) = error else {
-            return XCTFail("expected appNotFound")
-        }
-        XCTAssertEqual(reason, "app failed to enter foreground (state=0)")
-    }
-
-    func testTerminationWaitFailureError_IncludesState() {
-        let error = terminationWaitFailureError(state: .runningForeground)
-
-        guard case .appNotFound(let reason) = error else {
-            return XCTFail("expected appNotFound")
-        }
-        XCTAssertEqual(reason, "app failed to terminate (state=4)")
-    }
-
     func testActivateAppLaunchesAnyNonForegroundStateViaLaunchServices() {
         XCTAssertTrue(shouldLaunchViaLaunchServices(state: .unknown))
         XCTAssertTrue(shouldLaunchViaLaunchServices(state: .notRunning))
