@@ -597,6 +597,17 @@ public struct ForyProxyPayload {
 }
 
 @ForyStruct
+public struct ForyRotatePayload {
+    public var requestedOrientation: String = ""
+    public var actualOrientation: String = ""
+
+    public init(requestedOrientation: String = "", actualOrientation: String = "") {
+        self.requestedOrientation = requestedOrientation
+        self.actualOrientation = actualOrientation
+    }
+}
+
+@ForyStruct
 public struct ForyActivateAppArgs {
     public var bundleId: String = ""
 
@@ -611,6 +622,15 @@ public struct ForyTerminateAppArgs {
 
     public init(bundleId: String = "") {
         self.bundleId = bundleId
+    }
+}
+
+@ForyStruct
+public struct ForyRotateArgs {
+    public var orientation: String = ""
+
+    public init(orientation: String = "") {
+        self.orientation = orientation
     }
 }
 
@@ -874,8 +894,10 @@ public enum ForyRegistry {
         try! fory.register(ForySwipePayload.self, name: "ForySwipePayload")
         try! fory.register(ForySimpleStringPayload.self, name: "ForySimpleStringPayload")
         try! fory.register(ForyProxyPayload.self, name: "ForyProxyPayload")
+        try! fory.register(ForyRotatePayload.self, name: "ForyRotatePayload")
         try! fory.register(ForyActivateAppArgs.self, name: "ForyActivateAppArgs")
         try! fory.register(ForyTerminateAppArgs.self, name: "ForyTerminateAppArgs")
+        try! fory.register(ForyRotateArgs.self, name: "ForyRotateArgs")
         try! fory.register(ForyDomArgs.self, name: "ForyDomArgs")
         try! fory.register(ForyWaitForArgs.self, name: "ForyWaitForArgs")
         try! fory.register(ForyInputArgs.self, name: "ForyInputArgs")

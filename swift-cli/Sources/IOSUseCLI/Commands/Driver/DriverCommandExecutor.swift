@@ -9,6 +9,7 @@ enum DriverCommandPayload {
     case element(ForyElementPayload)
     case swipe(ForySwipePayload)
     case alert(ForyAlertPayload)
+    case rotate(ForyRotatePayload)
 }
 
 struct DriverCommandResult {
@@ -185,6 +186,22 @@ enum DriverCommandExecutor {
             }
             ok = true
             return DriverCommandResult(stdout: "Pressed Home\n", payload: nil)
+
+        case .rotate(let orientation, let postDom):
+            let payload = try requiredPayload(
+                clientRunner { .rotate(try $0.rotate(orientation: orientation)) },
+                as: ForyRotatePayload.self
+            )
+            let result = try appendPostDomIfNeeded(
+                DriverCommandResult(
+                    stdout: "Rotated to \(payload.requestedOrientation) (actual: \(payload.actualOrientation))\n",
+                    payload: .rotate(payload)
+                ),
+                postDom: postDom,
+                clientRunner: clientRunner
+            )
+            ok = true
+            return result
 
         case .dismissAlert(let options):
             let args = dismissAlertArgs(options)
@@ -396,6 +413,7 @@ enum DriverCommandExecutor {
         case .element(let payload): value = payload
         case .swipe(let payload): value = payload
         case .alert(let payload): value = payload
+        case .rotate(let payload): value = payload
         case nil: value = nil
         }
         guard let typed = value as? T else {

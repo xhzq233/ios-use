@@ -145,6 +145,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | `tap` / `longpress` | Act on a label or coordinate. |
 | `swipe` | Scroll by direction/distance or toward a target label. |
 | `input` | Type into the current keyboard focus, optionally tapping a target first. |
+| `rotate` | Set and verify a real-device or Simulator orientation, optionally returning the fresh post-rotation DOM. |
 | `screenshot` | Capture a native-resolution JPEG with accurate host OCR and Logical coordinates by default. |
 | `capture` | Capture a fixed-rate JPEG sequence plus `manifest.json`, with optional tolerant changed-frame filtering (max 10 FPS). |
 | `media import` | Add one local photo or video to the Photos library used by the active backend. |
@@ -160,6 +161,7 @@ ios-use waitFor "蓝牙" --timeout 5s
 ios-use tap "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
 ios-use input --tap "搜索" --content "蓝牙"
+ios-use rotate --to landscape-right --dom --json
 ios-use screenshot --name settings-home
 ios-use screenshot --name channels-disagree  # explicit visual evidence when AX is insufficient
 

@@ -64,6 +64,11 @@ extension DriverCommandResult {
             return .object(["bundleId": .string(bundleId), "terminated": .boolean(true)])
         case (.home, _):
             return .object(["pressed": .boolean(true)])
+        case (.rotate, .rotate(let rotate)):
+            return .object([
+                "requestedOrientation": .string(rotate.requestedOrientation),
+                "actualOrientation": .string(rotate.actualOrientation),
+            ])
         case (.dismissAlert, .alert(let alert)):
             return machineAlert(alert)
         default:

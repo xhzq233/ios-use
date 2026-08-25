@@ -335,3 +335,74 @@ enum AppCommands {
     }
 
 }
+
+enum DeviceCommands {
+    static func rotate(_ args: ForyRotateArgs) throws -> ForyResponseFrame {
+        guard let requested = IOSUseDeviceOrientation(rawValue: args.orientation) else {
+            return try Codec.foryError(
+                "rotate: unsupported orientation '\(args.orientation)'",
+                category: IOSUseErrorCategory.validation,
+                code: IOSUseErrorCode.invalidArguments,
+                phase: IOSUseErrorPhase.validation
+            )
+        }
+
+        let device = XCUIDevice.shared
+        device.orientation = xcuiOrientation(requested)
+
+        let deadline = CFAbsoluteTimeGetCurrent() + 5
+        var actual = orientation(device.orientation)
+        while actual != requested && CFAbsoluteTimeGetCurrent() < deadline {
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: IOSUseProtocol.appStatePollIntervalSeconds)
+            )
+            actual = orientation(device.orientation)
+        }
+
+        guard let actual, actual == requested else {
+            return try Codec.foryError(
+                "rotate: requested \(requested.rawValue), actual \(actual?.rawValue ?? "unknown")",
+                category: IOSUseErrorCategory.postcondition,
+                code: IOSUseErrorCode.postconditionFailed,
+                phase: IOSUseErrorPhase.postcondition,
+                retryable: true
+            )
+        }
+
+        return try Codec.foryOK(
+            ForyRotatePayload(
+                requestedOrientation: requested.rawValue,
+                actualOrientation: actual.rawValue
+            )
+        )
+    }
+
+    private static func xcuiOrientation(_ orientation: IOSUseDeviceOrientation) -> UIDeviceOrientation {
+        switch orientation {
+        case .portrait:
+            return .portrait
+        case .portraitUpsideDown:
+            return .portraitUpsideDown
+        case .landscapeLeft:
+            return .landscapeLeft
+        case .landscapeRight:
+            return .landscapeRight
+        }
+    }
+
+    private static func orientation(_ orientation: UIDeviceOrientation) -> IOSUseDeviceOrientation? {
+        switch orientation {
+        case .portrait:
+            return .portrait
+        case .portraitUpsideDown:
+            return .portraitUpsideDown
+        case .landscapeLeft:
+            return .landscapeLeft
+        case .landscapeRight:
+            return .landscapeRight
+        default:
+            return nil
+        }
+    }
+}

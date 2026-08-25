@@ -674,6 +674,12 @@ public struct IOSUseCLI: Sendable {
                         .lifecycleCommandUnsupported("home"),
                     json: json
                 )
+            case .rotate:
+                return commandFailure(
+                    command: action.name,
+                    error: PlayCoverBackendError.capabilityUnavailable("rotate"),
+                    json: json
+                )
             }
         default:
             return commandFailure(

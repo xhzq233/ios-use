@@ -71,6 +71,8 @@ public enum CLIParser {
             parsed = .appLifecycle(try parseAppLifecycle(&parser, action: .terminate))
         case "home":
             parsed = .driver(try parseHome(&parser))
+        case "rotate":
+            parsed = .driver(try parseRotate(&parser))
         case "open":
             parsed = .open(try parseOpen(&parser))
         case "dismissAlert":
@@ -741,6 +743,30 @@ public enum CLIParser {
     private static func parseHome(_ parser: inout ArgumentParser) throws -> DriverAction {
         try parser.requireEnd()
         return .home
+    }
+
+    private static func parseRotate(_ parser: inout ArgumentParser) throws -> DriverAction {
+        var orientation: IOSUseDeviceOrientation?
+        var postDom: PostDomMode?
+        while let arg = parser.consume() {
+            switch arg {
+            case "--to":
+                let value = try parser.value(for: arg)
+                guard let parsed = IOSUseDeviceOrientation(rawValue: value) else {
+                    let values = IOSUseDeviceOrientation.allCases.map(\.rawValue).joined(separator: ", ")
+                    throw CLIParseError.invalidValue("--to must be one of: \(values)")
+                }
+                orientation = parsed
+            case "--dom":
+                postDom = try parsePostDomMode(&parser, option: arg)
+            default:
+                throw CLIParseError.unknownOption(arg)
+            }
+        }
+        guard let orientation else {
+            throw CLIParseError.missingRequiredArgument("--to")
+        }
+        return .rotate(orientation: orientation, postDom: postDom)
     }
 
     private static func parseOpen(_ parser: inout ArgumentParser) throws -> OpenURLOptions {

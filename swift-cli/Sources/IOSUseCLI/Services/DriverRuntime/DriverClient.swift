@@ -64,6 +64,7 @@ protocol DriverCommandClient: AnyObject {
     func activateApp(bundleId: String) throws
     func terminateApp(bundleId: String) throws
     func home() throws
+    func rotate(orientation: IOSUseDeviceOrientation) throws -> ForyRotatePayload
     func dismissAlert(args: ForyDismissAlertArgs) throws -> ForyAlertPayload
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
@@ -129,6 +130,10 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
+    func rotate(orientation: IOSUseDeviceOrientation) throws -> ForyRotatePayload {
+        throw CLIParseError.invalidValue("rotate is not supported by this driver client")
+    }
+
     func input(
         tap: ForyTarget?,
         content: String,
@@ -534,6 +539,10 @@ final class DriverClient: DriverCommandClient {
 
     func home() throws {
         _ = try sendRawPayload(command: DriverCommand.home.rawValue, payload: Data())
+    }
+
+    func rotate(orientation: IOSUseDeviceOrientation) throws -> ForyRotatePayload {
+        try send(RotateCommand.self, args: ForyRotateArgs(orientation: orientation.rawValue))
     }
 
     func dismissAlert(args: ForyDismissAlertArgs) throws -> ForyAlertPayload {
