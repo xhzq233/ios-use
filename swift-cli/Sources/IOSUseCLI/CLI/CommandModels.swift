@@ -21,6 +21,7 @@ public enum ParsedCommand: Equatable, Sendable {
     case proxy(ProxyCommand)
     case debug(DebugOptions)
     case uiTree(UITreeOptions)
+    case script(ScriptOptions)
 
     public var commandName: String {
         switch self {
@@ -43,6 +44,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .proxy(let command): return "proxy \(command.subcommand)"
         case .debug: return "debug"
         case .uiTree: return "ui-tree"
+        case .script: return "script"
         }
     }
 }
@@ -50,10 +52,16 @@ public enum ParsedCommand: Equatable, Sendable {
 public struct ParsedInvocation: Equatable, Sendable {
     public var command: ParsedCommand
     public var json: Bool
+    public var deviceID: String?
 
-    public init(command: ParsedCommand, json: Bool = false) {
+    public init(
+        command: ParsedCommand,
+        json: Bool = false,
+        deviceID: String? = nil
+    ) {
         self.command = command
         self.json = json
+        self.deviceID = deviceID
     }
 }
 
@@ -62,6 +70,21 @@ public struct StatusOptions: Equatable, Sendable {
 
     public init(verbose: Bool = false) {
         self.verbose = verbose
+    }
+}
+
+public enum ScriptSource: Equatable, Sendable {
+    case inline(String)
+    case file(String)
+    case standardInput
+    case repl
+}
+
+public struct ScriptOptions: Equatable, Sendable {
+    public var source: ScriptSource
+
+    public init(source: ScriptSource) {
+        self.source = source
     }
 }
 

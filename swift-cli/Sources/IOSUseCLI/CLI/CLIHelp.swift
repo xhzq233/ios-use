@@ -3,7 +3,7 @@ import Foundation
 enum CLIHelp {
     static var rootText: String {
         """
-        Usage: ios-use [--help] [--version] <command>
+        Usage: ios-use [--help] [--version] [--device <device-id>] <command>
 
         Swift CLI for ios-use.
 
@@ -19,9 +19,10 @@ enum CLIHelp {
         Options:
           -h, --help       Show help
           -V, --version    Show version
+          --device <id>    Select a running Device; optional only when one runs
 
         Commands:
-          du, status, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
+          du, status, script, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
           activateApp, terminateApp, home, rotate, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
@@ -82,6 +83,29 @@ enum CLIHelp {
               --json       Print the common machine-readable envelope
 
             """
+        case "script":
+            return """
+            Usage: ios-use script '<javascript>'
+                   ios-use script --file <file.js>
+                   ios-use script -
+                   ios-use script
+
+            Run JavaScript with a persistent `mobile` API for explicit Device
+            selection and Accessibility-first automation. Inline code, files,
+            and stdin run once; no arguments starts an interactive Node REPL.
+            The Script Runtime requires Node.js. Other ios-use commands do not.
+
+            Examples:
+              ios-use script 'await mobile.getState()'
+              ios-use script 'let d = await mobile.getDevice("mac"); await d.ax.write()'
+
+            Options:
+              --file <file.js>  Execute a JavaScript file
+              -                 Read JavaScript from stdin
+
+            Inside JavaScript, use `mobile.help()` for the current API.
+
+            """
         case "config":
             return """
             Usage: ios-use config [--udid <udid>] [--simulator] [--list] [--verbose] [--json]
@@ -117,8 +141,10 @@ enum CLIHelp {
                    ios-use start --mac [--log] [--timeout <duration>]
 
             Start a configured XCTest driver or an iOS App on this Mac and
-            record it as the active backend in driver.lock.
+            record it in that Device's context under IOS_USE_HOME.
             Defaults to the first connected USB real device when udid is omitted.
+            Multiple Devices can run together. Use --device <device-id> on
+            later commands; status prints the stable IDs.
             The Mac backend automatically prepares an unmodified iPhoneOS App
             into its account-global Bundle slot, or directly launches the
             current slot. The current IOS_USE_HOME stores only its selected
@@ -189,12 +215,13 @@ enum CLIHelp {
             """
         case "stop":
             return """
-            Usage: ios-use stop [--json]
+            Usage: ios-use stop [--device <device-id>] [--json]
 
-            Stop the active XCTest driver or exact Mac process recorded
-            in driver.lock, then clear the active backend.
+            Stop one XCTest driver or exact Mac process recorded in its
+            Device Context. --device is required when multiple Devices run.
 
             Options:
+              --device     Device ID printed by status
               --json       Print the common machine-readable envelope
 
             """

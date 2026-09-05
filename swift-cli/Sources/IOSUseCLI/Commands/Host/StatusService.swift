@@ -46,9 +46,22 @@ public enum StatusService {
             return .object(value)
         }
 
+        let sessionContexts = DeviceContextStore.sessions(paths: paths)
         let driver: MachineValue
+        if sessionContexts.count > 1 {
+            driver = .object([
+                "status": .string("multiple"),
+                "count": .integer(sessionContexts.count),
+                "deviceIds": .array(sessionContexts.map {
+                    .string($0.deviceID)
+                }),
+            ])
+        } else {
+        let driverPaths = sessionContexts.first?.paths ?? paths
         do {
-            if let info = try SessionService.readDriverLockInfo(paths: paths) {
+            if let info = try SessionService.readDriverLockInfo(
+                paths: driverPaths
+            ) {
                 let config = configured[info.udid]
                 var fields: [String: MachineValue] = [
                     "status": .string("running"),
@@ -126,7 +139,7 @@ public enum StatusService {
             } else {
                 do {
                     if let launching = try PlayCoverLaunchingStore
-                        .load(paths: paths) {
+                        .load(paths: driverPaths) {
                         driver = .object([
                             "status": .string("unresolvedOpen"),
                             "deviceType": .string(
@@ -173,6 +186,7 @@ public enum StatusService {
             ])
             warnings.append("driver.lock is invalid: \(error)")
         }
+        }
 
         let configValues = ConfigService.listEntries(paths: paths).map { entry in
             MachineValue.object([
@@ -185,11 +199,21 @@ public enum StatusService {
                 } ?? .null,
             ])
         }
-        let activeUdid = (try? SessionService.readDriverLockInfo(paths: paths))?.udid
+        let selectedTarget = sessionContexts.count == 1
+            ? sessionContexts[0].deviceID
+            : nil
+        let aggregateDevices = aggregateDeviceValues(
+            connected: devices,
+            configured: ConfigService.listEntries(paths: paths),
+            sessions: sessionContexts,
+            paths: paths,
+            warnings: &warnings
+        )
         return (
             .object([
                 "cli": .object(["version": .string(IOSUseCLI.version)]),
-                "selectedTarget": activeUdid.map(MachineValue.string) ?? .null,
+                "selectedTarget": selectedTarget.map(MachineValue.string) ?? .null,
+                "devices": .array(aggregateDevices),
                 "connectedDevices": .array(deviceValues),
                 "driver": driver,
                 "macBackend": macReadinessMachineValue(paths: paths),
@@ -197,6 +221,171 @@ public enum StatusService {
             ]),
             warnings
         )
+    }
+
+    private struct AggregateDevice {
+        let id: String
+        var kind: String
+        var udid: String?
+        var name: String
+        var version: String
+        var connected: Bool
+        var config: DeviceConfigEntry?
+        var session: DeviceContextStore.Context?
+    }
+
+    private static func aggregateDeviceValues(
+        connected realDevices: [IOSDevice],
+        configured: [DeviceConfigEntry],
+        sessions: [DeviceContextStore.Context],
+        paths: IOSUsePaths,
+        warnings: inout [String]
+    ) -> [MachineValue] {
+        var connectedDevices = realDevices
+        do {
+            connectedDevices += try DeviceService.listDevices(
+                simulatorOnly: true,
+                paths: paths
+            )
+        } catch {
+            warnings.append("Simulator lookup failed: \(error)")
+        }
+
+        var records: [String: AggregateDevice] = [:]
+        for device in connectedDevices {
+            let id = device.kind == .simulator
+                ? DeviceContextStore.simulatorDeviceID(device.udid)
+                : DeviceContextStore.realDeviceID(device.udid)
+            records[id] = AggregateDevice(
+                id: id,
+                kind: device.kind.rawValue,
+                udid: device.udid,
+                name: device.name,
+                version: device.version,
+                connected: true,
+                config: nil,
+                session: nil
+            )
+        }
+        for entry in configured {
+            let isSimulator = entry.bundleId
+                == ConfigService.simulatorBundleId
+            let id = isSimulator
+                ? DeviceContextStore.simulatorDeviceID(entry.udid)
+                : DeviceContextStore.realDeviceID(entry.udid)
+            var record = records[id] ?? AggregateDevice(
+                id: id,
+                kind: isSimulator ? "simulator" : "real",
+                udid: entry.udid,
+                name: "",
+                version: "",
+                connected: false,
+                config: nil,
+                session: nil
+            )
+            record.config = entry
+            records[id] = record
+        }
+        for context in sessions {
+            var record = records[context.deviceID] ?? AggregateDevice(
+                id: context.deviceID,
+                kind: context.info.deviceType,
+                udid: context.info.deviceType
+                    == PlayCoverSessionService.deviceType
+                    ? nil
+                    : context.info.udid,
+                name: context.info.deviceName,
+                version: context.info.deviceVersion,
+                connected: context.info.deviceType
+                    == PlayCoverSessionService.deviceType,
+                config: nil,
+                session: nil
+            )
+            if record.name.isEmpty {
+                record.name = context.info.deviceName
+            }
+            if record.version.isEmpty {
+                record.version = context.info.deviceVersion
+            }
+            record.session = context
+            records[context.deviceID] = record
+        }
+
+        let macReadiness = macReadiness(paths: paths)
+        var mac = records[DeviceContextStore.macDeviceID]
+            ?? AggregateDevice(
+                id: DeviceContextStore.macDeviceID,
+                kind: PlayCoverSessionService.deviceType,
+                udid: nil,
+                name: "Mac Backend",
+                version: "Mac Catalyst",
+                connected: false,
+                config: nil,
+                session: nil
+            )
+        if mac.name.isEmpty {
+            mac.name = "Mac Backend"
+        }
+        records[DeviceContextStore.macDeviceID] = mac
+
+        return records.keys.sorted().compactMap { id in
+            guard let record = records[id] else { return nil }
+            let driver = record.session.map {
+                aggregateDriverValue(context: $0)
+            } ?? .object(["status": .string("notRunning")])
+            let isMac = id == DeviceContextStore.macDeviceID
+            let isConfigured = isMac
+                ? macReadiness.ready
+                : record.config != nil
+            let updateRequired = isMac
+                ? false
+                : record.config.map {
+                    $0.driverVersion != IOSUseCLI.version
+                } ?? false
+            return .object([
+                "id": .string(id),
+                "kind": .string(record.kind),
+                "udid": record.udid.map(MachineValue.string) ?? .null,
+                "name": .string(record.name),
+                "version": .string(record.version),
+                "connected": .boolean(record.connected),
+                "configured": .boolean(isConfigured),
+                "driverUpdateRequired": .boolean(updateRequired),
+                "driver": driver,
+            ])
+        }
+    }
+
+    private static func aggregateDriverValue(
+        context: DeviceContextStore.Context
+    ) -> MachineValue {
+        let info = context.info
+        var fields: [String: MachineValue] = [
+            "status": .string("running"),
+            "deviceType": .string(info.deviceType),
+            "startedAt": .integer(info.startedAt),
+            "holderPid": info.holderPid.map(MachineValue.integer)
+                ?? .null,
+            "runnerPid": info.runnerPid.map(MachineValue.integer)
+                ?? .null,
+            "sessionIdentifier": info.sessionIdentifier
+                .map(MachineValue.string) ?? .null,
+            "bundleId": info.bundleId.map(MachineValue.string) ?? .null,
+            "legacyContext": .boolean(context.legacy),
+        ]
+        if info.deviceType == PlayCoverSessionService.deviceType {
+            switch playCoverRuntimeHealth(info: info) {
+            case .healthy:
+                fields["status"] = .string("healthy")
+            case .unhealthy(let error, _, _):
+                fields["status"] = .string("unhealthy")
+                fields["error"] = .string(error)
+            case .stale(let error):
+                fields["status"] = .string("stale")
+                fields["error"] = .string(error)
+            }
+        }
+        return .object(fields)
     }
 
     public static func status(paths: IOSUsePaths, verbose: Bool = false) throws -> String {
@@ -299,9 +488,9 @@ public enum StatusService {
         paths: IOSUsePaths
     ) -> String {
         do {
-            if let info = try SessionService.readDriverLockInfo(
-                paths: paths
-            ), info.deviceType == PlayCoverSessionService.deviceType {
+            if DeviceContextStore.sessions(paths: paths).contains(where: {
+                $0.info.deviceType == PlayCoverSessionService.deviceType
+            }) {
                 return "running"
             }
             if try PlayCoverLaunchingStore.load(
@@ -363,7 +552,17 @@ public enum StatusService {
         do {
             let devices = try DeviceService.listDevices(simulatorOnly: simulatorOnly, paths: paths)
             guard !devices.isEmpty else { return ["  \(emptyMessage)"] }
-            return devices.map { "  - \(DeviceService.format($0, configuredDevices: configuredDevices, verbose: verbose))" }
+            return devices.map { device in
+                let deviceID = device.kind == .simulator
+                    ? DeviceContextStore.simulatorDeviceID(device.udid)
+                    : DeviceContextStore.realDeviceID(device.udid)
+                return "  - id: \(deviceID) | "
+                    + DeviceService.format(
+                        device,
+                        configuredDevices: configuredDevices,
+                        verbose: verbose
+                    )
+            }
         } catch {
             return ["  unavailable: \(error)"]
         }
@@ -372,6 +571,28 @@ public enum StatusService {
     private static func driverLines(
         paths: IOSUsePaths,
         verbose: Bool
+    ) -> [String] {
+        let contexts = DeviceContextStore.sessions(paths: paths)
+        if !contexts.isEmpty {
+            return contexts.flatMap { context in
+                driverLinesForContext(
+                    paths: context.paths,
+                    verbose: verbose,
+                    deviceID: context.deviceID
+                )
+            }
+        }
+        return driverLinesForContext(
+            paths: paths,
+            verbose: verbose,
+            deviceID: nil
+        )
+    }
+
+    private static func driverLinesForContext(
+        paths: IOSUsePaths,
+        verbose: Bool,
+        deviceID: String?
     ) -> [String] {
         do {
             guard let info = try SessionService.readDriverLockInfo(paths: paths) else {
@@ -397,7 +618,16 @@ public enum StatusService {
                     ]
                 }
             }
-            var parts = ["running", "udid: \(info.udid)", "device: \(info.deviceType)", "name: \(info.deviceName)", "iOS: \(info.deviceVersion)"]
+            var parts = ["running"]
+            if let deviceID {
+                parts.append("id: \(deviceID)")
+            }
+            parts.append(contentsOf: [
+                "udid: \(info.udid)",
+                "device: \(info.deviceType)",
+                "name: \(info.deviceName)",
+                "iOS: \(info.deviceVersion)",
+            ])
             if let startMode = info.startMode, !startMode.isEmpty {
                 parts.append("mode: \(startMode)")
             }

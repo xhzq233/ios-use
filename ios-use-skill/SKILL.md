@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Use when a task explicitly requires running, scripting, or troubleshooting the ios-use CLI on a real device, Simulator, or Mac backend, including setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, Frida debugging, and Frida-loaded native dylib patches."
+description: "Use when a task explicitly requires running, scripting, or troubleshooting the ios-use CLI on a real device, Simulator, or Mac backend, including setup, cloud serving, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, Frida debugging, and Frida-loaded native dylib patches."
 ---
 
 # ios-use Operational Playbook
@@ -79,17 +79,25 @@ real device, or a Simulator for reliable automation.
 `config --mac` asks for macOS authentication. If authentication is cancelled,
 rerun the same command. This setup is shared across `IOS_USE_HOME` values.
 
-Use a distinct `IOS_USE_HOME` for each concurrent ios-use session. This allows
-multiple Mac Apps with different bundle IDs (or independent device sessions) to
-run at the same time while sharing the one-time Mac signing setup and installed
-Mac Apps. The Mac backend intentionally rejects two concurrent copies of the
-same bundle ID.
+One `IOS_USE_HOME` can hold multiple independent Device Contexts. `status`
+prints their stable IDs: `real:<udid>`, `simulator:<udid>`, and `mac`. When more
+than one Device runs, pass `--device <device-id>` to every Device command;
+with exactly one running Device, it remains optional.
+
+```bash
+ios-use dom --device 'real:<udid>'
+ios-use screenshot --device mac
+ios-use stop --device 'real:<udid>'
+```
+
+Use distinct Homes only when you need multiple Mac Apps at once. The Mac
+backend intentionally rejects two concurrent copies of the same bundle ID.
 
 `start --mac --app <App.app>` automatically reuses an unchanged installed App
 or updates it after the source changes. Every Mac App includes the Frida debug
 Engine, so `ios-use debug` works for any Mac session. Later,
 `ios-use start --mac` launches the current `IOS_USE_HOME`'s remembered App.
-Run `ios-use stop` before switching backends.
+Starting or stopping `mac` does not replace another Device Context.
 
 After upgrading ios-use, Apps installed by older versions are not migrated or
 auto-launched: run `start --mac --app` once per bundle ID. ios-use never
@@ -102,10 +110,9 @@ deletes old caches for you; run `ios-use du` to see what you can remove.
 - Run `start` before `dom`, `ui-tree`, `tap`, `longpress`, `swipe`, `input`, `waitFor`,
   `screenshot`, `capture`, `home`, `dismissAlert`, default `activateApp`,
   `open --dom`, `rotate`, or device-backed proxy commands.
-- Treat the device selected by `start` as the target for all UI commands. To switch
-  devices, run `ios-use stop`, then `ios-use start <new-udid>`.
-- After `start --mac`, supported commands continue using that Mac session until
-  `ios-use stop`.
+- Use the Device ID returned by `status` on all UI commands when multiple
+  Device Contexts are running.
+- After `start --mac`, supported commands can select it with `--device mac`.
 - Mac lifecycle is only `start`, `status`, and `stop`. Do not use `home`,
   `activateApp`, or `terminateApp` for a Mac session. Restart it with
   `ios-use stop`, then `ios-use start --mac`.
@@ -135,6 +142,28 @@ signing is allowed to expire, installing the newly signed driver requires the
 user to open Settings on the device and manually trust the developer again.
 Avoid that interruption by checking `status` and refreshing while the current
 driver is still valid.
+
+### Drive multiple Devices from one JavaScript process
+
+Use `ios-use script` when one workflow needs persistent Device handles or
+parallel work across independent Devices:
+
+```bash
+ios-use script '
+  let state = await mobile.getState();
+  let mac = await mobile.getDevice("mac");
+  let simulator = await mobile.getDevice(
+    state.devices.find(device => device.kind === "simulator").id
+  );
+  await Promise.all([mac.ax.write(), simulator.ax.write()]);
+'
+```
+
+Use `ios-use script --file <file.js>` for a file, `ios-use script -` for stdin,
+and bare `ios-use script` for an interactive Node REPL. Call `mobile.help()` or
+`device.help()` instead of guessing the API. After `click`, `setValue`,
+`typeText`, or `scroll`, call `ax.write()` again before using an
+`element_index` from the new snapshot.
 
 ## 3. Follow the observe-act-verify loop
 

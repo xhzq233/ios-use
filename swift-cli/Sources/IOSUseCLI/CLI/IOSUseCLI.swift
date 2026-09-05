@@ -145,14 +145,33 @@ public struct IOSUseCLI: Sendable {
         arguments: [String]
     ) -> CLIResult {
         let (machineArguments, wantsJSON) = CLIParser.extractGlobalJSONFlag(arguments)
-        if let immediate = CLIHelp.immediateResult(arguments: machineArguments) {
+        let publicArguments: [String]
+        do {
+            publicArguments = try CLIParser.extractGlobalDeviceFlag(
+                machineArguments
+            ).0
+        } catch {
+            let command = machineArguments.first ?? "unknown"
+            if wantsJSON {
+                return MachineOutput.failure(
+                    command: command,
+                    error: error,
+                    data: machineParseHelp(arguments: machineArguments),
+                    exitCode: 64
+                )
+            }
+            return CLIErrorEnvelope(message: "\(error)").render(
+                help: CLIHelp.rootText
+            )
+        }
+        if let immediate = CLIHelp.immediateResult(arguments: publicArguments) {
             return immediate
         }
 
-        guard let first = arguments.first else {
+        guard let first = publicArguments.first else {
             return CLIResult(exitCode: 0, stdout: Self.helpText)
         }
-        let machineCommand = machineArguments.first ?? first
+        let machineCommand = publicArguments.first ?? first
         switch first {
         case _ where first.hasPrefix("-") && first != "--json":
             let error = CLIParseError.unknownOption(first)
@@ -192,7 +211,8 @@ public struct IOSUseCLI: Sendable {
             }
             let result = execute(
                 invocation.command,
-                json: invocation.json
+                json: invocation.json,
+                deviceID: invocation.deviceID
             )
             if registerHomesForDiskUsage,
                result.exitCode == 0,
@@ -204,7 +224,10 @@ public struct IOSUseCLI: Sendable {
     }
 
     private func performanceCommandName(arguments: [String]) -> String {
-        let normalized = CLIParser.extractGlobalJSONFlag(arguments).0
+        let withoutJSON = CLIParser.extractGlobalJSONFlag(arguments).0
+        let normalized = (try? CLIParser.extractGlobalDeviceFlag(
+            withoutJSON
+        ).0) ?? withoutJSON
         guard let first = normalized.first else {
             return "help"
         }
@@ -257,7 +280,259 @@ public struct IOSUseCLI: Sendable {
         )
     }
 
-    private func execute(_ parsed: ParsedCommand, json: Bool) -> CLIResult {
+    private struct InvocationTarget {
+        let paths: IOSUsePaths
+        let startUDID: String?
+    }
+
+    private func resolveInvocationTarget(
+        for command: ParsedCommand,
+        explicitDeviceID: String?
+    ) throws -> InvocationTarget {
+        switch command {
+        case .start(let options):
+            if options.mac {
+                if let explicitDeviceID {
+                    let normalized = try DeviceContextStore
+                        .normalizeExplicitDeviceID(
+                            explicitDeviceID,
+                            paths: paths
+                        )
+                    guard normalized == DeviceContextStore.macDeviceID else {
+                        throw CLIParseError.invalidValue(
+                            "start --mac requires --device mac."
+                        )
+                    }
+                }
+                try DeviceContextStore.requireInactive(
+                    deviceID: DeviceContextStore.macDeviceID,
+                    paths: paths
+                )
+                return InvocationTarget(
+                    paths: try paths.deviceContext(
+                        DeviceContextStore.macDeviceID
+                    ),
+                    startUDID: nil
+                )
+            }
+
+            var requestedUDID = options.udid
+            var normalizedExplicit: String?
+            if let explicitDeviceID {
+                let normalized = try DeviceContextStore
+                    .normalizeExplicitDeviceID(
+                        explicitDeviceID,
+                        paths: paths
+                    )
+                guard normalized != DeviceContextStore.macDeviceID,
+                      let targetUDID = DeviceContextStore.targetUDID(
+                          from: normalized
+                      ) else {
+                    throw CLIParseError.invalidValue(
+                        "A real or Simulator Device ID is required."
+                    )
+                }
+                if let requestedUDID, requestedUDID != targetUDID {
+                    throw CLIParseError.invalidValue(
+                        "start target \(requestedUDID) does not match --device \(normalized)."
+                    )
+                }
+                requestedUDID = targetUDID
+                normalizedExplicit = normalized
+            }
+            if requestedUDID == nil {
+                requestedUDID = try DeviceService.listDevices(
+                    simulatorOnly: false,
+                    paths: paths
+                ).first(where: { $0.kind == .real })?.udid
+            }
+            guard let requestedUDID, !requestedUDID.isEmpty else {
+                throw CLIParseError.invalidValue(
+                    "No --udid and no USB real devices detected."
+                )
+            }
+            if let existing = DeviceContextStore.sessions(
+                paths: paths
+            ).first(where: {
+                $0.info.udid == requestedUDID
+                    && (normalizedExplicit == nil
+                        || normalizedExplicit == $0.deviceID)
+            }) {
+                if SessionService.isIncompleteRealDriverLock(existing.info) {
+                    return InvocationTarget(
+                        paths: existing.paths,
+                        startUDID: requestedUDID
+                    )
+                }
+                throw CLIParseError.invalidValue(
+                    "Driver already started for Device \(existing.deviceID)."
+                )
+            }
+            let info = try SessionService.resolveDriverInfo(
+                udid: requestedUDID,
+                paths: paths
+            )
+            let resolvedDeviceID = DeviceContextStore.deviceID(for: info)
+            if let normalizedExplicit,
+               normalizedExplicit != resolvedDeviceID {
+                throw CLIParseError.invalidValue(
+                    "Device \(normalizedExplicit) resolved as \(resolvedDeviceID)."
+                )
+            }
+            try DeviceContextStore.requireInactive(
+                deviceID: resolvedDeviceID,
+                paths: paths
+            )
+            return InvocationTarget(
+                paths: try paths.deviceContext(resolvedDeviceID),
+                startUDID: requestedUDID
+            )
+
+        case .stop, .driver, .debug, .uiTree, .capture,
+                .mediaImport:
+            let context = try DeviceContextStore.activeContext(
+                explicitDeviceID: explicitDeviceID,
+                paths: paths
+            )
+            return InvocationTarget(
+                paths: context.paths,
+                startUDID: nil
+            )
+
+        case .nslog:
+            if let explicitDeviceID {
+                let normalized = try DeviceContextStore
+                    .normalizeExplicitDeviceID(
+                        explicitDeviceID,
+                        paths: paths
+                    )
+                return InvocationTarget(
+                    paths: try paths.deviceContext(normalized),
+                    startUDID: nil
+                )
+            }
+            let active = DeviceContextStore.sessions(paths: paths)
+            if active.count == 1 {
+                return InvocationTarget(
+                    paths: active[0].paths,
+                    startUDID: nil
+                )
+            }
+            if active.count > 1 {
+                _ = try DeviceContextStore.activeContext(
+                    explicitDeviceID: nil,
+                    paths: paths
+                )
+            }
+            return InvocationTarget(paths: paths, startUDID: nil)
+
+        case .open(let options):
+            return try resolveOptionalActiveTarget(
+                explicitDeviceID: explicitDeviceID,
+                impliedUDID: options.session.udid
+            )
+
+        case .appLifecycle(let options):
+            return try resolveOptionalActiveTarget(
+                explicitDeviceID: explicitDeviceID,
+                impliedUDID: options.session.udid
+            )
+
+        case .oslog(let options):
+            return try resolveOptionalActiveTarget(
+                explicitDeviceID: explicitDeviceID,
+                impliedUDID: options.session.udid
+            )
+
+        case .install(let options):
+            return try resolveOptionalActiveTarget(
+                explicitDeviceID: explicitDeviceID,
+                impliedUDID: options.udid
+            )
+        case .uninstall(let options):
+            return try resolveOptionalActiveTarget(
+                explicitDeviceID: explicitDeviceID,
+                impliedUDID: options.udid
+            )
+        case .apps(let options):
+            return try resolveOptionalActiveTarget(
+                explicitDeviceID: explicitDeviceID,
+                impliedUDID: options.udid
+            )
+        case .ddiMount(let options):
+            return try resolveOptionalActiveTarget(
+                explicitDeviceID: explicitDeviceID,
+                impliedUDID: options.udid
+            )
+
+        case .proxy(.start), .proxy(.read), .proxy(.stop):
+            let context = try DeviceContextStore.activeContext(
+                explicitDeviceID: explicitDeviceID,
+                paths: paths
+            )
+            return InvocationTarget(
+                paths: context.paths,
+                startUDID: nil
+            )
+
+        case .du, .status, .script, .config,
+                .proxy(.doctor), .proxy(.configca):
+            guard explicitDeviceID == nil else {
+                throw CLIParseError.invalidValue(
+                    "--device is not supported by \(command.commandName)."
+                )
+            }
+            return InvocationTarget(paths: paths, startUDID: nil)
+        }
+    }
+
+    private func resolveOptionalActiveTarget(
+        explicitDeviceID: String?,
+        impliedUDID: String?
+    ) throws -> InvocationTarget {
+        let active = DeviceContextStore.sessions(paths: paths)
+        if explicitDeviceID != nil {
+            let context = try DeviceContextStore.activeContext(
+                explicitDeviceID: explicitDeviceID,
+                impliedUDID: impliedUDID,
+                paths: paths
+            )
+            return InvocationTarget(
+                paths: context.paths,
+                startUDID: nil
+            )
+        }
+        if let impliedUDID {
+            if let context = active.first(where: {
+                $0.info.udid == impliedUDID
+            }) {
+                return InvocationTarget(
+                    paths: context.paths,
+                    startUDID: nil
+                )
+            }
+            return InvocationTarget(paths: paths, startUDID: nil)
+        }
+        if active.count == 1 {
+            return InvocationTarget(
+                paths: active[0].paths,
+                startUDID: nil
+            )
+        }
+        if active.count > 1 {
+            _ = try DeviceContextStore.activeContext(
+                explicitDeviceID: nil,
+                paths: paths
+            )
+        }
+        return InvocationTarget(paths: paths, startUDID: nil)
+    }
+
+    private func execute(
+        _ parsed: ParsedCommand,
+        json: Bool,
+        deviceID: String?
+    ) -> CLIResult {
         if case .start(let options) = parsed,
            options.mac,
            let warning = Self.macBackendCompatibilityWarning(
@@ -289,7 +564,25 @@ public struct IOSUseCLI: Sendable {
         } else {
             explicitMacSigningIdentity = nil
         }
-        if let routedFailure = playCoverRoutingFailure(for: parsed, json: json) {
+        let target: InvocationTarget
+        do {
+            target = try resolveInvocationTarget(
+                for: parsed,
+                explicitDeviceID: deviceID
+            )
+        } catch {
+            return commandFailure(
+                command: parsed.commandName,
+                error: error,
+                json: json
+            )
+        }
+        let commandPaths = target.paths
+        if let routedFailure = playCoverRoutingFailure(
+            for: parsed,
+            paths: commandPaths,
+            json: json
+        ) {
             return routedFailure
         }
         switch parsed {
@@ -313,6 +606,8 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .script(let options):
+            return ScriptRuntimeService.run(options: options)
         case .config(let options) where options.playCover:
             return executePlayCoverConfiguration(json: json)
         case .config(let options) where options.list:
@@ -377,12 +672,12 @@ public struct IOSUseCLI: Sendable {
                             explicitMacSigningIdentity,
                         captureStdio: options.log,
                         timeout: options.timeout,
-                        paths: paths
+                        paths: commandPaths
                     )
                 } else {
                     output = try SessionService.start(
-                        udid: options.udid,
-                        paths: paths,
+                        udid: target.startUDID,
+                        paths: commandPaths,
                         verbose: options.verbose
                     )
                 }
@@ -405,12 +700,20 @@ public struct IOSUseCLI: Sendable {
                 )
             }
         case .debug(let options):
-            return executeDebug(options, json: json)
+            return executeDebug(
+                options,
+                paths: commandPaths,
+                json: json
+            )
         case .uiTree(let options):
-            return executeUITree(options, json: json)
+            return executeUITree(
+                options,
+                paths: commandPaths,
+                json: json
+            )
         case .install(let options):
             do {
-                let result = try AppManagementService.installResult(options: options, paths: paths)
+                let result = try AppManagementService.installResult(options: options, paths: commandPaths)
                 if json {
                     return MachineOutput.success(
                         command: parsed.commandName,
@@ -426,13 +729,13 @@ public struct IOSUseCLI: Sendable {
             }
         case .uninstall(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try AppManagementService.uninstall(options: options, paths: paths))
+                return CLIResult(exitCode: 0, stdout: try AppManagementService.uninstall(options: options, paths: commandPaths))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .apps(let options):
             do {
-                let result = try AppManagementService.listResult(options: options, paths: paths)
+                let result = try AppManagementService.listResult(options: options, paths: commandPaths)
                 if json {
                     return MachineOutput.success(
                         command: parsed.commandName,
@@ -445,27 +748,35 @@ public struct IOSUseCLI: Sendable {
             }
         case .ddiMount(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try DeveloperDiskImageService.mount(options: options, paths: paths))
+                return CLIResult(exitCode: 0, stdout: try DeveloperDiskImageService.mount(options: options, paths: commandPaths))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .open(let options):
-            return executeOpen(options, json: json)
+            return executeOpen(
+                options,
+                paths: commandPaths,
+                json: json
+            )
         case .appLifecycle(let options):
-            return executeAppLifecycle(options, json: json)
+            return executeAppLifecycle(
+                options,
+                paths: commandPaths,
+                json: json
+            )
         case .oslog(let options):
-            return executeOSLog(options)
+            return executeOSLog(options, paths: commandPaths)
         case .nslog(let options):
             do {
                 switch options.command {
                 case .stream:
-                    return CLIResult(exitCode: 0, stdout: try NSLogService.stream(options: options, paths: paths))
+                    return CLIResult(exitCode: 0, stdout: try NSLogService.stream(options: options, paths: commandPaths))
                 case .start:
-                    return CLIResult(exitCode: 0, stdout: try NSLogService.start(options: options, paths: paths))
+                    return CLIResult(exitCode: 0, stdout: try NSLogService.start(options: options, paths: commandPaths))
                 case .read:
-                    return CLIResult(exitCode: 0, stdout: try NSLogService.read(options: options, paths: paths))
+                    return CLIResult(exitCode: 0, stdout: try NSLogService.read(options: options, paths: commandPaths))
                 case .stop:
-                    return CLIResult(exitCode: 0, stdout: try NSLogService.stop(paths: paths))
+                    return CLIResult(exitCode: 0, stdout: try NSLogService.stop(paths: commandPaths))
                 }
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
@@ -474,7 +785,7 @@ public struct IOSUseCLI: Sendable {
             }
         case .stop:
             do {
-                let output = try SessionService.stop(paths: paths)
+                let output = try SessionService.stop(paths: commandPaths)
                 if json {
                     let snapshot = StatusService.machineSnapshot(
                         paths: paths
@@ -494,10 +805,10 @@ public struct IOSUseCLI: Sendable {
                 )
             }
         case .proxy(.doctor):
-            return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: paths))
+            return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: commandPaths))
         case .proxy(.configca(let markTrusted)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(markTrusted: markTrusted, paths: paths))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(markTrusted: markTrusted, paths: commandPaths))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -505,7 +816,7 @@ public struct IOSUseCLI: Sendable {
             }
         case .proxy(.start(let interfaceName, let serverOnly)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.start(interfaceName: interfaceName, serverOnly: serverOnly, paths: paths))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.start(interfaceName: interfaceName, serverOnly: serverOnly, paths: commandPaths))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -513,23 +824,35 @@ public struct IOSUseCLI: Sendable {
             }
         case .proxy(.read(let filter, let raw, let last)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.read(filter: filter, raw: raw, last: last, paths: paths))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.read(filter: filter, raw: raw, last: last, paths: commandPaths))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .proxy(.stop(let serverOnly)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(serverOnly: serverOnly, paths: paths))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(serverOnly: serverOnly, paths: commandPaths))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .driver(let action):
-            return executeDriver(action, json: json)
+            return executeDriver(
+                action,
+                paths: commandPaths,
+                json: json
+            )
         case .capture(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try CaptureService.run(options: options, paths: paths))
+                let output = try DeviceCommandLock.withExclusiveLock(
+                    paths: commandPaths
+                ) {
+                    try CaptureService.run(
+                        options: options,
+                        paths: commandPaths
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: output)
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -537,7 +860,14 @@ public struct IOSUseCLI: Sendable {
             }
         case .mediaImport(let options):
             do {
-                let result = try MediaImportService.run(options: options, paths: paths)
+                let result = try DeviceCommandLock.withExclusiveLock(
+                    paths: commandPaths
+                ) {
+                    try MediaImportService.run(
+                        options: options,
+                        paths: commandPaths
+                    )
+                }
                 if json {
                     return MachineOutput.success(
                         command: parsed.commandName,
@@ -602,6 +932,7 @@ public struct IOSUseCLI: Sendable {
 
     private func playCoverRoutingFailure(
         for command: ParsedCommand,
+        paths: IOSUsePaths,
         json: Bool
     ) -> CLIResult? {
         let active: SessionService.Info?
@@ -611,7 +942,7 @@ public struct IOSUseCLI: Sendable {
             )
         } catch {
             switch command {
-            case .du, .status, .config, .start, .stop:
+            case .du, .status, .script, .config, .start, .stop:
                 return nil
             case .open:
                 return commandFailure(
@@ -634,7 +965,7 @@ public struct IOSUseCLI: Sendable {
             return nil
         }
         switch command {
-        case .du, .status, .config, .start, .stop, .capture, .open, .oslog, .debug, .uiTree:
+        case .du, .status, .script, .config, .start, .stop, .capture, .open, .oslog, .debug, .uiTree:
             return nil
         case .mediaImport:
             return nil
@@ -690,24 +1021,53 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    private func executeOpen(_ options: OpenURLOptions, json: Bool, hostDeviceTypeHint: String? = nil) -> CLIResult {
+    private func executeOpen(
+        _ options: OpenURLOptions,
+        paths: IOSUsePaths,
+        json: Bool,
+        hostDeviceTypeHint: String? = nil
+    ) -> CLIResult {
         do {
-            let result: OpenURLService.OpenResult
-            if options.dom {
-                result = try OpenURLService.openWithDom(url: options.url, session: options.session, paths: paths)
-            } else {
-                let validatedURL = try OpenURLService.validatedURL(options.url)
+            let validatedURL = try OpenURLService.validatedURL(
+                options.url
+            )
+            let result = try DeviceCommandLock.withExclusiveLock(
+                paths: paths
+            ) { () throws -> OpenURLService.OpenResult in
+                if options.dom {
+                    return try OpenURLService.openWithDom(
+                        url: validatedURL,
+                        session: options.session,
+                        paths: paths
+                    )
+                }
                 let resolved: OpenURLService.OpenResult?
-                if options.session.udid != nil || hostDeviceTypeHint != nil {
-                    resolved = try OpenURLService.openHostSideIfAvailable(url: validatedURL, udid: options.session.udid, deviceType: hostDeviceTypeHint, paths: paths)
-                        ?? OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
+                if options.session.udid != nil
+                    || hostDeviceTypeHint != nil {
+                    resolved = try OpenURLService
+                        .openHostSideIfAvailable(
+                            url: validatedURL,
+                            udid: options.session.udid,
+                            deviceType: hostDeviceTypeHint,
+                            paths: paths
+                        )
+                        ?? OpenURLService.openHostSideIfAvailable(
+                            url: validatedURL,
+                            session: options.session,
+                            paths: paths
+                        )
                 } else {
-                    resolved = try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
+                    resolved = try OpenURLService
+                        .openHostSideIfAvailable(
+                            url: validatedURL,
+                            session: options.session,
+                            paths: paths
+                        )
                 }
                 guard let resolved else {
                     throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start` first.")
                 }
-                result = resolved
+                return resolved
             }
             var stdout = "\(result.message)\n"
             if let dom = result.dom {
@@ -742,9 +1102,20 @@ public struct IOSUseCLI: Sendable {
             + "Simulator for reliable automation."
     }
 
-    private func executeAppLifecycle(_ options: AppLifecycleOptions, json: Bool) -> CLIResult {
+    private func executeAppLifecycle(
+        _ options: AppLifecycleOptions,
+        paths: IOSUsePaths,
+        json: Bool
+    ) -> CLIResult {
         do {
-            let result = try AppLifecycleService.runWithReadiness(options: options, paths: paths)
+            let result = try DeviceCommandLock.withExclusiveLock(
+                paths: paths
+            ) {
+                try AppLifecycleService.runWithReadiness(
+                    options: options,
+                    paths: paths
+                )
+            }
             var stdout = "\(result.message)\n"
             if let dom = result.dom {
                 stdout += "\n" + DriverOutput.formatDom(dom) + "\n"
@@ -769,7 +1140,11 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    private func executeOSLog(_ options: OSLogOptions, hostDeviceTypeHint: String? = nil) -> CLIResult {
+    private func executeOSLog(
+        _ options: OSLogOptions,
+        paths: IOSUsePaths,
+        hostDeviceTypeHint: String? = nil
+    ) -> CLIResult {
         do {
             let stdout = try OSLogCommandService.run(options: options, paths: paths, hostDeviceTypeHint: hostDeviceTypeHint, outputSink: outputSink)
             if let outputSink, !stdout.isEmpty {
@@ -782,12 +1157,23 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    private func executeDriver(_ action: DriverAction, json: Bool) -> CLIResult {
+    private func executeDriver(
+        _ action: DriverAction,
+        paths: IOSUsePaths,
+        json: Bool
+    ) -> CLIResult {
         let session = LockedDriverClientSession(paths: paths)
         defer { session.close() }
         do {
-            let result = try DriverCommandExecutor.execute(action: action, paths: paths) { body in
-                try session.run(body)
+            let result = try DeviceCommandLock.withExclusiveLock(
+                paths: paths
+            ) {
+                try DriverCommandExecutor.execute(
+                    action: action,
+                    paths: paths
+                ) { body in
+                    try session.run(body)
+                }
             }
             if json {
                 let output = result.machineOutput(for: action)
@@ -811,6 +1197,7 @@ public struct IOSUseCLI: Sendable {
 
     private func executeDebug(
         _ options: DebugOptions,
+        paths: IOSUsePaths,
         json: Bool
     ) -> CLIResult {
         do {
@@ -930,6 +1317,7 @@ public struct IOSUseCLI: Sendable {
 
     private func executeUITree(
         _ options: UITreeOptions,
+        paths: IOSUsePaths,
         json: Bool
     ) -> CLIResult {
         do {

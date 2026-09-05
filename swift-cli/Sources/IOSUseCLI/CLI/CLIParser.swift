@@ -11,7 +11,10 @@ public enum CLIParser {
     }
 
     public static func parseInvocation(_ arguments: [String]) throws -> ParsedInvocation {
-        let (normalizedArguments, json) = extractGlobalJSONFlag(arguments)
+        let (argumentsWithoutJSON, json) = extractGlobalJSONFlag(arguments)
+        let (normalizedArguments, deviceID) = try extractGlobalDeviceFlag(
+            argumentsWithoutJSON
+        )
         var parser = ArgumentParser(normalizedArguments)
         guard let command = parser.consume() else {
             throw CLIParseError.missingCommand
@@ -24,6 +27,8 @@ public enum CLIParser {
             parsed = .du
         case "status":
             parsed = .status(try parseStatus(&parser))
+        case "script":
+            parsed = .script(try parseScript(&parser))
         case "config":
             parsed = .config(try parseConfig(&parser))
         case "start":
@@ -94,7 +99,11 @@ public enum CLIParser {
                 throw CLIParseError.unknownOption("--json")
             }
         }
-        return ParsedInvocation(command: parsed, json: json)
+        return ParsedInvocation(
+            command: parsed,
+            json: json,
+            deviceID: deviceID
+        )
     }
 
     static func extractGlobalJSONFlag(_ arguments: [String]) -> ([String], Bool) {
@@ -104,7 +113,7 @@ public enum CLIParser {
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "--target", "--depth", "-i"
+            "--app", "--target", "--depth", "--device", "--file", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -127,6 +136,49 @@ public enum CLIParser {
         return (normalized, json)
     }
 
+    static func extractGlobalDeviceFlag(
+        _ arguments: [String]
+    ) throws -> ([String], String?) {
+        let valueOptions: Set<String> = [
+            "--udid", "--path", "--name", "--pattern",
+            "--flags", "--timeout", "--last", "--capture-mode",
+            "--filter", "--interface", "--offset", "--offset-ratio",
+            "--traits", "--cindex", "--duration", "--tap", "--label",
+            "--content", "--delete", "--to", "--from", "--dir",
+            "--distance", "--match", "--fps", "--index", "--process",
+            "--pid", "--output", "--runtime", "--app", "--target",
+            "--depth", "--file", "-i",
+        ]
+        var normalized: [String] = []
+        var deviceID: String?
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "--device" {
+                guard deviceID == nil else {
+                    throw CLIParseError.invalidValue(
+                        "--device may only be provided once"
+                    )
+                }
+                index += 1
+                guard index < arguments.count,
+                      !arguments[index].isEmpty else {
+                    throw CLIParseError.missingOptionValue("--device")
+                }
+                deviceID = arguments[index]
+                index += 1
+                continue
+            }
+            normalized.append(argument)
+            if valueOptions.contains(argument), index + 1 < arguments.count {
+                index += 1
+                normalized.append(arguments[index])
+            }
+            index += 1
+        }
+        return (normalized, deviceID)
+    }
+
     private static func parseStatus(_ parser: inout ArgumentParser) throws -> StatusOptions {
         var options = StatusOptions()
         while let arg = parser.consume() {
@@ -136,6 +188,32 @@ public enum CLIParser {
             }
         }
         return options
+    }
+
+    private static func parseScript(
+        _ parser: inout ArgumentParser
+    ) throws -> ScriptOptions {
+        guard let first = parser.consume() else {
+            return ScriptOptions(source: .repl)
+        }
+
+        let source: ScriptSource
+        switch first {
+        case "--file":
+            let path = try parser.valueAllowingLeadingDash(for: first)
+            guard !path.isEmpty else {
+                throw CLIParseError.invalidValue(
+                    "--file requires a non-empty path"
+                )
+            }
+            source = .file(path)
+        case "-":
+            source = .standardInput
+        default:
+            source = .inline(first)
+        }
+        try parser.requireEnd()
+        return ScriptOptions(source: source)
     }
 
     private static func parseConfig(_ parser: inout ArgumentParser) throws -> ConfigOptions {

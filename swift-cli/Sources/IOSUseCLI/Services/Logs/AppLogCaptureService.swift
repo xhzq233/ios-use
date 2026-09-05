@@ -43,16 +43,22 @@ enum AppLogCaptureService {
         let logFile = "\(paths.logs)/\(safeLogFileStem(bundleID))-\(nowSeconds()).log"
         FileManager.default.createFile(atPath: logFile, contents: nil)
 
+        var helperArguments = [
+            helperCommandName,
+            "--device-type", deviceType,
+            "--udid", udid,
+            "--bundle-id", bundleID,
+            "--log-file", logFile,
+            "--home", paths.root,
+        ]
+        if let deviceID = paths.deviceID {
+            helperArguments.append(
+                contentsOf: ["--device", deviceID]
+            )
+        }
         let request = HelperLaunchRequest(
             executablePath: try executablePath(),
-            arguments: [
-                helperCommandName,
-                "--device-type", deviceType,
-                "--udid", udid,
-                "--bundle-id", bundleID,
-                "--log-file", logFile,
-                "--home", paths.root,
-            ],
+            arguments: helperArguments,
             environment: ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new },
             stderrPath: CLILogService.logPath(paths: paths)
         )
@@ -66,8 +72,14 @@ enum AppLogCaptureService {
         )
     }
 
-    static func runHelper(arguments: [String], paths: IOSUsePaths) throws -> String {
+    static func runHelper(
+        arguments: [String],
+        paths basePaths: IOSUsePaths
+    ) throws -> String {
         let options = try parseHelperOptions(arguments)
+        let paths = try options.deviceID.map {
+            try basePaths.deviceContext($0)
+        } ?? basePaths
         if let home = options.home, standardizedPath(home) != standardizedPath(paths.root) {
             throw CLIParseError.invalidValue("app log helper home mismatch: \(home) != \(paths.root)")
         }
@@ -373,6 +385,7 @@ enum AppLogCaptureService {
         var bundleID: String?
         var logFile: String?
         var home: String?
+        var deviceID: String?
         while let arg = parser.consume() {
             switch arg {
             case "--device-type": deviceType = try parser.value(for: arg)
@@ -380,6 +393,7 @@ enum AppLogCaptureService {
             case "--bundle-id": bundleID = try parser.value(for: arg)
             case "--log-file": logFile = try parser.value(for: arg)
             case "--home": home = try parser.value(for: arg)
+            case "--device": deviceID = try parser.value(for: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
@@ -388,7 +402,8 @@ enum AppLogCaptureService {
             udid: try require(udid, option: "--udid"),
             bundleID: try require(bundleID, option: "--bundle-id"),
             logFile: try require(logFile, option: "--log-file"),
-            home: home
+            home: home,
+            deviceID: deviceID
         )
     }
 
@@ -496,4 +511,5 @@ private struct HelperOptions {
     var bundleID: String
     var logFile: String
     var home: String?
+    var deviceID: String?
 }

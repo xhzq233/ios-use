@@ -108,7 +108,7 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 64)
         XCTAssertTrue(result.stderr.contains("unknown option '--not-a-real-option'"))
-        XCTAssertTrue(result.stderr.contains("Usage: ios-use [--help] [--version] <command>"))
+        XCTAssertTrue(result.stderr.contains("Usage: ios-use [--help] [--version] [--device <device-id>] <command>"))
         XCTAssertTrue(result.stdout.isEmpty)
     }
 

@@ -7,6 +7,7 @@ import Darwin
 public struct IOSUsePaths: Equatable, Sendable {
     public let root: String
     public let hasExplicitHome: Bool
+    public let deviceID: String?
     public let config: String
     public let session: String
     public let driverLock: String
@@ -147,6 +148,7 @@ public struct IOSUsePaths: Equatable, Sendable {
         return IOSUsePaths(
             root: configured.root,
             hasExplicitHome: configured.hasExplicitHome,
+            deviceID: nil,
             config: "\(configured.root)/config.json",
             session: "\(configured.root)/state/session.json",
             driverLock: "\(configured.root)/state/driver.lock",
@@ -181,6 +183,45 @@ public struct IOSUsePaths: Equatable, Sendable {
             playcoverPlayChain: playChain,
             playcoverSigningBinding:
                 "\(accountApplicationSupportRoot)/mac-stable-signing-binding-v1.json",
+        )
+    }
+
+    func deviceContext(_ deviceID: String) throws -> IOSUsePaths {
+        let validated = try DeviceContextStore.validateDeviceID(deviceID)
+        let stateRoot = "\(root)/state/devices/\(validated)"
+        let logRoot = "\(root)/logs/devices/\(validated)"
+        let artifactRoot = "\(root)/artifacts/devices/\(validated)"
+        return IOSUsePaths(
+            root: root,
+            hasExplicitHome: hasExplicitHome,
+            deviceID: validated,
+            config: config,
+            session: "\(stateRoot)/session.json",
+            driverLock: "\(stateRoot)/driver.lock",
+            nslogLock: "\(stateRoot)/nslog.lock",
+            nslogState: "\(stateRoot)/nslog-state.json",
+            appLogState: "\(stateRoot)/app-log.json",
+            logs: logRoot,
+            artifacts: artifactRoot,
+            playcover: playcover,
+            playcoverRun: playcoverRun,
+            playcoverLogs: logRoot,
+            playcoverLaunching: playcoverLaunching,
+            playcoverCurrentBundle: playcoverCurrentBundle,
+            playcoverApps: playcoverApps,
+            playcoverLocks: playcoverLocks,
+            playcoverLegacyPrepared: playcoverLegacyPrepared,
+            playcoverLegacyLaunchFacades: playcoverLegacyLaunchFacades,
+            playcoverHomeID: playcoverHomeID,
+            accountCacheRoot: accountCacheRoot,
+            accountApplicationSupportRoot:
+                accountApplicationSupportRoot,
+            knownHomes: knownHomes,
+            playcoverFridaSourceCache: playcoverFridaSourceCache,
+            playcoverFridaBuildCache: playcoverFridaBuildCache,
+            playcoverSocketRoot: playcoverSocketRoot,
+            playcoverPlayChain: playcoverPlayChain,
+            playcoverSigningBinding: playcoverSigningBinding
         )
     }
 

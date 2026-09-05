@@ -192,7 +192,16 @@ enum DriverLifecycleService {
     ) throws -> LaunchMetadata {
         let stateDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true, attributes: nil)
-        let controlSocket = "\(stateDir)/xctest-holder-\(UUID().uuidString).sock"
+        try FileManager.default.createDirectory(
+            atPath: paths.playcoverSocketRoot,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let socketToken = UUID().uuidString.replacingOccurrences(
+            of: "-",
+            with: ""
+        )
+        let controlSocket = "\(paths.playcoverSocketRoot)/x-\(socketToken).sock"
         try? FileManager.default.removeItem(atPath: controlSocket)
 
         let process = Process()
@@ -203,6 +212,9 @@ enum DriverLifecycleService {
             "--bundle-id", bundleId,
             "--control-socket", controlSocket,
         ]
+        if let deviceID = paths.deviceID {
+            arguments.append(contentsOf: ["--device", deviceID])
+        }
         if verbose {
             arguments.append("--verbose")
         }

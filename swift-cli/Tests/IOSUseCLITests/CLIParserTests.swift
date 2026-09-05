@@ -977,4 +977,66 @@ final class CLIParserTests: XCTestCase {
             ParsedInvocation(command: .config(ConfigOptions(list: true)), json: true)
         )
     }
+
+    func testParsesScriptSourcesWithoutGuessingFilePaths() throws {
+        XCTAssertEqual(
+            try CLIParser.parse(["script"]),
+            .script(ScriptOptions(source: .repl))
+        )
+        XCTAssertEqual(
+            try CLIParser.parse(["script", ""]),
+            .script(ScriptOptions(source: .inline("")))
+        )
+        XCTAssertEqual(
+            try CLIParser.parse(["script", "await mobile.getState()"]),
+            .script(
+                ScriptOptions(
+                    source: .inline("await mobile.getState()")
+                )
+            )
+        )
+        XCTAssertEqual(
+            try CLIParser.parse(["script", "--file", "task.js"]),
+            .script(ScriptOptions(source: .file("task.js")))
+        )
+        XCTAssertEqual(
+            try CLIParser.parse(["script", "-"]),
+            .script(ScriptOptions(source: .standardInput))
+        )
+        XCTAssertThrowsError(
+            try CLIParser.parse(["script", "task.js", "extra"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .unexpectedArgument("extra")
+            )
+        }
+    }
+
+    func testParsesGlobalDeviceSelection() throws {
+        XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "--device",
+                "real:DEVICE-1",
+                "--json",
+                "dom",
+            ]),
+            ParsedInvocation(
+                command: .driver(
+                    .dom(raw: false, fresh: false, waitQuiescence: false)
+                ),
+                json: true,
+                deviceID: "real:DEVICE-1"
+            )
+        )
+        XCTAssertThrowsError(
+            try CLIParser.parseInvocation([
+                "dom",
+                "--device",
+                "real:DEVICE-1",
+                "--device",
+                "real:DEVICE-2",
+            ])
+        )
+    }
 }
