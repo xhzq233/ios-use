@@ -27,8 +27,8 @@ public enum CLIParser {
             parsed = .du
         case "status":
             parsed = .status(try parseStatus(&parser))
-        case "script":
-            parsed = .script(try parseScript(&parser))
+        case "repl":
+            parsed = .repl(try parseRepl(&parser))
         case "config":
             parsed = .config(try parseConfig(&parser))
         case "start":
@@ -190,14 +190,14 @@ public enum CLIParser {
         return options
     }
 
-    private static func parseScript(
+    private static func parseRepl(
         _ parser: inout ArgumentParser
-    ) throws -> ScriptOptions {
+    ) throws -> ReplOptions {
         guard let first = parser.consume() else {
-            return ScriptOptions(source: .repl)
+            return ReplOptions(source: .repl)
         }
 
-        let source: ScriptSource
+        let source: ReplSource
         switch first {
         case "--file":
             let path = try parser.valueAllowingLeadingDash(for: first)
@@ -213,7 +213,7 @@ public enum CLIParser {
             source = .inline(first)
         }
         try parser.requireEnd()
-        return ScriptOptions(source: source)
+        return ReplOptions(source: source)
     }
 
     private static func parseConfig(_ parser: inout ArgumentParser) throws -> ConfigOptions {

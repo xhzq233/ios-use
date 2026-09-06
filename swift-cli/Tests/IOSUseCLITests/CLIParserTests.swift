@@ -978,33 +978,33 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
-    func testParsesScriptSourcesWithoutGuessingFilePaths() throws {
+    func testParsesReplSourcesWithoutGuessingFilePaths() throws {
         XCTAssertEqual(
-            try CLIParser.parse(["script"]),
-            .script(ScriptOptions(source: .repl))
+            try CLIParser.parse(["repl"]),
+            .repl(ReplOptions(source: .repl))
         )
         XCTAssertEqual(
-            try CLIParser.parse(["script", ""]),
-            .script(ScriptOptions(source: .inline("")))
+            try CLIParser.parse(["repl", ""]),
+            .repl(ReplOptions(source: .inline("")))
         )
         XCTAssertEqual(
-            try CLIParser.parse(["script", "await mobile.getState()"]),
-            .script(
-                ScriptOptions(
-                    source: .inline("await mobile.getState()")
+            try CLIParser.parse(["repl", "await cua.getState()"]),
+            .repl(
+                ReplOptions(
+                    source: .inline("await cua.getState()")
                 )
             )
         )
         XCTAssertEqual(
-            try CLIParser.parse(["script", "--file", "task.js"]),
-            .script(ScriptOptions(source: .file("task.js")))
+            try CLIParser.parse(["repl", "--file", "task.js"]),
+            .repl(ReplOptions(source: .file("task.js")))
         )
         XCTAssertEqual(
-            try CLIParser.parse(["script", "-"]),
-            .script(ScriptOptions(source: .standardInput))
+            try CLIParser.parse(["repl", "-"]),
+            .repl(ReplOptions(source: .standardInput))
         )
         XCTAssertThrowsError(
-            try CLIParser.parse(["script", "task.js", "extra"])
+            try CLIParser.parse(["repl", "task.js", "extra"])
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,

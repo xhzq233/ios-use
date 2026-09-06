@@ -21,7 +21,7 @@ public enum ParsedCommand: Equatable, Sendable {
     case proxy(ProxyCommand)
     case debug(DebugOptions)
     case uiTree(UITreeOptions)
-    case script(ScriptOptions)
+    case repl(ReplOptions)
 
     public var commandName: String {
         switch self {
@@ -44,7 +44,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .proxy(let command): return "proxy \(command.subcommand)"
         case .debug: return "debug"
         case .uiTree: return "ui-tree"
-        case .script: return "script"
+        case .repl: return "repl"
         }
     }
 }
@@ -73,17 +73,17 @@ public struct StatusOptions: Equatable, Sendable {
     }
 }
 
-public enum ScriptSource: Equatable, Sendable {
+public enum ReplSource: Equatable, Sendable {
     case inline(String)
     case file(String)
     case standardInput
     case repl
 }
 
-public struct ScriptOptions: Equatable, Sendable {
-    public var source: ScriptSource
+public struct ReplOptions: Equatable, Sendable {
+    public var source: ReplSource
 
-    public init(source: ScriptSource) {
+    public init(source: ReplSource) {
         self.source = source
     }
 }

@@ -1,0 +1,786 @@
+import Darwin
+import Foundation
+
+final class ReplDriverSessionPool: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sessions: [String: LockedDriverClientSession] = [:]
+
+    func session(paths: IOSUsePaths) -> LockedDriverClientSession {
+        lock.lock()
+        defer { lock.unlock() }
+        if let existing = sessions[paths.root] {
+            return existing
+        }
+        let created = LockedDriverClientSession(paths: paths)
+        sessions[paths.root] = created
+        return created
+    }
+
+    func close() {
+        lock.lock()
+        let current = Array(sessions.values)
+        sessions.removeAll()
+        lock.unlock()
+        current.forEach { $0.close() }
+    }
+
+    deinit {
+        close()
+    }
+}
+
+private struct ReplRPCRequest: Decodable {
+    let id: Int
+    let arguments: [String]?
+    let imagePath: String?
+}
+
+private struct ReplRPCResponse: Encodable {
+    let id: Int
+    let exitCode: Int32
+    let stdout: String
+    let stderr: String
+    let imageBase64: String?
+}
+
+private final class ReplRPCServer: @unchecked Sendable {
+    let port: Int
+
+    private let paths: IOSUsePaths
+    private let listenerFD: Int32
+    private let stateLock = NSLock()
+    private let writeLock = NSLock()
+    private let work = DispatchGroup()
+    private let pool = ReplDriverSessionPool()
+    private var clientFD: Int32 = -1
+    private var stopped = false
+
+    init(paths: IOSUsePaths) throws {
+        self.paths = paths
+        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            throw CLIParseError.invalidValue("failed to create REPL host socket")
+        }
+        listenerFD = fd
+        setSocketNoSigPipe(fd)
+
+        var one: Int32 = 1
+        _ = setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            &one,
+            socklen_t(MemoryLayout<Int32>.size)
+        )
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(
+                    fd,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_in>.size)
+                )
+            }
+        }
+        guard bound == 0, Darwin.listen(fd, 1) == 0 else {
+            let value = errno
+            Darwin.close(fd)
+            throw CLIParseError.invalidValue(
+                "failed to bind REPL host socket: errno \(value)"
+            )
+        }
+        var actual = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let inspected = withUnsafeMutablePointer(to: &actual) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.getsockname(fd, $0, &length)
+            }
+        }
+        guard inspected == 0 else {
+            let value = errno
+            Darwin.close(fd)
+            throw CLIParseError.invalidValue(
+                "failed to inspect REPL host socket: errno \(value)"
+            )
+        }
+        port = Int(UInt16(bigEndian: actual.sin_port))
+    }
+
+    func start() {
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let accepted = Darwin.accept(listenerFD, nil, nil)
+            guard accepted >= 0 else { return }
+            setSocketNoSigPipe(accepted)
+            stateLock.lock()
+            if stopped {
+                stateLock.unlock()
+                Darwin.close(accepted)
+                return
+            }
+            clientFD = accepted
+            stateLock.unlock()
+            defer {
+                stateLock.lock()
+                let ownsClient = clientFD == accepted
+                if ownsClient {
+                    clientFD = -1
+                }
+                stateLock.unlock()
+                if ownsClient {
+                    Darwin.shutdown(accepted, SHUT_RDWR)
+                    Darwin.close(accepted)
+                }
+            }
+            readRequests(from: accepted)
+        }
+    }
+
+    func stop() {
+        stateLock.lock()
+        if stopped {
+            stateLock.unlock()
+            return
+        }
+        stopped = true
+        let client = clientFD
+        clientFD = -1
+        stateLock.unlock()
+        Darwin.shutdown(listenerFD, SHUT_RDWR)
+        Darwin.close(listenerFD)
+        if client >= 0 {
+            Darwin.shutdown(client, SHUT_RDWR)
+            Darwin.close(client)
+        }
+        work.wait()
+        pool.close()
+    }
+
+    private func readRequests(from descriptor: Int32) {
+        var pending = Data()
+        var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+        while true {
+            let count = Darwin.read(descriptor, &buffer, buffer.count)
+            guard count > 0 else { break }
+            pending.append(contentsOf: buffer.prefix(count))
+            while let newline = pending.firstIndex(of: 0x0A) {
+                let line = Data(pending[..<newline])
+                pending.removeSubrange(...newline)
+                guard !line.isEmpty else { continue }
+                work.enter()
+                DispatchQueue.global(qos: .userInitiated).async { [self] in
+                    defer { work.leave() }
+                    handle(line, descriptor: descriptor)
+                }
+            }
+        }
+    }
+
+    private func handle(_ data: Data, descriptor: Int32) {
+        let response: ReplRPCResponse
+        do {
+            let request = try JSONDecoder().decode(ReplRPCRequest.self, from: data)
+            if let arguments = request.arguments {
+                let cli = IOSUseCLI(
+                    pathsForTesting: paths,
+                    replDriverSessions: pool
+                )
+                let result = cli.run(arguments: arguments)
+                response = ReplRPCResponse(
+                    id: request.id,
+                    exitCode: result.exitCode,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    imageBase64: nil
+                )
+            } else if let imagePath = request.imagePath {
+                let root = URL(fileURLWithPath: paths.root)
+                    .standardizedFileURL.path
+                let candidate = URL(fileURLWithPath: imagePath)
+                    .standardizedFileURL.path
+                guard candidate.hasPrefix(root + "/") else {
+                    throw CLIParseError.invalidValue(
+                        "REPL image path is outside IOS_USE_HOME"
+                    )
+                }
+                let image = try Data(contentsOf: URL(fileURLWithPath: candidate))
+                response = ReplRPCResponse(
+                    id: request.id,
+                    exitCode: 0,
+                    stdout: "",
+                    stderr: "",
+                    imageBase64: image.base64EncodedString()
+                )
+            } else {
+                throw CLIParseError.invalidValue("invalid REPL host request")
+            }
+        } catch {
+            let requestID = (try? JSONDecoder().decode(
+                ReplRPCRequest.self,
+                from: data
+            ).id) ?? 0
+            response = ReplRPCResponse(
+                id: requestID,
+                exitCode: 1,
+                stdout: "",
+                stderr: "\(error)",
+                imageBase64: nil
+            )
+        }
+        do {
+            var encoded = try JSONEncoder().encode(response)
+            encoded.append(0x0A)
+            writeLock.lock()
+            defer { writeLock.unlock() }
+            try writeAll(fd: descriptor, data: encoded)
+        } catch {
+            return
+        }
+    }
+}
+
+enum ReplRuntimeService {
+    static func run(options: ReplOptions, paths: IOSUsePaths) -> CLIResult {
+        do {
+            let server = try ReplRPCServer(paths: paths)
+            let source = try sourcePayload(options.source)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [
+                "node",
+                "--permission",
+                "--input-type=module",
+                "-e",
+                javaScriptSource,
+                "--",
+                source.mode,
+                String(server.port),
+                Data(source.code.utf8).base64EncodedString(),
+                source.filename,
+            ]
+            let environment = ProcessInfo.processInfo.environment
+            process.environment = [
+                "PATH": environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin",
+                "LANG": environment["LANG"] ?? "en_US.UTF-8",
+                "LC_ALL": environment["LC_ALL"] ?? "en_US.UTF-8",
+                "NODE_NO_WARNINGS": "1",
+            ]
+            process.standardInput = FileHandle.standardInput
+            process.standardOutput = FileHandle.standardOutput
+            process.standardError = FileHandle.standardError
+            server.start()
+            try process.run()
+            process.waitUntilExit()
+            server.stop()
+            return CLIResult(exitCode: process.terminationStatus)
+        } catch {
+            return CLIErrorEnvelope(
+                message: "Unable to start the ios-use REPL. Install Node.js and retry: \(error)",
+                exitCode: 1
+            ).render()
+        }
+    }
+
+    private static func sourcePayload(
+        _ source: ReplSource
+    ) throws -> (mode: String, code: String, filename: String) {
+        switch source {
+        case .inline(let code):
+            return ("once", code, "<ios-use-repl>")
+        case .file(let path):
+            return (
+                "once",
+                try String(contentsOfFile: path, encoding: .utf8),
+                path
+            )
+        case .standardInput:
+            let data = FileHandle.standardInput.readDataToEndOfFile()
+            guard let code = String(data: data, encoding: .utf8) else {
+                throw CLIParseError.invalidValue("REPL stdin must be UTF-8")
+            }
+            return ("once", code, "<stdin>")
+        case .repl:
+            return ("interactive", "", "<ios-use-repl>")
+        }
+    }
+
+    static let javaScriptSource = #"""
+    import net from "node:net";
+    import repl from "node:repl";
+    import { registerHooks } from "node:module";
+    import { PassThrough } from "node:stream";
+    import { inspect } from "node:util";
+
+    const [mode, portValue, payloadBase64 = "", filename = "<ios-use-repl>"] = process.argv.slice(1);
+    const source = Buffer.from(payloadBase64, "base64").toString("utf8");
+    const socket = net.createConnection({ host: "127.0.0.1", port: Number(portValue) });
+    const pending = new Map();
+    const imagePaths = new WeakMap();
+    let nextID = 1;
+    let incoming = "";
+
+    const connected = new Promise((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
+    });
+
+    socket.on("data", chunk => {
+      incoming += chunk.toString("utf8");
+      for (;;) {
+        const newline = incoming.indexOf("\n");
+        if (newline < 0) break;
+        const line = incoming.slice(0, newline);
+        incoming = incoming.slice(newline + 1);
+        if (!line) continue;
+        const response = JSON.parse(line);
+        const completion = pending.get(response.id);
+        if (!completion) continue;
+        pending.delete(response.id);
+        completion.resolve(response);
+      }
+    });
+    socket.on("error", error => {
+      for (const completion of pending.values()) completion.reject(error);
+      pending.clear();
+    });
+    socket.on("close", () => {
+      const error = new Error("ios-use REPL host disconnected");
+      for (const completion of pending.values()) completion.reject(error);
+      pending.clear();
+    });
+
+    async function rpc(payload) {
+      await connected;
+      const id = nextID++;
+      return await new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        socket.write(JSON.stringify({ id, ...payload }) + "\n", error => {
+          if (!error) return;
+          pending.delete(id);
+          reject(error);
+        });
+      });
+    }
+
+    class IOSUseCommandError extends Error {
+      constructor(envelope, fallback) {
+        super(envelope?.error?.message ?? fallback ?? "ios-use command failed");
+        this.name = "IOSUseCommandError";
+        this.command = envelope?.command ?? null;
+        this.code = envelope?.error?.code ?? null;
+        this.category = envelope?.error?.category ?? null;
+        this.retryable = envelope?.error?.retryable ?? false;
+        this.mutationMayHaveApplied = envelope?.error?.mutationMayHaveApplied ?? false;
+        this.data = envelope?.data ?? null;
+        this.interaction = envelope?.interaction ?? null;
+        this.warnings = envelope?.warnings ?? [];
+      }
+    }
+
+    function decodeEnvelope(text) {
+      const value = String(text ?? "").trim();
+      if (!value) return null;
+      try {
+        const decoded = JSON.parse(value);
+        return typeof decoded === "object" && decoded !== null ? decoded : null;
+      } catch {
+        return null;
+      }
+    }
+
+    async function runCLI(deviceId, command, args = []) {
+      const argv = ["--json"];
+      if (deviceId !== null) argv.push("--device", deviceId);
+      argv.push(command, ...args.map(String));
+      const result = await rpc({ arguments: argv });
+      const envelope = decodeEnvelope(result.stdout) ?? decodeEnvelope(result.stderr);
+      if (!envelope) {
+        throw new IOSUseCommandError(null, result.stderr || `${command} did not return JSON`);
+      }
+      if (result.exitCode !== 0 || !envelope.ok) {
+        throw new IOSUseCommandError(envelope, result.stderr);
+      }
+      return envelope.data;
+    }
+
+    function textValue(value) {
+      return typeof value === "string" ? value.trim() : "";
+    }
+
+    function elementText(element) {
+      return textValue(element.label) || textValue(element.value) || textValue(element.identifier);
+    }
+
+    function elementKey(element) {
+      const identifier = textValue(element.identifier);
+      if (identifier) return `id:${identifier}`;
+      const label = textValue(element.label);
+      if (/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$/.test(label)) return `label-id:${label}`;
+      const path = Array.isArray(element.hierarchy?.path) ? element.hierarchy.path.join("/") : "";
+      if (path) return `path:${path}`;
+      return [element.semanticType, element.hierarchy?.depth, element.hierarchy?.index]
+        .map(value => String(value ?? ""))
+        .join("|");
+    }
+
+    function keyedElements(elements) {
+      const occurrences = new Map();
+      return elements.map((element, index) => {
+        const base = elementKey(element);
+        const occurrence = occurrences.get(base) ?? 0;
+        occurrences.set(base, occurrence + 1);
+        return { key: `${base}#${occurrence}`, element, index };
+      });
+    }
+
+    function elementSignature(element) {
+      return JSON.stringify([
+        element.semanticType,
+        element.label,
+        element.value,
+        element.identifier,
+        element.traits,
+        element.frame,
+        element.state,
+      ]);
+    }
+
+    function projectElement(element, index) {
+      const traits = Array.isArray(element.traits) ? element.traits : [];
+      return {
+        element_index: index,
+        role: textValue(element.semanticType) || textValue(element.type) || "Element",
+        label: textValue(element.label),
+        value: textValue(element.value),
+        identifier: textValue(element.identifier),
+        traits,
+        frame: Array.isArray(element.frame) ? element.frame : null,
+        enabled: element.state?.enabled ?? null,
+        selected: element.state?.selected ?? null,
+        focused: element.state?.focused ?? null,
+      };
+    }
+
+    function shortText(value) {
+      const normalized = textValue(value).replaceAll(/\s+/g, " ");
+      return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
+    }
+
+    function formatElement(element, marker = " ") {
+      const fields = [];
+      const label = shortText(element.label);
+      const value = shortText(element.value);
+      if (label) fields.push(JSON.stringify(label));
+      if (value && value !== label) fields.push(`value=${JSON.stringify(value)}`);
+      if (!label && !value && element.identifier) fields.push(`id=${JSON.stringify(element.identifier)}`);
+      if (element.enabled === false) fields.push("disabled");
+      if (element.selected === true) fields.push("selected");
+      if (element.focused === true) fields.push("focused");
+      return `${marker}[${element.element_index}] ${element.role}${fields.length ? ` ${fields.join(" ")}` : ""}`;
+    }
+
+    const nodeRepl = Object.freeze({
+      write(value) {
+        const rendered = typeof value === "string" ? value : inspect(value, {
+          colors: process.stdout.isTTY,
+          depth: 8,
+          maxArrayLength: 200,
+          breakLength: 100,
+        });
+        process.stdout.write(rendered + (rendered.endsWith("\n") ? "" : "\n"));
+      },
+      async emitImage(image) {
+        const path = imagePaths.get(image) ?? image?.path;
+        if (path) process.stdout.write(`Image: ${path}\n`);
+        else if (image instanceof Uint8Array) process.stdout.write(`Image: <${image.byteLength} bytes>\n`);
+        else throw new TypeError("nodeRepl.emitImage expects screenshot bytes");
+      },
+    });
+
+    class DeviceHandle {
+      #current = null;
+      #previous = null;
+
+      constructor(info) {
+        Object.assign(this, info);
+      }
+
+      help() {
+        return [
+          "await device.getAXState()",
+          "await device.getScreenshot()",
+          "await device.getAXStateAndScreenshot()",
+          "await device.click(element_index|string|[x,y])",
+          "await device.setValue(element_index|string, value)",
+          "await device.typeText(value)",
+          "await device.pressKey(\"Return\")",
+          "await device.scroll(element_index|[x,y], \"down\", 1)",
+        ].join("\n");
+      }
+
+      async refresh() {
+        const state = await cua.getState({ emit: false });
+        const info = state.devices.find(device => device.id === this.id);
+        if (!info) throw new Error(`Device ${this.id} is no longer known to ios-use`);
+        Object.assign(this, info);
+        return this;
+      }
+
+      async getAXState(options = {}) {
+        if (options.disableDiffing === true) this.#previous = null;
+        const data = await runCLI(this.id, "dom", ["--fresh"]);
+        const rawElements = Array.isArray(data.elements) ? data.elements : [];
+        const elements = rawElements.map(projectElement);
+        const previousEntries = keyedElements(this.#previous?.rawElements ?? []);
+        const currentEntries = keyedElements(rawElements);
+        const previousByKey = new Map(previousEntries.map(entry => [entry.key, entry.element]));
+        const currentKeys = new Set();
+        const markers = [];
+        currentEntries.forEach(({ key, element }) => {
+          currentKeys.add(key);
+          const prior = previousByKey.get(key);
+          markers.push(!prior ? "+" : elementSignature(prior) !== elementSignature(element) ? "~" : " ");
+        });
+        const removed = previousEntries
+          .filter(entry => !currentKeys.has(entry.key))
+          .map(entry => formatElement(projectElement(entry.element, entry.index), "-"));
+        this.#current = { rawElements, elements };
+        this.#previous = { rawElements };
+        const header = `Device ${this.id} ${data.app?.bundleId ?? ""}`.trim();
+        const state = [header, ...removed, ...elements.map((element, index) => formatElement(element, markers[index]))]
+          .filter(Boolean)
+          .join("\n");
+        if (options.emit !== false) nodeRepl.write(state);
+        return state;
+      }
+
+      async getScreenshot(options = {}) {
+        const data = await runCLI(this.id, "screenshot", ["--no-ocr"]);
+        const response = await rpc({ imagePath: data.imagePath });
+        if (response.exitCode !== 0 || !response.imageBase64) {
+          throw new Error(response.stderr || "ios-use screenshot bytes unavailable");
+        }
+        const bytes = Uint8Array.from(Buffer.from(response.imageBase64, "base64"));
+        Object.defineProperty(bytes, "path", { value: data.imagePath, enumerable: false });
+        imagePaths.set(bytes, data.imagePath);
+        if (options.emit !== false) await nodeRepl.emitImage(bytes);
+        return bytes;
+      }
+
+      async getAXStateAndScreenshot(options = {}) {
+        const state = await this.getAXState({ ...options, emit: false });
+        const screenshot = await this.getScreenshot({ emit: false });
+        if (options.emit !== false) {
+          nodeRepl.write(state);
+          await nodeRepl.emitImage(screenshot);
+        }
+        return { state, screenshot };
+      }
+
+      async click(target) {
+        const resolved = this.#resolveTarget(target);
+        try {
+          return await runCLI(this.id, "tap", [resolved.target]);
+        } finally {
+          this.#current = null;
+        }
+      }
+
+      async setValue(target, value) {
+        const resolved = this.#resolveTarget(target);
+        const args = ["--tap", resolved.target, "--content", String(value)];
+        const deleteCount = Array.from(resolved.element?.value ?? "").length;
+        if (deleteCount > 0) args.push("--delete", String(deleteCount));
+        try {
+          return await runCLI(this.id, "input", args);
+        } finally {
+          this.#current = null;
+        }
+      }
+
+      async typeText(value) {
+        try {
+          return await runCLI(this.id, "input", ["--content", String(value)]);
+        } finally {
+          this.#current = null;
+        }
+      }
+
+      async paste(value) {
+        return await this.typeText(value);
+      }
+
+      async pressKey(key) {
+        if (String(key).toLowerCase() !== "return") {
+          throw new TypeError("ios-use currently supports pressKey(\"Return\") only");
+        }
+        try {
+          return await runCLI(this.id, "input", ["--content", "", "--enter"]);
+        } finally {
+          this.#current = null;
+        }
+      }
+
+      async scroll(target, direction = "down", pages = 1) {
+        const directions = { down: "forth", right: "forth", d: "forth", r: "forth", up: "back", left: "back", u: "back", l: "back" };
+        const mapped = directions[String(direction).toLowerCase()];
+        if (!mapped) throw new TypeError("scroll direction must be up, down, left, or right");
+        const count = Math.max(1, Math.trunc(Number(pages) || 1));
+        const args = ["--dir", mapped];
+        if (target !== undefined && target !== null) args.push("--from", this.#resolveTarget(target).target);
+        let result;
+        try {
+          for (let index = 0; index < count; index += 1) result = await runCLI(this.id, "swipe", args);
+          return result;
+        } finally {
+          this.#current = null;
+        }
+      }
+
+      get(selector) {
+        if (!this.#current) throw new Error("No current AX state. Call await device.getAXState() first.");
+        if (selector === undefined) return this.#current.elements.slice();
+        if (Number.isInteger(selector)) {
+          const element = this.#current.elements[selector];
+          if (!element) throw new RangeError(`Unknown element_index ${selector}`);
+          return element;
+        }
+        const query = String(selector).trim().toLocaleLowerCase();
+        return this.#current.elements.filter(element =>
+          [element.label, element.value, element.identifier, element.role]
+            .some(value => String(value ?? "").toLocaleLowerCase().includes(query))
+        );
+      }
+
+      #resolveTarget(target) {
+        if (target && typeof target === "object" && Number.isInteger(target.element_index)) target = target.element_index;
+        if (Number.isInteger(target)) {
+          if (!this.#current) throw new Error("element_index is stale. Call await device.getAXState() first.");
+          const element = this.#current.elements[target];
+          if (!element) throw new RangeError(`Unknown element_index ${target}`);
+          const text = elementText(element);
+          const exactMatches = this.#current.elements.filter(candidate =>
+            [candidate.label, candidate.value, candidate.identifier].some(value => textValue(value) === text)
+          ).length;
+          if (text && exactMatches === 1 && element.enabled !== false) return { target: text, element };
+          if (Array.isArray(element.frame) && element.frame.length === 4) {
+            const [x, y, width, height] = element.frame.map(Number);
+            return { target: `${x + width / 2},${y + height / 2}`, element };
+          }
+          throw new Error(`element_index ${target} has no usable target`);
+        }
+        if (typeof target === "string" && target.length > 0) return { target, element: null };
+        const point = Array.isArray(target) ? target : target && typeof target === "object" ? [target.x, target.y] : null;
+        if (point?.length === 2 && point.every(value => Number.isFinite(Number(value)))) {
+          return { target: `${Number(point[0])},${Number(point[1])}`, element: null };
+        }
+        throw new TypeError("target must be an element_index, semantic text, or [x, y]");
+      }
+
+      toJSON() {
+        return { id: this.id, kind: this.kind, name: this.name, version: this.version, connected: this.connected, configured: this.configured, driver: this.driver };
+      }
+    }
+
+    class CUARoot {
+      #state = null;
+
+      help() {
+        return [
+          "await cua.getState()",
+          "let device = await cua.getDevice(\"device-id\")",
+          "await device.getAXState()",
+          "await device.click(0)",
+          "await device.getAXStateAndScreenshot()",
+          "await Promise.all([deviceA.getAXState(), deviceB.getAXState()])",
+          "Call device.help() for the current target API.",
+        ].join("\n");
+      }
+
+      async getState(options = {}) {
+        this.#state = await runCLI(null, "status");
+        if (options.emit !== false) nodeRepl.write(this.#state);
+        return this.#state;
+      }
+
+      async getDevice(deviceId) {
+        if (typeof deviceId !== "string" || !deviceId) {
+          throw new TypeError("cua.getDevice requires a Device ID from cua.getState()");
+        }
+        const state = this.#state ?? await this.getState({ emit: false });
+        const info = Array.isArray(state.devices) ? state.devices.find(device => device.id === deviceId) : null;
+        if (!info) throw new Error(`Unknown Device ID ${deviceId}`);
+        return new DeviceHandle(info);
+      }
+    }
+
+    const cua = new CUARoot();
+
+    function installContext(server) {
+      server.context.cua = cua;
+      server.context.nodeRepl = nodeRepl;
+      server.context.console = console;
+      for (const name of ["process", "require", "module", "Buffer", "fetch", "WebSocket"]) {
+        Object.defineProperty(server.context, name, { value: undefined, configurable: false });
+      }
+    }
+
+    async function evaluate(code, sourceName) {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const server = repl.start({ input, output, prompt: "", terminal: false, useGlobal: false });
+      installContext(server);
+      try {
+        return await new Promise((resolve, reject) => {
+          let settled = false;
+          const finish = (callback, value) => {
+            if (settled) return;
+            settled = true;
+            callback(value);
+          };
+          output.on("data", chunk => {
+            const message = chunk.toString("utf8").trim();
+            if (message) finish(reject, new Error(message));
+          });
+          server.eval(code, server.context, sourceName, (error, value) => {
+            if (error) finish(reject, error);
+            else finish(resolve, value);
+          });
+        });
+      } finally {
+        server.close();
+        input.destroy();
+        output.destroy();
+      }
+    }
+
+    async function main() {
+      await connected;
+      registerHooks({
+        resolve(specifier) {
+          throw new Error(`Module imports are unavailable in ios-use repl: ${specifier}`);
+        },
+      });
+      process.getBuiltinModule = undefined;
+      if (mode === "interactive") {
+        const server = repl.start({ prompt: "ios-use> ", useGlobal: false });
+        installContext(server);
+        server.once("exit", () => socket.end());
+        return;
+      }
+      if (mode !== "once") throw new Error(`unknown ios-use repl mode: ${mode}`);
+      const value = await evaluate(source, filename);
+      if (value !== undefined) nodeRepl.write(value);
+      socket.end();
+    }
+
+    main().catch(error => {
+      process.stderr.write(`${error?.stack ?? error}\n`);
+      socket.destroy();
+      process.exitCode = 1;
+    });
+    """#
+}

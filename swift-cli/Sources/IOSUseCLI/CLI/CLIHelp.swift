@@ -22,7 +22,7 @@ enum CLIHelp {
           --device <id>    Select a running Device; optional only when one runs
 
         Commands:
-          du, status, script, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
+          du, status, repl, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
           activateApp, terminateApp, home, rotate, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
@@ -83,27 +83,28 @@ enum CLIHelp {
               --json       Print the common machine-readable envelope
 
             """
-        case "script":
+        case "repl":
             return """
-            Usage: ios-use script '<javascript>'
-                   ios-use script --file <file.js>
-                   ios-use script -
-                   ios-use script
+            Usage: ios-use repl '<javascript>'
+                   ios-use repl --file <file.js>
+                   ios-use repl -
+                   ios-use repl
 
-            Run JavaScript with a persistent `mobile` API for explicit Device
-            selection and Accessibility-first automation. Inline code, files,
-            and stdin run once; no arguments starts an interactive Node REPL.
-            The Script Runtime requires Node.js. Other ios-use commands do not.
+            Run JavaScript in the persistent ios-use REPL with a `cua` API
+            for explicit Device selection and Accessibility-first automation.
+            Inline code, files, and stdin run once; no arguments starts an
+            interactive REPL. Only the REPL requires Node.js.
 
             Examples:
-              ios-use script 'await mobile.getState()'
-              ios-use script 'let d = await mobile.getDevice("mac"); await d.ax.write()'
+              ios-use repl 'await cua.getState()'
+              ios-use repl 'let d = await cua.getDevice("mac"); await d.getAXState()'
 
             Options:
               --file <file.js>  Execute a JavaScript file
               -                 Read JavaScript from stdin
 
-            Inside JavaScript, use `mobile.help()` for the current API.
+            Inside JavaScript, use `cua.help()` for the current API and
+            `nodeRepl.write()` / `nodeRepl.emitImage()` for explicit output.
 
             """
         case "config":

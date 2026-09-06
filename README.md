@@ -32,7 +32,7 @@ Each `start` creates an independent Device Context inside the same `IOS_USE_HOME
 - **Deeply optimized DOM tree**: the accessibility snapshot is restructured for agent consumption: flat, noise-free, with stable labels and semantic grouping. `dom` and `waitFor` are cheap enough for tight observe-act loops.
 - **Target-based command semantics**: actions can target label/value text instead of raw coordinates. The driver resolves element frames internally, while coordinate and offset modes remain available for visual-only controls.
 - **Single binary for local use**: no separate server process or port forwarding is needed for local automation.
-- **Persistent multi-device JavaScript**: `ios-use script` injects `mobile`, so one Node process can keep explicit Device handles and coordinate independent Devices with `Promise.all`.
+- **Persistent multi-device REPL**: `ios-use repl` injects `cua`, so one Node process can keep explicit Device handles and coordinate independent Devices with `Promise.all` while one Swift Host reuses Driver sessions.
 - **Real device and Simulator support**: real devices connect through usbmuxd; Simulators connect over `localhost`.
 - **Logs and proxy capture included**: OSLog, NSLogger, and HTTP/HTTPS proxy capture are first-class CLI workflows; repeatable multi-step recipes can be composed with shell scripts.
 
@@ -140,7 +140,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | `status` / `config --list` | Show stable Device IDs plus connected, configured, and per-Device Driver state. |
 | `config` | Install or update the on-device driver; use `config --mac` once before the first local Mac-backend start. |
 | `start` / `status` / `stop` | Start, inspect, or release independent Device Contexts. Pass `--device <device-id>` when more than one Device runs. |
-| `script` | Run inline, file, stdin, or interactive JavaScript with the `mobile` multi-device API. |
+| `repl` | Run inline, file, stdin, or interactive JavaScript with the `cua` multi-device API. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID on a real device or Simulator; activation is UI-ready by default. |
 | `dom` | Print the current semantic UI tree. |
 | `ui-tree` | Inspect UIKit view classes and layout details for the active Mac App; use `dom` for interaction. |
@@ -189,35 +189,37 @@ When a blocking interaction exists, the machine envelope includes a top-level
 Computer Use. Bare `dismissAlert` accepts only an unambiguous one-button alert;
 choose `--label`, `--index`, or `--primary` for a multi-button alert.
 
-### JavaScript API
+### REPL API
 
-`ios-use script` starts Node and injects `mobile`. Device handles always keep an
-explicit Device ID, so one process can safely work with multiple running Device
-Contexts:
+`ios-use repl` starts a persistent Swift Host plus a restricted Node REPL and
+injects `cua`. Device handles keep an explicit Device ID, so one process can
+safely work with multiple running Device Contexts:
 
 ```bash
-ios-use script '
-  let state = await mobile.getState();
-  let mac = await mobile.getDevice("mac");
-  let simulator = await mobile.getDevice(
+ios-use repl '
+  let state = await cua.getState({emit: false});
+  let mac = await cua.getDevice("mac");
+  let simulator = await cua.getDevice(
     state.devices.find(device => device.kind === "simulator").id
   );
-  await Promise.all([mac.ax.write(), simulator.ax.write()]);
+  await Promise.all([mac.getAXState(), simulator.getAXState()]);
 '
 ```
 
 The same runtime accepts a file, stdin, or no arguments for an interactive REPL:
 
 ```bash
-ios-use script --file task.js
-ios-use script - < task.js
-ios-use script
+ios-use repl --file task.js
+ios-use repl - < task.js
+ios-use repl
 ```
 
-Use `mobile.help()` and `device.help()` inside JavaScript for the current API.
-`device.ax.write()` returns an indexed AX view; after any action, observe again
-before reusing an `element_index`. `ax.write("screenshot")` returns an artifact
-path and `ax.write("both")` returns AX plus screenshot evidence.
+Use `cua.help()` and `device.help()` for the current API. The Device surface
+matches Codex CUA naming: `getAXState`, `getScreenshot`,
+`getAXStateAndScreenshot`, `click`, `setValue`, `typeText`, `paste`, `pressKey`,
+and `scroll`. Observations emit by default; pass `{emit: false}` to retain only
+the returned value and `{disableDiffing: true}` for a full AX snapshot. Observe
+again after every action before reusing an `element_index`.
 
 Repeatable sequences are ordinary shell scripts, so they can use variables, conditionals, and the same CLI commands without another DSL:
 
@@ -351,7 +353,7 @@ See [examples/proxy/README.md](examples/proxy/README.md) for prerequisites and s
 | `altsign-cli` | copied by installer if bundled | required for real-device signing | not needed |
 | `dns-sd` | not needed | optional for NSLogger Bonjour publish | optional for NSLogger Bonjour publish |
 | `mitmproxy` | not needed | proxy capture only | proxy capture only |
-| `node` | not needed | required only for `ios-use script` | Script Runtime, benchmark, and full Simulator tests |
+| `node` | not needed | required only for `ios-use repl` | REPL Runtime, benchmark, and full Simulator tests |
 | `xcodebuild`, `zip`, `mktemp` | not needed | not needed at runtime | required for `scripts/build_driver.sh` |
 | `appium`, `lsof` | not needed | not needed at runtime | benchmark only |
 

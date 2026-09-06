@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Use when a task explicitly requires running, scripting, or troubleshooting the ios-use CLI on a real device, Simulator, or Mac backend, including setup, cloud serving, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, Frida debugging, and Frida-loaded native dylib patches."
+description: "Use when a task explicitly requires running, scripting, or troubleshooting the ios-use CLI on a real device, Simulator, or Mac backend, including setup, REPL automation, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, Frida debugging, and Frida-loaded native dylib patches."
 ---
 
 # ios-use Operational Playbook
@@ -47,6 +47,8 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 ## 1. Load only the relevant reference
 
 - Read `references/simulator.md` before operating or troubleshooting a Simulator.
+- Read `references/repl.md` before using the persistent JavaScript REPL or
+  coordinating multiple Devices in one JavaScript process.
 - Read `references/proxy.md` before configuring HTTP/HTTPS capture or certificates.
 - Read `references/nslog.md` only when the target App already integrates NSLogger.
 - Read `references/frida-debug.md` before using `debug` or a Frida-loaded
@@ -143,27 +145,26 @@ user to open Settings on the device and manually trust the developer again.
 Avoid that interruption by checking `status` and refreshing while the current
 driver is still valid.
 
-### Drive multiple Devices from one JavaScript process
+### Drive multiple Devices from one JavaScript REPL
 
-Use `ios-use script` when one workflow needs persistent Device handles or
-parallel work across independent Devices:
+Use `ios-use repl` when one workflow needs persistent Device handles or
+parallel work across independent Devices. Read `references/repl.md` before
+writing the JavaScript:
 
 ```bash
-ios-use script '
-  let state = await mobile.getState();
-  let mac = await mobile.getDevice("mac");
-  let simulator = await mobile.getDevice(
+ios-use repl '
+  let state = await cua.getState({emit: false});
+  let mac = await cua.getDevice("mac");
+  let simulator = await cua.getDevice(
     state.devices.find(device => device.kind === "simulator").id
   );
-  await Promise.all([mac.ax.write(), simulator.ax.write()]);
+  await Promise.all([mac.getAXState(), simulator.getAXState()]);
 '
 ```
 
-Use `ios-use script --file <file.js>` for a file, `ios-use script -` for stdin,
-and bare `ios-use script` for an interactive Node REPL. Call `mobile.help()` or
-`device.help()` instead of guessing the API. After `click`, `setValue`,
-`typeText`, or `scroll`, call `ax.write()` again before using an
-`element_index` from the new snapshot.
+Use `ios-use repl --file <file.js>` for a file, `ios-use repl -` for stdin, and
+bare `ios-use repl` for an interactive session. Call `cua.help()` or
+`device.help()` instead of guessing the API.
 
 ## 3. Follow the observe-act-verify loop
 
