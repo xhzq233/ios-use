@@ -2,8 +2,8 @@
 
 ## Highlights
 
-- Restores Mac Runtime compatibility for apps such as Feature that could crash
-  while entering GPU-backed editors with v2.0.1 or v2.0.2.
+- Restores Mac Runtime compatibility for apps that could crash while entering
+  GPU-backed editors with v2.0.1 or v2.0.2.
 - Mac starts now reuse an unchanged source App automatically. Pass `--app`
   after a rebuild, or omit it to launch the current App for this Home.
 - Mac App slots now use the stable ASCII path `App.app`, independent of the
