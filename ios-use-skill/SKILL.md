@@ -82,14 +82,14 @@ real device, or a Simulator for reliable automation.
 rerun the same command. This setup is shared across `IOS_USE_HOME` values.
 
 One `IOS_USE_HOME` can hold multiple independent Device Contexts. `status`
-prints their stable IDs: `real:<udid>`, `simulator:<udid>`, and `mac`. When more
-than one Device runs, pass `--device <device-id>` to every Device command;
+prints their stable IDs: the bare UDID for a real device or Simulator, and `mac`. When more
+than one Device runs, pass `-d <device-id>` (or `--device`) to every Device command;
 with exactly one running Device, it remains optional.
 
 ```bash
-ios-use dom --device 'real:<udid>'
-ios-use screenshot --device mac
-ios-use stop --device 'real:<udid>'
+ios-use dom -d '<udid>'
+ios-use screenshot -d mac
+ios-use stop -d '<udid>'
 ```
 
 Use distinct Homes only when you need multiple Mac Apps at once. The Mac
@@ -114,7 +114,7 @@ deletes old caches for you; run `ios-use du` to see what you can remove.
   `open --dom`, `rotate`, or device-backed proxy commands.
 - Use the Device ID returned by `status` on all UI commands when multiple
   Device Contexts are running.
-- After `start --mac`, supported commands can select it with `--device mac`.
+- After `start --mac`, supported commands can select it with `-d mac`.
 - Mac lifecycle is only `start`, `status`, and `stop`. Do not use `home`,
   `activateApp`, or `terminateApp` for a Mac session. Restart it with
   `ios-use stop`, then `ios-use start --mac`.

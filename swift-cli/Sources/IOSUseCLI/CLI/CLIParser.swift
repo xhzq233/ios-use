@@ -113,7 +113,7 @@ public enum CLIParser {
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "--target", "--depth", "--device", "--file", "-i"
+            "--app", "--target", "--depth", "--device", "-d", "--file", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -154,16 +154,16 @@ public enum CLIParser {
         var index = 0
         while index < arguments.count {
             let argument = arguments[index]
-            if argument == "--device" {
+            if argument == "--device" || argument == "-d" {
                 guard deviceID == nil else {
                     throw CLIParseError.invalidValue(
-                        "--device may only be provided once"
+                        "--device/-d may only be provided once"
                     )
                 }
                 index += 1
                 guard index < arguments.count,
                       !arguments[index].isEmpty else {
-                    throw CLIParseError.missingOptionValue("--device")
+                    throw CLIParseError.missingOptionValue(argument)
                 }
                 deviceID = arguments[index]
                 index += 1

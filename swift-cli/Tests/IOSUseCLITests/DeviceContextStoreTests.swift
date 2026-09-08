@@ -43,10 +43,24 @@ final class DeviceContextStoreTests: XCTestCase {
         )
         XCTAssertEqual(
             try DeviceContextStore.activeContext(
-                explicitDeviceID: "real:DEVICE-2",
+                explicitDeviceID: "DEVICE-2",
                 paths: paths
             ).info.udid,
             "DEVICE-2"
         )
     }
+
+    func testReplClientsAreIsolatedWithinOneHome() throws {
+        let paths = IOSUsePaths.resolve(environment: [
+            "IOS_USE_HOME": FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString).path,
+        ])
+        let pool = ReplDriverSessionPool()
+        defer { pool.close() }
+        let first = try paths.deviceContext("DEVICE-A")
+        let second = try paths.deviceContext("DEVICE-B")
+        XCTAssertTrue(pool.session(paths: first) === pool.session(paths: first))
+        XCTAssertFalse(pool.session(paths: first) === pool.session(paths: second))
+    }
+
 }

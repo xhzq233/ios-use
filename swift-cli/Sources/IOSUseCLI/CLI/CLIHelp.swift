@@ -19,7 +19,7 @@ enum CLIHelp {
         Options:
           -h, --help       Show help
           -V, --version    Show version
-          --device <id>    Select a running Device; optional only when one runs
+          -d, --device <id>  Select a running Device; optional only when one runs
 
         Commands:
           du, status, repl, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
@@ -216,13 +216,13 @@ enum CLIHelp {
             """
         case "stop":
             return """
-            Usage: ios-use stop [--device <device-id>] [--json]
+            Usage: ios-use stop [-d <device-id>] [--json]
 
             Stop one XCTest driver or exact Mac process recorded in its
             Device Context. --device is required when multiple Devices run.
 
             Options:
-              --device     Device ID printed by status
+              -d, --device Device ID printed by status
               --json       Print the common machine-readable envelope
 
             """

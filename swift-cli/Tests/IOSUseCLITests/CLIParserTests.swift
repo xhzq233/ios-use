@@ -1034,9 +1034,25 @@ final class CLIParserTests: XCTestCase {
                 "dom",
                 "--device",
                 "real:DEVICE-1",
-                "--device",
+                "-d",
                 "real:DEVICE-2",
             ])
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "dom",
+                "-d",
+                "mac",
+                "--json",
+            ]),
+            ParsedInvocation(
+                command: .driver(
+                    .dom(raw: false, fresh: false, waitQuiescence: false)
+                ),
+                json: true,
+                deviceID: "mac"
+            )
         )
     }
 }

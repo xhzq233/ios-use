@@ -227,10 +227,11 @@ final class LockedDriverClientSession {
     }
 
     private func lockedInfo() throws -> SessionService.Info {
-        if let info {
-            return info
-        }
         let lock = try SessionService.requireDriverLock(paths: paths)
+        if let info, info != lock {
+            closeClient()
+            didRecoverConnectFailure = false
+        }
         info = lock
         return lock
     }

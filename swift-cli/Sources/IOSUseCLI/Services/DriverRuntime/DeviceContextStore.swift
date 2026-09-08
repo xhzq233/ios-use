@@ -11,11 +11,11 @@ enum DeviceContextStore {
     static let macDeviceID = "mac"
 
     static func realDeviceID(_ udid: String) -> String {
-        "real:\(udid)"
+        udid
     }
 
     static func simulatorDeviceID(_ udid: String) -> String {
-        "simulator:\(udid)"
+        udid
     }
 
     static func deviceID(for info: SessionService.Info) -> String {
@@ -30,30 +30,14 @@ enum DeviceContextStore {
     }
 
     static func targetUDID(from deviceID: String) -> String? {
-        if deviceID.hasPrefix("real:") {
-            return String(deviceID.dropFirst("real:".count))
-        }
-        if deviceID.hasPrefix("simulator:") {
-            return String(deviceID.dropFirst("simulator:".count))
-        }
-        return nil
+        return deviceID == macDeviceID ? nil : deviceID
     }
 
     static func normalizeExplicitDeviceID(
         _ value: String,
         paths: IOSUsePaths
     ) throws -> String {
-        if value == macDeviceID
-            || value.hasPrefix("real:")
-            || value.hasPrefix("simulator:") {
-            return try validateDeviceID(value)
-        }
-        if let matching = sessions(paths: paths).first(where: {
-            $0.info.udid == value
-        }) {
-            return matching.deviceID
-        }
-        return try validateDeviceID(realDeviceID(value))
+        try validateDeviceID(value)
     }
 
     static func validateDeviceID(_ value: String) throws -> String {
@@ -63,7 +47,7 @@ enum DeviceContextStore {
               value.utf8.count <= 512,
               value.unicodeScalars.allSatisfy({ scalar in
                   CharacterSet.alphanumerics.contains(scalar)
-                      || "-._:".unicodeScalars.contains(scalar)
+                      || "-._".unicodeScalars.contains(scalar)
               }) else {
             throw CLIParseError.invalidValue(
                 "Invalid Device ID \(value)."
@@ -71,14 +55,6 @@ enum DeviceContextStore {
         }
         if value == macDeviceID {
             return value
-        }
-        let acceptedPrefixes = ["real:", "simulator:"]
-        guard let prefix = acceptedPrefixes.first(where: {
-            value.hasPrefix($0)
-        }), value.count > prefix.count else {
-            throw CLIParseError.invalidValue(
-                "Device ID must be mac, real:<udid>, or simulator:<udid>."
-            )
         }
         return value
     }

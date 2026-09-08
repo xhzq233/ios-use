@@ -77,13 +77,16 @@ ios-use start <first-device-udid>
 ios-use start <second-device-udid>
 ios-use status --json
 
-ios-use dom --device <device-id>
-ios-use tap "Continue" --device <device-id> --dom
-ios-use stop --device <device-id>
+ios-use dom -d <device-id>
+ios-use tap "Continue" -d <device-id> --dom
+ios-use stop -d <device-id>
 ```
 
-When exactly one Device is running, `--device` may be omitted. With multiple
+When exactly one Device is running, `-d` / `--device` may be omitted. With multiple
 Devices, use the stable IDs printed by `status`.
+Real devices and Simulators use their bare UDID; the Mac Backend uses `mac`.
+Per-Device state, logs, and artifacts live under `~/.ios-use/{state,logs,artifacts}/devices/<device-id>/`.
+Existing single-Device state is still read and moves to the new layout after its next stop/start.
 
 ## Persistent REPL
 
@@ -92,9 +95,7 @@ handles and Driver connections can be reused across a workflow:
 
 ```bash
 ios-use repl '
-  const state = await cua.getState({emit: false});
-  const device = await cua.getDevice(state.devices[0].id);
-  await device.getAXState();
+  const device = await cua.getDevice("<udid-from-status>");
 '
 ```
 
@@ -107,7 +108,7 @@ ios-use repl
 ```
 
 Use `cua.help()` and `device.help()` for the current API. Common Device methods
-include `getAXState`, `getScreenshot`, `click`, `scroll`, `setValue`,
+include `getAXState`, `getScreenshot`, `click`, `scroll`, `scrollTo`, `waitFor`, `setValue`,
 `typeText`, `paste`, and `pressKey`. See the
 [REPL guide](ios-use-skill/references/repl.md) for examples.
 

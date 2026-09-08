@@ -8,11 +8,11 @@ final class ReplDriverSessionPool: @unchecked Sendable {
     func session(paths: IOSUsePaths) -> LockedDriverClientSession {
         lock.lock()
         defer { lock.unlock() }
-        if let existing = sessions[paths.root] {
+        if let existing = sessions[paths.driverLock] {
             return existing
         }
         let created = LockedDriverClientSession(paths: paths)
-        sessions[paths.root] = created
+        sessions[paths.driverLock] = created
         return created
     }
 
@@ -33,6 +33,7 @@ private struct ReplRPCRequest: Decodable {
     let id: Int
     let arguments: [String]?
     let imagePath: String?
+    let emitImage: Bool?
 }
 
 private struct ReplRPCResponse: Encodable {
@@ -207,6 +208,20 @@ private final class ReplRPCServer: @unchecked Sendable {
                     )
                 }
                 let image = try Data(contentsOf: URL(fileURLWithPath: candidate))
+                if request.emitImage == true {
+                    let environment = ProcessInfo.processInfo.environment
+                    if let directory = environment["DEVICE_RELAY_ARTIFACT_DIR"],
+                       let fdText = environment["DEVICE_RELAY_ARTIFACT_FD"],
+                       let fd = Int32(fdText) {
+                        let name = "screenshot-\(UUID().uuidString)." + URL(fileURLWithPath: candidate).pathExtension
+                        try image.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name))
+                        try FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+                            .write(contentsOf: Data((name + "\n").utf8))
+                        response = ReplRPCResponse(id: request.id, exitCode: 0, stdout: "", stderr: "", imageBase64: nil)
+                    } else {
+                        response = ReplRPCResponse(id: request.id, exitCode: 0, stdout: "Image: \(candidate)\n", stderr: "", imageBase64: nil)
+                    }
+                } else {
                 response = ReplRPCResponse(
                     id: request.id,
                     exitCode: 0,
@@ -214,6 +229,7 @@ private final class ReplRPCServer: @unchecked Sendable {
                     stderr: "",
                     imageBase64: image.base64EncodedString()
                 )
+                }
             } else {
                 throw CLIParseError.invalidValue("invalid REPL host request")
             }
@@ -418,9 +434,7 @@ enum ReplRuntimeService {
       const identifier = textValue(element.identifier);
       if (identifier) return `id:${identifier}`;
       const label = textValue(element.label);
-      if (/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$/.test(label)) return `label-id:${label}`;
-      const path = Array.isArray(element.hierarchy?.path) ? element.hierarchy.path.join("/") : "";
-      if (path) return `path:${path}`;
+      if (label) return `label:${element.semanticType ?? element.type}:${label}`;
       return [element.semanticType, element.hierarchy?.depth, element.hierarchy?.index]
         .map(value => String(value ?? ""))
         .join("|");
@@ -461,6 +475,8 @@ enum ReplRuntimeService {
         enabled: element.state?.enabled ?? null,
         selected: element.state?.selected ?? null,
         focused: element.state?.focused ?? null,
+        visible: element.state?.visible ?? null,
+        depth: element.hierarchy?.depth ?? 0,
       };
     }
 
@@ -479,7 +495,8 @@ enum ReplRuntimeService {
       if (element.enabled === false) fields.push("disabled");
       if (element.selected === true) fields.push("selected");
       if (element.focused === true) fields.push("focused");
-      return `${marker}[${element.element_index}] ${element.role}${fields.length ? ` ${fields.join(" ")}` : ""}`;
+      if (element.visible === false) fields.push("invisible");
+      return `${marker}${"  ".repeat(Math.max(0, element.depth))}[${element.element_index}] ${element.role}${fields.length ? ` ${fields.join(" ")}` : ""}`;
     }
 
     const nodeRepl = Object.freeze({
@@ -494,9 +511,10 @@ enum ReplRuntimeService {
       },
       async emitImage(image) {
         const path = imagePaths.get(image) ?? image?.path;
-        if (path) process.stdout.write(`Image: ${path}\n`);
-        else if (image instanceof Uint8Array) process.stdout.write(`Image: <${image.byteLength} bytes>\n`);
-        else throw new TypeError("nodeRepl.emitImage expects screenshot bytes");
+        if (!path) throw new TypeError("nodeRepl.emitImage expects bytes returned by getScreenshot");
+        const result = await rpc({imagePath: path, emitImage: true});
+        if (result.exitCode !== 0) throw new Error(result.stderr);
+        if (result.stdout) process.stdout.write(result.stdout);
       },
     });
 
@@ -509,7 +527,7 @@ enum ReplRuntimeService {
       }
 
       help() {
-        return [
+        nodeRepl.write([
           "await device.getAXState()",
           "await device.getScreenshot()",
           "await device.getAXStateAndScreenshot()",
@@ -518,7 +536,9 @@ enum ReplRuntimeService {
           "await device.typeText(value)",
           "await device.pressKey(\"Return\")",
           "await device.scroll(element_index|[x,y], \"down\", 1)",
-        ].join("\n");
+          "await device.scrollTo(text, anchor)",
+          "await device.waitFor(text, {gone: true, timeout: 20})",
+        ].join("\n"));
       }
 
       async refresh() {
@@ -536,21 +556,22 @@ enum ReplRuntimeService {
         const elements = rawElements.map(projectElement);
         const previousEntries = keyedElements(this.#previous?.rawElements ?? []);
         const currentEntries = keyedElements(rawElements);
-        const previousByKey = new Map(previousEntries.map(entry => [entry.key, entry.element]));
+        const previousByKey = new Map(previousEntries.map(entry => [entry.key, entry]));
         const currentKeys = new Set();
         const markers = [];
-        currentEntries.forEach(({ key, element }) => {
+        currentEntries.forEach(({ key, element, index }) => {
           currentKeys.add(key);
           const prior = previousByKey.get(key);
-          markers.push(!prior ? "+" : elementSignature(prior) !== elementSignature(element) ? "~" : " ");
+          markers.push(!prior ? "+" : prior.index !== index || elementSignature(prior.element) !== elementSignature(element) ? "~" : " ");
         });
         const removed = previousEntries
           .filter(entry => !currentKeys.has(entry.key))
           .map(entry => formatElement(projectElement(entry.element, entry.index), "-"));
         this.#current = { rawElements, elements };
         this.#previous = { rawElements };
-        const header = `Device ${this.id} ${data.app?.bundleId ?? ""}`.trim();
-        const state = [header, ...removed, ...elements.map((element, index) => formatElement(element, markers[index]))]
+        const header = `Device ${this.id} ${typeof data.app === "string" ? data.app : data.app?.bundleId ?? ""}`.trim();
+        const changed = elements.flatMap((element, index) => markers[index] === " " ? [] : [formatElement(element, markers[index])]);
+        const state = [header, ...removed, ...changed, ...(!removed.length && !changed.length ? ["No AX changes."] : [])]
           .filter(Boolean)
           .join("\n");
         if (options.emit !== false) nodeRepl.write(state);
@@ -558,6 +579,8 @@ enum ReplRuntimeService {
       }
 
       async getScreenshot(options = {}) {
+        this.#current = null;
+        this.#previous = null;
         const data = await runCLI(this.id, "screenshot", ["--no-ocr"]);
         const response = await rpc({ imagePath: data.imagePath });
         if (response.exitCode !== 0 || !response.imageBase64) {
@@ -571,8 +594,8 @@ enum ReplRuntimeService {
       }
 
       async getAXStateAndScreenshot(options = {}) {
-        const state = await this.getAXState({ ...options, emit: false });
         const screenshot = await this.getScreenshot({ emit: false });
+        const state = await this.getAXState({ ...options, emit: false });
         if (options.emit !== false) {
           nodeRepl.write(state);
           await nodeRepl.emitImage(screenshot);
@@ -590,6 +613,12 @@ enum ReplRuntimeService {
       }
 
       async setValue(target, value) {
+        if (typeof target === "string") {
+          if (!this.#current) await this.getAXState({emit: false});
+          const matches = this.#current.elements.filter(element => [element.label, element.value, element.identifier].includes(target));
+          if (matches.length !== 1) throw new Error("setValue requires one observed editable target; select its element_index");
+          target = matches[0].element_index;
+        }
         const resolved = this.#resolveTarget(target);
         const args = ["--tap", resolved.target, "--content", String(value)];
         const deleteCount = Array.from(resolved.element?.value ?? "").length;
@@ -609,8 +638,25 @@ enum ReplRuntimeService {
         }
       }
 
-      async paste(value) {
+      async paste(value, options = {}) {
+        if (options.format && options.format !== "text") throw new TypeError("ios-use paste supports plain text only");
         return await this.typeText(value);
+      }
+
+      async waitFor(text, options = {}) {
+        const args = [String(text), "--timeout", `${options.timeout ?? 10}s`];
+        if (options.gone) args.push("--gone");
+        if (options.match) args.push("--match", options.match);
+        await runCLI(this.id, "waitFor", args);
+        return await this.getAXState({emit: options.emit});
+      }
+
+      async scrollTo(text, anchor, options = {}) {
+        const args = ["--to", String(text)];
+        if (anchor !== undefined) args.push("--from", this.#resolveTarget(anchor).target);
+        try { await runCLI(this.id, "swipe", args); }
+        finally { this.#current = null; }
+        return await this.getAXState({emit: options.emit});
       }
 
       async pressKey(key) {
@@ -661,6 +707,7 @@ enum ReplRuntimeService {
           if (!this.#current) throw new Error("element_index is stale. Call await device.getAXState() first.");
           const element = this.#current.elements[target];
           if (!element) throw new RangeError(`Unknown element_index ${target}`);
+          if (element.enabled === false || element.visible === false) throw new Error("Target is disabled or invisible; observe or scroll before acting");
           const text = elementText(element);
           const exactMatches = this.#current.elements.filter(candidate =>
             [candidate.label, candidate.value, candidate.identifier].some(value => textValue(value) === text)
@@ -689,7 +736,7 @@ enum ReplRuntimeService {
       #state = null;
 
       help() {
-        return [
+        nodeRepl.write([
           "await cua.getState()",
           "let device = await cua.getDevice(\"device-id\")",
           "await device.getAXState()",
@@ -697,7 +744,7 @@ enum ReplRuntimeService {
           "await device.getAXStateAndScreenshot()",
           "await Promise.all([deviceA.getAXState(), deviceB.getAXState()])",
           "Call device.help() for the current target API.",
-        ].join("\n");
+        ].join("\n"));
       }
 
       async getState(options = {}) {
@@ -706,14 +753,23 @@ enum ReplRuntimeService {
         return this.#state;
       }
 
-      async getDevice(deviceId) {
+      async getDevice(deviceId, options = {}) {
         if (typeof deviceId !== "string" || !deviceId) {
-          throw new TypeError("cua.getDevice requires a Device ID from cua.getState()");
+          throw new TypeError("cua.getDevice requires a stable Device ID");
         }
-        const state = this.#state ?? await this.getState({ emit: false });
-        const info = Array.isArray(state.devices) ? state.devices.find(device => device.id === deviceId) : null;
+        const cached = Array.isArray(this.#state?.devices)
+          ? this.#state.devices.find(device => device.id === deviceId)
+          : null;
+        const inferred = deviceId === "mac"
+          ? { id: deviceId, kind: "mac", name: "Mac Backend" }
+          : /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(deviceId)
+            ? { id: deviceId, udid: deviceId }
+              : null;
+        const info = cached ?? inferred;
         if (!info) throw new Error(`Unknown Device ID ${deviceId}`);
-        return new DeviceHandle(info);
+        const device = new DeviceHandle(info);
+        await device.getAXState(options);
+        return device;
       }
     }
 
@@ -766,14 +822,17 @@ enum ReplRuntimeService {
       });
       process.getBuiltinModule = undefined;
       if (mode === "interactive") {
-        const server = repl.start({ prompt: "ios-use> ", useGlobal: false });
+        const server = repl.start({ prompt: "ios-use> ", useGlobal: false, ignoreUndefined: true });
+        const evaluate = server.eval;
+        server.eval = function(code, context, filename, callback) {
+          evaluate.call(this, code, context, filename, error => callback(error, undefined));
+        };
         installContext(server);
         server.once("exit", () => socket.end());
         return;
       }
       if (mode !== "once") throw new Error(`unknown ios-use repl mode: ${mode}`);
-      const value = await evaluate(source, filename);
-      if (value !== undefined) nodeRepl.write(value);
+      await evaluate(source, filename);
       socket.end();
     }
 
