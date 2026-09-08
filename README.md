@@ -112,6 +112,34 @@ include `getAXState`, `getScreenshot`, `click`, `scroll`, `scrollTo`, `waitFor`,
 `typeText`, `paste`, and `pressKey`. See the
 [REPL guide](ios-use-skill/references/repl.md) for examples.
 
+JavaScript runs in one Node.js child process and calls the Swift Host over
+localhost TCP RPC; the Host reuses a separate Driver connection per Device.
+Variables, Device handles, and AX snapshots stay in memory until the REPL exits;
+they are not saved or restored between invocations. Device session files, logs,
+and screenshots use the normal `IOS_USE_HOME` layout above (default `~/.ios-use`).
+
+## Performance Snapshot
+
+Historical real-iPhone Settings benchmark (2026-05-30), comparing the native CLI
+with the full Appium Server → WebDriverAgent stack. Lower latency is better.
+
+![Historical ios-use and Appium + WDA latency comparison, with separate scales for short and long operations](docs/benchmark.svg)
+
+| Operation | ios-use (ms) | Appium + WDA (ms) | Latency reduction |
+| --- | ---: | ---: | ---: |
+| Start session | 1,954.8 | 10,753.6 | 81.8% |
+| Cached UI tree | 20.7 | 965.7 | 97.9% |
+| Wait for element | 14.0 | 308.7 | 95.5% |
+| Screenshot (no OCR) | 81.2 | 179.0 | 54.6% |
+| Tap by label | 413.2 | 1,076.3 | 61.6% |
+| Scroll to element | 10,799.2 | 17,050.9 | 36.7% |
+| Terminate app | 1,195.1 | 1,144.0 | −4.5% |
+
+Command cases are means of three iterations; cold session start is one sample.
+These are tool timings, not REPL comparisons or Agent success/token benchmarks,
+and have not been rerun for the current development version. See the
+[full results and methodology](docs/benchmark.md).
+
 ## Commands
 
 | Command | Purpose |
