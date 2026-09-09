@@ -68,9 +68,15 @@ Run on the device's Mac host:
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
 ```
 
-The installer also updates this Skill. A Linux Agent using a remote device needs
-the Skill content, not a local iOS binary; load the tool owner's available Skill
-or obtain `ios-use-skill/` from the same source revision as the Edge installation.
+The installer also updates this Skill. A Linux Agent using a remote device can
+install only the Skill, without a Mac binary or device setup:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install_skill.sh | bash
+```
+
+Set `IOS_USE_REF` to the Edge's source revision when pinning versions. From a
+source checkout, `bash scripts/install_skill.sh` installs the local Skill.
 
 Never put passwords, 2FA codes, certificates or provisioning profiles in commands
 or reports. Redact device identifiers and signed URLs before sharing artifacts.
