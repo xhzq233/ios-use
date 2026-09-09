@@ -405,6 +405,7 @@ enum CLIHelp {
                 Preferred for an off-screen target: ios-use swipe --to "开发者" --from "蓝牙" --dom
                 Use the exact displayed target and a currently visible DOM label or value from the same scroll container for --from.
                 Use coordinate anchors or --dir/--distance only when Accessibility exposes no usable semantic target.
+                Target direction follows its viewport geometry. Fixed-distance swipes select the foreground scrollable when a sheet covers the page.
                 """
             )
         case "activateApp":

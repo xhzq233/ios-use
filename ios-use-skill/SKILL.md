@@ -1,382 +1,76 @@
 ---
 name: "ios-use-skill"
-description: "Use when a task explicitly requires running, scripting, or troubleshooting the ios-use CLI on a real device, Simulator, or Mac backend, including setup, REPL automation, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, Frida debugging, and Frida-loaded native dylib patches."
+description: "Use when running or troubleshooting ios-use on a real iOS device, Simulator, or Mac backend. Covers target setup, DOM-first UI actions, persistent REPL, App lifecycle and evidence; signing, proxy and Frida are loaded only when needed."
 ---
 
-# ios-use Operational Playbook
+# ios-use
 
-## Preserve repeatable workflows early
+This skill owns platform operation, not App-specific navigation or remote transport.
+Use the App project's context for business entry points and assertions. When a
+transport already provides an ios-use session, keep using that session; do not
+reconfigure the Consumer as a device host.
 
-Treat a working command sequence as a reusable asset. As soon as an
-exploratory route succeeds, preserve its stable labels, waits, and any debug
-setup in a named `.sh` script in the App's project instead of rediscovering the
-same route later.
+## Select the workflow
 
-This is a strong recommendation when a route repeats, installs debug hooks, or
-may continue across turns or sessions. It is not a gate for a genuinely
-one-off action. Persist semantic labels rather than coordinates, make setup
-idempotent, and use fail-fast execution so later mutations do not run after an
-earlier failure.
+- **Existing target:** `ios-use status`, then use the returned Device ID. With
+  multiple running Devices, pass `-d <id>` / `--device <id>` on every UI command.
+  IDs are bare UDIDs or `mac`; with one running target the selector is optional.
+- **Persistent or multi-device work:** read [REPL](references/repl.md), then
+  `ios-use repl`. `cua.getDevice(id)` shows initial AX; explore one action at a
+  time, preserving Device handles. Ask `cua.help()` / `device.help()` for APIs.
+- **No running target, upgrade, signing, DDI or Mac setup:** read
+  [setup and recovery](references/setup.md). Real-device preparation is
+  `config --udid <udid>` then `start <udid>`; do not renew an already healthy
+  running target merely to observe it.
+- **Simulator:** read [Simulator](references/simulator.md).
+- **App launch, rotation, screenshots or animation evidence:** read
+  [App actions and evidence](references/apps-and-evidence.md).
+- **HTTP/HTTPS capture:** read [proxy](references/proxy.md).
+- **App integrates NSLogger:** read [NSLogger](references/nslog.md).
+- **Frida or native dylib patches:** read [Frida debug](references/frida-debug.md).
+- **Create/update a GitHub issue:** read [report](references/report.md).
+
+Read only the references relevant to the current task. Use `ios-use help <command>`
+for complete options instead of guessing flags or mirroring a command manual.
+
+## Observe → act → verify
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-entry_label='入口'
-target_label='目标'
-visible_anchor='当前可见项'
-
-ios-use waitFor "$entry_label" --timeout 10s
-ios-use tap "$entry_label" --dom
-ios-use swipe --to "$target_label" --from "$visible_anchor" --dom
-ios-use tap "$target_label" --dom
+ios-use dom
+ios-use tap "通用" --dom
+ios-use swipe --to "开发者" --from "蓝牙" --dom
+ios-use input --tap "搜索" --content "蓝牙" --dom
+ios-use waitFor "正在加载" --gone --timeout 10s
 ```
 
-Keep page-dependent UI actions sequential. Parallelize only independent
-read-only observations. For a short dependent sequence, joining commands with
-`&&` provides the same fail-fast behavior without requiring a script.
+- Serialize actions that depend on page state. Parallelize only independent
+  Devices or independent read-only observations.
+- Prefer displayed labels/values. Do not copy the entire DOM line as a target.
+  Use `--traits` / `--cindex` only to disambiguate observed duplicates.
+- Prefer a labeled offscreen target with a visible anchor in the same container.
+  If no semantic target is available, use an observed coordinate or fixed-distance
+  swipe. A label-relative `--offset-ratio 0.8,0.5` is preferable to an absolute tap.
+- Navigation, scrolling and lookup failures invalidate old UI assumptions. Read
+  fresh DOM before selecting the next action. Bare `--dom` waits for quiescence;
+  add a duration only for an intentional fixed delay, with `ms` or `s` suffix.
+- For changing labels, wait on a stable substring:
+  `ios-use waitFor "优化身形线条中" --match contains --gone --timeout 55s`.
+- On failure, read inline target/candidate/rejection/suggestion/alert fields first.
+  Capture a screenshot when the decision requires visual information.
+- Preserve a repeatable successful route as a small fail-fast script in the App
+  project when it will be reused. Store labels and waits, not stale coordinates.
 
-## Install or update ios-use
+## Install or update
 
-Use the same command for both the initial installation and every update:
+Run on the device's Mac host:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
 ```
 
-## 1. Load only the relevant reference
-
-- Read `references/simulator.md` before operating or troubleshooting a Simulator.
-- Read `references/repl.md` before using the persistent JavaScript REPL or
-  coordinating multiple Devices in one JavaScript process.
-- Read `references/proxy.md` before configuring HTTP/HTTPS capture or certificates.
-- Read `references/nslog.md` only when the target App already integrates NSLogger.
-- Read `references/frida-debug.md` before using `debug` or a Frida-loaded
-  native dylib patch.
-- Read `references/report.md` before creating or updating a GitHub issue.
-
-Do not load unrelated references preemptively.
-
-## 2. Prepare an active target
-
-For a real device, run:
-
-```bash
-ios-use status
-ios-use config --udid <udid>
-ios-use start <udid>
-```
-
-For the Mac backend, complete its one-time setup and start an App:
-
-```bash
-ios-use config --mac
-ios-use start --mac --app <App.app>
-```
-
-On macOS 26 or newer, `start --mac` warns and continues, but Mac UI interaction
-is not fully supported and may crash. Prefer a validated older macOS host, a
-real device, or a Simulator for reliable automation.
-
-`config --mac` asks for macOS authentication. If authentication is cancelled,
-rerun the same command. This setup is shared across `IOS_USE_HOME` values.
-
-One `IOS_USE_HOME` can hold multiple independent Device Contexts. `status`
-prints their stable IDs: the bare UDID for a real device or Simulator, and `mac`. When more
-than one Device runs, pass `-d <device-id>` (or `--device`) to every Device command;
-with exactly one running Device, it remains optional.
-
-```bash
-ios-use dom -d '<udid>'
-ios-use screenshot -d mac
-ios-use stop -d '<udid>'
-```
-
-Use distinct Homes only when you need multiple Mac Apps at once. The Mac
-backend intentionally rejects two concurrent copies of the same bundle ID.
-
-`start --mac --app <App.app>` automatically reuses an unchanged installed App
-or updates it after the source changes. Every Mac App includes the Frida debug
-Engine, so `ios-use debug` works for any Mac session. Later,
-`ios-use start --mac` launches the current `IOS_USE_HOME`'s remembered App.
-Starting or stopping `mac` does not replace another Device Context.
-
-After upgrading ios-use, Apps installed by older versions are not migrated or
-auto-launched: run `start --mac --app` once per bundle ID. ios-use never
-deletes old caches for you; run `ios-use du` to see what you can remove.
-
-- Connect real devices over USB and use iOS 17.4 or later.
-- Run `config` on first use, after upgrading ios-use, when `status` reports
-  `driver update required`, when signing expires soon, or when signing has
-  expired. Refresh before expiry instead of deferring renewal across sessions.
-- Run `start` before `dom`, `ui-tree`, `tap`, `longpress`, `swipe`, `input`, `waitFor`,
-  `screenshot`, `capture`, `home`, `dismissAlert`, default `activateApp`,
-  `open --dom`, `rotate`, or device-backed proxy commands.
-- Use the Device ID returned by `status` on all UI commands when multiple
-  Device Contexts are running.
-- After `start --mac`, supported commands can select it with `-d mac`.
-- Mac lifecycle is only `start`, `status`, and `stop`. Do not use `home`,
-  `activateApp`, or `terminateApp` for a Mac session. Restart it with
-  `ios-use stop`, then `ios-use start --mac`.
-- Use `ios-use help <command>` for the complete option contract instead of guessing
-  whether an individual command accepts `--udid`.
-
-For first-time real-device signing, run:
-
-```bash
-~/.ios-use/altsign-cli/altsign-cli list --apple-id '<Apple ID>'
-ios-use config --udid <udid>
-```
-
-AltSign reads the password and any two-factor code from standard input. When
-standard input is a terminal, password echo is disabled and restored by
-AltSign. ios-use never reads either secret or inspects AltSign login state. A
-free Personal Team is sufficient.
-
-After the first successful login, ios-use normally reuses the cached Apple
-Developer authentication for up to one year. Routine `config` renewals therefore
-usually do not require the Apple ID, password, or two-factor code again. If the
-AltSign signing output says its single cached session is missing or expired, ask
-the user to run the login command above and then retry the same `config` command.
-
-Renew real-device signing with `config` within each seven-day signing window. If
-signing is allowed to expire, installing the newly signed driver requires the
-user to open Settings on the device and manually trust the developer again.
-Avoid that interruption by checking `status` and refreshing while the current
-driver is still valid.
-
-### Drive multiple Devices from one JavaScript REPL
-
-Use `ios-use repl` when one workflow needs persistent Device handles or
-parallel work across independent Devices. Read `references/repl.md` before
-writing the JavaScript:
-
-```bash
-ios-use repl '
-  let state = await cua.getState({emit: false});
-  let mac = await cua.getDevice("mac");
-  let simulator = await cua.getDevice(
-    state.devices.find(device => device.kind === "simulator").id
-  );
-  await Promise.all([mac.getAXState(), simulator.getAXState()]);
-'
-```
-
-Use `ios-use repl --file <file.js>` for a file, `ios-use repl -` for stdin, and
-bare `ios-use repl` for an interactive session. Call `cua.help()` or
-`device.help()` instead of guessing the API.
-
-## 3. Follow the observe-act-verify loop
-
-Inspect the current UI before acting:
-
-```bash
-ios-use dom
-ios-use waitFor "蓝牙" --timeout 8s
-```
-
-Then perform one state-changing action and verify the new state:
-
-```bash
-ios-use tap "通用" --dom
-ios-use swipe --to "开发者" --from "蓝牙" --dom
-ios-use input --tap "搜索" --content "蓝牙" --dom
-```
-
-- Prefer DOM labels and values over raw coordinates.
-- After navigation, scrolling, or an element lookup failure, request a new DOM
-  before choosing the next action.
-- Use bare `--dom` to wait for quiescence and return a fresh DOM. Use
-  `--dom <duration>` only when a fixed post-action delay is intentional; suffix
-  explicit values with `ms` or `s`.
-- Wait for disappearance with `--gone`:
-
-```bash
-ios-use waitFor "正在加载" --gone --timeout 10s
-```
-
-For changing labels, pass a stable substring instead of copying one transient value:
-
-```bash
-ios-use waitFor "优化身形线条中" --match contains --gone --timeout 55s
-```
-
-## 4. Use targets deliberately
-
-```bash
-ios-use tap "通用"
-ios-use tap "亮度" --offset-ratio 0.8,0.5
-ios-use longpress "照片" --duration 800ms
-ios-use swipe --to "开发者" --from "蓝牙"
-ios-use swipe --dir forth --distance 300
-ios-use input --tap "搜索" --content "蓝牙"
-```
-
-- Pass only the displayed label or value as the target; do not copy the whole DOM
-  line, traits, or coordinates into a label target.
-- Use `--traits` or `--cindex` only when the DOM shows duplicate candidates that
-  need disambiguation.
-- Prefer `swipe --to ... --from ...` for a labeled off-screen target. Use its exact
-  displayed text and a currently visible anchor from the same scroll container.
-- Use coordinate taps, coordinate anchors, or fixed-distance swipes only when
-  Accessibility exposes no usable semantic target. Prefer a label-relative offset
-  before an absolute coordinate.
-- On mutation failure, read the inline target, candidate, rejection, suggestion,
-  and alert fields first. Request a fresh `dom` or named `screenshot` only when
-  the next decision needs more UI context.
-
-### Rotate a real device or Simulator
-
-```bash
-ios-use rotate --to landscape-right --dom --json
-```
-
-Supported orientations are `portrait`, `portrait-upside-down`, `landscape-left`,
-and `landscape-right`. The command changes the simulated physical orientation;
-an App that supports only portrait can remain portrait. Use `--dom` to inspect the
-resulting App layout. `rotate` requires an active real-device or Simulator Driver
-and is unavailable on the Mac backend.
-
-## 5. Control Apps and inspect their logs
-
-The commands in this section are for real devices and Simulators. For the Mac
-backend, use only `start`, `status`, and `stop` for lifecycle.
-
-```bash
-ios-use activateApp com.example.app
-ios-use activateApp com.example.app --dom
-ios-use activateApp com.example.app --no-wait
-ios-use activateApp com.example.app --terminateExisting --log
-ios-use terminateApp com.example.app
-ios-use open "https://example.com"
-ios-use open "https://example.com" --dom
-ios-use dismissAlert --only-button
-ios-use dismissAlert --label "Allow Full Access"
-```
-
-- Normal `activateApp` waits for the App to reach the foreground and for one fresh
-  UI snapshot. Add `--dom` to return that snapshot, or use `--no-wait` only when
-  host launch acknowledgement is sufficient.
-- `open` only dispatches the URL by default. Add `--dom` for immediate foreground
-  UI evidence, then use `waitFor` for the destination condition that matters.
-- `dismissAlert` requires an explicit or unambiguous button choice. Use
-  `--only-button` for a one-button alert, `--label` or `--index` for a known
-  multi-button alert, and `--primary` only when the visual trailing/top heuristic
-  is intentional.
-
-When `activateApp --terminateExisting --log` prints a log path, query the file with
-standard shell tools:
-
-```bash
-rg -n -i 'error|warning|precheck' <log-file>
-tail -f <log-file>
-```
-
-Do not echo signed URLs, tokens, credentials, or unrelated private log content.
-
-### Debug a Mac App with Frida
-
-When runtime implementation details matter, use semantic DOM to name the
-current UI and `ui-tree` to relate one label to its UIKit subtree:
-
-```bash
-ios-use dom
-ios-use ui-tree --target "导入照片" --depth 6
-```
-
-`ui-tree` is read-only and Mac-only. It shows current view classes, hierarchy,
-geometry, and common public properties; continue to use `dom` labels for UI
-actions. View frames use their parent's coordinates; use DOM geometry for the
-screen position. Request a fresh tree after the UI changes.
-
-Read `references/frida-debug.md` first. Prefer stdin for multi-line GumJS and
-use an explicit reset when a failed script may have installed hooks:
-
-```bash
-ios-use start --mac --app /path/to/App.app
-ios-use debug - < probe.js
-ios-use debug --reset
-```
-
-Script source is not saved, but variables and hooks created by a script persist
-until reset or App exit. Reset does not undo changes the script already made
-inside the App.
-
-Use Frida JS directly for discovery, observation, small hooks, and changing
-existing App state. For a substantial new UIKit hierarchy, page replacement,
-animation, or interaction state machine, put the implementation in an arm64 Mac
-Catalyst dylib and use Frida as its loader and runtime control plane. Read
-`references/frida-debug.md` for the export contract and the required
-install-state-restore workflow. The dylib may be compiled locally or remotely;
-ios-use does not require the compiler to run on the same Mac as the App.
-
-## 6. Collect visual evidence only when needed
-
-Use a screenshot when the DOM cannot describe visual state:
-
-```bash
-ios-use dom
-ios-use screenshot --name result
-ios-use screenshot --no-ocr --name pixels-only
-```
-
-Use a short image sequence for transient animation:
-
-```bash
-ios-use tap "站姿1" && ios-use capture --fps 10 --duration 3 --name pose-sweep
-ios-use capture --fps 10 --duration 3 --name pose-sweep --keep-changed-frames
-```
-
-- Keep `tap` and `capture` as separate shell commands.
-- Use `--keep-changed-frames` when only visually changed JPEGs are useful.
-- Expect JPEG files and `manifest.json`, not video, GIF, or a contact sheet.
-
-## 7. Manage installed Apps and DDI
-
-```bash
-ios-use apps --udid <udid>
-ios-use install path/to/signed.ipa --udid <udid>
-ios-use uninstall com.example.app --udid <udid>
-ios-use ddi-mount --udid <udid>
-```
-
-- Install only signed `.ipa` or `.app` artifacts.
-- Confirm the bundle ID before uninstalling an App.
-- Let `ddi-mount` inspect local caches first.
-- If no matching DDI exists locally, download the current fallback archive:
-
-```text
-https://deviceboxhq.com/ddi-17E5179g.zip
-```
-
-Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
-`ddi-mount --path`. Do not mount a version that does not match the device.
-
-## 8. Recover from common failures
-
-- `No active driver`: run `ios-use status`, then `ios-use start <udid>`.
-- `driver update required`, `signing expired`, or a driver that no longer launches:
-  rerun `ios-use config --udid <udid>`, then start again.
-- `signing expires soon`: run `config` while the current driver is still valid;
-  do not defer renewal across a long or multi-session task.
-- Element not found or ambiguous: inspect a fresh DOM, use the exact displayed
-  label/value, then add `--traits` or `--cindex` only if needed.
-- DDI missing or mismatched: use `ddi-mount`, the fallback archive above, and an
-  exact device-version match.
-- The Mac backend reports missing or incomplete installed resources: reinstall or
-  update ios-use from a complete release, then retry the same `start --mac --app`
-  command.
-- Mac setup is missing or macOS trust needs attention: run
-  `ios-use config --mac`. If macOS authentication was cancelled, safely retry
-  that same command.
-- altsign HTTP 4xx: verify Apple Developer account state and interactive
-  authentication, then retry `config`.
-- altsign HTTP 5xx: check network, VPN, or proxy conditions and retry later; do not
-  change device UI state to solve a signing-service failure.
-- Signing succeeded but launch still fails: check developer trust and run
-  `ios-use status`. If it reports `driver update required`, rerun
-  `ios-use config --udid <udid>` before starting again.
-
-Never place passwords, two-factor codes, certificates, or complete provisioning
-profiles in commands, logs, artifacts, or reports. A full UDID is required in some
-local commands; redact it before sharing logs, artifacts, or reports.
+The installer also updates this Skill. A Linux Agent using a remote device needs
+the Skill content, not a local iOS binary; load the tool owner's available Skill
+or obtain `ios-use-skill/` from the same source revision as the Edge installation.
+
+Never put passwords, 2FA codes, certificates or provisioning profiles in commands
+or reports. Redact device identifiers and signed URLs before sharing artifacts.

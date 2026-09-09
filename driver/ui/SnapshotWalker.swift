@@ -507,8 +507,9 @@ func hasAncestor(_ node: SafeSnapshot, withLabel label: String) -> Bool {
 
 // MARK: - findLargestScrollable (doc 5.3)
 
-/// Single DFS that picks the largest scrollable container by area.
-/// Time complexity: O(n), where n is the number of nodes in the subtree.
+/// Picks the largest scrollable, keeping a later sibling's overlay when it
+/// covers the candidate's center. XCTest may still mark the covered page visible.
+/// Time complexity: O(n * h), where h is the snapshot ancestor depth.
 func findLargestScrollable(_ root: SafeSnapshot) -> SafeSnapshot? {
     var best: SafeSnapshot?
     var bestArea: CGFloat = 0
@@ -517,7 +518,14 @@ func findLargestScrollable(_ root: SafeSnapshot) -> SafeSnapshot? {
         if scrollableElementTypes.contains(UInt(node.elementType)),
            let frame = interactionFrame(node) {
             let a = frame.width * frame.height
-            if a > bestArea { best = node; bestArea = a }
+            if a > bestArea {
+                var ancestor = best?.parent
+                while let current = ancestor, current !== node { ancestor = current.parent }
+                let coveredByLaterSibling = best.flatMap(interactionFrame)?.contains(
+                    CGPoint(x: frame.midX, y: frame.midY)
+                ) == true && ancestor == nil
+                if !coveredByLaterSibling { best = node; bestArea = a }
+            }
         }
         for c in node.children { stack.append(c) }
     }
@@ -582,24 +590,27 @@ func collectCellSnapshots(_ scrollView: SafeSnapshot) -> [SafeSnapshot] {
 /// Early-terminating variant: collects up to `limit` visible cell/icon frames.
 /// Used by boundary detection in scroll loops — only needs a few anchor frames
 /// to detect movement, not the full cell list.
-func collectVisibleCellFrames(_ scrollView: SafeSnapshot, limit: Int = 3) -> [CGRect] {
+func collectVisibleCellFrames(_ scrollView: SafeSnapshot, limit: Int? = 3) -> [CGRect] {
     var frames: [CGRect] = []
-    frames.reserveCapacity(limit)
+    frames.reserveCapacity(limit ?? 3)
     var stack: [SafeSnapshot] = [scrollView]
     while let n = stack.popLast() {
         if cellLikeElementTypes.contains(UInt(n.elementType)) && n.isVisible {
             frames.append(n.frame)
-            if frames.count >= limit { return frames }
+            if let limit, frames.count >= limit { return frames }
         }
         for c in n.children.reversed() { stack.append(c) }
     }
-    // Fallback: if no Cell/Icon found, use any visible descendant
+    // Without Cell/Icon nodes, sample visible leaves. Structural wrappers can
+    // stay fixed while their children scroll (e.g. sectioned bottom sheets).
     if frames.isEmpty {
         var fallback: [SafeSnapshot] = [scrollView]
         while let n = fallback.popLast() {
-            if n.isVisible && n !== scrollView {
+            if n.isVisible && n !== scrollView && n.children.isEmpty
+                && UInt(n.elementType) != XCUIElement.ElementType.scrollBar.rawValue
+                && !n.frame.isEmpty {
                 frames.append(n.frame)
-                if frames.count >= limit { return frames }
+                if let limit, frames.count >= limit { return frames }
             }
             for c in n.children.reversed() { fallback.append(c) }
         }

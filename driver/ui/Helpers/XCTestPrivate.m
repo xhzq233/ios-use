@@ -1056,7 +1056,7 @@ BOOL SnapshotMatchesElement(id a, id b) {
 - (NSArray<SafeSnapshot *> *)allDescendants {
     if (_allDescendantsCache) return _allDescendantsCache;
     NSMutableArray<SafeSnapshot *> *out = [NSMutableArray array];
-    NSMutableArray<SafeSnapshot *> *stack = [NSMutableArray arrayWithArray:self.children];
+    NSMutableArray<SafeSnapshot *> *stack = [NSMutableArray arrayWithArray:self.children.reverseObjectEnumerator.allObjects];
     while (stack.count > 0) {
         SafeSnapshot *node = stack.lastObject;
         [stack removeLastObject];

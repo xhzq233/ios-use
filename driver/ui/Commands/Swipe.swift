@@ -85,29 +85,31 @@ enum SwipeCommands {
             return try okScroll(target: target, scrolls: adjusted.count, scrollDirection: adjusted.scrollDirection)
         }
 
-        // STEP 5: direction inference from visible cells.
+        // STEP 5: infer the axis from visible content; prefer target geometry
+        // for direction and use traversal order only when geometry is inconclusive.
         let cellSnapshots = collectCellSnapshots(scrollView)
         let targetCell = findCellAncestor(target.node)
         let targetCellIdx = cellSnapshots.firstIndex { SnapshotMatchesElement($0.raw, targetCell.raw) }
 
         let visibleCells = cellSnapshots.filter { $0.isVisible }
-        guard visibleCells.count >= 2 else {
-            return try scrollUnavailable("less than 2 visible cells in scrollable", target: toTarget)
+        guard let scrollFrame = interactionFrame(scrollView) else {
+            return try scrollUnavailable("scrollable has no interaction frame", target: toTarget)
         }
-        let firstVisibleCell = visibleCells.first!
-        let lastVisibleCell = visibleCells.last!
-        let lastVisibleIdx = cellSnapshots.firstIndex { SnapshotMatchesElement($0.raw, lastVisibleCell.raw) } ?? 0
-
-        let dx = firstVisibleCell.frame.minX - lastVisibleCell.frame.minX
-        let dy = firstVisibleCell.frame.minY - lastVisibleCell.frame.minY
-        let vertical = abs(dy) > abs(dx)
+        let lastVisibleIdx = visibleCells.last.flatMap { last in
+            cellSnapshots.firstIndex { SnapshotMatchesElement($0.raw, last.raw) }
+        }
+        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollView, limit: nil), scrollFrame: scrollFrame)
+        let vertical = axis == .vertical
 
         let scrollUpwards: Bool
         if args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack {
             scrollUpwards = true
         } else if args.dir == IOSUseProtocol.XCConstants.swipeDirectionForth {
             scrollUpwards = false
-        } else if let tci = targetCellIdx {
+        } else if let backwards = scrollBackwardsToward(targetFrame: target.node.frame,
+                                                        scrollFrame: scrollFrame, axis: axis) {
+            scrollUpwards = backwards
+        } else if let tci = targetCellIdx, let lastVisibleIdx {
             scrollUpwards = tci < lastVisibleIdx
         } else {
             scrollUpwards = false
@@ -244,7 +246,7 @@ enum SwipeCommands {
         guard let frame = interactionFrame(scrollView) else {
             return try scrollUnavailable("scrollable has no interaction frame", target: ForyTarget(point: point))
         }
-        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollView), scrollFrame: frame)
+        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollView, limit: nil), scrollFrame: frame)
         let center = CGPoint(x: frame.midX, y: frame.midY)
         let rawVector = CGVector(dx: center.x - p.x, dy: center.y - p.y)
         let vector = projectVectorToPrimaryAxis(rawVector, axis: axis)
@@ -278,7 +280,7 @@ enum SwipeCommands {
         let scrollNode = findLargestScrollable(cs.root)
         let scrollFrame = scrollNode.flatMap(interactionFrame) ?? cs.appFrame
         let isBack = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
-        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root), scrollFrame: scrollFrame)
+        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root, limit: nil), scrollFrame: scrollFrame)
         let axisSize = axis == .vertical ? scrollFrame.height : scrollFrame.width
         let distance = args.distance > 0 ? args.distance : (IOSUseProtocol.scrollTouchProportion * Double(axisSize))
 
