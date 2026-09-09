@@ -178,6 +178,12 @@ replay lives in `.github/workflows/simulator.yml` and is manual-only.
 
 ## Install And Benchmark
 
+Agents using a remote Mac can install only the operational Skill on Linux or
+macOS with `bash scripts/install_skill.sh`. It does not install the CLI or touch
+devices. `IOS_USE_SKILL_DIR` and `IOS_USE_SKILL_LINK` override its content and
+discovery paths; when invoked outside a source checkout, `IOS_USE_REF` selects
+the source revision downloaded from GitHub.
+
 | Script | Purpose |
 | --- | --- |
 | `scripts/install.sh` | On Apple Silicon, verify checksums and install the release CLI, driver IPAs, and prebuilt Mac Runtime plus Frida Engine under `<prefix>/share/ios-use/mac/`; both frameworks are signature-verified immutable preparation inputs. Also installs the skill and altsign helper. `--build-from-source` additionally requires full Xcode, Swift, xcodegen, and the pinned Frida build toolchain. Intel macOS is unsupported. |
