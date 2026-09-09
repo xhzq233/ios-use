@@ -90,18 +90,10 @@ helps the caller understand the final result.
 Use `nodeRepl.write(...)` or `console.log(...)` for other values; JavaScript
 return values are not echoed a second time after the API has emitted its result.
 
-For remote interactive work, keep one Shell process open and send the next JS
-line after inspecting the preceding output:
-
-```bash
-device-relay exec --stdin - --artifacts ./artifacts <edge> -- ios-use repl
-```
-
-Use the Shell tool's existing session input mechanism; send `.exit` when done.
-Do not use `repl -` for this: it reads one whole program until stdin EOF.
-With Relay `--artifacts`, emitted screenshots are transferred during execution
-and the Consumer prints their local `Artifact:` paths. Read those images with
-the Agent's image tool; a terminal cannot itself render an image tool result.
+For multi-turn work, keep bare `ios-use repl` open, send the next JS line after
+observing the preceding output, and finish with `.exit`. `repl -` instead reads
+one whole program until EOF. Remote connection and artifact transfer follow the
+transport's own Skill; do not treat an Edge-local path as a Consumer file.
 `paste` inserts plain text, not clipboard HTML; `pressKey` currently supports
 Return only. Use native CLI commands for lifecycle, installation, logs and capture.
 
