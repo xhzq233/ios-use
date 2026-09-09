@@ -289,7 +289,21 @@ enum ReplRuntimeService {
             process.standardError = FileHandle.standardError
             server.start()
             try process.run()
-            process.waitUntilExit()
+            // Foundation starts the child in its own process group. Give it
+            // the terminal while it reads interactive input, then restore us.
+            let terminal = STDIN_FILENO
+            let foreground = isatty(terminal) == 1 ? tcgetpgrp(terminal) : -1
+            if foreground > 0 {
+                let previousSignal = signal(SIGTTOU, SIG_IGN)
+                defer { signal(SIGTTOU, previousSignal) }
+                if tcsetpgrp(terminal, process.processIdentifier) == 0 {
+                    kill(process.processIdentifier, SIGCONT)
+                }
+                process.waitUntilExit()
+                _ = tcsetpgrp(terminal, foreground)
+            } else {
+                process.waitUntilExit()
+            }
             server.stop()
             return CLIResult(exitCode: process.terminationStatus)
         } catch {
@@ -464,18 +478,20 @@ enum ReplRuntimeService {
 
     function projectElement(element, index) {
       const traits = Array.isArray(element.traits) ? element.traits : [];
+      // XCTest DOM carries state in traits; its unused structured fields decode as false.
+      const hasStructuredState = Boolean(textValue(element.semanticType));
       return {
         element_index: index,
-        role: textValue(element.semanticType) || textValue(element.type) || "Element",
+        role: textValue(element.semanticType) || textValue(element.type) || traits[0] || "Element",
         label: textValue(element.label),
         value: textValue(element.value),
         identifier: textValue(element.identifier),
         traits,
         frame: Array.isArray(element.frame) ? element.frame : null,
-        enabled: element.state?.enabled ?? null,
-        selected: element.state?.selected ?? null,
-        focused: element.state?.focused ?? null,
-        visible: element.state?.visible ?? null,
+        enabled: hasStructuredState ? (element.state?.enabled ?? null) : !traits.includes("disabled"),
+        selected: hasStructuredState ? (element.state?.selected ?? null) : traits.includes("selected"),
+        focused: hasStructuredState ? (element.state?.focused ?? null) : traits.includes("focused"),
+        visible: hasStructuredState ? (element.state?.visible ?? null) : !traits.includes("invisible"),
         depth: element.hierarchy?.depth ?? 0,
       };
     }

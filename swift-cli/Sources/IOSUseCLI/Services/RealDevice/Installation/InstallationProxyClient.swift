@@ -550,7 +550,7 @@ enum RealDevicePackageInstaller {
     }
 
     private static func ipaMetadata(ipaPath: String) throws -> IpaInstallMetadata {
-        let entries = try Shell.run("unzip", arguments: ["-Z1", ipaPath])
+        let entries = String(decoding: try Shell.runData("unzip", arguments: ["-Z1", ipaPath]), as: UTF8.self)
             .split(whereSeparator: \.isNewline)
             .map(String.init)
         guard let infoEntry = entries.first(where: { entry in
