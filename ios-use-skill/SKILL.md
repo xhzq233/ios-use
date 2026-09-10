@@ -68,7 +68,9 @@ Run on the device's Mac host:
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
 ```
 
-The installer also updates this Skill. A Linux Agent using a remote device can
+The installer also updates this Skill. Set `IOS_USE_INSTALL_SKILL=0` when a
+consumer links `ios-use-skill/` from its original checkout and owns discovery.
+A Linux Agent using a remote device can
 install only the Skill, without a Mac binary or device setup:
 
 ```bash

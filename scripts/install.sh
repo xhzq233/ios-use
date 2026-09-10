@@ -45,6 +45,7 @@ Environment:
   IOS_USE_DRIVER_VERSION
                         Driver release tag override. Defaults to IOS_USE_VERSION.
   IOS_USE_REF           Source ref used when source files are needed.
+  IOS_USE_INSTALL_SKILL Set to 0 when a consumer manages the Skill link.
   IOS_USE_GITHUB_REPO   GitHub repository. Defaults to xhzq233/ios-use.
 
 Requirements:
@@ -404,7 +405,7 @@ install_binary() {
   local skill_src="$ROOT_DIR/ios-use-skill"
   local skill_dst="$HOME/.ios-use/skill"
   local skill_link="$HOME/.agents/skills/ios-use"
-  if [[ -d "$skill_src" ]]; then
+  if [[ "${IOS_USE_INSTALL_SKILL:-1}" != 0 && -d "$skill_src" ]]; then
     mkdir -p "$HOME/.agents/skills"
     rm -rf "$skill_dst"
     cp -R "$skill_src" "$skill_dst"
