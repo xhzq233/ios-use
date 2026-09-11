@@ -1,3 +1,3 @@
 public extension IOSUseCLI {
-    static let version = "2.0.4"
+    static let version = "2.1.0"
 }
