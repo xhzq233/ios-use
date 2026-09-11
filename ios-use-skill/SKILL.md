@@ -16,8 +16,10 @@ reconfigure the Consumer as a device host.
   multiple running Devices, pass `-d <id>` / `--device <id>` on every UI command.
   IDs are bare UDIDs or `mac`; with one running target the selector is optional.
 - **Persistent or multi-device work:** read [REPL](references/repl.md), then
-  `ios-use repl`. `cua.getDevice(id)` shows initial AX; explore one action at a
-  time, preserving Device handles. Ask `cua.help()` / `device.help()` for APIs.
+  `ios-use repl`. `cua.getDevice(id)` shows initial AX. Once a repeated flow is
+  understood, run it as a loop with in-script state checks rather than returning
+  to the model after every action or item. Preserve Device handles; use
+  `cua.help()` / `device.help()` for APIs.
 - **No running target, upgrade, signing, DDI or Mac setup:** read
   [setup and recovery](references/setup.md). Real-device preparation is
   `config --udid <udid>` then `start <udid>`; do not renew an already healthy

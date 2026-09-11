@@ -52,10 +52,16 @@ await device.setValue(7, "hello");
 await device.typeText(" world");
 await device.paste("text");
 await device.pressKey("Return");
-await device.scroll(4, "down", 1);
+await device.scroll(4, "down", 0.5);
 await device.scrollTo("Settings", "Home");
 await device.waitFor("Loading", {gone: true, timeout: 20});
 ```
+
+After a transition, use `await device.getAXState({waitQuiescence: true})`
+to wait for UI animations to settle before reading. This uses the Driver's
+quiescence wait, not a fixed sleep; use `waitFor` for a particular loading state.
+`scroll` accepts positive fractional pages: `0.5` requests half a viewport
+along the requested direction, not a whole swipe rounded up.
 
 Observations emit to the REPL by default. Pass `{emit: false}` when the value is
 only an intermediate result. AX observations are diffed against the previous
@@ -72,6 +78,27 @@ observation, obtain a new AX state before using an index. After `click`,
 `setValue`, `typeText`, `paste`, `pressKey`, or `scroll`, observe again before
 using an index. Prefer semantic text when it is unique; the runtime falls back
 to the observed element center only when needed.
+
+## Batch repeated work
+
+Explore enough of an unfamiliar UI to understand the route and relevant page
+variants. Then use a reusable helper and a loop to process the requested items
+in one REPL call where practical. Do not split a known repeated flow into one
+model round trip per click or item.
+
+Keep actions on one Device sequential, but make the intermediate observations
+and decisions inside the script. After each navigation, read fresh AX with
+`{emit: false, waitQuiescence: true}` and use `device.get()` to inspect the full
+current element objects, including labels, values and selected states. The AX
+text return value may be only a diff; do not treat it as the whole page or reuse
+old element indices. Select fields using the active page's context: a flat list
+of every switch can include duplicate controls or nodes from a previous page.
+
+Accumulate the requested results and emit a compact summary. Handle page
+variants only when their visible state makes the next step clear. If a page is
+unexpected or an action fails, return the completed results and current state
+for the model to resolve; do not continue the loop blindly. Batching does not
+expand permission to change settings or take other external actions.
 
 ## Emit explicit results
 
@@ -90,10 +117,10 @@ helps the caller understand the final result.
 Use `nodeRepl.write(...)` or `console.log(...)` for other values; JavaScript
 return values are not echoed a second time after the API has emitted its result.
 
-For multi-turn work, keep bare `ios-use repl` open, send the next JS line after
-observing the preceding output, and finish with `.exit`. `repl -` instead reads
-one whole program until EOF. Remote connection and artifact transfer follow the
-transport's own Skill; do not treat an Edge-local path as a Consumer file.
+For multi-turn work, keep bare `ios-use repl` open, send the next script segment
+after reading the preceding result, and finish with `.exit`. `repl -` instead
+reads one whole program until EOF. Remote connection and artifact transfer
+follow the transport's own Skill; do not treat an Edge-local path as a Consumer file.
 `paste` inserts plain text, not clipboard HTML; `pressKey` currently supports
 Return only. Use native CLI commands for lifecycle, installation, logs and capture.
 

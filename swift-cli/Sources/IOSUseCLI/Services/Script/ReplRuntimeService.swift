@@ -544,14 +544,14 @@ enum ReplRuntimeService {
 
       help() {
         nodeRepl.write([
-          "await device.getAXState()",
+          "await device.getAXState({waitQuiescence: true}) // wait for UI animations before reading",
           "await device.getScreenshot()",
           "await device.getAXStateAndScreenshot()",
           "await device.click(element_index|string|[x,y])",
           "await device.setValue(element_index|string, value)",
           "await device.typeText(value)",
           "await device.pressKey(\"Return\")",
-          "await device.scroll(element_index|[x,y], \"down\", 1)",
+          "await device.scroll(element_index|[x,y], \"down\", 0.5) // fraction of the scroll viewport",
           "await device.scrollTo(text, anchor)",
           "await device.waitFor(text, {gone: true, timeout: 20})",
         ].join("\n"));
@@ -567,7 +567,9 @@ enum ReplRuntimeService {
 
       async getAXState(options = {}) {
         if (options.disableDiffing === true) this.#previous = null;
-        const data = await runCLI(this.id, "dom", ["--fresh"]);
+        const args = ["--fresh"];
+        if (options.waitQuiescence === true) args.push("--wait-quiescence");
+        const data = await runCLI(this.id, "dom", args);
         const rawElements = Array.isArray(data.elements) ? data.elements : [];
         const elements = rawElements.map(projectElement);
         const previousEntries = keyedElements(this.#previous?.rawElements ?? []);
@@ -687,19 +689,76 @@ enum ReplRuntimeService {
       }
 
       async scroll(target, direction = "down", pages = 1) {
-        const directions = { down: "forth", right: "forth", d: "forth", r: "forth", up: "back", left: "back", u: "back", l: "back" };
-        const mapped = directions[String(direction).toLowerCase()];
-        if (!mapped) throw new TypeError("scroll direction must be up, down, left, or right");
-        const count = Math.max(1, Math.trunc(Number(pages) || 1));
-        const args = ["--dir", mapped];
-        if (target !== undefined && target !== null) args.push("--from", this.#resolveTarget(target).target);
+        const directions = { down: [1, -1], right: [0, -1], d: [1, -1], r: [0, -1], up: [1, 1], left: [0, 1], u: [1, 1], l: [0, 1] };
+        const axisAndSign = directions[String(direction).toLowerCase()];
+        if (!axisAndSign) throw new TypeError("scroll direction must be up, down, left, or right");
+        const amount = Number(pages);
+        if (!Number.isFinite(amount) || amount <= 0) throw new TypeError("scroll pages must be a positive finite number");
+        // Resolve indices before any implicit observation can give them a new meaning.
+        const resolved = target === undefined || target === null ? null : this.#resolveTarget(target);
+        if (!this.#current) await this.getAXState({emit: false});
+        const [x, y, width, height] = this.#scrollFrame(resolved);
+        const [axis, sign] = axisAndSign;
+        const extent = axis === 0 ? width : height;
+        const center = [x + width / 2, y + height / 2];
+        let remaining = extent * amount;
         let result;
         try {
-          for (let index = 0; index < count; index += 1) result = await runCLI(this.id, "swipe", args);
+          // Keep each drag inside the observed viewport, including multi-page requests.
+          while (remaining > 0) {
+            const distance = Math.min(remaining, extent * 0.75);
+            const from = center.slice();
+            const to = center.slice();
+            // Start in the inner quarter, matching Driver scroll gestures;
+            // centering a long drag can start under a navigation-bar overlay.
+            from[axis] -= sign * extent / 4;
+            to[axis] = from[axis] + sign * distance;
+            result = await runCLI(this.id, "swipe", ["--from", from.join(","), "--to", to.join(",")]);
+            remaining -= distance;
+          }
           return result;
         } finally {
           this.#current = null;
         }
+      }
+
+      #scrollFrame(resolved) {
+        const elements = this.#current.elements;
+        const appFrame = elements[0]?.frame;
+        if (!appFrame) throw new Error("No viewport in the current AX state");
+        const scrollRoles = new Set(["scroll", "scrollview", "scrollarea", "table", "collection", "collectionview", "list"]);
+        const isScrollable = element => element.visible !== false && scrollRoles.has(element.role.toLowerCase());
+        let container;
+        const anchor = resolved?.element ?? (resolved && elements.find(element =>
+          [element.label, element.value, element.identifier].includes(resolved.target)
+        ));
+        if (anchor && isScrollable(anchor)) {
+          container = anchor;
+        } else {
+          // XCTest's flat DOM may have no hierarchy depth; use the observed
+          // anchor center to select the smallest containing scroll viewport.
+          const point = anchor?.frame
+            ? [anchor.frame[0] + anchor.frame[2] / 2, anchor.frame[1] + anchor.frame[3] / 2]
+            : resolved?.target.split(",").map(Number);
+          const candidates = elements.filter(element => {
+            if (!isScrollable(element) || !element.frame) return false;
+            const [x, y, width, height] = element.frame;
+            return !point || (point[0] >= x && point[0] <= x + width && point[1] >= y && point[1] <= y + height);
+          });
+          candidates.sort((a, b) => {
+            const areaDifference = a.frame[2] * a.frame[3] - b.frame[2] * b.frame[3];
+            return (point ? areaDifference : -areaDifference) || b.element_index - a.element_index;
+          });
+          container = candidates[0];
+        }
+        if (!container?.frame) throw new Error("No observed scrollable at the target; read AX and select a scroll container or a point inside it");
+        const [x, y, width, height] = container.frame;
+        const left = Math.max(x, appFrame[0]);
+        const top = Math.max(y, appFrame[1]);
+        const right = Math.min(x + width, appFrame[0] + appFrame[2]);
+        const bottom = Math.min(y + height, appFrame[1] + appFrame[3]);
+        if (right <= left || bottom <= top) throw new Error("The scroll viewport is outside the current App frame");
+        return [left, top, right - left, bottom - top];
       }
 
       get(selector) {
