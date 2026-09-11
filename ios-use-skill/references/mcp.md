@@ -64,10 +64,15 @@ await device.scrollTo("Settings", "Home");
 await device.waitFor("Loading", {gone: true, timeout: 20});
 ```
 
-AX and screenshot observations wait for UI animations to settle by default.
+AX and screenshot observations request native quiescence by default.
 Use `{waitQuiescence: false}` only when an immediate unsettled observation is
 intentional. This uses the Driver's
-quiescence wait, not a fixed sleep; use `waitFor` for a particular loading state.
+quiescence wait, not a fixed sleep. Native idle is not an application-readiness
+guarantee: iOS navigation can still expose the outgoing and incoming pages
+together. Before collecting results, check the expected page and its container;
+if both pages remain, observe again until the relevant transition condition is
+met. `waitFor` checks visible selector presence or absence, not whole-tree
+stability. A new title alone does not prove the previous page has disappeared.
 `scroll` accepts positive fractional pages: `0.5` requests half a viewport
 along the requested direction, not a whole swipe rounded up.
 

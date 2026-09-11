@@ -12,7 +12,7 @@
   Device handles, AX observations, and Driver connections are reused.
 - Batch repeated UI work into helpers and loops, checking intermediate page
   state inside the script instead of returning to the model after every action.
-- AX and screenshot observations wait for animation-idle by default. Read full
+- AX and screenshot observations request native quiescence by default. Read full
   parent/child relationships from `device.get()`; combined AX and screenshot
   calls retain the AX indices and return image bytes directly.
 - Add touch multi-clicks, coordinate dragging, literal text selection with
@@ -47,6 +47,9 @@
 - Rich-text paste, secondary accessibility actions, and secure-field replacement
   or selection remain unavailable. iOS clicks are touch-only; Mac currently
   supports single clicks and Return/Enter keys.
+- Native quiescence can return during iOS navigation animations. Check the
+  expected page/container before collecting results; it is not a universal
+  readiness guarantee.
 - The Skill is now named `ios-use`. Source selection follows the release version;
   the separate `IOS_USE_REF` override has been removed. Local Skill development
   still uses `bash scripts/install_skill.sh` from a checkout.

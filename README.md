@@ -108,7 +108,8 @@ defaults to 30,000 and can be raised to 300,000 for longer batches.
 Use `cua.help()` and `device.help()` for the current API. Common Device methods
 include `getAXState`, `getScreenshot`, `getAXStateAndScreenshot`, `click`, `drag`,
 `longPress`, `scroll`, `scrollTo`, `waitFor`, `setValue`, `selectText`, `typeText`,
-`paste`, and `pressKey`. AX observations wait for animation-idle by default;
+`paste`, and `pressKey`. Observations request native quiescence by default;
+this does not guarantee that every navigation transition has finished.
 `get()` exposes the complete latest tree with parent/child indices. See the
 [MCP guide](ios-use-skill/references/mcp.md) for examples.
 

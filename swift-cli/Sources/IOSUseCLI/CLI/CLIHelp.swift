@@ -281,7 +281,7 @@ enum CLIHelp {
                 options: [
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
                     "--fresh             Ignore cached snapshot and rebuild",
-                    "--wait-quiescence   Wait until the UI is idle before returning a fresh DOM",
+                    "--wait-quiescence   Request native UI-idle waiting, then return a fresh DOM",
                 ]
             )
         case "ui-tree":
