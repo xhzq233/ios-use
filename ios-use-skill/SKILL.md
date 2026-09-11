@@ -1,6 +1,6 @@
 ---
-name: "ios-use-skill"
-description: "Use when running or troubleshooting ios-use on a real iOS device, Simulator, or Mac backend. Covers target setup, DOM-first UI actions, persistent REPL, App lifecycle and evidence; signing, proxy and Frida are loaded only when needed."
+name: "ios-use"
+description: "Use when running or troubleshooting ios-use on a real iOS device, Simulator, or Mac backend. Covers target setup, DOM-first UI actions, persistent MCP JavaScript, App lifecycle and evidence; signing, proxy and Frida are loaded only when needed."
 ---
 
 # ios-use
@@ -15,11 +15,15 @@ reconfigure the Consumer as a device host.
 - **Existing target:** `ios-use status`, then use the returned Device ID. With
   multiple running Devices, pass `-d <id>` / `--device <id>` on every UI command.
   IDs are bare UDIDs or `mac`; with one running target the selector is optional.
-- **Persistent or multi-device work:** read [REPL](references/repl.md), then
-  `ios-use repl`. `cua.getDevice(id)` shows initial AX. Once a repeated flow is
+- **MCP automation:** use the ios-use `js` tool; read [MCP](references/mcp.md)
+  for registration or recovery. `cua.getDevice(id)` shows API help and initial AX.
+  Once a repeated flow is
   understood, run it as a loop with in-script state checks rather than returning
   to the model after every action or item. Preserve Device handles; use
   `cua.help()` / `device.help()` for APIs.
+  Each tool call returns when its script completes; do not poll a shell or start
+  `ios-use repl`. If MCP is unavailable, use the native CLI or register the server
+  and start a new Agent session.
 - **No running target, upgrade, signing, DDI or Mac setup:** read
   [setup and recovery](references/setup.md). Real-device preparation is
   `config --udid <udid>` then `start <udid>`; do not renew an already healthy
@@ -79,8 +83,9 @@ install only the Skill, without a Mac binary or device setup:
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install_skill.sh | bash
 ```
 
-Set `IOS_USE_REF` to the Edge's source revision when pinning versions. From a
-source checkout, `bash scripts/install_skill.sh` installs the local Skill.
+Both installers accept `--version <tag>` to match the device host's release;
+remote installs default to the latest release. From a source checkout,
+`bash scripts/install_skill.sh` installs the local Skill.
 
 Never put passwords, 2FA codes, certificates or provisioning profiles in commands
 or reports. Redact device identifiers and signed URLs before sharing artifacts.

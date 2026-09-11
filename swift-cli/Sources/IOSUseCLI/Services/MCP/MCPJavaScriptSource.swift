@@ -1,354 +1,24 @@
-import Darwin
-import Foundation
-
-final class ReplDriverSessionPool: @unchecked Sendable {
-    private let lock = NSLock()
-    private var sessions: [String: LockedDriverClientSession] = [:]
-
-    func session(paths: IOSUsePaths) -> LockedDriverClientSession {
-        lock.lock()
-        defer { lock.unlock() }
-        if let existing = sessions[paths.driverLock] {
-            return existing
-        }
-        let created = LockedDriverClientSession(paths: paths)
-        sessions[paths.driverLock] = created
-        return created
-    }
-
-    func close() {
-        lock.lock()
-        let current = Array(sessions.values)
-        sessions.removeAll()
-        lock.unlock()
-        current.forEach { $0.close() }
-    }
-
-    deinit {
-        close()
-    }
-}
-
-private struct ReplRPCRequest: Decodable {
-    let id: Int
-    let arguments: [String]?
-    let imagePath: String?
-    let emitImage: Bool?
-}
-
-private struct ReplRPCResponse: Encodable {
-    let id: Int
-    let exitCode: Int32
-    let stdout: String
-    let stderr: String
-    let imageBase64: String?
-}
-
-private final class ReplRPCServer: @unchecked Sendable {
-    let port: Int
-
-    private let paths: IOSUsePaths
-    private let listenerFD: Int32
-    private let stateLock = NSLock()
-    private let writeLock = NSLock()
-    private let work = DispatchGroup()
-    private let pool = ReplDriverSessionPool()
-    private var clientFD: Int32 = -1
-    private var stopped = false
-
-    init(paths: IOSUsePaths) throws {
-        self.paths = paths
-        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else {
-            throw CLIParseError.invalidValue("failed to create REPL host socket")
-        }
-        listenerFD = fd
-        setSocketNoSigPipe(fd)
-
-        var one: Int32 = 1
-        _ = setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_REUSEADDR,
-            &one,
-            socklen_t(MemoryLayout<Int32>.size)
-        )
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = 0
-        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-        let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(
-                    fd,
-                    $0,
-                    socklen_t(MemoryLayout<sockaddr_in>.size)
-                )
-            }
-        }
-        guard bound == 0, Darwin.listen(fd, 1) == 0 else {
-            let value = errno
-            Darwin.close(fd)
-            throw CLIParseError.invalidValue(
-                "failed to bind REPL host socket: errno \(value)"
-            )
-        }
-        var actual = sockaddr_in()
-        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let inspected = withUnsafeMutablePointer(to: &actual) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.getsockname(fd, $0, &length)
-            }
-        }
-        guard inspected == 0 else {
-            let value = errno
-            Darwin.close(fd)
-            throw CLIParseError.invalidValue(
-                "failed to inspect REPL host socket: errno \(value)"
-            )
-        }
-        port = Int(UInt16(bigEndian: actual.sin_port))
-    }
-
-    func start() {
-        DispatchQueue.global(qos: .userInitiated).async { [self] in
-            let accepted = Darwin.accept(listenerFD, nil, nil)
-            guard accepted >= 0 else { return }
-            setSocketNoSigPipe(accepted)
-            stateLock.lock()
-            if stopped {
-                stateLock.unlock()
-                Darwin.close(accepted)
-                return
-            }
-            clientFD = accepted
-            stateLock.unlock()
-            defer {
-                stateLock.lock()
-                let ownsClient = clientFD == accepted
-                if ownsClient {
-                    clientFD = -1
-                }
-                stateLock.unlock()
-                if ownsClient {
-                    Darwin.shutdown(accepted, SHUT_RDWR)
-                    Darwin.close(accepted)
-                }
-            }
-            readRequests(from: accepted)
-        }
-    }
-
-    func stop() {
-        stateLock.lock()
-        if stopped {
-            stateLock.unlock()
-            return
-        }
-        stopped = true
-        let client = clientFD
-        clientFD = -1
-        stateLock.unlock()
-        Darwin.shutdown(listenerFD, SHUT_RDWR)
-        Darwin.close(listenerFD)
-        if client >= 0 {
-            Darwin.shutdown(client, SHUT_RDWR)
-            Darwin.close(client)
-        }
-        work.wait()
-        pool.close()
-    }
-
-    private func readRequests(from descriptor: Int32) {
-        var pending = Data()
-        var buffer = [UInt8](repeating: 0, count: 16 * 1024)
-        while true {
-            let count = Darwin.read(descriptor, &buffer, buffer.count)
-            guard count > 0 else { break }
-            pending.append(contentsOf: buffer.prefix(count))
-            while let newline = pending.firstIndex(of: 0x0A) {
-                let line = Data(pending[..<newline])
-                pending.removeSubrange(...newline)
-                guard !line.isEmpty else { continue }
-                work.enter()
-                DispatchQueue.global(qos: .userInitiated).async { [self] in
-                    defer { work.leave() }
-                    handle(line, descriptor: descriptor)
-                }
-            }
-        }
-    }
-
-    private func handle(_ data: Data, descriptor: Int32) {
-        let response: ReplRPCResponse
-        do {
-            let request = try JSONDecoder().decode(ReplRPCRequest.self, from: data)
-            if let arguments = request.arguments {
-                let cli = IOSUseCLI(
-                    pathsForTesting: paths,
-                    replDriverSessions: pool
-                )
-                let result = cli.run(arguments: arguments)
-                response = ReplRPCResponse(
-                    id: request.id,
-                    exitCode: result.exitCode,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    imageBase64: nil
-                )
-            } else if let imagePath = request.imagePath {
-                let root = URL(fileURLWithPath: paths.root)
-                    .standardizedFileURL.path
-                let candidate = URL(fileURLWithPath: imagePath)
-                    .standardizedFileURL.path
-                guard candidate.hasPrefix(root + "/") else {
-                    throw CLIParseError.invalidValue(
-                        "REPL image path is outside IOS_USE_HOME"
-                    )
-                }
-                let image = try Data(contentsOf: URL(fileURLWithPath: candidate))
-                if request.emitImage == true {
-                    let environment = ProcessInfo.processInfo.environment
-                    if let directory = environment["DEVICE_RELAY_ARTIFACT_DIR"],
-                       let fdText = environment["DEVICE_RELAY_ARTIFACT_FD"],
-                       let fd = Int32(fdText) {
-                        let name = "screenshot-\(UUID().uuidString)." + URL(fileURLWithPath: candidate).pathExtension
-                        try image.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name))
-                        try FileHandle(fileDescriptor: fd, closeOnDealloc: false)
-                            .write(contentsOf: Data((name + "\n").utf8))
-                        response = ReplRPCResponse(id: request.id, exitCode: 0, stdout: "", stderr: "", imageBase64: nil)
-                    } else {
-                        response = ReplRPCResponse(id: request.id, exitCode: 0, stdout: "Image: \(candidate)\n", stderr: "", imageBase64: nil)
-                    }
-                } else {
-                response = ReplRPCResponse(
-                    id: request.id,
-                    exitCode: 0,
-                    stdout: "",
-                    stderr: "",
-                    imageBase64: image.base64EncodedString()
-                )
-                }
-            } else {
-                throw CLIParseError.invalidValue("invalid REPL host request")
-            }
-        } catch {
-            let requestID = (try? JSONDecoder().decode(
-                ReplRPCRequest.self,
-                from: data
-            ).id) ?? 0
-            response = ReplRPCResponse(
-                id: requestID,
-                exitCode: 1,
-                stdout: "",
-                stderr: "\(error)",
-                imageBase64: nil
-            )
-        }
-        do {
-            var encoded = try JSONEncoder().encode(response)
-            encoded.append(0x0A)
-            writeLock.lock()
-            defer { writeLock.unlock() }
-            try writeAll(fd: descriptor, data: encoded)
-        } catch {
-            return
-        }
-    }
-}
-
-enum ReplRuntimeService {
-    static func run(options: ReplOptions, paths: IOSUsePaths) -> CLIResult {
-        do {
-            let server = try ReplRPCServer(paths: paths)
-            let source = try sourcePayload(options.source)
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = [
-                "node",
-                "--permission",
-                "--input-type=module",
-                "-e",
-                javaScriptSource,
-                "--",
-                source.mode,
-                String(server.port),
-                Data(source.code.utf8).base64EncodedString(),
-                source.filename,
-            ]
-            let environment = ProcessInfo.processInfo.environment
-            process.environment = [
-                "PATH": environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin",
-                "LANG": environment["LANG"] ?? "en_US.UTF-8",
-                "LC_ALL": environment["LC_ALL"] ?? "en_US.UTF-8",
-                "NODE_NO_WARNINGS": "1",
-            ]
-            process.standardInput = FileHandle.standardInput
-            process.standardOutput = FileHandle.standardOutput
-            process.standardError = FileHandle.standardError
-            server.start()
-            try process.run()
-            // Foundation starts the child in its own process group. Give it
-            // the terminal while it reads interactive input, then restore us.
-            let terminal = STDIN_FILENO
-            let foreground = isatty(terminal) == 1 ? tcgetpgrp(terminal) : -1
-            if foreground > 0 {
-                let previousSignal = signal(SIGTTOU, SIG_IGN)
-                defer { signal(SIGTTOU, previousSignal) }
-                if tcsetpgrp(terminal, process.processIdentifier) == 0 {
-                    kill(process.processIdentifier, SIGCONT)
-                }
-                process.waitUntilExit()
-                _ = tcsetpgrp(terminal, foreground)
-            } else {
-                process.waitUntilExit()
-            }
-            server.stop()
-            return CLIResult(exitCode: process.terminationStatus)
-        } catch {
-            return CLIErrorEnvelope(
-                message: "Unable to start the ios-use REPL. Install Node.js and retry: \(error)",
-                exitCode: 1
-            ).render()
-        }
-    }
-
-    private static func sourcePayload(
-        _ source: ReplSource
-    ) throws -> (mode: String, code: String, filename: String) {
-        switch source {
-        case .inline(let code):
-            return ("once", code, "<ios-use-repl>")
-        case .file(let path):
-            return (
-                "once",
-                try String(contentsOfFile: path, encoding: .utf8),
-                path
-            )
-        case .standardInput:
-            let data = FileHandle.standardInput.readDataToEndOfFile()
-            guard let code = String(data: data, encoding: .utf8) else {
-                throw CLIParseError.invalidValue("REPL stdin must be UTF-8")
-            }
-            return ("once", code, "<stdin>")
-        case .repl:
-            return ("interactive", "", "<ios-use-repl>")
-        }
-    }
-
-    static let javaScriptSource = #"""
+enum MCPJavaScriptSource {
+    static let code = #"""
     import net from "node:net";
     import repl from "node:repl";
     import { registerHooks } from "node:module";
     import { PassThrough } from "node:stream";
-    import { inspect } from "node:util";
+    import { inspect, formatWithOptions } from "node:util";
+    import { AsyncLocalStorage } from "node:async_hooks";
+    import { createInterface } from "node:readline";
+    import { fileURLToPath } from "node:url";
 
-    const [mode, portValue, payloadBase64 = "", filename = "<ios-use-repl>"] = process.argv.slice(1);
-    const source = Buffer.from(payloadBase64, "base64").toString("utf8");
+    const [portValue] = process.argv.slice(1);
+    const executionContext = new AsyncLocalStorage();
+    function emit(content) {
+      const execution = executionContext.getStore();
+      if (!execution?.active) throw new Error("This JavaScript execution has ended");
+      process.stdout.write(JSON.stringify({event: "content", content}) + "\n");
+    }
     const socket = net.createConnection({ host: "127.0.0.1", port: Number(portValue) });
+    socket.setEncoding("utf8");
     const pending = new Map();
-    const imagePaths = new WeakMap();
     let nextID = 1;
     let incoming = "";
 
@@ -358,7 +28,7 @@ enum ReplRuntimeService {
     });
 
     socket.on("data", chunk => {
-      incoming += chunk.toString("utf8");
+      incoming += chunk;
       for (;;) {
         const newline = incoming.indexOf("\n");
         if (newline < 0) break;
@@ -377,15 +47,18 @@ enum ReplRuntimeService {
       pending.clear();
     });
     socket.on("close", () => {
-      const error = new Error("ios-use REPL host disconnected");
+      const error = new Error("ios-use JavaScript host disconnected");
       for (const completion of pending.values()) completion.reject(error);
       pending.clear();
     });
 
     async function rpc(payload) {
+      const execution = executionContext.getStore();
+      if (!execution?.active) throw new Error("This JavaScript execution has ended");
       await connected;
+      if (!execution.active) throw new Error("This JavaScript execution has ended");
       const id = nextID++;
-      return await new Promise((resolve, reject) => {
+      const result = new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
         socket.write(JSON.stringify({ id, ...payload }) + "\n", error => {
           if (!error) return;
@@ -393,6 +66,9 @@ enum ReplRuntimeService {
           reject(error);
         });
       });
+      execution.pending.add(result);
+      result.then(() => execution.pending.delete(result), () => execution.pending.delete(result));
+      return await result;
     }
 
     class IOSUseCommandError extends Error {
@@ -515,24 +191,48 @@ enum ReplRuntimeService {
       return `${marker}${"  ".repeat(Math.max(0, element.depth))}[${element.element_index}] ${element.role}${fields.length ? ` ${fields.join(" ")}` : ""}`;
     }
 
-    const nodeRepl = Object.freeze({
+    function imageMimeType(bytes) {
+      if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+      if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+      if (Buffer.from(bytes.subarray(0,4)).toString() === "RIFF" && Buffer.from(bytes.subarray(8,12)).toString() === "WEBP") return "image/webp";
+      throw new TypeError("emitImage requires PNG, JPEG, or WebP image bytes");
+    }
+
+    const nodeRepl = {
       write(value) {
-        const rendered = typeof value === "string" ? value : inspect(value, {
-          colors: process.stdout.isTTY,
-          depth: 8,
-          maxArrayLength: 200,
-          breakLength: 100,
+        const text = typeof value === "string" ? value : inspect(value, {
+          colors: false, depth: 8, maxArrayLength: 200, breakLength: 100,
         });
-        process.stdout.write(rendered + (rendered.endsWith("\n") ? "" : "\n"));
+        emit({type: "text", text});
       },
       async emitImage(image) {
-        const path = imagePaths.get(image) ?? image?.path;
-        if (!path) throw new TypeError("nodeRepl.emitImage expects bytes returned by getScreenshot");
-        const result = await rpc({imagePath: path, emitImage: true});
-        if (result.exitCode !== 0) throw new Error(result.stderr);
-        if (result.stdout) process.stdout.write(result.stdout);
+        let bytes = image?.bytes ?? image;
+        let mimeType = image?.mimeType;
+        if (typeof bytes === "string" && bytes.startsWith("file:")) {
+          const response = await rpc({imagePath: fileURLToPath(bytes)});
+          if (response.exitCode !== 0) throw new Error(response.stderr);
+          bytes = Uint8Array.from(Buffer.from(response.imageBase64, "base64"));
+        } else if (typeof bytes === "string") {
+          const match = /^data:(image\/[a-z+.-]+);base64,([\s\S]*)$/i.exec(bytes);
+          if (!match) throw new TypeError("emitImage expects image bytes or a data/file URL");
+          mimeType = match[1];
+          bytes = Uint8Array.from(Buffer.from(match[2], "base64"));
+        }
+        if (!ArrayBuffer.isView(bytes) || bytes.BYTES_PER_ELEMENT !== 1) {
+          throw new TypeError("emitImage expects image bytes or {bytes, mimeType}");
+        }
+        bytes = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const detected = imageMimeType(bytes);
+        if (mimeType && mimeType !== detected) throw new TypeError("Image MIME type does not match its bytes");
+        emit({type: "image", mimeType: detected, data: Buffer.from(bytes).toString("base64")});
       },
-    });
+    };
+
+    const executionConsole = Object.fromEntries(
+      ["log", "info", "warn", "error", "debug", "dir"].map(method => [
+        method, (...args) => nodeRepl.write(formatWithOptions({colors: false}, ...args)),
+      ])
+    );
 
     class DeviceHandle {
       #current = null;
@@ -605,8 +305,6 @@ enum ReplRuntimeService {
           throw new Error(response.stderr || "ios-use screenshot bytes unavailable");
         }
         const bytes = Uint8Array.from(Buffer.from(response.imageBase64, "base64"));
-        Object.defineProperty(bytes, "path", { value: data.imagePath, enumerable: false });
-        imagePaths.set(bytes, data.imagePath);
         if (options.emit !== false) await nodeRepl.emitImage(bytes);
         return bytes;
       }
@@ -843,6 +541,7 @@ enum ReplRuntimeService {
         const info = cached ?? inferred;
         if (!info) throw new Error(`Unknown Device ID ${deviceId}`);
         const device = new DeviceHandle(info);
+        if (options.emit !== false) device.help();
         await device.getAXState(options);
         return device;
       }
@@ -853,68 +552,67 @@ enum ReplRuntimeService {
     function installContext(server) {
       server.context.cua = cua;
       server.context.nodeRepl = nodeRepl;
-      server.context.console = console;
+      server.context.console = executionConsole;
+      server.context.setTimeout = setTimeout;
+      server.context.clearTimeout = clearTimeout;
       for (const name of ["process", "require", "module", "Buffer", "fetch", "WebSocket"]) {
-        Object.defineProperty(server.context, name, { value: undefined, configurable: false });
+        Object.defineProperty(server.context, name, {value: undefined, configurable: false});
       }
     }
 
-    async function evaluate(code, sourceName) {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const server = repl.start({ input, output, prompt: "", terminal: false, useGlobal: false });
-      installContext(server);
-      try {
-        return await new Promise((resolve, reject) => {
-          let settled = false;
-          const finish = (callback, value) => {
-            if (settled) return;
-            settled = true;
-            callback(value);
-          };
-          output.on("data", chunk => {
-            const message = chunk.toString("utf8").trim();
-            if (message) finish(reject, new Error(message));
-          });
-          server.eval(code, server.context, sourceName, (error, value) => {
-            if (error) finish(reject, error);
-            else finish(resolve, value);
-          });
-        });
-      } finally {
-        server.close();
-        input.destroy();
-        output.destroy();
-      }
-    }
-
-    async function main() {
-      await connected;
-      registerHooks({
-        resolve(specifier) {
-          throw new Error(`Module imports are unavailable in ios-use repl: ${specifier}`);
-        },
-      });
-      process.getBuiltinModule = undefined;
-      if (mode === "interactive") {
-        const server = repl.start({ prompt: "ios-use> ", useGlobal: false, ignoreUndefined: true });
-        const evaluate = server.eval;
-        server.eval = function(code, context, filename, callback) {
-          evaluate.call(this, code, context, filename, error => callback(error, undefined));
-        };
-        installContext(server);
-        server.once("exit", () => socket.end());
-        return;
-      }
-      if (mode !== "once") throw new Error(`unknown ios-use repl mode: ${mode}`);
-      await evaluate(source, filename);
-      socket.end();
-    }
-
-    main().catch(error => {
-      process.stderr.write(`${error?.stack ?? error}\n`);
-      socket.destroy();
-      process.exitCode = 1;
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const server = repl.start({input, output, prompt: "", terminal: false, useGlobal: false, ignoreUndefined: true});
+    installContext(server);
+    output.on("data", chunk => {
+      const execution = executionContext.getStore();
+      const message = chunk.toString("utf8").trim();
+      if (execution?.active && message) execution.reject?.(new Error(message));
     });
+
+    async function execute(code) {
+      const execution = {active: true, pending: new Set(), reject: null};
+      return await executionContext.run(execution, async () => {
+        let isError = false;
+        try {
+          await connected;
+          await new Promise((resolve, reject) => {
+            execution.reject = reject;
+            server.eval(code, server.context, "<ios-use-mcp>", (error, value) => {
+              if (error) reject(error);
+              else Promise.resolve(value).then(resolve, reject);
+            });
+          });
+          while (execution.pending.size) await Promise.allSettled([...execution.pending]);
+        } catch (error) {
+          isError = true;
+          nodeRepl.write(error?.stack ?? String(error));
+          if (error instanceof IOSUseCommandError) nodeRepl.write({
+            category: error.category, retryable: error.retryable,
+            mutationMayHaveApplied: error.mutationMayHaveApplied, interaction: error.interaction,
+          });
+          while (execution.pending.size) await Promise.allSettled([...execution.pending]);
+        } finally {
+          execution.active = false;
+          execution.reject = null;
+        }
+        process.stdout.write(JSON.stringify({event: "complete", isError}) + "\n");
+      });
+    }
+
+    registerHooks({
+      resolve(specifier) { throw new Error(`Module imports are unavailable in ios-use mcp: ${specifier}`); },
+    });
+    process.getBuiltinModule = undefined;
+    const requests = createInterface({input: process.stdin, crlfDelay: Infinity});
+    for await (const line of requests) {
+      if (!line.trim()) continue;
+      const request = JSON.parse(line);
+      await execute(request.code);
+    }
+    server.close();
+    input.destroy();
+    output.destroy();
+    socket.end();
     """#
 }

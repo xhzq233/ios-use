@@ -20,7 +20,7 @@ public struct IOSUseCLI: Sendable {
     public let outputSink: CLIOutputSink?
     private let playCoverSignerInitializer: PlayCoverSignerInitializer
     private let registerHomesForDiskUsage: Bool
-    private let replDriverSessions: ReplDriverSessionPool?
+    private let mcpDriverSessions: MCPDriverSessionPool?
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -31,7 +31,7 @@ public struct IOSUseCLI: Sendable {
             environment: environment,
             outputSink: outputSink,
             registerHomesForDiskUsage: registerHomesForDiskUsage,
-            replDriverSessions: nil,
+            mcpDriverSessions: nil,
             playCoverSignerInitializer: {
                 try PlayCoverSigningIdentityService()
                     .initializeForConfiguration()
@@ -43,14 +43,14 @@ public struct IOSUseCLI: Sendable {
         environment: [String: String],
         outputSink: CLIOutputSink? = nil,
         registerHomesForDiskUsage: Bool = false,
-        replDriverSessions: ReplDriverSessionPool? = nil,
+        mcpDriverSessions: MCPDriverSessionPool? = nil,
         playCoverSignerInitializer:
             @escaping PlayCoverSignerInitializer
     ) {
         self.paths = IOSUsePaths.resolve(environment: environment)
         self.outputSink = outputSink
         self.registerHomesForDiskUsage = registerHomesForDiskUsage
-        self.replDriverSessions = replDriverSessions
+        self.mcpDriverSessions = mcpDriverSessions
         self.playCoverSignerInitializer = playCoverSignerInitializer
     }
 
@@ -60,7 +60,7 @@ public struct IOSUseCLI: Sendable {
         pathsForTesting paths: IOSUsePaths,
         outputSink: CLIOutputSink? = nil,
         registerHomesForDiskUsage: Bool = false,
-        replDriverSessions: ReplDriverSessionPool? = nil,
+        mcpDriverSessions: MCPDriverSessionPool? = nil,
         playCoverSignerInitializer:
             @escaping PlayCoverSignerInitializer = {
                 try PlayCoverSigningIdentityService()
@@ -70,7 +70,7 @@ public struct IOSUseCLI: Sendable {
         self.paths = paths
         self.outputSink = outputSink
         self.registerHomesForDiskUsage = registerHomesForDiskUsage
-        self.replDriverSessions = replDriverSessions
+        self.mcpDriverSessions = mcpDriverSessions
         self.playCoverSignerInitializer = playCoverSignerInitializer
     }
 
@@ -481,7 +481,7 @@ public struct IOSUseCLI: Sendable {
                 startUDID: nil
             )
 
-        case .du, .status, .repl, .config,
+        case .du, .status, .mcp, .config,
                 .proxy(.doctor), .proxy(.configca):
             guard explicitDeviceID == nil else {
                 throw CLIParseError.invalidValue(
@@ -612,8 +612,8 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
-        case .repl(let options):
-            return ReplRuntimeService.run(options: options, paths: paths)
+        case .mcp:
+            return MCPService.run(paths: paths)
         case .config(let options) where options.playCover:
             return executePlayCoverConfiguration(json: json)
         case .config(let options) where options.list:
@@ -948,7 +948,7 @@ public struct IOSUseCLI: Sendable {
             )
         } catch {
             switch command {
-            case .du, .status, .repl, .config, .start, .stop:
+            case .du, .status, .mcp, .config, .start, .stop:
                 return nil
             case .open:
                 return commandFailure(
@@ -971,7 +971,7 @@ public struct IOSUseCLI: Sendable {
             return nil
         }
         switch command {
-        case .du, .status, .repl, .config, .start, .stop, .capture, .open, .oslog, .debug, .uiTree:
+        case .du, .status, .mcp, .config, .start, .stop, .capture, .open, .oslog, .debug, .uiTree:
             return nil
         case .mediaImport:
             return nil
@@ -1168,10 +1168,10 @@ public struct IOSUseCLI: Sendable {
         paths: IOSUsePaths,
         json: Bool
     ) -> CLIResult {
-        let session = replDriverSessions?.session(paths: paths)
+        let session = mcpDriverSessions?.session(paths: paths)
             ?? LockedDriverClientSession(paths: paths)
         defer {
-            if replDriverSessions == nil {
+            if mcpDriverSessions == nil {
                 session.close()
             }
         }
@@ -1179,7 +1179,8 @@ public struct IOSUseCLI: Sendable {
             let result = try DeviceCommandLock.withExclusiveLock(
                 paths: paths
             ) {
-                try DriverCommandExecutor.execute(
+                try mcpDriverSessions?.checkCancellation()
+                return try DriverCommandExecutor.execute(
                     action: action,
                     paths: paths
                 ) { body in

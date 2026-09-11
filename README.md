@@ -8,7 +8,7 @@
 
 `ios-use` drives real iPhones, Simulators, and supported iPhone Apps on Apple
 silicon Macs. It exposes a compact accessibility tree, semantic actions, JSON
-output, screenshots, logs, proxy capture, and a persistent multi-device REPL.
+output, screenshots, logs, proxy capture, and persistent multi-device MCP tools.
 
 ## Install
 
@@ -16,10 +16,13 @@ output, screenshots, logs, proxy capture, and a persistent multi-device REPL.
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
 ```
 
+The CLI and Skill come from the same release, including when installing latest.
+
 Install a specific release or build from source:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.0.4
+# v2.1.0 is in preparation; this pinned command is for use after publication.
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.1.0
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
@@ -88,35 +91,33 @@ Real devices and Simulators use their bare UDID; the Mac Backend uses `mac`.
 Per-Device state, logs, and artifacts live under `~/.ios-use/{state,logs,artifacts}/devices/<device-id>/`.
 Existing single-Device state is still read and moves to the new layout after its next stop/start.
 
-## Persistent REPL
+## MCP automation
 
-`ios-use repl` keeps one Swift Host and JavaScript runtime alive, so Device
-handles and Driver connections can be reused across a workflow:
-
-```bash
-ios-use repl '
-  const device = await cua.getDevice("<udid-from-status>");
-'
-```
-
-It also accepts a file, stdin, or an interactive session:
+Register `ios-use mcp` as a local stdio MCP server. For Codex:
 
 ```bash
-ios-use repl --file task.js
-ios-use repl - < task.js
-ios-use repl
+codex mcp add ios-use -- ios-use mcp
 ```
+
+Start a new Agent session to discover `js` and `js_reset`. Call `js` with
+`{"code":"let device = await cua.getDevice(\"<device-id>\");"}`. Each call returns
+its text and image content when the code completes; variables and Device
+handles persist across calls. No terminal polling is needed. `timeout_ms`
+defaults to 30,000 and can be raised to 300,000 for longer batches.
 
 Use `cua.help()` and `device.help()` for the current API. Common Device methods
 include `getAXState`, `getScreenshot`, `click`, `scroll`, `scrollTo`, `waitFor`, `setValue`,
 `typeText`, `paste`, and `pressKey`. See the
-[REPL guide](ios-use-skill/references/repl.md) for examples.
+[MCP guide](ios-use-skill/references/mcp.md) for examples.
 
 JavaScript runs in one Node.js child process and calls the Swift Host over
 localhost TCP RPC; the Host reuses a separate Driver connection per Device.
-Variables, Device handles, and AX snapshots stay in memory until the REPL exits;
-they are not saved or restored between invocations. Device session files, logs,
-and screenshots use the normal `IOS_USE_HOME` layout above (default `~/.ios-use`).
+Each MCP connection owns its own JavaScript context. `js_reset`, execution
+timeout, or cancellation clears that context; disconnection releases its
+resources. Drivers and Apps remain running. Device actions already issued may
+still finish, so observe before retrying. Device setup, lifecycle, logs and
+artifact-producing commands remain available through the native CLI.
+The old `ios-use repl` command has been removed.
 
 ## Performance Snapshot
 
@@ -146,7 +147,7 @@ and have not been rerun for the current development version. See the
 | --- | --- |
 | `status`, `config` | Discover Devices and install or inspect Drivers |
 | `start`, `stop` | Start or release a Device Context |
-| `repl` | Run persistent CUA-shaped JavaScript |
+| `mcp` | Serve persistent JavaScript tools over stdio MCP |
 | `apps`, `install`, `activateApp`, `terminateApp` | Manage Apps |
 | `dom`, `waitFor` | Observe and query UI state |
 | `tap`, `longpress`, `swipe`, `input`, `rotate` | Interact with the UI |
@@ -165,7 +166,7 @@ Most automation commands support `--json`.
   account for driver signing.
 - Simulators and source builds: full Xcode; source builds also require Swift
   and `xcodegen`.
-- REPL: Node.js.
+- MCP: Node.js 22.18+.
 - Proxy capture: `mitmproxy`.
 
 ## Development
@@ -180,7 +181,7 @@ bash scripts/ci_test.sh
 
 See [scripts/README.md](scripts/README.md) for build and test entry points,
 [docs/benchmark.md](docs/benchmark.md) for benchmarks, and
-[ios-use-skill](ios-use-skill/SKILL.md) for operational workflows.
+[ios-use Skill](ios-use-skill/SKILL.md) for operational workflows.
 
 ## Acknowledgments
 

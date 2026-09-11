@@ -22,7 +22,7 @@ enum CLIHelp {
           -d, --device <id>  Select a running Device; optional only when one runs
 
         Commands:
-          du, status, repl, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
+          du, status, mcp, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
           activateApp, terminateApp, home, rotate, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
@@ -83,29 +83,26 @@ enum CLIHelp {
               --json       Print the common machine-readable envelope
 
             """
-        case "repl":
+        case "mcp":
             return """
-            Usage: ios-use repl '<javascript>'
-                   ios-use repl --file <file.js>
-                   ios-use repl -
-                   ios-use repl
+            Usage: ios-use mcp
 
-            Run JavaScript in the persistent ios-use REPL with a `cua` API
-            for explicit Device selection and Accessibility-first automation.
-            Inline code, files, and stdin run once; no arguments starts an
-            interactive REPL. Only the REPL requires Node.js.
+            Run a local stdio MCP server with js and js_reset tools.
+            JavaScript variables, Device handles, and Driver connections persist
+            across js calls. Text and images are returned as MCP content.
 
-            Examples:
-              ios-use repl 'await cua.getState()'
-              ios-use repl 'let d = await cua.getDevice("mac"); await d.getAXState()'
+            Register with Codex:
+              codex mcp add ios-use -- ios-use mcp
 
-            Options:
-              --file <file.js>  Execute a JavaScript file
-              -                 Read JavaScript from stdin
+            In the js tool:
+              await cua.getState()
+              let device = await cua.getDevice("device-id")
+              await device.getAXState()
+              await device.getScreenshot()
 
-            Inside JavaScript, use `cua.help()` for the current API and
-            `nodeRepl.write()` / `nodeRepl.emitImage()` for explicit output.
-
+            Requires Node.js 22.18+. Use one server process per Agent conversation.
+            Exiting closes this client's connections; Device Drivers stay running.
+            Device setup remains: ios-use config --udid <id>; ios-use start <id>
             """
         case "config":
             return """

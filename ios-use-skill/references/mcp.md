@@ -1,23 +1,25 @@
-# REPL 模式
+# MCP automation
 
-Use `ios-use repl` for a dependent automation flow that benefits from persistent
+Use the ios-use MCP `js` tool for a dependent automation flow that benefits from persistent
 JavaScript variables, reusable Device handles, or concurrent work across
 independent Devices. The Swift Host stays in the same process and reuses Driver
 connections; JavaScript actions do not launch another `ios-use` process.
 
-## Start the REPL
+## Register the server
 
-Choose the shortest input form that fits the task:
+Configure a local stdio server with command `ios-use` and argument `mcp`.
+For Codex:
 
 ```bash
-ios-use repl 'await cua.getState()'
-ios-use repl --file task.js
-ios-use repl - < task.js
-ios-use repl
+codex mcp add ios-use -- ios-use mcp
 ```
 
-Inline, file, and stdin input run once. Bare `ios-use repl` opens an interactive
-Node REPL. The injected surface is deliberately small: `cua`, `nodeRepl`, and
+Start a new Agent session after registration. Node.js 22.18+ must be on the
+server's PATH. Call `js` with a `code` string, an optional short `title`, and
+optional `timeout_ms` (default 30,000; maximum 300,000). JavaScript variables
+persist between calls. Await the tool result; do not use shell polling.
+
+The injected surface is deliberately small: `cua`, `nodeRepl`, and
 `console`. Filesystem, process, network, module-import, and worker APIs are not
 available to evaluated code.
 
@@ -40,7 +42,7 @@ pass `{emit: false}` as the second argument when only the handle is needed.
 
 ## Observe, act, observe
 
-Device methods align with the native Computer Use REPL:
+Device methods follow the native Computer Use target shape:
 
 ```javascript
 await device.getAXState();
@@ -63,7 +65,7 @@ quiescence wait, not a fixed sleep; use `waitFor` for a particular loading state
 `scroll` accepts positive fractional pages: `0.5` requests half a viewport
 along the requested direction, not a whole swipe rounded up.
 
-Observations emit to the REPL by default. Pass `{emit: false}` when the value is
+Observations emit text or images into the tool result by default. Pass `{emit: false}` when the value is
 only an intermediate result. AX observations are diffed against the previous
 observation for the same Device; pass `{disableDiffing: true}` when a full
 snapshot is required.
@@ -83,7 +85,7 @@ to the observed element center only when needed.
 
 Explore enough of an unfamiliar UI to understand the route and relevant page
 variants. Then use a reusable helper and a loop to process the requested items
-in one REPL call where practical. Do not split a known repeated flow into one
+in one `js` call where practical. Do not split a known repeated flow into one
 model round trip per click or item.
 
 Keep actions on one Device sequential, but make the intermediate observations
@@ -117,10 +119,12 @@ helps the caller understand the final result.
 Use `nodeRepl.write(...)` or `console.log(...)` for other values; JavaScript
 return values are not echoed a second time after the API has emitted its result.
 
-For multi-turn work, keep bare `ios-use repl` open, send the next script segment
-after reading the preceding result, and finish with `.exit`. `repl -` instead
-reads one whole program until EOF. Remote connection and artifact transfer
-follow the transport's own Skill; do not treat an Edge-local path as a Consumer file.
+For multi-turn work, reuse variables in the next `js` call. `js_reset` interrupts
+running JavaScript and clears its variables and handles, without stopping
+Drivers or Apps. Timeout and request cancellation also reset the context.
+Ordinary JavaScript errors preserve it. No `.exit` or terminal session is needed.
+Remote connection and artifact transfer follow the transport's own Skill;
+do not treat an Edge-local path as a Consumer file.
 `paste` inserts plain text, not clipboard HTML; `pressKey` currently supports
 Return only. Use native CLI commands for lifecycle, installation, logs and capture.
 
@@ -147,7 +151,7 @@ Devices or independent read-only observations.
 
 ## Recover from failures
 
-REPL command failures throw `IOSUseCommandError` with the CLI error category,
+Device command failures throw `IOSUseCommandError` with the CLI error category,
 retryability, interaction state, and mutation warning. Inspect those fields
 before retrying a mutation:
 
@@ -166,5 +170,7 @@ try {
 ```
 
 If `mutationMayHaveApplied` is true, observe first instead of replaying the
-action blindly. Exit the REPL when the task is complete so the Host releases its
-cached Driver connections.
+action blindly. After cancellation, timeout, or reset, obtain a new Device handle
+and observe again: actions already sent to a Driver may still finish. The MCP
+client releases the JavaScript runtime and cached connections on disconnection;
+use native `ios-use stop -d <id>` only when stopping the Driver is part of the task.

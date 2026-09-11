@@ -978,39 +978,10 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
-    func testParsesReplSourcesWithoutGuessingFilePaths() throws {
-        XCTAssertEqual(
-            try CLIParser.parse(["repl"]),
-            .repl(ReplOptions(source: .repl))
-        )
-        XCTAssertEqual(
-            try CLIParser.parse(["repl", ""]),
-            .repl(ReplOptions(source: .inline("")))
-        )
-        XCTAssertEqual(
-            try CLIParser.parse(["repl", "await cua.getState()"]),
-            .repl(
-                ReplOptions(
-                    source: .inline("await cua.getState()")
-                )
-            )
-        )
-        XCTAssertEqual(
-            try CLIParser.parse(["repl", "--file", "task.js"]),
-            .repl(ReplOptions(source: .file("task.js")))
-        )
-        XCTAssertEqual(
-            try CLIParser.parse(["repl", "-"]),
-            .repl(ReplOptions(source: .standardInput))
-        )
-        XCTAssertThrowsError(
-            try CLIParser.parse(["repl", "task.js", "extra"])
-        ) { error in
-            XCTAssertEqual(
-                error as? CLIParseError,
-                .unexpectedArgument("extra")
-            )
-        }
+    func testParsesMCPWithoutLegacyScriptArguments() throws {
+        XCTAssertEqual(try CLIParser.parse(["mcp"]), .mcp)
+        XCTAssertThrowsError(try CLIParser.parse(["mcp", "await cua.getState()"]))
+        XCTAssertThrowsError(try CLIParser.parse(["repl"]))
     }
 
     func testParsesGlobalDeviceSelection() throws {

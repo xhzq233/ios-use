@@ -50,12 +50,12 @@ final class DeviceContextStoreTests: XCTestCase {
         )
     }
 
-    func testReplClientsAreIsolatedWithinOneHome() throws {
+    func testMCPClientsAreIsolatedWithinOneHome() throws {
         let paths = IOSUsePaths.resolve(environment: [
             "IOS_USE_HOME": FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString).path,
         ])
-        let pool = ReplDriverSessionPool()
+        let pool = MCPDriverSessionPool()
         defer { pool.close() }
         let first = try paths.deviceContext("DEVICE-A")
         let second = try paths.deviceContext("DEVICE-B")

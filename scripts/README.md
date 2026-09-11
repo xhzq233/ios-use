@@ -70,6 +70,7 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | Script | Purpose |
 | --- | --- |
 | `scripts/ci_test.sh [--skip-builds] [--skip-driver-sim-build]` | Main local unit/build gate: script syntax checks, Swift CLI tests, Driver tests, Swift CLI Release build, and Simulator Driver build. Release validation additionally owns fresh production Runtime, Frida Engine and both Driver artifacts. |
+| `node scripts/test_mcp.mjs [path-to-ios-use]` | Real stdio MCP smoke: persistent JavaScript, text/images, errors, cancellation/reset/timeout, large-response framing, and child cleanup. Requires Node.js 22.18+; uses an isolated Home and no Device or model. |
 | `scripts/ci_full_simulator.sh --driver-ipa <path> [--case CASES]` | Main full Simulator regression entry. Builds the Swift CLI, uses the caller-selected Simulator driver IPA, and runs the Node Simulator command matrix. |
 | `scripts/test_swift_cli.sh` | Run Swift CLI unit tests plus installed-style CLI/nslog smoke checks and static driver log/version-stamp guards. |
 | `scripts/test_driver_unit.sh` | Run Swift driver unit tests with an isolated default `IOS_USE_HOME` under `~/.ios-use/test-homes/driver-unit`. |
@@ -181,8 +182,11 @@ replay lives in `.github/workflows/simulator.yml` and is manual-only.
 Agents using a remote Mac can install only the operational Skill on Linux or
 macOS with `bash scripts/install_skill.sh`. It does not install the CLI or touch
 devices. `IOS_USE_SKILL_DIR` and `IOS_USE_SKILL_LINK` override its content and
-discovery paths; when invoked outside a source checkout, `IOS_USE_REF` selects
-the source revision downloaded from GitHub.
+discovery paths. Without a local checkout it downloads the latest release's
+Skill. Pass `--version <tag>` (or `IOS_USE_VERSION`) to install a specific
+release, even from a local checkout. The full installer also takes its source
+and Skill from the selected release; latest is resolved to one tag before
+downloading.
 
 | Script | Purpose |
 | --- | --- |

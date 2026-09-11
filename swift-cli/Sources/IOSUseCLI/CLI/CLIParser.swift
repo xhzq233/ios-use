@@ -27,8 +27,9 @@ public enum CLIParser {
             parsed = .du
         case "status":
             parsed = .status(try parseStatus(&parser))
-        case "repl":
-            parsed = .repl(try parseRepl(&parser))
+        case "mcp":
+            try parser.requireEnd()
+            parsed = .mcp
         case "config":
             parsed = .config(try parseConfig(&parser))
         case "start":
@@ -188,32 +189,6 @@ public enum CLIParser {
             }
         }
         return options
-    }
-
-    private static func parseRepl(
-        _ parser: inout ArgumentParser
-    ) throws -> ReplOptions {
-        guard let first = parser.consume() else {
-            return ReplOptions(source: .repl)
-        }
-
-        let source: ReplSource
-        switch first {
-        case "--file":
-            let path = try parser.valueAllowingLeadingDash(for: first)
-            guard !path.isEmpty else {
-                throw CLIParseError.invalidValue(
-                    "--file requires a non-empty path"
-                )
-            }
-            source = .file(path)
-        case "-":
-            source = .standardInput
-        default:
-            source = .inline(first)
-        }
-        try parser.requireEnd()
-        return ReplOptions(source: source)
     }
 
     private static func parseConfig(_ parser: inout ArgumentParser) throws -> ConfigOptions {
