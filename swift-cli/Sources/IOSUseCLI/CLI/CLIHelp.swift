@@ -636,6 +636,7 @@ enum CLIHelp {
             Usage: ios-use proxy read [--filter <expression>] [--raw] [--last N]
 
             Read the most recent mitmdump capture recorded by proxy start.
+            Does not require a running Device.
 
             Options:
               --filter <expression>  mitmdump filter expression

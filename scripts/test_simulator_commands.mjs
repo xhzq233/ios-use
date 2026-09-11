@@ -263,12 +263,15 @@ const driverSideCommands = new Set([
 
 function readDriverLockInfo() {
   try {
-    const lock = JSON.parse(readFileIfExists(path.join(iosHome, 'state/driver.lock')) || '{}');
+    const lock = JSON.parse(readFileIfExists(driverLockPath()) || '{}');
     return typeof lock.udid === 'string' ? lock : null;
   } catch {
     return null;
   }
 }
+
+function driverLockRelativePath() { return path.join('state', 'devices', sim.udid, 'driver.lock'); }
+function driverLockPath() { return path.join(iosHome, driverLockRelativePath()); }
 
 function runCli(args) {
   if (driverSideCommands.has(args[0])) {
@@ -660,7 +663,7 @@ async function runStartCreatesDriverLockCase() {
   const res = runCliToFiles(['start', sim.udid], out, err);
   let lock;
   try {
-    lock = JSON.parse(readFileIfExists(path.join(iosHome, 'state/driver.lock')) || '{}');
+    lock = JSON.parse(readFileIfExists(driverLockPath()) || '{}');
   } catch (error) {
     return recordFail(id, `${res.stdout}${res.stderr}${error}\n`, res.code === 0 ? 'assertion' : 'command');
   }
@@ -674,7 +677,7 @@ async function runStartCreatesDriverLockCase() {
   ) {
     recordPass(id);
   } else {
-    recordFail(id, `${res.stdout}${res.stderr}${readFileIfExists(path.join(iosHome, 'state/driver.lock'))}\n${dom.stdout}${dom.stderr}`, res.code === 0 && dom.code === 0 ? 'assertion' : 'command');
+    recordFail(id, `${res.stdout}${res.stderr}${readFileIfExists(driverLockPath())}\n${dom.stdout}${dom.stderr}`, res.code === 0 && dom.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -688,7 +691,7 @@ async function runStopClearsDriverLockCase() {
   const sessionPath = path.join(iosHome, 'state/session.json');
   writeFile(sessionPath, JSON.stringify({ legacy: true }));
   const stop = runCliToFiles(['stop'], out, err);
-  const lockExists = fs.existsSync(path.join(iosHome, 'state/driver.lock'));
+  const lockExists = fs.existsSync(driverLockPath());
   const sessionExists = fs.existsSync(sessionPath);
   if (stop.code === 0 && !lockExists && sessionExists) {
     recordPass(id);
@@ -729,12 +732,14 @@ function backupLocalState() {
   backupStateFile('config.json');
   backupStateFile('state/session.json');
   backupStateFile('state/driver.lock');
+  backupStateFile(driverLockRelativePath());
 }
 
 function restoreLocalState() {
   restoreStateFile('config.json');
   restoreStateFile('state/session.json');
   restoreStateFile('state/driver.lock');
+  restoreStateFile(driverLockRelativePath());
 }
 
 async function waitForDriver() {
@@ -1080,7 +1085,8 @@ async function runProxyReadDoctorNoLockCase() {
   const id = 'AS-8';
   if (!selected(id)) return recordSkip(id);
   console.log(`[sim-test] RUN ${id}: proxy read/doctor without active driver.lock`);
-  const stop = stopDriverIfLocked(`${id}-stop-before`) ?? { code: 0, stdout: '', stderr: '' };
+  const stopped = stopDriverIfLocked(`${id}-stop-before`);
+  const stop = stopped ?? { code: 0, stdout: '', stderr: '' };
   fs.rmSync(path.join(iosHome, 'state/proxy-session.json'), { force: true });
   const doctor = runCliToFiles(['proxy', 'doctor'], path.join(artifactDir, `${id}-doctor.out`), path.join(artifactDir, `${id}-doctor.err`));
   const read = runCliToFiles(['proxy', 'read'], path.join(artifactDir, `${id}-read.out`), path.join(artifactDir, `${id}-read.err`));
@@ -1091,7 +1097,7 @@ async function runProxyReadDoctorNoLockCase() {
     && read.code !== 0
     && readText.includes('ios-use proxy start')
     && !readText.includes('No active driver');
-  ensureDriverStarted(`${id}-restore`);
+  if (stopped) ensureDriverStarted(`${id}-restore`);
   if (ok) recordPass(id);
   else recordFail(id, stop.stdout + stop.stderr + doctor.stdout + doctor.stderr + read.stdout + read.stderr, 'assertion');
 }
@@ -1107,6 +1113,7 @@ function buildCaseContext() {
   const generalPage = async () => { await openGeneralPage(); };
   return {
     artifactDir,
+    deviceArtifactDir: path.join(iosHome, 'artifacts', 'devices', sim.udid),
     caseFilterIds,
     discardContactIfNeeded,
     emptyHomeName,

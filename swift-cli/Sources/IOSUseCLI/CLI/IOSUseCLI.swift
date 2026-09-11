@@ -405,7 +405,7 @@ public struct IOSUseCLI: Sendable {
                 startUDID: nil
             )
 
-        case .nslog:
+        case .nslog, .proxy(.read):
             if let explicitDeviceID {
                 let normalized = try DeviceContextStore
                     .normalizeExplicitDeviceID(
@@ -471,7 +471,7 @@ public struct IOSUseCLI: Sendable {
                 impliedUDID: options.udid
             )
 
-        case .proxy(.start), .proxy(.read), .proxy(.stop):
+        case .proxy(.start), .proxy(.stop):
             let context = try DeviceContextStore.activeContext(
                 explicitDeviceID: explicitDeviceID,
                 paths: paths
