@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOSUseProtocol
 
 final class MCPDriverSessionPool: @unchecked Sendable {
     private let lock = NSLock()
@@ -46,6 +47,38 @@ private struct MCPHostRequest: Decodable {
     let id: Int
     let arguments: [String]?
     let imagePath: String?
+    let deviceID: String?
+    let observation: MCPObservationRequest?
+    let interaction: MCPInteractionRequest?
+}
+
+private struct MCPInteractionRequest: Decodable {
+    let name: String
+    let target: MCPInteractionTarget?
+    let text: String?
+    let prefix: String?
+    let suffix: String?
+    let selectionType: String?
+    let clickCount: Int?
+}
+
+private struct MCPInteractionTarget: Decodable {
+    let label: String?
+    let point: [Double]?
+
+    func foryTarget() throws -> ForyTarget {
+        if let point, point.count == 2, point.allSatisfy(\.isFinite), label == nil {
+            return ForyTarget(point: ForyPoint(x: point[0], y: point[1]))
+        }
+        if let label, !label.isEmpty, point == nil { return ForyTarget(label: label) }
+        throw CLIParseError.invalidValue("Expected a label or an [x,y] point")
+    }
+}
+
+private struct MCPObservationRequest: Decodable {
+    let ax: Bool
+    let screenshot: Bool
+    let waitQuiescence: Bool
 }
 
 private struct MCPHostResponse: Encodable {
@@ -54,6 +87,7 @@ private struct MCPHostResponse: Encodable {
     let stdout: String
     let stderr: String
     let imageBase64: String?
+    var data: MachineValue? = nil
 }
 
 final class MCPRuntimeHost: @unchecked Sendable {
@@ -211,7 +245,11 @@ final class MCPRuntimeHost: @unchecked Sendable {
             stateLock.unlock()
             if cancelled { return }
             let request = try JSONDecoder().decode(MCPHostRequest.self, from: data)
-            if let arguments = request.arguments {
+            if let observation = request.observation, let deviceID = request.deviceID {
+                response = try observe(observation, deviceID: deviceID, requestID: request.id)
+            } else if let interaction = request.interaction, let deviceID = request.deviceID {
+                response = try interact(interaction, deviceID: deviceID, requestID: request.id)
+            } else if let arguments = request.arguments {
                 let cli = IOSUseCLI(
                     pathsForTesting: paths,
                     mcpDriverSessions: pool
@@ -246,15 +284,17 @@ final class MCPRuntimeHost: @unchecked Sendable {
                 throw CLIParseError.invalidValue("invalid JavaScript host request")
             }
         } catch {
-            let requestID = (try? JSONDecoder().decode(
+            let failedRequest = try? JSONDecoder().decode(
                 MCPHostRequest.self,
                 from: data
-            ).id) ?? 0
+            )
+            let requestID = failedRequest?.id ?? 0
+            let failure = MachineOutput.failure(command: failedRequest?.interaction?.name ?? "observe", error: error, data: machineDriverErrorData(error))
             response = MCPHostResponse(
                 id: requestID,
                 exitCode: 1,
-                stdout: "",
-                stderr: "\(error)",
+                stdout: failure.stdout,
+                stderr: failure.stderr,
                 imageBase64: nil
             )
         }
@@ -270,6 +310,49 @@ final class MCPRuntimeHost: @unchecked Sendable {
             try writeAll(fd: descriptor, data: encoded)
         } catch {
             return
+        }
+    }
+
+    private func observe(_ options: MCPObservationRequest, deviceID: String, requestID: Int) throws -> MCPHostResponse {
+        let context = try DeviceContextStore.activeContext(explicitDeviceID: deviceID, paths: paths)
+        return try DeviceCommandLock.withExclusiveLock(paths: context.paths) {
+            try pool.checkCancellation()
+            return try pool.session(paths: context.paths).run { client in
+                var data: [String: MachineValue] = [:]
+                if options.ax {
+                    data["ax"] = machineDom(try client.dom(raw: false, fresh: true, waitQuiescence: options.waitQuiescence))
+                }
+                var image: Data?
+                if options.screenshot {
+                    let capture = try ScreenshotCaptureCoordinator.capture(paths: context.paths) {
+                        try client.screenshotCapture(waitQuiescence: options.waitQuiescence && !options.ax)
+                    }
+                    image = capture.jpeg
+                    data["screenshot"] = .object([
+                        "logicalSize": capture.logicalSize.map { .array([.double($0.x), .double($0.y)]) } ?? .null,
+                        "pixelSize": capture.pixelSize.map { .array([.double($0.x), .double($0.y)]) } ?? .null,
+                        "scale": capture.scale.map(MachineValue.double) ?? .null,
+                    ])
+                }
+                return MCPHostResponse(id: requestID, exitCode: 0, stdout: "", stderr: "", imageBase64: image?.base64EncodedString(), data: .object(data))
+            }
+        }
+    }
+
+    private func interact(_ request: MCPInteractionRequest, deviceID: String, requestID: Int) throws -> MCPHostResponse {
+        let context = try DeviceContextStore.activeContext(explicitDeviceID: deviceID, paths: paths)
+        let target = try request.target?.foryTarget() ?? ForyTarget()
+        return try DeviceCommandLock.withExclusiveLock(paths: context.paths) {
+            try pool.checkCancellation()
+            try pool.session(paths: context.paths).run { client in
+                switch request.name {
+                case "click": _ = try client.click(target: target, count: request.clickCount ?? 1)
+                case "replace", "select", "key", "type":
+                    _ = try client.textInput(ForyTextInputArgs(operation: request.name, target: target, text: request.text ?? "", prefix: request.prefix ?? "", suffix: request.suffix ?? "", selectionType: request.selectionType ?? "text"))
+                default: throw CLIParseError.invalidValue("Unknown Device interaction: \(request.name)")
+                }
+            }
+            return MCPHostResponse(id: requestID, exitCode: 0, stdout: "", stderr: "", imageBase64: nil)
         }
     }
 }

@@ -112,6 +112,21 @@ enum MCPJavaScriptSource {
       return envelope.data;
     }
 
+    async function observe(deviceID, ax, screenshot, options) {
+      const result = await rpc({deviceID, observation: {ax, screenshot, waitQuiescence: options.waitQuiescence !== false}});
+      if (result.exitCode !== 0) {
+        throw new IOSUseCommandError(decodeEnvelope(result.stdout) ?? decodeEnvelope(result.stderr), result.stderr);
+      }
+      return result;
+    }
+
+    async function interact(deviceID, interaction) {
+      const result = await rpc({deviceID, interaction});
+      if (result.exitCode !== 0) {
+        throw new IOSUseCommandError(decodeEnvelope(result.stdout) ?? decodeEnvelope(result.stderr), result.stderr);
+      }
+    }
+
     function textValue(value) {
       return typeof value === "string" ? value.trim() : "";
     }
@@ -121,6 +136,7 @@ enum MCPJavaScriptSource {
     }
 
     function elementKey(element) {
+      if (element.nodeID) return `node:${element.nodeID}`;
       const identifier = textValue(element.identifier);
       if (identifier) return `id:${identifier}`;
       const label = textValue(element.label);
@@ -148,7 +164,13 @@ enum MCPJavaScriptSource {
         element.identifier,
         element.traits,
         element.frame,
-        element.state,
+        element.enabled,
+        element.visible,
+        element.selected,
+        element.focused,
+        element.depth,
+        element.parent_index,
+        element.childCount,
       ]);
     }
 
@@ -156,11 +178,12 @@ enum MCPJavaScriptSource {
       const traits = Array.isArray(element.traits) ? element.traits : [];
       // XCTest DOM carries state in traits; its unused structured fields decode as false.
       const hasStructuredState = Boolean(textValue(element.semanticType));
-      return {
+      const projected = {
+        ...element,
         element_index: index,
         role: textValue(element.semanticType) || textValue(element.type) || traits[0] || "Element",
         label: textValue(element.label),
-        value: textValue(element.value),
+        value: typeof element.value === "string" ? element.value : "",
         identifier: textValue(element.identifier),
         traits,
         frame: Array.isArray(element.frame) ? element.frame : null,
@@ -170,6 +193,28 @@ enum MCPJavaScriptSource {
         visible: hasStructuredState ? (element.state?.visible ?? null) : !traits.includes("invisible"),
         depth: element.hierarchy?.depth ?? 0,
       };
+      projected.state = {...element.state, enabled: projected.enabled, selected: projected.selected, focused: projected.focused, visible: projected.visible};
+      return projected;
+    }
+
+    function projectElements(rawElements) {
+      const stack = [];
+      const elements = rawElements.map(projectElement);
+      for (const element of elements) {
+        while (stack.length && stack.at(-1).remaining === 0) stack.pop();
+        const parent = stack.at(-1);
+        element.depth = stack.length;
+        element.parent_index = parent?.index ?? null;
+        element.children = [];
+        element.ancestor_indices = stack.map(entry => entry.index);
+        if (parent) {
+          elements[parent.index].children.push(element.element_index);
+          parent.remaining--;
+        }
+        const count = element.childCount ?? 0;
+        if (count > 0) stack.push({index: element.element_index, remaining: count});
+      }
+      return elements;
     }
 
     function shortText(value) {
@@ -244,16 +289,22 @@ enum MCPJavaScriptSource {
 
       help() {
         nodeRepl.write([
-          "await device.getAXState({waitQuiescence: true}) // wait for UI animations before reading",
+          "await device.getAXState() // fresh AX; waits for UI animations by default",
           "await device.getScreenshot()",
           "await device.getAXStateAndScreenshot()",
-          "await device.click(element_index|string|[x,y])",
+          "await device.click(element_index|string|[x,y], {clickCount: 2}) // default: 1",
           "await device.setValue(element_index|string, value)",
           "await device.typeText(value)",
-          "await device.pressKey(\"Return\")",
+          "await device.selectText(element_index, text, {prefix, suffix, selectionType: \"text\"}) // also cursor_before / cursor_after",
+          "await device.pressKey(\"super+a\") // xdotool-style keys; ctrl and super are distinct",
+          "await device.paste(value) // plain text only",
+          "await device.drag([fromX,fromY], [toX,toY])",
+          "await device.longPress(element_index|string|[x,y], 0.5) // seconds",
           "await device.scroll(element_index|[x,y], \"down\", 0.5) // fraction of the scroll viewport",
           "await device.scrollTo(text, anchor)",
           "await device.waitFor(text, {gone: true, timeout: 20})",
+          "device.get() // complete latest AX objects with parent_index, children and ancestor_indices",
+          "Unsupported: rich-text paste, secondary AX actions, secure-text replacement/selection. iOS clicks are touch-only; Mac supports single clicks and Return/Enter keys.",
         ].join("\n"));
       }
 
@@ -266,14 +317,17 @@ enum MCPJavaScriptSource {
       }
 
       async getAXState(options = {}) {
+        this.#current = null;
+        const result = await observe(this.id, true, false, options);
+        return this.#applyAX(result.data.ax, options);
+      }
+
+      #applyAX(data, options) {
         if (options.disableDiffing === true) this.#previous = null;
-        const args = ["--fresh"];
-        if (options.waitQuiescence === true) args.push("--wait-quiescence");
-        const data = await runCLI(this.id, "dom", args);
         const rawElements = Array.isArray(data.elements) ? data.elements : [];
-        const elements = rawElements.map(projectElement);
-        const previousEntries = keyedElements(this.#previous?.rawElements ?? []);
-        const currentEntries = keyedElements(rawElements);
+        const elements = projectElements(rawElements);
+        const previousEntries = keyedElements(this.#previous?.elements ?? []);
+        const currentEntries = keyedElements(elements);
         const previousByKey = new Map(previousEntries.map(entry => [entry.key, entry]));
         const currentKeys = new Set();
         const markers = [];
@@ -284,9 +338,9 @@ enum MCPJavaScriptSource {
         });
         const removed = previousEntries
           .filter(entry => !currentKeys.has(entry.key))
-          .map(entry => formatElement(projectElement(entry.element, entry.index), "-"));
-        this.#current = { rawElements, elements };
-        this.#previous = { rawElements };
+          .map(entry => formatElement(entry.element, "-"));
+        this.#current = { rawElements, elements, windowSize: data.windowSize };
+        this.#previous = { elements };
         const header = `Device ${this.id} ${typeof data.app === "string" ? data.app : data.app?.bundleId ?? ""}`.trim();
         const changed = elements.flatMap((element, index) => markers[index] === " " ? [] : [formatElement(element, markers[index])]);
         const state = [header, ...removed, ...changed, ...(!removed.length && !changed.length ? ["No AX changes."] : [])]
@@ -299,19 +353,17 @@ enum MCPJavaScriptSource {
       async getScreenshot(options = {}) {
         this.#current = null;
         this.#previous = null;
-        const data = await runCLI(this.id, "screenshot", ["--no-ocr"]);
-        const response = await rpc({ imagePath: data.imagePath });
-        if (response.exitCode !== 0 || !response.imageBase64) {
-          throw new Error(response.stderr || "ios-use screenshot bytes unavailable");
-        }
-        const bytes = Uint8Array.from(Buffer.from(response.imageBase64, "base64"));
+        const response = await observe(this.id, false, true, options);
+        const bytes = this.#imageBytes(response);
         if (options.emit !== false) await nodeRepl.emitImage(bytes);
         return bytes;
       }
 
       async getAXStateAndScreenshot(options = {}) {
-        const screenshot = await this.getScreenshot({ emit: false });
-        const state = await this.getAXState({ ...options, emit: false });
+        this.#current = null;
+        const response = await observe(this.id, true, true, options);
+        const state = this.#applyAX(response.data.ax, {...options, emit: false});
+        const screenshot = this.#imageBytes(response);
         if (options.emit !== false) {
           nodeRepl.write(state);
           await nodeRepl.emitImage(screenshot);
@@ -319,16 +371,28 @@ enum MCPJavaScriptSource {
         return { state, screenshot };
       }
 
-      async click(target) {
+      #imageBytes(response) {
+        if (!response.imageBase64) throw new Error("ios-use screenshot bytes unavailable");
+        const bytes = Uint8Array.from(Buffer.from(response.imageBase64, "base64"));
+        Object.assign(bytes, response.data.screenshot);
+        return bytes;
+      }
+
+      async click(target, options = {}) {
+        const button = options.mouseButton ?? "left";
+        const count = options.clickCount ?? 1;
+        if (!["left", "l"].includes(button)) throw new TypeError("iOS touch targets support left clicks only; use longPress for a context menu");
+        if (!Number.isInteger(count) || count < 1 || count > 10) throw new TypeError("clickCount must be an integer from 1 to 10");
         const resolved = this.#resolveTarget(target);
         try {
-          return await runCLI(this.id, "tap", [resolved.target]);
+          return await interact(this.id, {name: "click", target: resolved.interactionTarget, clickCount: count});
         } finally {
           this.#current = null;
         }
       }
 
       async setValue(target, value) {
+        if (typeof value !== "string") throw new TypeError("setValue requires a text string");
         if (typeof target === "string") {
           if (!this.#current) await this.getAXState({emit: false});
           const matches = this.#current.elements.filter(element => [element.label, element.value, element.identifier].includes(target));
@@ -336,19 +400,17 @@ enum MCPJavaScriptSource {
           target = matches[0].element_index;
         }
         const resolved = this.#resolveTarget(target);
-        const args = ["--tap", resolved.target, "--content", String(value)];
-        const deleteCount = Array.from(resolved.element?.value ?? "").length;
-        if (deleteCount > 0) args.push("--delete", String(deleteCount));
         try {
-          return await runCLI(this.id, "input", args);
+          return await interact(this.id, {name: "replace", target: resolved.interactionTarget, text: value});
         } finally {
           this.#current = null;
         }
       }
 
       async typeText(value) {
+        if (typeof value !== "string") throw new TypeError("typeText requires a text string");
         try {
-          return await runCLI(this.id, "input", ["--content", String(value)]);
+          return await interact(this.id, {name: "type", text: value});
         } finally {
           this.#current = null;
         }
@@ -357,6 +419,11 @@ enum MCPJavaScriptSource {
       async paste(value, options = {}) {
         if (options.format && options.format !== "text") throw new TypeError("ios-use paste supports plain text only");
         return await this.typeText(value);
+      }
+
+      async performSecondaryAction(target, action) {
+        this.#resolveTarget(target);
+        throw new Error("ios-use does not yet expose secondary accessibility actions; observe and use the visible control or longPress context menu");
       }
 
       async waitFor(text, options = {}) {
@@ -376,14 +443,39 @@ enum MCPJavaScriptSource {
       }
 
       async pressKey(key) {
-        if (String(key).toLowerCase() !== "return") {
-          throw new TypeError("ios-use currently supports pressKey(\"Return\") only");
-        }
+        if (typeof key !== "string" || !key) throw new TypeError("pressKey requires a key or modifier+key string");
         try {
-          return await runCLI(this.id, "input", ["--content", "", "--enter"]);
+          return await interact(this.id, {name: "key", text: key});
         } finally {
           this.#current = null;
         }
+      }
+
+      async selectText(target, text, options = {}) {
+        if (typeof text !== "string" || !text) throw new TypeError("selectText requires non-empty text");
+        const selectionType = options.selectionType ?? "text";
+        if (!["text", "cursor_before", "cursor_after"].includes(selectionType)) throw new TypeError("Unknown selectionType");
+        if ((options.prefix !== undefined && typeof options.prefix !== "string") || (options.suffix !== undefined && typeof options.suffix !== "string")) throw new TypeError("prefix and suffix must be strings");
+        const resolved = this.#resolveTarget(target);
+        try {
+          await interact(this.id, {name: "select", target: resolved.interactionTarget, text, prefix: options.prefix, suffix: options.suffix, selectionType});
+        } finally { this.#current = null; }
+      }
+
+      async drag(from, to) {
+        if (!Array.isArray(from) || !Array.isArray(to)) throw new TypeError("drag requires observed [x,y] points");
+        const start = this.#resolveTarget(from);
+        const end = this.#resolveTarget(to);
+        if (start.element || end.element) throw new TypeError("drag requires observed [x,y] points");
+        try { return await runCLI(this.id, "swipe", ["--from", start.target, "--to", end.target]); }
+        finally { this.#current = null; }
+      }
+
+      async longPress(target, duration = 0.5) {
+        if (!Number.isFinite(duration) || duration <= 0) throw new TypeError("longPress duration must be positive seconds");
+        const resolved = this.#resolveTarget(target);
+        try { return await runCLI(this.id, "longpress", [resolved.target, "--duration", `${Math.round(duration * 1000)}ms`]); }
+        finally { this.#current = null; }
       }
 
       async scroll(target, direction = "down", pages = 1) {
@@ -485,17 +577,17 @@ enum MCPJavaScriptSource {
           const exactMatches = this.#current.elements.filter(candidate =>
             [candidate.label, candidate.value, candidate.identifier].some(value => textValue(value) === text)
           ).length;
-          if (text && exactMatches === 1 && element.enabled !== false) return { target: text, element };
+          if (text && exactMatches === 1 && element.enabled !== false) return { target: text, interactionTarget: {label: text}, element };
           if (Array.isArray(element.frame) && element.frame.length === 4) {
             const [x, y, width, height] = element.frame.map(Number);
-            return { target: `${x + width / 2},${y + height / 2}`, element };
+            return { target: `${x + width / 2},${y + height / 2}`, interactionTarget: {point: [x + width / 2, y + height / 2]}, element };
           }
           throw new Error(`element_index ${target} has no usable target`);
         }
-        if (typeof target === "string" && target.length > 0) return { target, element: null };
+        if (typeof target === "string" && target.length > 0) return { target, interactionTarget: {label: target}, element: null };
         const point = Array.isArray(target) ? target : target && typeof target === "object" ? [target.x, target.y] : null;
-        if (point?.length === 2 && point.every(value => Number.isFinite(Number(value)))) {
-          return { target: `${Number(point[0])},${Number(point[1])}`, element: null };
+        if (point?.length === 2 && point.every(Number.isFinite)) {
+          return { target: `${Number(point[0])},${Number(point[1])}`, interactionTarget: {point: point.map(Number)}, element: null };
         }
         throw new TypeError("target must be an element_index, semantic text, or [x, y]");
       }

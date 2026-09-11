@@ -309,6 +309,15 @@ public struct ForyDomElement {
 }
 
 @ForyStruct
+public struct ForyScreenshotArgs {
+    public var waitQuiescence: Bool = false
+
+    public init(waitQuiescence: Bool = false) {
+        self.waitQuiescence = waitQuiescence
+    }
+}
+
+@ForyStruct
 public struct ForyDomPayload {
     public var app: String = ""
     public var windowSize: ForyPoint = ForyPoint()
@@ -692,11 +701,32 @@ public struct ForyTapArgs {
     public var target: ForyTarget = ForyTarget()
     public var offset: ForyPoint? = nil
     public var ratio: ForyPoint = ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)
+    public var clickCount: Int32 = 1
 
-    public init(target: ForyTarget = ForyTarget(), offset: ForyPoint? = nil, ratio: ForyPoint = ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)) {
+    public init(target: ForyTarget = ForyTarget(), offset: ForyPoint? = nil, ratio: ForyPoint = ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio), clickCount: Int32 = 1) {
         self.target = target
         self.offset = offset
         self.ratio = ratio
+        self.clickCount = clickCount
+    }
+}
+
+@ForyStruct
+public struct ForyTextInputArgs {
+    public var operation: String = ""
+    public var target: ForyTarget = ForyTarget()
+    public var text: String = ""
+    public var prefix: String = ""
+    public var suffix: String = ""
+    public var selectionType: String = "text"
+
+    public init(operation: String = "", target: ForyTarget = ForyTarget(), text: String = "", prefix: String = "", suffix: String = "", selectionType: String = "text") {
+        self.operation = operation
+        self.target = target
+        self.text = text
+        self.prefix = prefix
+        self.suffix = suffix
+        self.selectionType = selectionType
     }
 }
 
@@ -899,8 +929,10 @@ public enum ForyRegistry {
         try! fory.register(ForyTerminateAppArgs.self, name: "ForyTerminateAppArgs")
         try! fory.register(ForyRotateArgs.self, name: "ForyRotateArgs")
         try! fory.register(ForyDomArgs.self, name: "ForyDomArgs")
+        try! fory.register(ForyScreenshotArgs.self, name: "ForyScreenshotArgs")
         try! fory.register(ForyWaitForArgs.self, name: "ForyWaitForArgs")
         try! fory.register(ForyInputArgs.self, name: "ForyInputArgs")
+        try! fory.register(ForyTextInputArgs.self, name: "ForyTextInputArgs")
         try! fory.register(ForyTapArgs.self, name: "ForyTapArgs")
         try! fory.register(ForyLongPressArgs.self, name: "ForyLongPressArgs")
         try! fory.register(ForySwipeArgs.self, name: "ForySwipeArgs")

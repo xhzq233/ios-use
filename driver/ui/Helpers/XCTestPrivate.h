@@ -14,10 +14,16 @@ id _Nullable SnapshotOfElement(XCUIElement * _Nonnull element);
 /// XCPointerEventPath(initForTextInput). Returns NO and assigns `error`
 /// when the event synthesizer reports a failure.
 BOOL XCFBTypeText(NSString * _Nonnull text, NSUInteger typingSpeed, NSError * _Nullable * _Nullable error);
+BOOL XCSynthesizeKey(NSString * _Nonnull key, NSUInteger modifiers, NSError * _Nullable * _Nullable error);
+NSString * _Nullable XCTextValue(id _Nonnull snapshot, NSError * _Nullable * _Nullable error);
+NSString * _Nullable XCSelectAllText(id _Nonnull snapshot, NSError * _Nullable * _Nullable error);
+BOOL XCTextValueMatches(id _Nonnull snapshot, NSString * _Nonnull expected, NSError * _Nullable * _Nullable error);
+BOOL XCSelectTextRange(id _Nonnull snapshot, NSString * _Nonnull value, NSRange range, NSError * _Nullable * _Nullable error);
 
 /// WDA-style synthesized tap/long press using XCSynthesizedEventRecord +
 /// XCPointerEventPath(initForTouchAtPoint:offset:) + liftUpAtOffset:.
 BOOL XCSynthesizeTapAtPoint(CGPoint point, NSError * _Nullable * _Nullable error);
+BOOL XCSynthesizeTapsAtPoint(CGPoint point, NSUInteger count, NSError * _Nullable * _Nullable error);
 BOOL XCSynthesizeLongPressAtPoint(CGPoint point, double duration, NSError * _Nullable * _Nullable error);
 
 /// Captures a screenshot through XCTest daemon `_XCT_requestScreenshot`

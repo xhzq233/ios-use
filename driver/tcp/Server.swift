@@ -383,8 +383,8 @@ import Foundation
         case .proxyCAPush(let args):
             return try ProxyCommands.proxyCAPush(args)
 
-        case .screenshot:
-            return try ScreenCommands.screenshot()
+        case .screenshot(let args):
+            return try ScreenCommands.screenshot(args)
 
         case .dom(let args):
             return try DomCommands.dom(args)
@@ -397,6 +397,8 @@ import Foundation
 
         case .input(let args):
             return try InputCommands.input(args)
+        case .textInput(let args):
+            return try TextInputCommands.execute(args)
 
         case .swipe(let args):
             return try SwipeCommands.swipe(args)
@@ -442,7 +444,7 @@ struct CommandInvocation {
             self.arguments = .proxyCAPush(try codec.deserialize(payload, as: ForyProxyCAPushArgs.self))
 
         case .screenshot:
-            self.arguments = .screenshot
+            self.arguments = .screenshot(payload.isEmpty ? ForyScreenshotArgs() : try codec.deserialize(payload, as: ForyScreenshotArgs.self))
 
         case .dom:
             self.arguments = .dom(payload.count > 0 ? try codec.deserialize(payload, as: ForyDomArgs.self) : ForyDomArgs())
@@ -455,6 +457,8 @@ struct CommandInvocation {
 
         case .input:
             self.arguments = .input(try codec.deserialize(payload, as: ForyInputArgs.self))
+        case .textInput:
+            self.arguments = .textInput(try codec.deserialize(payload, as: ForyTextInputArgs.self))
 
         case .swipe:
             self.arguments = .swipe(payload.count > 0 ? try codec.deserialize(payload, as: ForySwipeArgs.self) : ForySwipeArgs())
@@ -510,11 +514,12 @@ struct CommandInvocation {
         case home
         case rotate(ForyRotateArgs)
         case proxyCAPush(ForyProxyCAPushArgs)
-        case screenshot
+        case screenshot(ForyScreenshotArgs)
         case dom(ForyDomArgs)
         case tap(ForyTapArgs)
         case longPress(ForyLongPressArgs)
         case input(ForyInputArgs)
+        case textInput(ForyTextInputArgs)
         case swipe(ForySwipeArgs)
         case waitFor(ForyWaitForArgs)
         case dismissAlert(ForyDismissAlertArgs)

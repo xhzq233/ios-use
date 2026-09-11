@@ -4,7 +4,7 @@
 PlayCover backend. It deliberately combines:
 
 - UIKit controls, a native modal alert, an in-window UIKit popup, text input,
-  and four full-canvas edge probes;
+  double-tap / long-press recognition, and four full-canvas edge probes;
 - SwiftUI controls and text input;
 - a `WKWebView` with accessible controls;
 - an animated `MTKView` underneath a UIKit overlay;

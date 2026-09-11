@@ -50,17 +50,23 @@ await device.getScreenshot();
 await device.getAXStateAndScreenshot();
 
 await device.click(12);
+await device.click(12, {clickCount: 2});
 await device.setValue(7, "hello");
+await device.getAXState({emit: false});
+await device.selectText(7, "hello", {selectionType: "cursor_after"});
 await device.typeText(" world");
 await device.paste("text");
 await device.pressKey("Return");
+await device.drag([120, 400], [120, 250]);
+await device.longPress("A visible control", 0.5);
 await device.scroll(4, "down", 0.5);
 await device.scrollTo("Settings", "Home");
 await device.waitFor("Loading", {gone: true, timeout: 20});
 ```
 
-After a transition, use `await device.getAXState({waitQuiescence: true})`
-to wait for UI animations to settle before reading. This uses the Driver's
+AX and screenshot observations wait for UI animations to settle by default.
+Use `{waitQuiescence: false}` only when an immediate unsettled observation is
+intentional. This uses the Driver's
 quiescence wait, not a fixed sleep; use `waitFor` for a particular loading state.
 `scroll` accepts positive fractional pages: `0.5` requests half a viewport
 along the requested direction, not a whole swipe rounded up.
@@ -69,6 +75,10 @@ Observations emit text or images into the tool result by default. Pass `{emit: f
 only an intermediate result. AX observations are diffed against the previous
 observation for the same Device; pass `{disableDiffing: true}` when a full
 snapshot is required.
+`device.get()` returns the full current element objects even when the text
+output is a diff. Each includes `depth`, `parent_index`, `children`, and
+`ancestor_indices`; use that hierarchy to scope controls to the relevant page
+or container. Screenshot bytes also carry `logicalSize`, `pixelSize`, and `scale`.
 
 ```javascript
 let ax = await device.getAXState({emit: false});
@@ -77,9 +87,25 @@ let full = await device.getAXState({emit: false, disableDiffing: true});
 
 An `element_index` belongs to the latest AX observation. After a screenshot-only
 observation, obtain a new AX state before using an index. After `click`,
-`setValue`, `typeText`, `paste`, `pressKey`, or `scroll`, observe again before
+`setValue`, `selectText`, `typeText`, `paste`, `pressKey`, `drag`, `longPress`, or `scroll`, observe again before
 using an index. Prefer semantic text when it is unique; the runtime falls back
 to the observed element center only when needed.
+
+`setValue` replaces the whole editable value, including with an empty string.
+`typeText` inserts at the current cursor or replaces the current selection.
+`selectText(index, text, {prefix, suffix, selectionType})` requires one literal
+match; use adjacent `prefix` / `suffix` text to disambiguate duplicates.
+`selectionType` is `text` (default), `cursor_before`, or `cursor_after`.
+Selection and replacement are checked against the native editable state.
+If native selection cannot be confirmed or its time budget expires, stop and
+observe; do not type assuming the requested selection exists.
+
+On iOS and Simulator, `pressKey` accepts xdotool-style names and chords, such as
+`Left`, `BackSpace`, `Return`, `shift+Left`, and `super+a`. `ctrl` is Control;
+`super` / `cmd` is Command, not an alias for Control. Use `typeText` for Unicode
+text rather than passing an emoji or combining sequence as a physical key.
+`clickCount` is 1–10. iOS clicks are touch-only (`mouseButton: "left"`);
+use `longPress` for a context menu, not a right-click alias.
 
 ## Batch repeated work
 
@@ -125,8 +151,14 @@ Drivers or Apps. Timeout and request cancellation also reset the context.
 Ordinary JavaScript errors preserve it. No `.exit` or terminal session is needed.
 Remote connection and artifact transfer follow the transport's own Skill;
 do not treat an Edge-local path as a Consumer file.
-`paste` inserts plain text, not clipboard HTML; `pressKey` currently supports
-Return only. Use native CLI commands for lifecycle, installation, logs and capture.
+`paste` currently inserts plain text; Markdown/HTML clipboard formats and
+`performSecondaryAction` are not implemented. Secure-field replacement and
+selection are unavailable because the text cannot be verified; focus and use
+`typeText` when entering a secret is authorized. The Mac backend currently
+supports single clicks and Return/Enter keys only. Use native CLI commands for
+lifecycle, installation, logs and capture.
+After upgrading, restart a running Mac App with the current ios-use build before
+using MCP text editing; older runtimes cannot preserve these selection semantics.
 
 ## Coordinate independent Devices
 

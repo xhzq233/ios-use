@@ -7,6 +7,41 @@ import XCTest
 @testable import IOSUseCLI
 
 final class PlayCoverDriverClientTests: XCTestCase {
+    func testSelectionInputRejectsOldRuntimeBeforeMutationAndPreservesReturnSelection() throws {
+        var legacyMutations = 0
+        let legacy = PlayCoverDriverClient(session: makeSession()) { command, _, _ in
+            if command == .hello { return self.makePayload(capability: .hello) }
+            legacyMutations += 1
+            return self.makePayload(capability: .input, input: self.makeAction(generation: 1))
+        }
+        XCTAssertThrowsError(try legacy.textInput(.init(operation: "replace", target: .init(label: "Field"), text: "replacement")))
+        XCTAssertEqual(legacyMutations, 0)
+
+        var handshakes = 0
+        var inputs: [PlayCoverRuntimeInputArguments] = []
+        let current = PlayCoverDriverClient(session: makeSession()) { command, arguments, _ in
+            if command == .hello {
+                handshakes += 1
+                return self.makePayload(capability: .hello, helloCapabilities: ["hello", "input", "inputSelection"])
+            }
+            guard case .input(let input) = arguments else { throw CLIParseError.invalidValue("expected input") }
+            inputs.append(input)
+            return self.makePayload(capability: .input, input: self.makeAction(generation: 2))
+        }
+        _ = try current.textInput(.init(operation: "select", target: .init(label: "Field"), text: "cat", prefix: "/ ", selectionType: "cursor_before"))
+        _ = try current.textInput(.init(operation: "key", text: "Return"))
+        _ = try current.textInput(.init(operation: "type", text: "insert"))
+        XCTAssertEqual(handshakes, 1)
+        XCTAssertEqual(inputs.count, 3)
+        XCTAssertEqual(inputs[0].selectionType, "cursor_before")
+        XCTAssertTrue(inputs[1].enter)
+        XCTAssertEqual(inputs[1].textOperation, "type")
+        XCTAssertNil(inputs[1].target)
+        XCTAssertEqual(inputs[1].deleteCount, 0)
+        XCTAssertEqual(inputs[2].textOperation, "type")
+        XCTAssertNil(inputs[2].target)
+    }
+
     func testAllUICommandsMapTypedArgumentsAndPreserveResults()
         throws
     {
@@ -1259,6 +1294,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
 
     private func makePayload(
         capability: PlayCoverRuntimeCommand,
+        helloCapabilities: [String] = ["hello"],
         screenshot: PlayCoverRuntimeScreenshotPayload? = nil,
         dom: PlayCoverRuntimeDOMPayload? = nil,
         waitFor: PlayCoverRuntimeWaitForPayload? = nil,
@@ -1279,7 +1315,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                     executablePath:
                         "/tmp/apps/com.example.runtime/Runtime.app/Demo",
                     installRevision: String(repeating: "a", count: 64),
-                    capabilities: ["hello"],
+                    capabilities: helloCapabilities,
                     controlStage: "ready",
                     controlFailure: nil,
                     uiState: .init(

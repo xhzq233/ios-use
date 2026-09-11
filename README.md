@@ -106,8 +106,10 @@ handles persist across calls. No terminal polling is needed. `timeout_ms`
 defaults to 30,000 and can be raised to 300,000 for longer batches.
 
 Use `cua.help()` and `device.help()` for the current API. Common Device methods
-include `getAXState`, `getScreenshot`, `click`, `scroll`, `scrollTo`, `waitFor`, `setValue`,
-`typeText`, `paste`, and `pressKey`. See the
+include `getAXState`, `getScreenshot`, `getAXStateAndScreenshot`, `click`, `drag`,
+`longPress`, `scroll`, `scrollTo`, `waitFor`, `setValue`, `selectText`, `typeText`,
+`paste`, and `pressKey`. AX observations wait for animation-idle by default;
+`get()` exposes the complete latest tree with parent/child indices. See the
 [MCP guide](ios-use-skill/references/mcp.md) for examples.
 
 JavaScript runs in one Node.js child process and calls the Swift Host over
