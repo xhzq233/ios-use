@@ -100,7 +100,7 @@ enum CLIHelp {
               await device.getAXState()
               await device.getScreenshot()
 
-            Requires Node.js 22.18+. Use one server process per Agent conversation.
+            JavaScript is embedded; no Node.js required. Use one server process per Agent conversation.
             Exiting closes this client's connections; Device Drivers stay running.
             Device setup remains: ios-use config --udid <id>; ios-use start <id>
             """

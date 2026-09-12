@@ -1,130 +1,51 @@
 enum MCPJavaScriptSource {
     static let code = #"""
-    import net from "node:net";
-    import repl from "node:repl";
-    import { registerHooks } from "node:module";
-    import { PassThrough } from "node:stream";
-    import { inspect, formatWithOptions } from "node:util";
-    import { AsyncLocalStorage } from "node:async_hooks";
-    import { createInterface } from "node:readline";
-    import { fileURLToPath } from "node:url";
-
-    const [portValue] = process.argv.slice(1);
-    const executionContext = new AsyncLocalStorage();
-    function emit(content) {
-      const execution = executionContext.getStore();
-      if (!execution?.active) throw new Error("This JavaScript execution has ended");
-      process.stdout.write(JSON.stringify({event: "content", content}) + "\n");
-    }
-    const socket = net.createConnection({ host: "127.0.0.1", port: Number(portValue) });
-    socket.setEncoding("utf8");
-    const pending = new Map();
-    let nextID = 1;
-    let incoming = "";
-
-    const connected = new Promise((resolve, reject) => {
-      socket.once("connect", resolve);
-      socket.once("error", reject);
-    });
-
-    socket.on("data", chunk => {
-      incoming += chunk;
-      for (;;) {
-        const newline = incoming.indexOf("\n");
-        if (newline < 0) break;
-        const line = incoming.slice(0, newline);
-        incoming = incoming.slice(newline + 1);
-        if (!line) continue;
-        const response = JSON.parse(line);
-        const completion = pending.get(response.id);
-        if (!completion) continue;
-        pending.delete(response.id);
-        completion.resolve(response);
-      }
-    });
-    socket.on("error", error => {
-      for (const completion of pending.values()) completion.reject(error);
-      pending.clear();
-    });
-    socket.on("close", () => {
-      const error = new Error("ios-use JavaScript host disconnected");
-      for (const completion of pending.values()) completion.reject(error);
-      pending.clear();
-    });
-
-    async function rpc(payload) {
-      const execution = executionContext.getStore();
-      if (!execution?.active) throw new Error("This JavaScript execution has ended");
-      await connected;
-      if (!execution.active) throw new Error("This JavaScript execution has ended");
-      const id = nextID++;
-      const result = new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.write(JSON.stringify({ id, ...payload }) + "\n", error => {
-          if (!error) return;
-          pending.delete(id);
-          reject(error);
-        });
-      });
-      execution.pending.add(result);
-      result.then(() => execution.pending.delete(result), () => execution.pending.delete(result));
-      return await result;
-    }
+    (function(nativeCall, emitText, emitBytes, decodeBase64, scheduleTimer, cancelTimer, complete) {
 
     class IOSUseCommandError extends Error {
-      constructor(envelope, fallback) {
-        super(envelope?.error?.message ?? fallback ?? "ios-use command failed");
+      constructor(envelope) {
+        super(envelope.error.message);
         this.name = "IOSUseCommandError";
-        this.command = envelope?.command ?? null;
-        this.code = envelope?.error?.code ?? null;
-        this.category = envelope?.error?.category ?? null;
-        this.retryable = envelope?.error?.retryable ?? false;
-        this.mutationMayHaveApplied = envelope?.error?.mutationMayHaveApplied ?? false;
-        this.data = envelope?.data ?? null;
-        this.interaction = envelope?.interaction ?? null;
-        this.warnings = envelope?.warnings ?? [];
+        this.command = envelope.command;
+        this.code = envelope.error.code;
+        this.category = envelope.error.category;
+        this.retryable = envelope.error.retryable;
+        this.mutationMayHaveApplied = envelope.error.mutationMayHaveApplied;
+        this.data = envelope.data;
+        this.interaction = envelope.interaction;
+        this.warnings = envelope.warnings;
       }
     }
 
-    function decodeEnvelope(text) {
-      const value = String(text ?? "").trim();
-      if (!value) return null;
-      try {
-        const decoded = JSON.parse(value);
-        return typeof decoded === "object" && decoded !== null ? decoded : null;
-      } catch {
-        return null;
-      }
-    }
-
-    async function runCLI(deviceId, command, args = []) {
-      const argv = ["--json"];
-      if (deviceId !== null) argv.push("--device", deviceId);
-      argv.push(command, ...args.map(String));
-      const result = await rpc({ arguments: argv });
-      const envelope = decodeEnvelope(result.stdout) ?? decodeEnvelope(result.stderr);
-      if (!envelope) {
-        throw new IOSUseCommandError(null, result.stderr || `${command} did not return JSON`);
-      }
-      if (result.exitCode !== 0 || !envelope.ok) {
-        throw new IOSUseCommandError(envelope, result.stderr);
-      }
-      return envelope.data;
-    }
-
-    async function observe(deviceID, ax, screenshot, options) {
-      const result = await rpc({deviceID, observation: {ax, screenshot, waitQuiescence: options.waitQuiescence !== false}});
-      if (result.exitCode !== 0) {
-        throw new IOSUseCommandError(decodeEnvelope(result.stdout) ?? decodeEnvelope(result.stderr), result.stderr);
-      }
+    async function callHost(name, deviceID, options = {}) {
+      const result = await new Promise(resolve => nativeCall(name, deviceID, options, resolve));
+      if (result.error) throw new IOSUseCommandError(result.error);
       return result;
     }
 
-    async function interact(deviceID, interaction) {
-      const result = await rpc({deviceID, interaction});
-      if (result.exitCode !== 0) {
-        throw new IOSUseCommandError(decodeEnvelope(result.stdout) ?? decodeEnvelope(result.stderr), result.stderr);
-      }
+    async function deviceCall(deviceID, name, options = {}) {
+      return (await callHost(name, deviceID, options)).data;
+    }
+
+    function observe(deviceID, ax, screenshot, options) {
+      return callHost("observe", deviceID, {ax, screenshot, waitQuiescence: options.waitQuiescence !== false});
+    }
+
+    async function interact(deviceID, {name, ...options}) {
+      await deviceCall(deviceID, name, options);
+    }
+
+    function inspect(value) {
+      if (typeof value === "string") return value;
+      const seen = new WeakSet();
+      return JSON.stringify(value, (_, item) => {
+        if (typeof item === "bigint") return String(item) + "n";
+        if (typeof item === "object" && item !== null) {
+          if (seen.has(item)) return "[Circular]";
+          seen.add(item);
+        }
+        return item;
+      }, 2) ?? String(value);
     }
 
     function textValue(value) {
@@ -239,29 +160,24 @@ enum MCPJavaScriptSource {
     function imageMimeType(bytes) {
       if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
       if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-      if (Buffer.from(bytes.subarray(0,4)).toString() === "RIFF" && Buffer.from(bytes.subarray(8,12)).toString() === "WEBP") return "image/webp";
+      if (String.fromCharCode(...bytes.subarray(0,4)) === "RIFF" && String.fromCharCode(...bytes.subarray(8,12)) === "WEBP") return "image/webp";
       throw new TypeError("emitImage requires PNG, JPEG, or WebP image bytes");
     }
 
     const nodeRepl = {
       write(value) {
-        const text = typeof value === "string" ? value : inspect(value, {
-          colors: false, depth: 8, maxArrayLength: 200, breakLength: 100,
-        });
-        emit({type: "text", text});
+        emitText(inspect(value));
       },
       async emitImage(image) {
         let bytes = image?.bytes ?? image;
         let mimeType = image?.mimeType;
         if (typeof bytes === "string" && bytes.startsWith("file:")) {
-          const response = await rpc({imagePath: fileURLToPath(bytes)});
-          if (response.exitCode !== 0) throw new Error(response.stderr);
-          bytes = Uint8Array.from(Buffer.from(response.imageBase64, "base64"));
+          bytes = new Uint8Array((await callHost("readImage", null, {url: bytes})).image);
         } else if (typeof bytes === "string") {
           const match = /^data:(image\/[a-z+.-]+);base64,([\s\S]*)$/i.exec(bytes);
           if (!match) throw new TypeError("emitImage expects image bytes or a data/file URL");
           mimeType = match[1];
-          bytes = Uint8Array.from(Buffer.from(match[2], "base64"));
+          bytes = new Uint8Array(decodeBase64(match[2]));
         }
         if (!ArrayBuffer.isView(bytes) || bytes.BYTES_PER_ELEMENT !== 1) {
           throw new TypeError("emitImage expects image bytes or {bytes, mimeType}");
@@ -269,13 +185,15 @@ enum MCPJavaScriptSource {
         bytes = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         const detected = imageMimeType(bytes);
         if (mimeType && mimeType !== detected) throw new TypeError("Image MIME type does not match its bytes");
-        emit({type: "image", mimeType: detected, data: Buffer.from(bytes).toString("base64")});
+        const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+          ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        emitBytes(buffer, detected);
       },
     };
 
     const executionConsole = Object.fromEntries(
       ["log", "info", "warn", "error", "debug", "dir"].map(method => [
-        method, (...args) => nodeRepl.write(formatWithOptions({colors: false}, ...args)),
+        method, (...args) => nodeRepl.write(args.map(inspect).join(" ")),
       ])
     );
 
@@ -322,9 +240,7 @@ enum MCPJavaScriptSource {
 
       async listApps(options = {}) {
         if (this.id === "mac") throw new Error("listApps supports real iOS and Simulator, not the Mac backend");
-        const args = ["--udid", this.id];
-        if (options.includeSystem) args.push("--system");
-        const result = await runCLI(null, "apps", args);
+        const result = await deviceCall(this.id, "apps", {includeSystem: options.includeSystem === true});
         if (options.emit !== false) nodeRepl.write(result.apps);
         return result.apps;
       }
@@ -333,9 +249,7 @@ enum MCPJavaScriptSource {
         if (typeof bundleId !== "string" || !bundleId) throw new TypeError("activateApp requires an installed bundle ID from listApps");
         this.#current = null;
         this.#previous = null;
-        const args = [bundleId, "--dom"];
-        if (options.terminateExisting === true) args.push("--terminateExisting");
-        const result = await runCLI(this.id, "activateApp", args);
+        const result = await deviceCall(this.id, "activateApp", {bundleId, terminateExisting: options.terminateExisting === true});
         this.#setAX(result.readiness.dom);
         if (options.emit !== false) this.#formatAX(options);
       }
@@ -344,14 +258,14 @@ enum MCPJavaScriptSource {
         if (typeof bundleId !== "string" || !bundleId) throw new TypeError("terminateApp requires an installed bundle ID");
         this.#current = null;
         this.#previous = null;
-        return await runCLI(this.id, "terminateApp", [bundleId]);
+        return await deviceCall(this.id, "terminateApp", {bundleId});
       }
 
       async start(options = {}) {
         if (this.id === "mac") throw new Error("Use native ios-use start --mac --app <App.app> for Mac setup");
         this.#current = null;
         this.#previous = null;
-        const state = await runCLI(null, "start", [this.id]);
+        const state = await deviceCall(this.id, "start");
         Object.assign(this, state.devices.find(device => device.id === this.id));
         if (options.observe !== false) await this.getAXState(options);
         return this;
@@ -360,7 +274,7 @@ enum MCPJavaScriptSource {
       async stop() {
         this.#current = null;
         this.#previous = null;
-        const state = await runCLI(this.id, "stop");
+        const state = await deviceCall(this.id, "stop");
         Object.assign(this, state.devices.find(device => device.id === this.id));
         return this;
       }
@@ -429,8 +343,8 @@ enum MCPJavaScriptSource {
       }
 
       #imageBytes(response) {
-        if (!response.imageBase64) throw new Error("ios-use screenshot bytes unavailable");
-        const bytes = Uint8Array.from(Buffer.from(response.imageBase64, "base64"));
+        if (!response.image) throw new Error("ios-use screenshot bytes unavailable");
+        const bytes = new Uint8Array(response.image);
         Object.assign(bytes, response.data.screenshot);
         return bytes;
       }
@@ -484,17 +398,15 @@ enum MCPJavaScriptSource {
       }
 
       async waitFor(text, options = {}) {
-        const args = [String(text), "--timeout", `${options.timeout ?? 10}s`];
-        if (options.gone) args.push("--gone");
-        if (options.match) args.push("--match", options.match);
-        await runCLI(this.id, "waitFor", args);
+        const timeout = options.timeout ?? 10;
+        if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 300) throw new TypeError("waitFor timeout must be positive seconds, at most 300");
+        await deviceCall(this.id, "waitFor", {text: String(text), timeout, gone: options.gone === true, match: options.match ?? "contains"});
         return await this.getAXState({emit: options.emit});
       }
 
       async scrollTo(text, anchor, options = {}) {
-        const args = ["--to", String(text)];
-        if (anchor !== undefined) args.push("--from", this.#resolveTarget(anchor).target);
-        try { await runCLI(this.id, "swipe", args); }
+        const from = anchor === undefined ? null : this.#resolveTarget(anchor).interactionTarget;
+        try { await deviceCall(this.id, "swipe", {to: {label: String(text)}, from}); }
         finally { this.#current = null; }
         return await this.getAXState({emit: options.emit});
       }
@@ -524,14 +436,14 @@ enum MCPJavaScriptSource {
         const start = this.#resolveTarget(from);
         const end = this.#resolveTarget(to);
         if (start.element || end.element) throw new TypeError("drag requires observed [x,y] points");
-        try { return await runCLI(this.id, "swipe", ["--from", start.target, "--to", end.target]); }
+        try { return await deviceCall(this.id, "swipe", {from: start.interactionTarget, to: end.interactionTarget}); }
         finally { this.#current = null; }
       }
 
       async longPress(target, duration = 0.5) {
         if (!Number.isFinite(duration) || duration <= 0) throw new TypeError("longPress duration must be positive seconds");
         const resolved = this.#resolveTarget(target);
-        try { return await runCLI(this.id, "longpress", [resolved.target, "--duration", `${Math.round(duration * 1000)}ms`]); }
+        try { return await deviceCall(this.id, "longpress", {target: resolved.interactionTarget, duration}); }
         finally { this.#current = null; }
       }
 
@@ -560,7 +472,7 @@ enum MCPJavaScriptSource {
             // centering a long drag can start under a navigation-bar overlay.
             from[axis] -= sign * extent / 4;
             to[axis] = from[axis] + sign * distance;
-            result = await runCLI(this.id, "swipe", ["--from", from.join(","), "--to", to.join(",")]);
+            result = await deviceCall(this.id, "swipe", {from: {point: from}, to: {point: to}});
             remaining -= distance;
           }
           return result;
@@ -673,7 +585,7 @@ enum MCPJavaScriptSource {
       }
 
       async getState(options = {}) {
-        this.#state = await runCLI(null, "status");
+        this.#state = await deviceCall(null, "status");
         if (options.emit !== false) nodeRepl.write(this.#state);
         return this.#state;
       }
@@ -702,70 +614,29 @@ enum MCPJavaScriptSource {
 
     const cua = new CUARoot();
 
-    function installContext(server) {
-      server.context.cua = cua;
-      server.context.nodeRepl = nodeRepl;
-      server.context.console = executionConsole;
-      server.context.setTimeout = setTimeout;
-      server.context.clearTimeout = clearTimeout;
-      for (const name of ["process", "require", "module", "Buffer", "fetch", "WebSocket"]) {
-        Object.defineProperty(server.context, name, {value: undefined, configurable: false});
-      }
-    }
+    globalThis.cua = cua;
+    globalThis.nodeRepl = nodeRepl;
+    globalThis.console = executionConsole;
+    globalThis.setTimeout = (callback, delay = 0, ...args) => {
+      if (typeof callback !== "function") throw new TypeError("setTimeout requires a function");
+      return scheduleTimer(() => callback(...args), Number(delay));
+    };
+    globalThis.clearTimeout = cancelTimer;
 
-    const input = new PassThrough();
-    const output = new PassThrough();
-    const server = repl.start({input, output, prompt: "", terminal: false, useGlobal: false, ignoreUndefined: true});
-    installContext(server);
-    output.on("data", chunk => {
-      const execution = executionContext.getStore();
-      const message = chunk.toString("utf8").trim();
-      if (execution?.active && message) execution.reject?.(new Error(message));
-    });
-
-    async function execute(code) {
-      const execution = {active: true, pending: new Set(), reject: null};
-      return await executionContext.run(execution, async () => {
-        let isError = false;
-        try {
-          await connected;
-          await new Promise((resolve, reject) => {
-            execution.reject = reject;
-            server.eval(code, server.context, "<ios-use-mcp>", (error, value) => {
-              if (error) reject(error);
-              else Promise.resolve(value).then(resolve, reject);
-            });
-          });
-          while (execution.pending.size) await Promise.allSettled([...execution.pending]);
-        } catch (error) {
-          isError = true;
-          nodeRepl.write(error?.stack ?? String(error));
-          if (error instanceof IOSUseCommandError) nodeRepl.write({
-            category: error.category, retryable: error.retryable,
-            mutationMayHaveApplied: error.mutationMayHaveApplied, interaction: error.interaction,
-          });
-          while (execution.pending.size) await Promise.allSettled([...execution.pending]);
-        } finally {
-          execution.active = false;
-          execution.reject = null;
-        }
-        process.stdout.write(JSON.stringify({event: "complete", isError}) + "\n");
-      });
+    function reportError(error) {
+        nodeRepl.write(String(error) + (error?.stack ? "\n" + error.stack : ""));
+        if (error instanceof IOSUseCommandError) nodeRepl.write({
+          category: error.category, retryable: error.retryable,
+          mutationMayHaveApplied: error.mutationMayHaveApplied, interaction: error.interaction,
+        });
     }
-
-    registerHooks({
-      resolve(specifier) { throw new Error(`Module imports are unavailable in ios-use mcp: ${specifier}`); },
-    });
-    process.getBuiltinModule = undefined;
-    const requests = createInterface({input: process.stdin, crlfDelay: Infinity});
-    for await (const line of requests) {
-      if (!line.trim()) continue;
-      const request = JSON.parse(line);
-      await execute(request.code);
-    }
-    server.close();
-    input.destroy();
-    output.destroy();
-    socket.end();
+    return {
+      reportError,
+      attach: promise => Promise.resolve(promise).then(result => result.value).then(
+        () => complete(false),
+        error => { reportError(error); complete(true); }
+      ),
+    };
+    })
     """#
 }

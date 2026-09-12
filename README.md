@@ -118,8 +118,9 @@ operate on the Device's current foreground. `start()` / `stop()` control configu
 an idle Device with `cua.getDevice(id, {observe:false})`. See the
 [MCP guide](ios-use-skill/references/mcp.md) for examples.
 
-JavaScript runs in one Node.js child process and calls the Swift Host over
-localhost TCP RPC; the Host reuses a separate Driver connection per Device.
+JavaScript runs in embedded QuickJS inside the Swift MCP process and calls
+native services directly. No Node installation, JavaScript child process or
+localhost RPC is needed; the Host reuses a Driver connection per Device.
 Each MCP connection owns its own JavaScript context. `js_reset`, execution
 timeout, or cancellation clears that context; disconnection releases its
 resources. Drivers and Apps remain running. Device actions already issued may
@@ -174,7 +175,7 @@ Most automation commands support `--json`.
   account for driver signing.
 - Simulators and source builds: full Xcode; source builds also require Swift
   and `xcodegen`.
-- MCP: Node.js 22.18+.
+- MCP: included in the native binary; no separate JavaScript runtime installation.
 - Proxy capture: `mitmproxy`.
 
 ## Development

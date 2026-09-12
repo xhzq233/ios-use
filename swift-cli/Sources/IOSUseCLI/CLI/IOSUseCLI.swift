@@ -20,7 +20,6 @@ public struct IOSUseCLI: Sendable {
     public let outputSink: CLIOutputSink?
     private let playCoverSignerInitializer: PlayCoverSignerInitializer
     private let registerHomesForDiskUsage: Bool
-    private let mcpDriverSessions: MCPDriverSessionPool?
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -31,7 +30,6 @@ public struct IOSUseCLI: Sendable {
             environment: environment,
             outputSink: outputSink,
             registerHomesForDiskUsage: registerHomesForDiskUsage,
-            mcpDriverSessions: nil,
             playCoverSignerInitializer: {
                 try PlayCoverSigningIdentityService()
                     .initializeForConfiguration()
@@ -43,14 +41,12 @@ public struct IOSUseCLI: Sendable {
         environment: [String: String],
         outputSink: CLIOutputSink? = nil,
         registerHomesForDiskUsage: Bool = false,
-        mcpDriverSessions: MCPDriverSessionPool? = nil,
         playCoverSignerInitializer:
             @escaping PlayCoverSignerInitializer
     ) {
         self.paths = IOSUsePaths.resolve(environment: environment)
         self.outputSink = outputSink
         self.registerHomesForDiskUsage = registerHomesForDiskUsage
-        self.mcpDriverSessions = mcpDriverSessions
         self.playCoverSignerInitializer = playCoverSignerInitializer
     }
 
@@ -60,7 +56,6 @@ public struct IOSUseCLI: Sendable {
         pathsForTesting paths: IOSUsePaths,
         outputSink: CLIOutputSink? = nil,
         registerHomesForDiskUsage: Bool = false,
-        mcpDriverSessions: MCPDriverSessionPool? = nil,
         playCoverSignerInitializer:
             @escaping PlayCoverSignerInitializer = {
                 try PlayCoverSigningIdentityService()
@@ -70,7 +65,6 @@ public struct IOSUseCLI: Sendable {
         self.paths = paths
         self.outputSink = outputSink
         self.registerHomesForDiskUsage = registerHomesForDiskUsage
-        self.mcpDriverSessions = mcpDriverSessions
         self.playCoverSignerInitializer = playCoverSignerInitializer
     }
 
@@ -1117,11 +1111,9 @@ public struct IOSUseCLI: Sendable {
             let result = try DeviceCommandLock.withExclusiveLock(
                 paths: paths
             ) {
-                try mcpDriverSessions?.checkCancellation()
                 return try AppLifecycleService.runWithReadiness(
                     options: options,
-                    paths: paths,
-                    driverSession: mcpDriverSessions?.session(paths: paths)
+                    paths: paths
                 )
             }
             if json {
@@ -1170,18 +1162,12 @@ public struct IOSUseCLI: Sendable {
         paths: IOSUsePaths,
         json: Bool
     ) -> CLIResult {
-        let session = mcpDriverSessions?.session(paths: paths)
-            ?? LockedDriverClientSession(paths: paths)
-        defer {
-            if mcpDriverSessions == nil {
-                session.close()
-            }
-        }
+        let session = LockedDriverClientSession(paths: paths)
+        defer { session.close() }
         do {
             let result = try DeviceCommandLock.withExclusiveLock(
                 paths: paths
             ) {
-                try mcpDriverSessions?.checkCancellation()
                 return try DriverCommandExecutor.execute(
                     action: action,
                     paths: paths

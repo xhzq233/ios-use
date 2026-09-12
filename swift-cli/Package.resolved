@@ -19,6 +19,15 @@
       }
     },
     {
+      "identity" : "quickjs-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/zqqf16/QuickJS-Swift.git",
+      "state" : {
+        "branch" : "50eb132",
+        "revision" : "50eb132d6bc89736f478cf8336948fb62133a264"
+      }
+    },
+    {
       "identity" : "swift-atomics",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-atomics.git",

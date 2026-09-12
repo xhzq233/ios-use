@@ -18,11 +18,6 @@ function childPIDs(pid) {
   catch (error) { if (error.status === 1) return []; throw error; }
 }
 
-function isAlive(pid) {
-  try { process.kill(pid, 0); return true; }
-  catch (error) { if (error.code === 'ESRCH') return false; throw error; }
-}
-
 async function until(predicate, message) {
   for (let n = 0; n < 100; n++) {
     if (await predicate()) return;
@@ -32,7 +27,7 @@ async function until(predicate, message) {
 }
 
 function client() {
-  const child = spawn(binary, ['mcp'], {env: {...process.env, IOS_USE_HOME: taskHome}, stdio: ['pipe', 'pipe', 'pipe']});
+  const child = spawn(binary, ['mcp'], {env: {...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', IOS_USE_HOME: taskHome}, stdio: ['pipe', 'pipe', 'pipe']});
   const pending = new Map();
   let nextID = 1;
   let stderr = '';
@@ -96,6 +91,14 @@ try {
   ok(await mcp.js('let count = 40; let unicode = "你好🌍";'));
   assert.equal(value(await mcp.js('await new Promise(r => setTimeout(r, 1200)); count += 2; nodeRepl.write(JSON.stringify({count, length: Array.from(unicode).length}));')).count, 42);
   assert.equal(value(await mcp.js('nodeRepl.write(JSON.stringify(Array.from(unicode).length));')), 3);
+  ok(await mcp.js('let [left, right] = await Promise.resolve([2, 3]); class Sum { value() { return left + right; } }'));
+  assert.equal(value(await mcp.js('nodeRepl.write(new Sum().value());')), 5);
+  ok(await mcp.js('let abandonedTimerRan = false; setTimeout(() => { abandonedTimerRan = true; }, 10);'));
+  assert.equal(value(await mcp.js('await new Promise(r => setTimeout(r, 30)); nodeRepl.write(abandonedTimerRan);')), false);
+  ok(await mcp.js('try { await Promise.reject(new Error("handled")); } catch {}'));
+  assert.equal((await mcp.js('Promise.reject(new Error("unhandled")); void 0;')).isError, true);
+  assert.equal((await mcp.js('await import("node:fs");')).isError, true);
+  assert.equal(value(await mcp.js('nodeRepl.write([typeof process, typeof require, typeof fetch].every(x => x === "undefined"));')), true);
   const fragmented = await mcp.request('tools/call', {name:'js', arguments:{
     code:`nodeRepl.write(JSON.stringify(Array.from(${JSON.stringify('你好🌏'.repeat(20000))}).length));`,
   }}, true).result;
@@ -107,6 +110,8 @@ try {
   assert.equal(emitted.type, 'image');
   assert.equal(emitted.mimeType, 'image/png');
   assert.deepEqual(Buffer.from(emitted.data, 'base64'), png);
+  const imageView = ok(await mcp.js(`let backing = new Uint8Array(${png.length + 4}); backing.set(${JSON.stringify([...png])}, 2); await nodeRepl.emitImage(backing.subarray(2, -2));`)).content[0];
+  assert.deepEqual(Buffer.from(imageView.data, 'base64'), png);
   ok(await mcp.call('js_reset').result);
   assert.equal(value(await mcp.js('nodeRepl.write(JSON.stringify(typeof count === "undefined"));')), true);
 
@@ -115,6 +120,8 @@ try {
   assert.equal(timed.isError, true);
   assert.equal(JSON.parse(timed.content[0].text), 123);
   assert.equal(value(await mcp.js('nodeRepl.write(JSON.stringify(6 * 7));')), 42);
+  assert.equal((await mcp.js('await new Promise(() => {});', 100)).isError, true);
+  assert.equal(value(await mcp.js('nodeRepl.write(42);')), 42);
 
   // Cancellation and reset can interrupt an active tools/call without polling a shell.
   const cancelled = mcp.call('js', {code: 'while (true) {}', timeout_ms: 10000});
@@ -143,29 +150,27 @@ try {
   assert.equal(Buffer.from(ok(largeResult).content[0].data, 'base64').length, 1024 * 1024);
   console.log('[mcp-test] large image response remains framed under stdout backpressure');
 
-  // EOF and SIGTERM must clean up the server-owned Node, including a busy loop.
+  // The embedded engine must exit on EOF/SIGTERM, even during a busy loop.
   for (const termination of ['eof', 'SIGTERM']) {
     const stopping = client();
     await stopping.initialize();
     ok(await stopping.js('let ready = true;'));
     const pids = childPIDs(stopping.child.pid);
-    assert.equal(pids.length, 1, 'expected one persistent Node child');
+    assert.equal(pids.length, 0, 'JavaScript must run inside the MCP process');
     const running = stopping.call('js', {code: 'while (true) {}', timeout_ms: 10000});
     running.result.catch(() => {});
     await delay(150);
     if (termination === 'eof') stopping.child.stdin.end();
     else stopping.child.kill(termination);
     await until(() => stopping.child.exitCode !== null || stopping.child.signalCode !== null, `${termination}: MCP did not exit`);
-    await until(() => pids.every(pid => !isAlive(pid)), `${termination}: Node child leaked`);
   }
-  console.log('[mcp-test] client EOF and SIGTERM clean up busy JavaScript children');
+  console.log('[mcp-test] single-process JavaScript exits on client EOF and SIGTERM');
 
   // Disconnect must also interrupt a writer whose client stopped reading.
   for (const termination of ['eof', 'SIGTERM']) {
     const stopping = client();
     await stopping.initialize();
     ok(await stopping.js('let ready = true;'));
-    const pids = childPIDs(stopping.child.pid);
     stopping.child.stdout.pause();
     const blocked = stopping.js(`let image = new Uint8Array(4 * 1024 * 1024); image.set(${JSON.stringify([...png])}); await nodeRepl.emitImage(image);`, 10000);
     blocked.catch(() => {});
@@ -173,7 +178,6 @@ try {
     if (termination === 'eof') stopping.child.stdin.end();
     else stopping.child.kill(termination);
     await until(() => stopping.child.exitCode !== null || stopping.child.signalCode !== null, `${termination}: backpressured MCP did not exit`);
-    await until(() => pids.every(pid => !isAlive(pid)), `${termination}: backpressured Node child leaked`);
     stopping.child.stdout.resume();
   }
   console.log('[mcp-test] fragmented UTF-8 input and disconnect under image backpressure passed');

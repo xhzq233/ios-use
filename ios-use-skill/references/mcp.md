@@ -14,8 +14,8 @@ For Codex:
 codex mcp add ios-use -- ios-use mcp
 ```
 
-Start a new Agent session after registration. Node.js 22.18+ must be on the
-server's PATH. Call `js` with a `code` string, an optional short `title`, and
+Start a new Agent session after registration. JavaScript is included in the
+native binary; Node.js is not required. Call `js` with a `code` string, an optional short `title`, and
 optional `timeout_ms` (default 30,000; maximum 300,000). JavaScript variables
 persist between calls. Await the tool result; do not use shell polling.
 
@@ -168,7 +168,11 @@ helps the caller understand the final result.
 Use `nodeRepl.write(...)` or `console.log(...)` for other values; JavaScript
 return values are not echoed a second time after the API has emitted its result.
 
-For multi-turn work, reuse variables in the next `js` call. `js_reset` interrupts
+For multi-turn work, reuse variables in the next `js` call. Top-level `let` and
+`const` use normal JavaScript declaration rules: assign an existing variable
+instead of redeclaring it, or use a block for temporary locals. Await timers and
+Device work within the call; unawaited timers are cleared when the call ends.
+`js_reset` interrupts
 running JavaScript and clears its variables and handles, without stopping
 Drivers or Apps. Timeout and request cancellation also reset the context.
 Ordinary JavaScript errors preserve it. No `.exit` or terminal session is needed.
