@@ -84,7 +84,7 @@ enum AppLifecycleService {
     /// Compose a host-side lifecycle mutation with the shared driver
     /// `waitAppForeground` readiness command. Returns L2 by default; with
     /// `--no-wait` it returns at L0 without contacting the driver.
-    static func runWithReadiness(options: AppLifecycleOptions, paths: IOSUsePaths) throws -> Result {
+    static func runWithReadiness(options: AppLifecycleOptions, paths: IOSUsePaths, driverSession: LockedDriverClientSession? = nil) throws -> Result {
         guard options.action == .activate else {
             return try run(options: options, paths: paths)
         }
@@ -108,12 +108,17 @@ enum AppLifecycleService {
         // Then wait for L2 through the driver.
         let readiness: ForyWaitAppForegroundPayload
         do {
-            readiness = try DriverCommandExecution.withLockedClient(paths: paths, verbose: options.session.verbose) { client in
+            let wait: (DriverCommandClient) throws -> ForyWaitAppForegroundPayload = { client in
                 try client.waitAppForeground(
                     expectedBundleId: options.bundleID,
                     timeout: 0,
                     returnDom: options.dom
                 )
+            }
+            if let driverSession {
+                readiness = try driverSession.run(wait)
+            } else {
+                readiness = try DriverCommandExecution.withLockedClient(paths: paths, verbose: options.session.verbose, wait)
             }
         } catch {
             throw ReadinessError(hostResult: hostResult, underlying: error)

@@ -289,7 +289,12 @@ enum MCPJavaScriptSource {
 
       help() {
         nodeRepl.write([
+          "await device.listApps({includeSystem: true}) // real iOS / Simulator",
+          "await device.getApp(bundleId) // activate, reuse its ready AX, return this Device",
+          "await device.terminateApp(bundleId)",
+          "await device.start(); await device.stop() // configured iOS / Simulator Driver",
           "await device.getAXState() // fresh AX; waits for UI animations by default",
+          "await device.getAXSnapshot() // full structured AX, no text/diff or automatic output",
           "await device.getScreenshot()",
           "await device.getAXStateAndScreenshot()",
           "await device.click(element_index|string|[x,y], {clickCount: 2}) // default: 1",
@@ -303,6 +308,7 @@ enum MCPJavaScriptSource {
           "await device.scroll(element_index|[x,y], \"down\", 0.5) // fraction of the scroll viewport",
           "await device.scrollTo(text, anchor)",
           "await device.waitFor(text, {gone: true, timeout: 20})",
+          "await device.waitFor(ax => /* expected page condition */ false, {timeout: 10}) // structured AX; throws on timeout",
           "device.get() // complete latest AX objects with parent_index, children and ancestor_indices",
           "Unsupported: rich-text paste, secondary AX actions, secure-text replacement/selection. iOS clicks are touch-only; Mac supports single clicks and Return/Enter keys.",
         ].join("\n"));
@@ -316,16 +322,80 @@ enum MCPJavaScriptSource {
         return this;
       }
 
+      async listApps(options = {}) {
+        if (this.id === "mac") throw new Error("listApps supports real iOS and Simulator, not the Mac backend");
+        const args = ["--udid", this.id];
+        if (options.includeSystem) args.push("--system");
+        const result = await runCLI(null, "apps", args);
+        if (options.emit !== false) nodeRepl.write(result.apps);
+        return result.apps;
+      }
+
+      async getApp(bundleId, options = {}) {
+        if (typeof bundleId !== "string" || !bundleId) throw new TypeError("getApp requires an installed bundle ID from listApps");
+        this.#current = null;
+        this.#previous = null;
+        const args = [bundleId, "--dom"];
+        if (options.terminateExisting === true) args.push("--terminateExisting");
+        const result = await runCLI(this.id, "activateApp", args);
+        this.#setAX(result.readiness.dom);
+        if (options.emit !== false) this.#formatAX(options);
+        return this;
+      }
+
+      async terminateApp(bundleId) {
+        if (typeof bundleId !== "string" || !bundleId) throw new TypeError("terminateApp requires an installed bundle ID");
+        this.#current = null;
+        this.#previous = null;
+        return await runCLI(this.id, "terminateApp", [bundleId]);
+      }
+
+      async start(options = {}) {
+        if (this.id === "mac") throw new Error("Use native ios-use start --mac --app <App.app> for Mac setup");
+        this.#current = null;
+        this.#previous = null;
+        const state = await runCLI(null, "start", [this.id]);
+        Object.assign(this, state.devices.find(device => device.id === this.id));
+        if (options.observe !== false) await this.getAXState(options);
+        return this;
+      }
+
+      async stop() {
+        this.#current = null;
+        this.#previous = null;
+        const state = await runCLI(this.id, "stop");
+        Object.assign(this, state.devices.find(device => device.id === this.id));
+        return this;
+      }
+
       async getAXState(options = {}) {
         this.#current = null;
         const result = await observe(this.id, true, false, options);
         return this.#applyAX(result.data.ax, options);
       }
 
+      async getAXSnapshot(options = {}) {
+        this.#current = null;
+        const result = await observe(this.id, true, false, options);
+        const snapshot = this.#setAX(result.data.ax);
+        if (options.emit === true) nodeRepl.write(snapshot);
+        return snapshot;
+      }
+
+      #setAX(data) {
+        const elements = projectElements(data.elements ?? []);
+        this.#current = {app: data.app, windowSize: data.windowSize, snapshotGeneration: data.snapshotGeneration, elements};
+        return this.#current;
+      }
+
       #applyAX(data, options) {
+        this.#setAX(data);
+        return this.#formatAX(options);
+      }
+
+      #formatAX(options) {
         if (options.disableDiffing === true) this.#previous = null;
-        const rawElements = Array.isArray(data.elements) ? data.elements : [];
-        const elements = projectElements(rawElements);
+        const {elements, app} = this.#current;
         const previousEntries = keyedElements(this.#previous?.elements ?? []);
         const currentEntries = keyedElements(elements);
         const previousByKey = new Map(previousEntries.map(entry => [entry.key, entry]));
@@ -339,9 +409,8 @@ enum MCPJavaScriptSource {
         const removed = previousEntries
           .filter(entry => !currentKeys.has(entry.key))
           .map(entry => formatElement(entry.element, "-"));
-        this.#current = { rawElements, elements, windowSize: data.windowSize };
         this.#previous = { elements };
-        const header = `Device ${this.id} ${typeof data.app === "string" ? data.app : data.app?.bundleId ?? ""}`.trim();
+        const header = `Device ${this.id} ${app ?? ""}`.trim();
         const changed = elements.flatMap((element, index) => markers[index] === " " ? [] : [formatElement(element, markers[index])]);
         const state = [header, ...removed, ...changed, ...(!removed.length && !changed.length ? ["No AX changes."] : [])]
           .filter(Boolean)
@@ -427,6 +496,19 @@ enum MCPJavaScriptSource {
       }
 
       async waitFor(text, options = {}) {
+        if (typeof text === "function") {
+          const timeout = options.timeout ?? 10;
+          if (!Number.isFinite(timeout) || timeout <= 0) throw new TypeError("waitFor timeout must be positive seconds");
+          const deadline = Date.now() + timeout * 1000;
+          do {
+            const snapshot = await this.getAXSnapshot({waitQuiescence: options.waitQuiescence});
+            if (await text(snapshot)) {
+              if (options.emit === true) this.#formatAX(options);
+              return snapshot;
+            }
+          } while (Date.now() < deadline);
+          throw new Error(`AX condition not met within ${timeout}s; inspect device.get() for the last observed state`);
+        }
         const args = [String(text), "--timeout", `${options.timeout ?? 10}s`];
         if (options.gone) args.push("--gone");
         if (options.match) args.push("--match", options.match);
@@ -599,11 +681,14 @@ enum MCPJavaScriptSource {
 
     class CUARoot {
       #state = null;
+      #devices = new Map();
 
       help() {
         nodeRepl.write([
           "await cua.getState()",
           "let device = await cua.getDevice(\"device-id\")",
+          "let idle = await cua.getDevice(\"device-id\", {observe:false}); await idle.start()",
+          "await device.listApps(); await device.getApp(\"bundle.id\")",
           "await device.getAXState()",
           "await device.click(0)",
           "await device.getAXStateAndScreenshot()",
@@ -632,9 +717,10 @@ enum MCPJavaScriptSource {
               : null;
         const info = cached ?? inferred;
         if (!info) throw new Error(`Unknown Device ID ${deviceId}`);
-        const device = new DeviceHandle(info);
+        const device = this.#devices.get(deviceId) ?? new DeviceHandle(info);
+        this.#devices.set(deviceId, device);
         if (options.emit !== false) device.help();
-        await device.getAXState(options);
+        if (options.observe !== false) await device.getAXState(options);
         return device;
       }
     }

@@ -172,15 +172,18 @@ enum AppManagementService {
     }
 
     static func listResult(options: AppsOptions, paths: IOSUsePaths) throws -> AppListResult {
-        let targetUdid = try resolveRealDeviceTargetUdid(
+        let targetUdid = try SessionService.resolveTargetUdid(
             explicitUdid: options.udid,
             paths: paths,
-            command: "apps",
             missingMessage: "apps requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`."
         )
+        let isSimulator = DeviceService.looksLikeSimulatorUDID(targetUdid)
+            || (SessionService.read(paths: paths).map { $0.udid == targetUdid && $0.deviceType == "simulator" } ?? false)
         let apps: [AppInfo]
         if let appsProviderForTesting {
             apps = try appsProviderForTesting(targetUdid, options.includeSystem)
+        } else if isSimulator {
+            apps = try SimulatorService.listApps(udid: targetUdid, includeSystem: options.includeSystem)
         } else {
             apps = try InstallationProxyClient.withClient(udid: targetUdid) { client in
                 let raw = try client.browse(

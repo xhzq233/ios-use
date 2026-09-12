@@ -253,11 +253,11 @@ enum CLIHelp {
             return """
             Usage: ios-use apps [--udid <udid>] [--system] [--json]
 
-            List apps installed on a USB real device using installation_proxy.
+            List apps installed on a USB real device or booted Simulator.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
-              --udid <udid>  Target USB real device UDID; overrides active driver.lock
+              --udid <udid>  Target real device or Simulator UDID; overrides active driver.lock
               --system       Include system apps
               --json         Print JSON
 

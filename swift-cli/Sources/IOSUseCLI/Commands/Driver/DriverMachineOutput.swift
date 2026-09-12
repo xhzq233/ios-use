@@ -219,12 +219,16 @@ private func machineErrorCandidate(
 }
 
 func machineDom(_ payload: ForyDomPayload) -> MachineValue {
+    machineDom(payload, presentation: true)
+}
+
+func machineDom(_ payload: ForyDomPayload, presentation: Bool) -> MachineValue {
     .object([
         "app": .string(payload.app),
         "windowSize": machinePoint(payload.windowSize),
         "raw": payload.raw.isEmpty ? .null : .string(payload.raw),
         "snapshotGeneration": .integer(Int(payload.snapshotGeneration)),
-        "elements": .array(DriverOutput.presentationDomElements(payload.elements).map(machineDomElement)),
+        "elements": .array((presentation ? DriverOutput.presentationDomElements(payload.elements) : payload.elements).map(machineDomElement)),
     ])
 }
 

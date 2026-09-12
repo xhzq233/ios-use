@@ -1117,20 +1117,22 @@ public struct IOSUseCLI: Sendable {
             let result = try DeviceCommandLock.withExclusiveLock(
                 paths: paths
             ) {
-                try AppLifecycleService.runWithReadiness(
+                try mcpDriverSessions?.checkCancellation()
+                return try AppLifecycleService.runWithReadiness(
                     options: options,
-                    paths: paths
+                    paths: paths,
+                    driverSession: mcpDriverSessions?.session(paths: paths)
                 )
-            }
-            var stdout = "\(result.message)\n"
-            if let dom = result.dom {
-                stdout += "\n" + DriverOutput.formatDom(dom) + "\n"
             }
             if json {
                 return MachineOutput.success(
                     command: options.action.commandName,
                     data: AppLifecycleService.machineData(options: options, result: result)
                 )
+            }
+            var stdout = "\(result.message)\n"
+            if let dom = result.dom {
+                stdout += "\n" + DriverOutput.formatDom(dom) + "\n"
             }
             return CLIResult(exitCode: 0, stdout: stdout)
         } catch {

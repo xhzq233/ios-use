@@ -106,11 +106,19 @@ handles persist across calls. No terminal polling is needed. `timeout_ms`
 defaults to 30,000 and can be raised to 300,000 for longer batches.
 
 Use `cua.help()` and `device.help()` for the current API. Common Device methods
-include `getAXState`, `getScreenshot`, `getAXStateAndScreenshot`, `click`, `drag`,
+include `getAXState`, `getAXSnapshot`, `getScreenshot`, `getAXStateAndScreenshot`, `click`, `drag`,
 `longPress`, `scroll`, `scrollTo`, `waitFor`, `setValue`, `selectText`, `typeText`,
 `paste`, and `pressKey`. Observations request native quiescence by default;
 this does not guarantee that every navigation transition has finished.
-`get()` exposes the complete latest tree with parent/child indices. See the
+`getAXSnapshot()` returns fresh structured AX without text formatting, diffing,
+or automatic output; `get()` reads the cached tree without another request.
+Use `waitFor(ax => condition, {timeout: 10})` to check a known page transition
+inside one call; it returns the matching snapshot or throws on timeout.
+`listApps`, `getApp(bundleId)`, and `terminateApp(bundleId)` manage iOS / Simulator
+Apps. `getApp` activates the App and returns the same Device handle with its
+ready AX; UI methods still operate on the Device's current foreground, not an
+independently pinned App. `start()` / `stop()` control configured Drivers; select
+an idle Device with `cua.getDevice(id, {observe:false})`. See the
 [MCP guide](ios-use-skill/references/mcp.md) for examples.
 
 JavaScript runs in one Node.js child process and calls the Swift Host over

@@ -31,7 +31,6 @@ target object.
 ```javascript
 let state = await cua.getState({emit: false});
 let device = await cua.getDevice("mac");
-device.help();
 ```
 
 Use the stable IDs returned by `cua.getState()`: the bare device/Simulator UDID,
@@ -39,6 +38,25 @@ or `mac`. Never infer a target from list order.
 Once an ID is known, `cua.getDevice(id)` selects it directly without repeating
 global Device discovery. Selection emits the initial AX observation automatically;
 pass `{emit: false}` as the second argument when only the handle is needed.
+For an idle Device, pass `{observe: false}` instead, then `await device.start()`.
+Start requires existing configuration; signing and installation remain native
+CLI workflows. `await device.stop()` explicitly stops that Device's Driver.
+
+## Select an App
+
+```javascript
+let apps = await device.listApps({includeSystem: true, emit: false});
+await device.getApp("com.apple.Preferences");
+```
+
+Use the installed bundle ID from `listApps`; names are not guessed. `getApp`
+launches or activates an App and returns the **same Device handle**, with the
+Driver's ready AX already available through `get()`; no follow-up AX read is
+needed merely to obtain the initial page. UI methods always act on the Device's
+current foreground, not an independently pinned App. Use `terminateApp(bundleId)`
+only when closing the App is part of the task. `{terminateExisting: true}` on
+`getApp` explicitly requests a fresh launch. These App operations support real
+iOS and Simulator; Mac App setup remains native `start --mac --app`.
 
 ## Observe, act, observe
 
@@ -76,7 +94,7 @@ stability. A new title alone does not prove the previous page has disappeared.
 `scroll` accepts positive fractional pages: `0.5` requests half a viewport
 along the requested direction, not a whole swipe rounded up.
 
-Observations emit text or images into the tool result by default. Pass `{emit: false}` when the value is
+Text/image observations emit into the tool result by default. Pass `{emit: false}` when the value is
 only an intermediate result. AX observations are diffed against the previous
 observation for the same Device; pass `{disableDiffing: true}` when a full
 snapshot is required.
@@ -89,6 +107,11 @@ or container. Screenshot bytes also carry `logicalSize`, `pixelSize`, and `scale
 let ax = await device.getAXState({emit: false});
 let full = await device.getAXState({emit: false, disableDiffing: true});
 ```
+
+For intermediate decisions, prefer `await device.getAXSnapshot()`: it returns
+`{app, windowSize, snapshotGeneration, elements}` without text formatting,
+diffing, or automatic output. `device.get()` reads those same current elements
+without another Driver request. Neither requires printing the full object.
 
 An `element_index` belongs to the latest AX observation. After a screenshot-only
 observation, obtain a new AX state before using an index. After `click`,
@@ -120,12 +143,30 @@ in one `js` call where practical. Do not split a known repeated flow into one
 model round trip per click or item.
 
 Keep actions on one Device sequential, but make the intermediate observations
-and decisions inside the script. After each navigation, read fresh AX with
-`{emit: false, waitQuiescence: true}` and use `device.get()` to inspect the full
+and decisions inside the script. After each navigation, use `getAXSnapshot()` or
+`waitFor(predicate)` and use `device.get()` to inspect the full
 current element objects, including labels, values and selected states. The AX
 text return value may be only a diff; do not treat it as the whole page or reuse
 old element indices. Select fields using the active page's context: a flat list
 of every switch can include duplicate controls or nodes from a previous page.
+
+For an observed transition, wait on the relevant structured state in the same
+script. The predicate receives each fresh full snapshot; use observed page or
+container identifiers and check that outgoing content is gone when necessary:
+
+```javascript
+let ready = await device.waitFor(ax =>
+  ax.elements.some(e => e.identifier === readyID && e.visible) &&
+  !ax.elements.some(e => e.identifier === outgoingID && e.visible),
+  {timeout: 5});
+// Extract only the requested fields from ready.elements.
+```
+
+Predicate waits do not emit intermediate AX and do not read again after success.
+They throw on timeout and leave the last observation accessible via `get()`.
+Do not substitute fixed double reads, whole-text equality, or a broad ambiguous
+label for the actual destination condition. Do not swallow timeout and continue
+as if navigation succeeded.
 
 Accumulate the requested results and emit a compact summary. Handle page
 variants only when their visible state makes the next step clear. If a page is
@@ -161,7 +202,7 @@ do not treat an Edge-local path as a Consumer file.
 selection are unavailable because the text cannot be verified; focus and use
 `typeText` when entering a secret is authorized. The Mac backend currently
 supports single clicks and Return/Enter keys only. Use native CLI commands for
-lifecycle, installation, logs and capture.
+configuration, installation, logs and capture.
 After upgrading, restart a running Mac App with the current ios-use build before
 using MCP text editing; older runtimes cannot preserve these selection semantics.
 

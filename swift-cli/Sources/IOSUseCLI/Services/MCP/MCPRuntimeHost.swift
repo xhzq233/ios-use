@@ -320,7 +320,7 @@ final class MCPRuntimeHost: @unchecked Sendable {
             return try pool.session(paths: context.paths).run { client in
                 var data: [String: MachineValue] = [:]
                 if options.ax {
-                    data["ax"] = machineDom(try client.dom(raw: false, fresh: true, waitQuiescence: options.waitQuiescence))
+                    data["ax"] = machineDom(try client.dom(raw: false, fresh: true, waitQuiescence: options.waitQuiescence), presentation: false)
                 }
                 var image: Data?
                 if options.screenshot {
