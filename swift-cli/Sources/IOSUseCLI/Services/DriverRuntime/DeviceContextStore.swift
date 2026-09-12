@@ -106,21 +106,45 @@ enum DeviceContextStore {
         impliedUDID: String? = nil,
         paths: IOSUsePaths
     ) throws -> Context {
-        let active = sessions(paths: paths)
         if let explicitDeviceID {
             let normalized = try normalizeExplicitDeviceID(
                 explicitDeviceID,
                 paths: paths
             )
-            guard let context = active.first(where: {
-                $0.deviceID == normalized
-            }) else {
+            if let info = try? DriverSessionStore.readInfo(paths: paths),
+               deviceID(for: info) == normalized {
+                return Context(
+                    deviceID: normalized,
+                    paths: paths,
+                    info: info,
+                    legacy: true
+                )
+            }
+
+            let contextPaths = try paths.deviceContext(normalized)
+            let directory = URL(fileURLWithPath: contextPaths.driverLock)
+                .deletingLastPathComponent()
+            // Preserve exact Device ID selection on case-insensitive volumes,
+            // including aliases whose directory name differs from their UDID.
+            guard let name = try? directory.resourceValues(
+                forKeys: [.nameKey]
+            ).name,
+                  name == normalized,
+                  let info = try? DriverSessionStore.readInfo(
+                    paths: contextPaths
+                  ) else {
                 throw CLIParseError.invalidValue(
                     "No active driver for Device \(normalized). Run `ios-use start` first."
                 )
             }
-            return context
+            return Context(
+                deviceID: normalized,
+                paths: contextPaths,
+                info: info,
+                legacy: false
+            )
         }
+        let active = sessions(paths: paths)
         if let impliedUDID,
            let context = active.first(where: {
                $0.info.udid == impliedUDID

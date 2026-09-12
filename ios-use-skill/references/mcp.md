@@ -103,10 +103,10 @@ output is a diff. Each includes `depth`, `parent_index`, `children`, and
 `ancestor_indices`; use that hierarchy to scope controls to the relevant page
 or container. Screenshot bytes also carry `logicalSize`, `pixelSize`, and `scale`.
 
-```javascript
-let ax = await device.getAXState({emit: false});
-let full = await device.getAXState({emit: false, disableDiffing: true});
-```
+After one observation, inspect `device.get()` without another RPC. Use
+`disableDiffing` only to request full text output, not to obtain full objects.
+`activateApp`, `scrollTo` and `waitFor` also leave a current AX observation in
+`get()`; reuse it before deciding whether another observation is needed.
 
 An `element_index` belongs to the latest AX observation. After a screenshot-only
 observation, obtain a new AX state before using an index. After `click`,
@@ -145,11 +145,36 @@ text return value may be only a diff; do not treat it as the whole page or reuse
 old element indices. Select fields using the active page's context: a flat list
 of every switch can include duplicate controls or nodes from a previous page.
 
+For a known transition, define a helper once per session and stop observing as
+soon as the destination condition is met:
+
+```javascript
+async function readPage(ready, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    await device.getAXState({emit: false});
+    const nodes = device.get();
+    if (ready(nodes)) return nodes;
+  } while (Date.now() < deadline);
+  throw new Error("Destination page did not become ready");
+}
+```
+
+Build `ready` from the observed destination and its container, including the
+outgoing container's disappearance when both can coexist during navigation.
+Do not use a fixed pair of reads or whole-text equality as readiness. A timeout
+is a failed transition, not permission to record the last page as the result.
+After scrolling, confirm the target is inside the visible content area before
+clicking; a successful click response alone does not confirm navigation.
+
 Accumulate the requested results and emit a compact summary. Handle page
 variants only when their visible state makes the next step clear. If a page is
 unexpected or an action fails, return the completed results and current state
 for the model to resolve; do not continue the loop blindly. Batching does not
 expand permission to change settings or take other external actions.
+Keep completed records as task fields (for example, `{name, value}`), not saved
+AX trees. On failure, report those records and the failed step; include only the
+current page evidence needed to choose the recovery.
 
 ## Emit explicit results
 

@@ -31,6 +31,8 @@ enum SwipeCommands {
         guard let cs = getCleanedSnapshot() else {
             return try snapshotFailure("swipe: failed to take snapshot", target: toTarget.label.isEmpty ? nil : toTarget)
         }
+        // Gestures invalidate the cache, but response ancestors still use this tree.
+        defer { withExtendedLifetime(cs) {} }
 
         // Path B: `to` is a point → STEP_POINT
         if let point = toTarget.point {
@@ -129,12 +131,16 @@ enum SwipeCommands {
             return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
         case .snapshotFailed:
             return try snapshotFailure("scroll: failed to rebuild snapshot", target: toTarget)
-        case .ambiguous(let lbl, let matches):
-            return try ambiguityResponse(ForyTarget(label: lbl), matches: matches)
-        case .found(let count, let finalTarget, _):
-            return try okScrollWithAncestors(node: finalTarget,
-                                             scrolls: count,
-                                             scrollDirection: scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))
+        case .ambiguous(let lbl, let matches, let snapshot):
+            return try withExtendedLifetime(snapshot) {
+                try ambiguityResponse(ForyTarget(label: lbl), matches: matches)
+            }
+        case .found(let count, let finalTarget, let snapshot):
+            return try withExtendedLifetime(snapshot) {
+                try okScrollWithAncestors(node: finalTarget,
+                                          scrolls: count,
+                                          scrollDirection: scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))
+            }
         }
     }
 
@@ -187,18 +193,22 @@ enum SwipeCommands {
                                         scrollUpwards: scrollUpwards,
                                         app: app)
         switch result {
-        case .found(let count, let target, _):
-            return try okScrollWithAncestors(node: target,
-                                             scrolls: count,
-                                             scrollDirection: scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))
+        case .found(let count, let target, let snapshot):
+            return try withExtendedLifetime(snapshot) {
+                try okScrollWithAncestors(node: target,
+                                          scrolls: count,
+                                          scrollDirection: scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))
+            }
         case .hitBoundary:
             return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
         case .reachedMax:
             return try scrollLimitReached("anchor scroll: max scroll count reached", target: toTarget)
         case .snapshotFailed:
             return try snapshotFailure("anchor scroll: failed to rebuild snapshot", target: toTarget)
-        case .ambiguous(let lbl, let matches):
-            return try ambiguityResponse(ForyTarget(label: lbl), matches: matches)
+        case .ambiguous(let lbl, let matches, let snapshot):
+            return try withExtendedLifetime(snapshot) {
+                try ambiguityResponse(ForyTarget(label: lbl), matches: matches)
+            }
         }
     }
 
@@ -308,11 +318,11 @@ enum SwipeCommands {
     // MARK: - STEP 6 helper
 
     private enum ScrollOutcome {
-        case found(count: Int, target: SafeSnapshot, freshScrollView: SafeSnapshot)
+        case found(count: Int, target: SafeSnapshot, snapshot: CleanedSnapshot)
         case hitBoundary
         case reachedMax
         case snapshotFailed
-        case ambiguous(label: String, matches: [SnapshotElement])
+        case ambiguous(label: String, matches: [SnapshotElement], snapshot: CleanedSnapshot)
     }
 
     private static func scrollUntilVisible(scrollView: SafeSnapshot,
@@ -321,6 +331,9 @@ enum SwipeCommands {
                                    scrollUpwards: Bool,
                                    app: XCUIApplication) -> ScrollOutcome {
         var currentScrollView = scrollView
+        var currentSnapshot: CleanedSnapshot?
+        // Only the current iteration's tree survives into the next gesture.
+        defer { withExtendedLifetime(currentSnapshot) {} }
         var prevFrames = collectVisibleCellFrames(currentScrollView)
 
         for i in 0..<IOSUseProtocol.maxScrollCount {
@@ -349,9 +362,9 @@ enum SwipeCommands {
 
             switch rawFindInSnapshot(target, cs: freshCS, enableFuzzy: false, visibility: .only) {
             case .found(let elem):
-                return .found(count: i + 1, target: elem.node, freshScrollView: freshScrollView)
+                return .found(count: i + 1, target: elem.node, snapshot: freshCS)
             case .ambiguous(let matches):
-                return .ambiguous(label: target.label, matches: matches)
+                return .ambiguous(label: target.label, matches: matches, snapshot: freshCS)
             default:
                 break
             }
@@ -362,6 +375,7 @@ enum SwipeCommands {
             }
             prevFrames = nowFrames
             currentScrollView = freshScrollView
+            currentSnapshot = freshCS
         }
         return .reachedMax
     }
@@ -387,6 +401,7 @@ enum SwipeCommands {
         if !prevFrames.isEmpty,
            let freshCS = rebuildCleanedSnapshot(),
            let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) {
+            defer { withExtendedLifetime(freshCS) {} }
             let nowFrames = collectVisibleCellFrames(freshScrollView)
             if nowFrames == prevFrames {
                 DriverLog.info("[point-swipe] hit boundary after \(segmentCount) segment(s)")

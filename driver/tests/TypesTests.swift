@@ -157,6 +157,7 @@ final class TypesTests: XCTestCase {
             }
         }
         return CleanedSnapshot(
+            bundleId: "com.example.fixture",
             root: root,
             appFrame: CGRect(x: 0, y: 0, width: 375, height: 812),
             rawRoot: root,

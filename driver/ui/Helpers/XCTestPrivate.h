@@ -69,6 +69,7 @@ BOOL SnapshotMatchesElement(id _Nonnull a, id _Nonnull b);
 @property (nonatomic, readonly) BOOL hasKeyboardFocus;
 @property (nonatomic, readonly, nonnull) NSArray<SafeSnapshot *> *children;
 /// Parent snapshot lazily wrapped from raw `parent`. Returns nil for the root.
+/// Tree children borrow their parent wrapper; retain the root while navigating.
 @property (nonatomic, readonly, nullable) SafeSnapshot *parent;
 /// Flat list of every descendant (excluding self). Rooted traversal.
 @property (nonatomic, readonly, nonnull) NSArray<SafeSnapshot *> *allDescendants;

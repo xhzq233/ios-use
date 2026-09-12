@@ -211,7 +211,7 @@ enum MCPJavaScriptSource {
           "await device.activateApp(bundleId) // ready AX is available through device.get()",
           "await device.terminateApp(bundleId)",
           "await device.start(); await device.stop() // configured iOS / Simulator Driver",
-          "await device.getAXState() // fresh AX; waits for UI animations by default",
+          "await device.getAXState() // fresh AX; requests native quiescence, not page readiness",
           "await device.getScreenshot()",
           "await device.getAXStateAndScreenshot()",
           "await device.click(element_index|string|[x,y], {clickCount: 2}) // default: 1",
@@ -226,6 +226,7 @@ enum MCPJavaScriptSource {
           "await device.scrollTo(text, anchor)",
           "await device.waitFor(text, {gone: true, timeout: 20})",
           "device.get() // complete latest AX objects with parent_index, children and ancestor_indices",
+          "For known flows, observe with {emit:false}, check the destination container via get(), and emit only task results. Stop on failed transitions; do not compare two AX texts for readiness.",
           "Unsupported: rich-text paste, secondary AX actions, secure-text replacement/selection. iOS clicks are touch-only; Mac supports single clicks and Return/Enter keys.",
         ].join("\n"));
       }

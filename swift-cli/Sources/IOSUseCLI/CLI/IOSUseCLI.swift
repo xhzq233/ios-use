@@ -490,7 +490,6 @@ public struct IOSUseCLI: Sendable {
         explicitDeviceID: String?,
         impliedUDID: String?
     ) throws -> InvocationTarget {
-        let active = DeviceContextStore.sessions(paths: paths)
         if explicitDeviceID != nil {
             let context = try DeviceContextStore.activeContext(
                 explicitDeviceID: explicitDeviceID,
@@ -502,6 +501,7 @@ public struct IOSUseCLI: Sendable {
                 startUDID: nil
             )
         }
+        let active = DeviceContextStore.sessions(paths: paths)
         if let impliedUDID {
             if let context = active.first(where: {
                 $0.info.udid == impliedUDID

@@ -5,6 +5,7 @@ import XCTest
 /// The cleaned snapshot: root survives unchanged, but `elements` is a flat
 /// post-rule-1..6 view used by find/swipe/waitFor/etc.
 struct CleanedSnapshot {
+    let bundleId: String
     let root: SafeSnapshot
     let appFrame: CGRect
     let rawRoot: SafeSnapshot
@@ -126,6 +127,7 @@ func rebuildCleanedSnapshot() -> CleanedSnapshot? {
     DriverPerf.append("[perf] \(#function).total elements=\(elements.count) searchEntries=\(searchEntries.count) searchCandidates=\(searchCandidates.count) elapsed=\(DriverPerf.elapsedMilliseconds(since: startedAt))ms")
 
     return CleanedSnapshot(
+        bundleId: app.value(forKey: "bundleID") as? String ?? "",
         root: raw,
         appFrame: raw.frame,
         rawRoot: raw,

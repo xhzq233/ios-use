@@ -27,10 +27,15 @@
 
 ## Fixes
 
+- Release old snapshot trees after repeated observations while retaining the
+  ancestor context needed by scrolling and interaction results.
+- Read only the selected Device's session for explicit Device operations.
+- Keep DOM and App-readiness identifiers tied to the App that produced the
+  snapshot, including when the foreground changes during observation.
 - Improve scroll targeting for sectioned lists and visibility-aware container
   selection.
 - Clean up JavaScript on timeout, cancellation, reset, or MCP disconnection.
-- Preserve UTF-8 across RPC chunks and complete MCP messages under stdout
+- Preserve UTF-8 across stdio chunks and complete MCP messages under stdout
   backpressure, including large images with concurrent replies.
 - Avoid false AX diffs caused by JSON property order, preserve editable Unicode
   values, and keep numeric-looking labels distinct from coordinates.
@@ -42,8 +47,9 @@
 
 ## Compatibility and Upgrade Notes
 
-- MCP requires Node.js 22.18+; native CLI commands do not. The old `ios-use repl`
-  entry point is removed; register `ios-use mcp` with your Agent client instead.
+- MCP embeds QuickJS in the native binary and does not require Node.js.
+  Register `ios-use mcp` with your Agent client. Development builds that used
+  `ios-use repl` should switch to this entry point; published v2.0.4 had no REPL.
 - Rich-text paste, secondary accessibility actions, and secure-field replacement
   or selection remain unavailable. iOS clicks are touch-only; Mac currently
   supports single clicks and Return/Enter keys.
