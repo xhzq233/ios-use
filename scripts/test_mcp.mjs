@@ -57,10 +57,16 @@ function client() {
     else request.resolve(message.result);
   });
   const send = message => child.stdin.write(JSON.stringify({jsonrpc: '2.0', ...message}) + '\n');
-  const request = (method, params) => {
+  const request = (method, params, splitUTF8 = false) => {
     const id = nextID++;
     const result = new Promise((resolve, reject) => pending.set(id, {resolve, reject}));
-    send({id, method, params});
+    if (splitUTF8) {
+      const frame = Buffer.from(JSON.stringify({jsonrpc:'2.0', id, method, params}) + '\n');
+      const boundary = frame.findIndex(byte => byte >= 0x80) + 1;
+      assert.ok(boundary > 0);
+      child.stdin.write(frame.subarray(0, boundary));
+      setTimeout(() => child.stdin.write(frame.subarray(boundary)), 20);
+    } else { send({id, method, params}); }
     return {id, result};
   };
   const call = (name, args = {}) => request('tools/call', {name, arguments: args});
@@ -90,6 +96,10 @@ try {
   ok(await mcp.js('let count = 40; let unicode = "你好🌍";'));
   assert.equal(value(await mcp.js('await new Promise(r => setTimeout(r, 1200)); count += 2; nodeRepl.write(JSON.stringify({count, length: Array.from(unicode).length}));')).count, 42);
   assert.equal(value(await mcp.js('nodeRepl.write(JSON.stringify(Array.from(unicode).length));')), 3);
+  const fragmented = await mcp.request('tools/call', {name:'js', arguments:{
+    code:`nodeRepl.write(JSON.stringify(Array.from(${JSON.stringify('你好🌏'.repeat(20000))}).length));`,
+  }}, true).result;
+  assert.equal(value(fragmented), 60000);
   assert.equal((await mcp.js('throw new Error("smoke");')).isError, true);
   assert.equal(value(await mcp.js('nodeRepl.write(JSON.stringify(++count));')), 43);
   assert.equal((await mcp.js('let = ;')).isError, true);
@@ -149,6 +159,24 @@ try {
     await until(() => pids.every(pid => !isAlive(pid)), `${termination}: Node child leaked`);
   }
   console.log('[mcp-test] client EOF and SIGTERM clean up busy JavaScript children');
+
+  // Disconnect must also interrupt a writer whose client stopped reading.
+  for (const termination of ['eof', 'SIGTERM']) {
+    const stopping = client();
+    await stopping.initialize();
+    ok(await stopping.js('let ready = true;'));
+    const pids = childPIDs(stopping.child.pid);
+    stopping.child.stdout.pause();
+    const blocked = stopping.js(`let image = new Uint8Array(4 * 1024 * 1024); image.set(${JSON.stringify([...png])}); await nodeRepl.emitImage(image);`, 10000);
+    blocked.catch(() => {});
+    await delay(300);
+    if (termination === 'eof') stopping.child.stdin.end();
+    else stopping.child.kill(termination);
+    await until(() => stopping.child.exitCode !== null || stopping.child.signalCode !== null, `${termination}: backpressured MCP did not exit`);
+    await until(() => pids.every(pid => !isAlive(pid)), `${termination}: backpressured Node child leaked`);
+    stopping.child.stdout.resume();
+  }
+  console.log('[mcp-test] fragmented UTF-8 input and disconnect under image backpressure passed');
 } finally {
   for (const {child, exited} of clients) {
     if (child.exitCode === null && child.signalCode === null) {

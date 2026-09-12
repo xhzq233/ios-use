@@ -70,7 +70,7 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | Script | Purpose |
 | --- | --- |
 | `scripts/ci_test.sh [--skip-builds] [--skip-driver-sim-build]` | Main local unit/build gate: script syntax checks, Swift CLI tests, Driver tests, Swift CLI Release build, and Simulator Driver build. Release validation additionally owns fresh production Runtime, Frida Engine and both Driver artifacts. |
-| `node scripts/test_mcp.mjs [path-to-ios-use]` | Real stdio MCP smoke: persistent JavaScript, text/images, errors, cancellation/reset/timeout, large-response framing, and child cleanup. Requires Node.js 22.18+; uses an isolated Home and no Device or model. |
+| `node scripts/test_mcp.mjs [path-to-ios-use]` | Real stdio MCP smoke: persistent JavaScript, text/images, errors, cancellation/reset/timeout, fragmented UTF-8 input, large-response framing, and child cleanup even under stdout backpressure. Requires Node.js 22.18+; uses an isolated Home and no Device or model. |
 | `scripts/ci_full_simulator.sh --driver-ipa <path> [--case CASES]` | Main full Simulator regression entry. Builds the Swift CLI, uses the caller-selected Simulator driver IPA, and runs the Node Simulator command matrix. |
 | `scripts/test_swift_cli.sh` | Run Swift CLI unit tests plus installed-style CLI/nslog smoke checks and static driver log/version-stamp guards. |
 | `scripts/test_driver_unit.sh` | Run Swift driver unit tests with an isolated default `IOS_USE_HOME` under `~/.ios-use/test-homes/driver-unit`. |
