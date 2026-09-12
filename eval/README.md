@@ -4,6 +4,8 @@
 结果优先比较覆盖和正确性，然后报告任务耗时与**总 tokens**。
 
 - [原始提示词](prompts/settings.txt)：两组使用完全相同的文本。
+- [设置对比提示词](prompts/settings-comparison.txt)：两 App 的明确子页读取与对比。
+- [2026-09-13 复测记录](reports/2026-09-13.md)：当前 `cb21144` 候选，不与历史候选混算。
 - [环境与版本记录](environment.md)。结果与原始轨迹暂留本地，不随方法提交。
 - [CLI 配置](codex.toml)、[MCP 配置](codex-mcp.toml)。
 - `run.py`：直接调用 `codex exec`，记录一次运行；也可离线汇总原始记录。
@@ -15,7 +17,8 @@
 ## 1. 准备评测用户和版本
 
 需要 Apple silicon Mac、USB 连接并解锁的测试 iPhone、可用的开发者签名，
-以及支持目标模型的 Codex、Python 3.9+、Node.js 22.18+。从源码构建另外需要
+以及支持目标模型的 Codex、Python 3.9+。当前 `cb21144` 的 MCP 不需要 Node.js；
+历史 `1efc275` 使用 Node.js 22.18+。从源码构建另外需要
 完整 Xcode 和 xcodegen。历史具体版本见[环境记录](environment.md)；模型不可用时不要静默替换。
 
 建议使用专门的 macOS 评测用户。以下版本安装会替换该用户的全局 CLI、Driver
