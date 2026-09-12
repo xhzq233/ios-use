@@ -126,6 +126,10 @@ python3 eval/run.py run \
   --output "$IOS_EVAL_ROOT/results/204-cli"
 ```
 
+运行设置对比 case 时，向同一命令增加
+`--prompt eval/prompts/settings-comparison.txt`。每个重复样本均使用新的 Home、空 cwd
+和结果目录，不续跑旧会话；候选版本和运行顺序以对应评测记录为准。
+
 默认模型 `gpt-6-astra`、effort `low`、每轮超时 1800 秒。启动后读取 transcript 的
 实际 model / effort，若不同会终止该进程；不要继续第二组或自行补跑。
 未读到实际配置时仍属未验证，需人工审阅后再继续。Ctrl-C / 超时会结束本轮进程组，
