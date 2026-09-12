@@ -1,0 +1,11 @@
+model = "gpt-6-astra"
+model_reasoning_effort = "low"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[mcp_servers.ios_use]
+# Replace with the absolute path of the evaluated binary before running.
+command = "/absolute/path/to/ios-use"
+args = ["mcp"]
+startup_timeout_sec = 20
+tool_timeout_sec = 310

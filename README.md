@@ -186,6 +186,9 @@ See [scripts/README.md](scripts/README.md) for build and test entry points,
 [docs/benchmark.md](docs/benchmark.md) for benchmarks, and
 [ios-use Skill](ios-use-skill/SKILL.md) for operational workflows.
 
+For reproducible Agent task comparisons, including the 2.1.0 MCP / 2.0.4 CLI
+Settings experiment, see [eval/README.md](eval/README.md).
+
 ## Acknowledgments
 
 The implementation builds on ideas and upstream work from

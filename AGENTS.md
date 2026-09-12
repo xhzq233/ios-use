@@ -14,6 +14,7 @@ Key paths:
 - `driver/tcp/`: TCP server and Fory codec.
 - `driver/ui/`: XCTest UI actions, DOM, element lookup, waits, screenshots, and driver-side commands.
 - `scripts/`: build, install, test, Simulator matrix, and benchmark entry points.
+- `eval/`: reproducible Agent task evaluations and environment templates.
 - `swift-cli/Tests/` and `driver/tests/`: host and driver unit tests.
 - `ios-use-skill/`: user-facing CLI usage guidance. Keep leaf implementation context in this repository, cross-project coordination context in ContextShell, and the installed skill strictly user-facing.
 
@@ -33,7 +34,7 @@ tests. Use this evidence order:
 - Shared protocol or driver lifecycle changes require updates to the shared models and owning tests. Update a design note only when a durable cross-file invariant changes.
 - Test cases and case IDs belong in the owning executable tests or scripts, not in a parallel Markdown matrix. Update verification guidance only when gate selection changes.
 - Keep `ios-use-skill/SKILL.md` and its references strictly actionable for CLI users. Update them only when command choice, invocation order, or a user-executable recovery path changes. Do not mirror schemas, implementation details, benchmarks, test matrices, or release notes there.
-- Record completed code-change work in the coordinating ContextShell history when the task spans repositories. Do not commit or push unless the user asks.
+- Record cross-repository work in the coordinating ContextShell execution plan. For user-requested implementation work, commit completed coherent stages locally. Do not push unless the user asks.
 
 ## 3. Development commands
 

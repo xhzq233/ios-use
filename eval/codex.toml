@@ -1,0 +1,4 @@
+model = "gpt-6-astra"
+model_reasoning_effort = "low"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
