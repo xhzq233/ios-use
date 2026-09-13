@@ -5,8 +5,12 @@
 
 - [十应用盘点（简称「盘点」）](prompts/settings.txt)：手机名、键盘、前十个 App 权限；即原 case。
 - [双应用深查（简称「深查」）](prompts/settings-comparison.txt)：手机信息、语言地区，及地图 / 抖音的定位与通知子页对比；即新 case。
+- [姿势引导](prompts/pose-guide.txt)：静置至少 5 秒仍在、滑动后消失；原短 Prompt 已独立成文件。
+- [亮度撤销](prompts/brightness-undo.txt)：调高亮度后撤销，核对预览恢复；当前 App 为直接 slider，不是独立取消面板。
+- [旋转取消](prompts/rotation-cancel.txt)：构图中向右旋转 90° 后取消，核对原方向恢复。
 - [2026-09-13 当前结果](reports/2026-09-13.md)：盘点 cb R2 已撤出；76a0779 的 R3 为 306.771 s / 1,326,647 tokens，覆盖较深，不混算同候选均值。
 - [2026-09-13 姿势引导 A/B](reports/2026-09-13-guide-ab.md)：短 Prompt、204 CLI / 20cc02a MCP 各一轮；两组完成，256.452 s / 165.439 s，不作稳定提速结论。
+- [2026-09-14 三项重复 A/B 与 Settings 历史](reports/2026-09-14.md)：10 个新增 run 完成；三项各 A/B 两轮，旋转 A2 有跨轮资料暴露，Settings 异版本单列。
 - [环境与版本记录](environment.md)。结果与原始轨迹暂留本地，不随方法提交。
 - [CLI 配置](codex.toml)、[MCP 配置](codex-mcp.toml)。
 - `run.py`：直接调用 `codex exec`，记录一次运行；也可离线汇总原始记录。
@@ -14,6 +18,10 @@
 
 历史运行使用相同的 `codex exec` 参数，由另一通用调度脚本记录；这里提供独立的
 轻量入口。它没有重跑历史样本。包装器和环境的变化须记录，不能假定能复现相同数字。
+
+醒图三项任务从 App 首页开始，需计时外提供同一图片和对应 UIContext 业务页面选集，
+Guide 另需恢复首次态。图片、业务资料和预检记录不随本仓提交。它们不沿用下文 Settings
+的手机起点；每轮通过 `--prompt` 选择任务，实际候选和超时以对应报告为准。
 
 讨论单轮时使用「简称 / 候选 / 轮次」，例如 `盘点 / 210-cb / R2`。
 本组 `gpt-6-astra / low` 样本中，`204` 指原始 2.0.4 CLI；`210-cb` 指
@@ -51,8 +59,9 @@ env CODEX_HOME="$IOS_EVAL_ROOT/codex-204" codex login
 只切换 ios-use Skill 的对应版本。工作目录内不放本仓、其他组答案或历史日志。
 将 MCP 配置的 `command` 改成评测 CLI 的绝对路径；CLI 配置不含任何 MCP server。
 
-**2.1.0 样本是未发布的源码候选** `1efc275e770e8c80454c45600bfd4a6bd55b3629`。
-必须先取得该提交，不能用后来同名版本或 `main` 冒充历史候选。iPhone 场景可按以下
+下列构建命令保留的是**历史 2.1.0 源码候选** `1efc275e770e8c80454c45600bfd4a6bd55b3629`，
+不是后续 `cb21144`、`76a0779` 或 `20cc02a`。复跑须按目标报告选择实际提交，
+不能用后来同名版本或 `main` 冒充历史候选。iPhone 场景可按以下
 方式构建和安装；这不执行 Mac App 测试：
 
 ```bash
