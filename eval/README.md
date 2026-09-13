@@ -6,6 +6,7 @@
 - [十应用盘点（简称「盘点」）](prompts/settings.txt)：手机名、键盘、前十个 App 权限；即原 case。
 - [双应用深查（简称「深查」）](prompts/settings-comparison.txt)：手机信息、语言地区，及地图 / 抖音的定位与通知子页对比；即新 case。
 - [2026-09-13 当前结果](reports/2026-09-13.md)：盘点 cb R2 已撤出；76a0779 的 R3 为 306.771 s / 1,326,647 tokens，覆盖较深，不混算同候选均值。
+- [2026-09-13 姿势引导 A/B](reports/2026-09-13-guide-ab.md)：短 Prompt、204 CLI / 20cc02a MCP 各一轮；两组完成，256.452 s / 165.439 s，不作稳定提速结论。
 - [环境与版本记录](environment.md)。结果与原始轨迹暂留本地，不随方法提交。
 - [CLI 配置](codex.toml)、[MCP 配置](codex-mcp.toml)。
 - `run.py`：直接调用 `codex exec`，记录一次运行；也可离线汇总原始记录。
