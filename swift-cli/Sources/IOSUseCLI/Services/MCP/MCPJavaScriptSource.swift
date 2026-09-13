@@ -61,8 +61,8 @@ enum MCPJavaScriptSource {
       const identifier = textValue(element.identifier);
       if (identifier) return `id:${identifier}`;
       const label = textValue(element.label);
-      if (label) return `label:${element.semanticType ?? element.type}:${label}`;
-      return [element.semanticType, element.hierarchy?.depth, element.hierarchy?.index]
+      if (label) return `label:${element.role}:${label}`;
+      return [element.role, element.depth, element.parent_index]
         .map(value => String(value ?? ""))
         .join("|");
     }
@@ -79,7 +79,7 @@ enum MCPJavaScriptSource {
 
     function elementSignature(element) {
       return JSON.stringify([
-        element.semanticType,
+        element.role,
         element.label,
         element.value,
         element.identifier,
@@ -100,7 +100,6 @@ enum MCPJavaScriptSource {
       // XCTest DOM carries state in traits; its unused structured fields decode as false.
       const hasStructuredState = Boolean(textValue(element.semanticType));
       const projected = {
-        ...element,
         element_index: index,
         role: textValue(element.semanticType) || textValue(element.type) || traits[0] || "Element",
         label: textValue(element.label),
@@ -112,9 +111,18 @@ enum MCPJavaScriptSource {
         selected: hasStructuredState ? (element.state?.selected ?? null) : traits.includes("selected"),
         focused: hasStructuredState ? (element.state?.focused ?? null) : traits.includes("focused"),
         visible: hasStructuredState ? (element.state?.visible ?? null) : !traits.includes("invisible"),
-        depth: element.hierarchy?.depth ?? 0,
+        childCount: element.childCount ?? 0,
       };
-      projected.state = {...element.state, enabled: projected.enabled, selected: projected.selected, focused: projected.focused, visible: projected.visible};
+      // Keep useful backend metadata, not empty protocol slots or duplicate state/tree fields.
+      for (const key of ["nodeID", "hint", "class"]) {
+        const value = textValue(element[key]);
+        if (value) projected[key] = value;
+      }
+      if (hasStructuredState) {
+        projected.opaque = element.state?.opaque ?? null;
+        projected.zOrder = element.zOrder ?? 0;
+      }
+      if (element.snapshotGeneration > 0) projected.snapshotGeneration = element.snapshotGeneration;
       return projected;
     }
 
@@ -297,9 +305,8 @@ enum MCPJavaScriptSource {
       }
 
       #formatAX(options) {
-        if (options.disableDiffing === true) this.#previous = null;
         const {elements, app} = this.#current;
-        const previousEntries = keyedElements(this.#previous?.elements ?? []);
+        const previousEntries = keyedElements(options.disableDiffing === true ? [] : this.#previous?.elements ?? []);
         const currentEntries = keyedElements(elements);
         const previousByKey = new Map(previousEntries.map(entry => [entry.key, entry]));
         const currentKeys = new Set();
@@ -312,14 +319,18 @@ enum MCPJavaScriptSource {
         const removed = previousEntries
           .filter(entry => !currentKeys.has(entry.key))
           .map(entry => formatElement(entry.element, "-"));
-        this.#previous = { elements };
         const header = `Device ${this.id} ${app ?? ""}`.trim();
         const changed = elements.flatMap((element, index) => markers[index] === " " ? [] : [formatElement(element, markers[index])]);
         const state = [header, ...removed, ...changed, ...(!removed.length && !changed.length ? ["No AX changes."] : [])]
           .filter(Boolean)
           .join("\n");
-        if (options.emit !== false) nodeRepl.write(state);
+        if (options.emit !== false) this.#emitAX(state);
         return state;
+      }
+
+      #emitAX(state) {
+        nodeRepl.write(state);
+        this.#previous = {elements: this.#current.elements};
       }
 
       async getScreenshot(options = {}) {
@@ -337,7 +348,7 @@ enum MCPJavaScriptSource {
         const state = this.#applyAX(response.data.ax, {...options, emit: false});
         const screenshot = this.#imageBytes(response);
         if (options.emit !== false) {
-          nodeRepl.write(state);
+          this.#emitAX(state);
           await nodeRepl.emitImage(screenshot);
         }
         return { state, screenshot };

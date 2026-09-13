@@ -95,13 +95,19 @@ stability. A new title alone does not prove the previous page has disappeared.
 along the requested direction, not a whole swipe rounded up.
 
 Text/image observations emit into the tool result by default. Pass `{emit: false}` when the value is
-only an intermediate result. AX observations are diffed against the previous
-observation for the same Device; pass `{disableDiffing: true}` when a full
-snapshot is required.
+only an intermediate result. AX text is diffed against the last AX text emitted
+by an observation method for the same Device. Silent reads refresh `get()` but do
+not advance that comparison. Pass `{disableDiffing: true}` for full text on that
+call; it does not change observation or waiting. Manually printing a returned
+string or a custom summary does not advance the observation method's comparison.
 `device.get()` returns the full current element objects even when the text
 output is a diff. Each includes `depth`, `parent_index`, `children`, and
 `ancestor_indices`; use that hierarchy to scope controls to the relevant page
-or container. Screenshot bytes also carry `logicalSize`, `pixelSize`, and `scale`.
+or container. Read `role`, `label`, `value`, `identifier`, `frame`, and the top-level
+`enabled`, `visible`, `selected`, `focused` states. Raw protocol placeholders and
+duplicate `state` / `hierarchy` objects are not exposed; meaningful backend
+metadata such as `nodeID` and `hint` is retained when present. Screenshot bytes
+also carry `logicalSize`, `pixelSize`, and `scale`.
 
 After one observation, inspect `device.get()` without another RPC. Use
 `disableDiffing` only to request full text output, not to obtain full objects.

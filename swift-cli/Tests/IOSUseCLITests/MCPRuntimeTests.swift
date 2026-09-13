@@ -11,7 +11,7 @@ final class MCPRuntimeTests: XCTestCase {
             udid: "MCP-SIM", deviceName: "Test", deviceVersion: "26.0", deviceType: "simulator", startedAt: 1
         ), paths: try paths.deviceContext("MCP-SIM"))
         let fory = ForyRegistry.create()
-        let dom = ForyDomPayload(app: "test", snapshotGeneration: 7, elements: [ForyDomElement(traits: ["App"], childCount: 1), ForyDomElement(traits: ["Button"])])
+        let dom = ForyDomPayload(app: "test", snapshotGeneration: 7, elements: [ForyDomElement(traits: ["App"], childCount: 1), ForyDomElement(traits: ["Button", "selected", "focused"])])
         let ready = ForyWaitAppForegroundPayload(expectedBundleId: "test", activeBundleId: "test", appState: IOSUseAppState.foreground.rawValue, snapshotReady: true, dom: dom)
         let server = try FakeDriverServer(responses: [
             ForyResponseFrame(ok: true, payload: try fory.serialize(ready)),
@@ -44,6 +44,8 @@ final class MCPRuntimeTests: XCTestCase {
             if (d.get().length !== 2) throw new Error("Ready AX not reused");
             await d.getAXState({emit:false});
             if (d.get(1).parent_index !== 0) throw new Error("Hierarchy lost");
+            if (d.get(0).children[0] !== 1 || d.get(1).ancestor_indices[0] !== 0) throw new Error("Tree links lost");
+            if (!d.get(1).enabled || !d.get(1).visible || !d.get(1).selected || !d.get(1).focused) throw new Error("Projected state lost");
             """, timeoutMS: 3000)
         XCTAssertNotEqual(selected.isError, true, "\(selected.content)")
         XCTAssertTrue(selected.content.isEmpty)
