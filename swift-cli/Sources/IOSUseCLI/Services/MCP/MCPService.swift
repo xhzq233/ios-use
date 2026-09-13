@@ -3,12 +3,12 @@ import MCP
 
 enum MCPService {
     static let instructions = """
-    Use js for persistent JavaScript iOS automation. Start with await cua.getState() to discover Devices, or let device = await cua.getDevice(knownDeviceID). Selection emits initial AX and API guidance; use {observe:false} for an idle Device, then device.start(). Keep handles and helpers across calls. Batch known flows in one call: getAXState({emit:false}) refreshes AX; device.get() reads its full structured elements without another request. Check the expected page, not whole-text equality. Emit compact results with nodeRepl.write; observations emit by default. Use device.listApps(), activateApp(bundleId), terminateApp(bundleId), start()/stop() for lifecycle; signing/setup remains native CLI. Do not use shell polling or ios-use repl. js_reset clears JavaScript without stopping Drivers or Apps. One server process owns one context; use separate processes for independent Agent conversations.
+    Use js to control apps on an iOS device, Simulator or Mac backend. Start with await cua.getState() to discover Devices, or let device = await cua.getDevice(knownDeviceID). Selection displays API help and initial AX. Keep handles across calls. Batch deterministic actions and getAXState() in the same call, then use the returned state to decide what to do next. Observations emit automatically; do not print them again. If AX reports no change, do not immediately repeat the observation without an intervening action or a specific need for missing context. Stop when the requested result is visibly present. Signing and target setup remain native CLI workflows. js_reset clears JavaScript without stopping Drivers or Apps.
     """
 
     static var tools: [Tool] {
         [
-            Tool(name: "js", description: "Execute JavaScript in a persistent iOS automation context. Await Device actions; retain variables and handles between calls. Returns emitted text and images when this execution completes, without terminal polling. Use a longer timeout_ms for an expected long batch.", inputSchema: .object([
+            Tool(name: "js", description: "Control apps on an iOS device, Simulator or Mac backend with persistent JavaScript. Start with cua.getState() or cua.getDevice(knownDeviceID), then follow the returned API guidance. Await actions and observations within the call; text and images are emitted automatically.", inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([
                     "code": .object(["type": .string("string"), "description": .string("JavaScript to execute. cua, nodeRepl and console are available.")]),

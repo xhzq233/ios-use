@@ -1,266 +1,103 @@
 # MCP automation
 
-Use the ios-use MCP `js` tool for a dependent automation flow that benefits from persistent
-JavaScript variables, reusable Device handles, or concurrent work across
-independent Devices. The Swift Host stays in the same process and reuses Driver
-connections; JavaScript actions do not launch another `ios-use` process.
+Use the ios-use `js` tool for UI actions. JavaScript variables and Device handles
+persist across calls. The runtime provides `cua`, `nodeRepl` and `console`,
+not Node.js filesystem, process or network APIs.
 
-## Register the server
+## Register and select
 
-Configure a local stdio server with command `ios-use` and argument `mcp`.
-For Codex:
+Register a stdio server with command `ios-use` and argument `mcp`, then start
+a new Agent session. For Codex:
 
 ```bash
 codex mcp add ios-use -- ios-use mcp
 ```
 
-Start a new Agent session after registration. JavaScript is included in the
-native binary; Node.js is not required. Call `js` with a `code` string, an optional short `title`, and
-optional `timeout_ms` (default 30,000; maximum 300,000). JavaScript variables
-persist between calls. Await the tool result; do not use shell polling.
-
-The injected surface is deliberately small: `cua`, `nodeRepl`, and
-`console`. Filesystem, process, network, module-import, and worker APIs are not
-available to evaluated code.
-
-## Discover and select a Device
-
-Follow the Codex CUA shape: discover from `cua`, then operate directly on a
-target object.
+When the Device ID is unknown, start with:
 
 ```javascript
-let state = await cua.getState({emit: false});
-let device = await cua.getDevice("mac");
+await cua.getState();
 ```
 
-Use the stable IDs returned by `cua.getState()`: the bare device/Simulator UDID,
-or `mac`. Never infer a target from list order.
-Once an ID is known, `cua.getDevice(id)` selects it directly without repeating
-global Device discovery. Selection emits the initial AX observation automatically;
-pass `{emit: false}` as the second argument when only the handle is needed.
-For an idle Device, pass `{observe: false}` instead, then `await device.start()`.
-Start requires existing configuration; signing and installation remain native
-CLI workflows. `await device.stop()` explicitly stops that Device's Driver.
-
-## Select an App
+Select a returned bare UDID or `mac`; a known ID can be selected directly:
 
 ```javascript
-let apps = await device.listApps({includeSystem: true, emit: false});
-await device.activateApp("com.apple.Preferences");
+let device = await cua.getDevice("device-id");
 ```
 
-Use the installed bundle ID from `listApps`; names are not guessed. `activateApp`
-launches or activates an App, with the Driver's ready AX already available
-through `get()`; no follow-up AX read is
-needed merely to obtain the initial page. UI methods always act on the Device's
-current foreground, not an independently pinned App. Use `terminateApp(bundleId)`
-only when closing the App is part of the task. `{terminateExisting: true}` on
-`activateApp` explicitly requests a fresh launch. These App operations support real
-iOS and Simulator; Mac App setup remains native `start --mac --app`.
+Selection displays API help and initial AX. Use `device.help()` or `cua.help()`
+when more API detail is needed. With an idle configured Device, select with
+`{observe: false}` and call `await device.start()`. Signing and Mac App setup
+remain native CLI workflows; see [setup](setup.md).
 
-## Observe, act, observe
+Device actions address its current foreground App. On iOS or Simulator,
+`device.activateApp(bundleId)` selects an installed App and returns initial AX.
+Use `device.listApps()` when its installed bundle ID is unknown.
 
-Device methods follow the native Computer Use target shape:
+## Workflow
+
+After one or more UI actions, call `getAXState()` before deciding what to do next.
+Use element indices from that latest observation. Batch deterministic actions
+and the resulting observation in the same call:
 
 ```javascript
+await device.click(42);
 await device.getAXState();
-await device.getScreenshot();
-await device.getAXStateAndScreenshot();
-
-await device.click(12);
-await device.click(12, {clickCount: 2});
-await device.setValue(7, "hello");
-await device.getAXState({emit: false});
-await device.selectText(7, "hello", {selectionType: "cursor_after"});
-await device.typeText(" world");
-await device.paste("text");
-await device.pressKey("Return");
-await device.drag([120, 400], [120, 250]);
-await device.longPress("A visible control", 0.5);
-await device.scroll(4, "down", 0.5);
-await device.scrollTo("Settings", "Home");
-await device.waitFor("Loading", {gone: true, timeout: 20});
 ```
 
-AX and screenshot observations request native quiescence by default.
-Use `{waitQuiescence: false}` only when an immediate unsettled observation is
-intentional. This uses the Driver's
-quiescence wait, not a fixed sleep. Native idle is not an application-readiness
-guarantee: iOS navigation can still expose the outgoing and incoming pages
-together. Before collecting results, check the expected page and its container;
-if both pages remain, observe again until the relevant transition condition is
-met. `waitFor` checks visible selector presence or absence, not whole-tree
-stability. A new title alone does not prove the previous page has disappeared.
-`scroll` accepts positive fractional pages: `0.5` requests half a viewport
-along the requested direction, not a whole swipe rounded up.
+- Use the observation's default native idle wait; do not add an arbitrary delay
+  before capturing state. App-specific loading may outlast native idle:
+  `waitFor(text, {gone: true, timeout: 20})` can wait for an observed loading label.
+- If a standalone AX read reports no change, do not immediately repeat it
+  without an intervening action. Use a screenshot, combined AX/image, or full
+  AX only when it supplies missing context.
+- Prefer element indices when AX exposes the target. Use screenshots and
+  coordinates when the target is visual or AX actions are unavailable.
+- Once the requested result is visibly present, stop exploring and respond.
+  An action completing is not by itself evidence that the task succeeded.
 
-Text/image observations emit into the tool result by default. Pass `{emit: false}` when the value is
-only an intermediate result. AX text is diffed against the last AX text emitted
-by an observation method for the same Device. Silent reads refresh `get()` but do
-not advance that comparison. Pass `{disableDiffing: true}` for full text on that
-call; it does not change observation or waiting. Manually printing a returned
-string or a custom summary does not advance the observation method's comparison.
-`device.get()` returns the full current element objects even when the text
-output is a diff. Each includes `depth`, `parent_index`, `children`, and
-`ancestor_indices`; use that hierarchy to scope controls to the relevant page
-or container. Read `role`, `label`, `value`, `identifier`, `frame`, and the top-level
-`enabled`, `visible`, `selected`, `focused` states. Raw protocol placeholders and
-duplicate `state` / `hierarchy` objects are not exposed; meaningful backend
-metadata such as `nodeID` and `hint` is retained when present. Screenshot bytes
-also carry `logicalSize`, `pixelSize`, and `scale`.
+## Observations and output
 
-After one observation, inspect `device.get()` without another RPC. Use
-`disableDiffing` only to request full text output, not to obtain full objects.
-`activateApp`, `scrollTo` and `waitFor` also leave a current AX observation in
-`get()`; reuse it before deciding whether another observation is needed.
+`getAXState()`, `getScreenshot()` and `getAXStateAndScreenshot()` emit their
+results automatically, as do discovery and selection. Do not print those
+results a second time. Pass `{emit: false}` when consuming an intermediate
+observation inside JavaScript; use `nodeRepl.write(value)` for task results and
+`nodeRepl.emitImage(image)` for an explicitly retained image.
 
-An `element_index` belongs to the latest AX observation. After a screenshot-only
-observation, obtain a new AX state before using an index. After `click`,
-`setValue`, `selectText`, `typeText`, `paste`, `pressKey`, `drag`, `longPress`, or `scroll`, observe again before
-using an index. Prefer semantic text when it is unique; the runtime falls back
-to the observed element center only when needed.
+AX text is diffed against the last AX emitted by an observation method.
+Prefer this default; `{disableDiffing: true}` requests full text without changing
+the wait. Silent reads refresh the current nodes but do not advance the emitted
+comparison. Manually printing a string or summary does not advance it either.
 
-`setValue` replaces the whole editable value, including with an empty string.
-`typeText` inserts at the current cursor or replaces the current selection.
-`selectText(index, text, {prefix, suffix, selectionType})` requires one literal
-match; use adjacent `prefix` / `suffix` text to disambiguate duplicates.
-`selectionType` is `text` (default), `cursor_before`, or `cursor_after`.
-Selection and replacement are checked against the native editable state.
-If native selection cannot be confirmed or its time budget expires, stop and
-observe; do not type assuming the requested selection exists.
+`device.get()` returns the complete current nodes, including states and hierarchy,
+without another Device request. `activateApp`, `scrollTo` and `waitFor` also leave
+a current observation available there. After a screenshot-only observation,
+obtain fresh AX before using element indices.
 
-On iOS and Simulator, `pressKey` accepts xdotool-style names and chords, such as
-`Left`, `BackSpace`, `Return`, `shift+Left`, and `super+a`. `ctrl` is Control;
-`super` / `cmd` is Command, not an alias for Control. Use `typeText` for Unicode
-text rather than passing an emoji or combining sequence as a physical key.
-`clickCount` is 1–10. iOS clicks are touch-only (`mouseButton: "left"`);
-use `longPress` for a context menu, not a right-click alias.
+## Platform differences
 
-## Batch repeated work
+- Independent Devices can run concurrently; actions on one Device are sequential.
+- `click` also accepts semantic text. iOS clicks are touch-only; use `longPress`
+  for a context menu. `scroll` accepts fractional pages.
+- `scrollTo` scrolls to semantic text using a visible anchor; `waitFor` checks
+  a visible label's presence or absence. Use `device.help()` for these extensions.
+- `setValue` replaces the whole editable value; `typeText` inserts at the cursor.
+  `selectText` accepts `prefix`, `suffix` and `selectionType` to disambiguate.
+  `pressKey` uses xdotool-style keys; `ctrl` and `super` are distinct.
+- Rich-text paste, secondary AX actions and secure-text replacement/selection
+  are unavailable. `paste` inserts plain text.
+- Mac App lifecycle uses native `start --mac --app` / `stop -d mac`, not
+  `listApps`, `activateApp`, `terminateApp` or Device `start()`.
+  Mac currently supports single clicks and Return/Enter keys. After upgrading,
+  restart the Mac App with the current build before using MCP text editing.
 
-Explore enough of an unfamiliar UI to understand the route and relevant page
-variants. Then use a reusable helper and a loop to process the requested items
-in one `js` call where practical. Do not split a known repeated flow into one
-model round trip per click or item.
+## Execution and recovery
 
-Keep actions on one Device sequential, but make the intermediate observations
-and decisions inside the script. After each navigation, refresh with
-`getAXState({emit:false})` and use `device.get()` to inspect the full
-current element objects, including labels, values and selected states. The AX
-text return value may be only a diff; do not treat it as the whole page or reuse
-old element indices. Select fields using the active page's context: a flat list
-of every switch can include duplicate controls or nodes from a previous page.
+Await the `js` result; no terminal polling or `ios-use repl` is needed.
+`timeout_ms` defaults to 30,000 and can be raised to 300,000 for a longer action.
+Ordinary JavaScript errors preserve the context. Timeout, cancellation and
+`js_reset` clear variables and handles, but do not stop Drivers or Apps;
+obtain a new Device handle afterward. Await work within the call.
 
-For a known transition, define a helper once per session and stop observing as
-soon as the destination condition is met:
-
-```javascript
-async function readPage(ready, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
-  do {
-    await device.getAXState({emit: false});
-    const nodes = device.get();
-    if (ready(nodes)) return nodes;
-  } while (Date.now() < deadline);
-  throw new Error("Destination page did not become ready");
-}
-```
-
-Build `ready` from the observed destination and its container, including the
-outgoing container's disappearance when both can coexist during navigation.
-Do not use a fixed pair of reads or whole-text equality as readiness. A timeout
-is a failed transition, not permission to record the last page as the result.
-After scrolling, confirm the target is inside the visible content area before
-clicking; a successful click response alone does not confirm navigation.
-
-Accumulate the requested results and emit a compact summary. Handle page
-variants only when their visible state makes the next step clear. If a page is
-unexpected or an action fails, return the completed results and current state
-for the model to resolve; do not continue the loop blindly. Batching does not
-expand permission to change settings or take other external actions.
-Keep completed records as task fields (for example, `{name, value}`), not saved
-AX trees. On failure, report those records and the failed step; include only the
-current page evidence needed to choose the recovery.
-
-## Emit explicit results
-
-Use the same output helpers as Codex Node REPL:
-
-```javascript
-let state = await device.getAXState({emit: false});
-nodeRepl.write(state);
-
-let image = await device.getScreenshot({emit: false});
-await nodeRepl.emitImage(image);
-```
-
-Do not print every intermediate object. Emit the observation or artifact that
-helps the caller understand the final result.
-Use `nodeRepl.write(...)` or `console.log(...)` for other values; JavaScript
-return values are not echoed a second time after the API has emitted its result.
-
-For multi-turn work, reuse variables in the next `js` call. Top-level `let` and
-`const` use normal JavaScript declaration rules: assign an existing variable
-instead of redeclaring it, or use a block for temporary locals. Await timers and
-Device work within the call; unawaited timers are cleared when the call ends.
-`js_reset` interrupts
-running JavaScript and clears its variables and handles, without stopping
-Drivers or Apps. Timeout and request cancellation also reset the context.
-Ordinary JavaScript errors preserve it. No `.exit` or terminal session is needed.
-Remote connection and artifact transfer follow the transport's own Skill;
-do not treat an Edge-local path as a Consumer file.
-`paste` currently inserts plain text; Markdown/HTML clipboard formats and
-`performSecondaryAction` are not implemented. Secure-field replacement and
-selection are unavailable because the text cannot be verified; focus and use
-`typeText` when entering a secret is authorized. The Mac backend currently
-supports single clicks and Return/Enter keys only. Use native CLI commands for
-configuration, installation, logs and capture.
-After upgrading, restart a running Mac App with the current ios-use build before
-using MCP text editing; older runtimes cannot preserve these selection semantics.
-
-## Coordinate independent Devices
-
-Device handles keep their own identity and AX history, so independent Devices
-may run concurrently:
-
-```javascript
-let state = await cua.getState({emit: false});
-let mac = await cua.getDevice("mac");
-let simulatorID = state.devices.find(item => item.kind === "simulator")?.id;
-if (!simulatorID) throw new Error("No Simulator is available");
-let simulator = await cua.getDevice(simulatorID);
-
-await Promise.all([
-  mac.getAXState(),
-  simulator.getAXState(),
-]);
-```
-
-Keep actions on one Device sequential. Use `Promise.all` only across independent
-Devices or independent read-only observations.
-
-## Recover from failures
-
-Device command failures throw `IOSUseCommandError` with the CLI error category,
-retryability, interaction state, and mutation warning. Inspect those fields
-before retrying a mutation:
-
-```javascript
-try {
-  await device.click("Continue");
-} catch (error) {
-  nodeRepl.write({
-    message: error.message,
-    category: error.category,
-    retryable: error.retryable,
-    mutationMayHaveApplied: error.mutationMayHaveApplied,
-    interaction: error.interaction,
-  });
-}
-```
-
-If `mutationMayHaveApplied` is true, observe first instead of replaying the
-action blindly. After cancellation, timeout, or reset, obtain a new Device handle
-and observe again: actions already sent to a Driver may still finish. The MCP
-client releases the JavaScript runtime and cached connections on disconnection;
-use native `ios-use stop -d <id>` only when stopping the Driver is part of the task.
+Device errors include `category`, `retryable`, `mutationMayHaveApplied` and
+`interaction`. If an action may already have applied, observe before retrying.

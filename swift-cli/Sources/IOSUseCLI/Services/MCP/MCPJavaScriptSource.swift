@@ -216,10 +216,10 @@ enum MCPJavaScriptSource {
       help() {
         nodeRepl.write([
           "await device.listApps({includeSystem: true}) // real iOS / Simulator",
-          "await device.activateApp(bundleId) // ready AX is available through device.get()",
+          "await device.activateApp(bundleId) // emits initial AX; real iOS / Simulator",
           "await device.terminateApp(bundleId)",
           "await device.start(); await device.stop() // configured iOS / Simulator Driver",
-          "await device.getAXState() // fresh AX; requests native quiescence, not page readiness",
+          "await device.getAXState() // fresh AX with native idle wait by default",
           "await device.getScreenshot()",
           "await device.getAXStateAndScreenshot()",
           "await device.click(element_index|string|[x,y], {clickCount: 2}) // default: 1",
@@ -234,7 +234,9 @@ enum MCPJavaScriptSource {
           "await device.scrollTo(text, anchor)",
           "await device.waitFor(text, {gone: true, timeout: 20})",
           "device.get() // complete latest AX objects with parent_index, children and ancestor_indices",
-          "For known flows, observe with {emit:false}, check the destination container via get(), and emit only task results. Stop on failed transitions; do not compare two AX texts for readiness.",
+          "Batch deterministic actions and getAXState() in one call; use the latest observation for element indices.",
+          "Observations emit automatically. Use {emit:false} for intermediate state and nodeRepl.write(value) for task results.",
+          "If AX reports no change, do not immediately repeat it without an intervening action. Use an image or full AX only for missing context. Stop when the requested result is visible.",
           "Unsupported: rich-text paste, secondary AX actions, secure-text replacement/selection. iOS clicks are touch-only; Mac supports single clicks and Return/Enter keys.",
         ].join("\n"));
       }
