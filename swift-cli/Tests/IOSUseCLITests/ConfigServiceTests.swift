@@ -1546,7 +1546,7 @@ final class ConfigServiceTests: XCTestCase {
                 "LookupResult": [
                     bundleID: [
                         "CFBundleIdentifier": bundleID,
-                        "CFBundleShortVersionString": IOSUseCLI.version,
+                        "CFBundleShortVersionString": "2.1.0",
                     ],
                 ],
             ]
@@ -1554,7 +1554,7 @@ final class ConfigServiceTests: XCTestCase {
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["config", "--udid", "REAL-CONFIG"])
 
-        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
         XCTAssertEqual(nativePackages.count, 1)
         XCTAssertEqual(nativePackages.first?.uploadMode, .file)
         XCTAssertEqual(nativePackages.first?.remotePath, "PublicStaging/com.ios-use.driver.real-config.xctrunner")
