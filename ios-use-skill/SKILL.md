@@ -12,7 +12,7 @@ from using that session.
 ## Native CLI
 
 When using the CLI, discover the target with `ios-use status`. With multiple
-running Devices, pass `-d <id>` on UI commands; IDs are bare UDIDs or `mac`.
+running Devices, pass `-d <id>` on UI commands; IDs are bare UDIDs, `mac`, or aliases chosen during TCP attachment.
 
 ```bash
 ios-use dom

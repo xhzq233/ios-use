@@ -31,6 +31,11 @@ public enum CLIParser {
             parsed = .config(try parseConfig(&parser))
         case "start":
             parsed = .start(try parseStart(&parser))
+        case "attach":
+            parsed = .attach(try parseAttach(&parser))
+        case "detach":
+            try parser.requireEnd()
+            parsed = .detach
         case "stop":
             try parser.requireEnd()
             parsed = .stop
@@ -89,7 +94,7 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .du, .start, .stop, .status, .install, .apps, .open,
+            case .du, .start, .stop, .attach, .detach, .status, .install, .apps, .open,
                     .config, .appLifecycle, .driver, .mediaImport,
                     .debug, .uiTree:
                 break
@@ -106,7 +111,7 @@ public enum CLIParser {
 
     static func extractGlobalJSONFlag(_ arguments: [String]) -> ([String], Bool) {
         let valueOptions: Set<String> = [
-            "--udid", "--path", "--name", "--pattern",
+            "--host", "--port", "--udid", "--path", "--name", "--pattern",
             "--flags", "--timeout", "--last", "--capture-mode", "--filter", "--interface",
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
@@ -138,7 +143,7 @@ public enum CLIParser {
         _ arguments: [String]
     ) throws -> ([String], String?) {
         let valueOptions: Set<String> = [
-            "--udid", "--path", "--name", "--pattern",
+            "--host", "--port", "--udid", "--path", "--name", "--pattern",
             "--flags", "--timeout", "--last", "--capture-mode",
             "--filter", "--interface", "--offset", "--offset-ratio",
             "--traits", "--cindex", "--duration", "--tap", "--label",
@@ -209,6 +214,27 @@ public enum CLIParser {
                     + "or --list"
             )
         }
+        return options
+    }
+
+    private static func parseAttach(_ parser: inout ArgumentParser) throws -> AttachOptions {
+        var host: String?
+        var port: Int?
+        while let arg = parser.consume() {
+            switch arg {
+            case "--host":
+                guard host == nil else { throw CLIParseError.invalidValue("--host may only be provided once") }
+                host = try parser.value(for: arg)
+            case "--port":
+                guard port == nil else { throw CLIParseError.invalidValue("--port may only be provided once") }
+                port = try parsePositiveIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            default: throw CLIParseError.unknownOption(arg)
+            }
+        }
+        let resolvedHost = try require(host, option: "--host")
+        guard let port else { throw CLIParseError.missingRequiredOption("--port") }
+        let options = AttachOptions(host: resolvedHost, port: port)
+        try TCPAttachService.validateEndpoint(host: options.host, port: options.port)
         return options
     }
 

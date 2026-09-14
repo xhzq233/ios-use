@@ -113,7 +113,7 @@ public struct IOSUseCLI: Sendable {
                 let command = performanceCommandName(
                     arguments: arguments
                 )
-                if command == "start" || command == "stop" {
+                if ["start", "stop", "attach", "detach"].contains(command) {
                     invocationState.suppressAlertRefresh()
                 }
                 let result = executePublicInvocation(
@@ -216,7 +216,7 @@ public struct IOSUseCLI: Sendable {
             )
             if registerHomesForDiskUsage,
                result.exitCode == 0,
-               case .start = invocation.command {
+               ["start", "attach"].contains(invocation.command.commandName) {
                 IOSUseHomeDiscoveryStore.registerIfExisting(paths: paths)
             }
             return result
@@ -290,6 +290,17 @@ public struct IOSUseCLI: Sendable {
         explicitDeviceID: String?
     ) throws -> InvocationTarget {
         switch command {
+        case .attach:
+            guard let explicitDeviceID else {
+                throw CLIParseError.missingRequiredOption("--device")
+            }
+            let id = try DeviceContextStore.normalizeExplicitDeviceID(explicitDeviceID, paths: paths)
+            guard id != DeviceContextStore.macDeviceID else {
+                throw CLIParseError.invalidValue("Device ID mac is reserved for the Mac backend.")
+            }
+            try DeviceContextStore.requireInactive(deviceID: id, paths: paths)
+            return InvocationTarget(paths: try paths.deviceContext(id), startUDID: nil)
+
         case .start(let options):
             if options.mac {
                 if let explicitDeviceID {
@@ -388,7 +399,7 @@ public struct IOSUseCLI: Sendable {
                 startUDID: requestedUDID
             )
 
-        case .stop, .driver, .debug, .uiTree, .capture,
+        case .stop, .detach, .driver, .debug, .uiTree, .capture,
                 .mediaImport:
             let context = try DeviceContextStore.activeContext(
                 explicitDeviceID: explicitDeviceID,
@@ -585,7 +596,47 @@ public struct IOSUseCLI: Sendable {
         ) {
             return routedFailure
         }
+        if let session = SessionService.read(paths: commandPaths), session.isAttached {
+            switch parsed {
+            case .install, .uninstall, .apps, .ddiMount, .open, .oslog, .nslog,
+                    .proxy, .mediaImport, .debug, .uiTree:
+                return commandFailure(
+                    command: parsed.commandName,
+                    error: CLIParseError.invalidValue("\(parsed.commandName) is unavailable through a TCP attachment; use the external device provider for host services."),
+                    json: json
+                )
+            default: break
+            }
+        }
         switch parsed {
+        case .attach(let options):
+            do {
+                let output = try TCPAttachService.attach(options: options, paths: commandPaths)
+                if json {
+                    return MachineOutput.success(command: "attach", data: .object([
+                        "deviceId": .string(commandPaths.deviceID!),
+                        "host": .string(options.host),
+                        "port": .integer(options.port),
+                        "status": .string("attached"),
+                    ]))
+                }
+                return CLIResult(exitCode: 0, stdout: output)
+            } catch {
+                return commandFailure(command: parsed.commandName, error: error, json: json)
+            }
+        case .detach:
+            do {
+                let output = try TCPAttachService.detach(paths: commandPaths)
+                if json {
+                    return MachineOutput.success(command: "detach", data: .object([
+                        "deviceId": .string(commandPaths.deviceID ?? deviceID ?? ""),
+                        "status": .string("detached"),
+                    ]))
+                }
+                return CLIResult(exitCode: 0, stdout: output)
+            } catch {
+                return commandFailure(command: parsed.commandName, error: error, json: json)
+            }
         case .du:
             let snapshot = DiskUsageService.snapshot(paths: paths)
             if json {
@@ -940,7 +991,7 @@ public struct IOSUseCLI: Sendable {
             )
         } catch {
             switch command {
-            case .du, .status, .config, .start, .stop:
+            case .du, .status, .config, .start, .stop, .attach, .detach:
                 return nil
             case .open:
                 return commandFailure(
@@ -963,7 +1014,7 @@ public struct IOSUseCLI: Sendable {
             return nil
         }
         switch command {
-        case .du, .status, .config, .start, .stop, .capture, .open, .oslog, .debug, .uiTree:
+        case .du, .status, .config, .start, .stop, .attach, .detach, .capture, .open, .oslog, .debug, .uiTree:
             return nil
         case .mediaImport:
             return nil

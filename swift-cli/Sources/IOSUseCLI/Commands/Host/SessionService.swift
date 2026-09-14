@@ -6,6 +6,9 @@ public enum SessionService {
         public let deviceName: String
         public let deviceVersion: String
         public let deviceType: String
+        public let driverHost: String?
+        public let driverPort: Int?
+        public var isAttached: Bool { deviceType == TCPAttachService.deviceType }
         public let startedAt: Int
         public let holderPid: Int?
         public let runnerPid: Int?
@@ -24,6 +27,8 @@ public enum SessionService {
             deviceName: String,
             deviceVersion: String,
             deviceType: String,
+            driverHost: String? = nil,
+            driverPort: Int? = nil,
             startedAt: Int = Int(Date().timeIntervalSince1970 * 1000),
             holderPid: Int? = nil,
             runnerPid: Int? = nil,
@@ -41,6 +46,8 @@ public enum SessionService {
             self.deviceName = deviceName
             self.deviceVersion = deviceVersion
             self.deviceType = deviceType
+            self.driverHost = driverHost
+            self.driverPort = driverPort
             self.startedAt = startedAt
             self.holderPid = holderPid
             self.runnerPid = runnerPid
@@ -61,6 +68,8 @@ public enum SessionService {
                 deviceName: deviceName,
                 deviceVersion: deviceVersion,
                 deviceType: deviceType,
+                driverHost: driverHost,
+                driverPort: driverPort,
                 startedAt: startedAt,
                 holderPid: metadata.holderPid,
                 runnerPid: metadata.runnerPid,
@@ -393,6 +402,9 @@ public enum SessionService {
             preconditionFailure(
                 "requireDriverLock must throw when driver.lock is absent"
             )
+        }
+        if current.isAttached {
+            return try TCPAttachService.detachLocked(info: current, paths: paths)
         }
         if current.deviceType == PlayCoverSessionService.deviceType {
             let pid = try PlayCoverSessionService.terminate(

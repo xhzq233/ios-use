@@ -57,6 +57,28 @@ ios-use config --simulator --udid <simulator-udid>
 ios-use start <simulator-udid>
 ```
 
+### External TCP driver
+
+When another host or device provider starts the matching ios-use driver and
+forwards its TCP port, attach without local USB or signing configuration:
+
+```bash
+ios-use attach --device remote-phone --host 127.0.0.1 --port 18102
+ios-use dom -d remote-phone
+ios-use activateApp com.apple.Preferences -d remote-phone --dom
+ios-use detach -d remote-phone
+```
+
+The host can be an IP address or hostname. Attach checks the Fory protocol before
+saving the session. UI commands use this endpoint; installation, URL opening,
+media import, logs and proxy remain the provider's responsibility.
+`detach` (or `stop` on this target) only removes the local attachment. It also
+works offline and never stops the externally managed driver. Restore a lost
+endpoint through its provider, then retry; ios-use does not launch a local driver
+for a TCP attachment. Use a trusted network or secure tunnel for this plain TCP
+connection. `status` reports `attached`, which records the binding rather than
+continuously probing remote health.
+
 ### Mac backend
 
 ```bash
