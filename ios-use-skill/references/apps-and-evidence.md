@@ -1,18 +1,6 @@
 # App actions and visual evidence
 
-### Rotate a real device or Simulator
-
-```bash
-ios-use rotate --to landscape-right --dom --json
-```
-
-Supported orientations are `portrait`, `portrait-upside-down`, `landscape-left`,
-and `landscape-right`. The command changes the simulated physical orientation;
-an App that supports only portrait can remain portrait. Use `--dom` to inspect the
-resulting App layout. `rotate` requires an active real-device or Simulator Driver
-and is unavailable on the Mac backend.
-
-## 5. Control Apps and inspect their logs
+## Control Apps and inspect their logs
 
 The commands in this section are for real devices and Simulators. For the Mac
 backend, use only `start`, `status`, and `stop` for lifecycle.
@@ -38,6 +26,8 @@ ios-use dismissAlert --label "Allow Full Access"
   `--only-button` for a one-button alert, `--label` or `--index` for a known
   multi-button alert, and `--primary` only when the visual trailing/top heuristic
   is intentional.
+- Rotate with `ios-use rotate --to landscape-right --dom`; real devices and
+  Simulators only. See `ios-use help rotate` for orientations and limitations.
 
 When `activateApp --terminateExisting --log` prints a log path, query the file with
 standard shell tools:
@@ -85,7 +75,7 @@ Catalyst dylib and use Frida as its loader and runtime control plane. Read
 install-state-restore workflow. The dylib may be compiled locally or remotely;
 ios-use does not require the compiler to run on the same Mac as the App.
 
-## 6. Collect visual evidence only when needed
+## Collect visual evidence only when needed
 
 Use a screenshot when the DOM cannot describe visual state:
 

@@ -13,14 +13,35 @@ from using that session.
 
 When using the CLI, discover the target with `ios-use status`. With multiple
 running Devices, pass `-d <id>` on UI commands; IDs are bare UDIDs, `mac`, or aliases chosen during TCP attachment.
+Use `ios-use --help` for the workflow and `ios-use help <command>` for command
+options and examples. The CLI help is usable without loading this Skill.
+
+### Observe, act and verify
 
 ```bash
 ios-use dom
 ios-use tap "Continue" --dom
+ios-use swipe --to "<target>" --from "<visible-anchor>" --dom
+ios-use input --tap "Search" --content "<query>" --dom
+ios-use waitFor "Loading" --match contains --gone --timeout 20s
 ```
 
-Use targets from the current DOM. Bare `--dom` uses the native idle wait;
-use `ios-use help <command>` for selectors and options.
+- Use displayed labels/values from current DOM, not the whole DOM line. Use
+  `--traits` / `--cindex` for observed duplicates. Prefer an offscreen semantic
+  target with a visible anchor in the same scroll container; use label-relative
+  offsets before absolute coordinates when possible.
+- Verify the result using the action's `--dom` output. Native idle does not
+  guarantee App readiness; wait on an observed page/loading condition when needed.
+  An explicit `--dom <duration>` is a fixed delay, not a readiness check.
+- After navigation, scrolling or a failed lookup, refresh stale context before
+  choosing the next action. Read inline target/candidate/rejection/suggestion/alert
+  details first; request `dom --fresh` or a screenshot when more context is needed.
+- Keep page-dependent actions sequential. Batch known steps with `&&` so failure
+  stops later mutations; inspect intermediate UI when the next step is not known.
+  Parallelize only independent Devices or independent read-only observations.
+- Save successful reusable routes as small `.sh` scripts in the App project with
+  `set -euo pipefail`, stable labels and waits, rather than rediscovering them or
+  retaining stale coordinates. A one-off action does not require a saved script.
 
 ## Target setup and other workflows
 
