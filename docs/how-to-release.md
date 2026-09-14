@@ -116,7 +116,8 @@ git push origin vX.Y.Z
 
 Pushing the tag triggers `.github/workflows/release.yml`. Linux CLI, Mac CLI,
 device Driver, Simulator Driver, and Mac resources build in five independent
-jobs. Each Driver has its own checkout and DerivedData directory. The final
+jobs. Each Driver has its own checkout and build cache, including both DerivedData
+and the products written outside it by `CONFIGURATION_BUILD_DIR`. The final
 job downloads those artifacts, assembles the Mac package without recompiling,
 runs the isolated installed-layout validation, then adds the Linux checksum
 and publishes all six assets with the tracked release note. Linux uses Swift

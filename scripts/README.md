@@ -190,7 +190,8 @@ downloading.
 | Script | Purpose |
 | --- | --- |
 | `scripts/install.sh` | On Apple Silicon, verify checksums and install the release CLI, driver IPAs, and prebuilt Mac Runtime plus Frida Engine under `<prefix>/share/ios-use/mac/`; both frameworks are signature-verified immutable preparation inputs. Also installs the skill and altsign helper. `--build-from-source` additionally requires full Xcode, Swift, xcodegen, and the pinned Frida build toolchain. Intel macOS is unsupported. |
-| `scripts/release_build.sh` | From a clean Git tree, audit all pins/licenses, force fresh Runtime, CLI, driver, and pinned Frida Engine builds, then stage the exact five-asset release set under `release/`; validates `IOS_USE_RELEASE_VERSION` when provided. See [docs/how-to-release.md](../docs/how-to-release.md). |
+| `scripts/release_build.sh` | Build and stage the five Mac release files from a clean checkout; `--assemble-only` uses already-built artifacts in `release/`. Validates `IOS_USE_RELEASE_VERSION`. CI builds components in independent jobs; see [docs/how-to-release.md](../docs/how-to-release.md). |
+| `scripts/build_release_mac_resources.sh` | Audit pinned upstreams, build the Runtime and Frida Engine, and package `release/ios-use-mac-resources.tar.gz`. |
 | `scripts/benchmark.js --bench ios-use --udid <udid> --driver-ipa <path>` | Measure ios-use on a real device and write JSON only. Screenshot cases pass `--no-ocr` to isolate pixel capture. The script never builds, signs, installs, or runs `config`; the device must already be prepared with a driver whose configured `driverVersion` matches the IPA version. |
 | `scripts/benchmark.js --bench wda --udid <udid> --wda-bundle-id <id>` | Measure Appium/WebDriverAgent on a real device and write JSON only. This is a separate WDA run, not an implicit ios-use comparison. |
 
