@@ -1,4 +1,8 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
 
 enum DeviceCommandLock {
@@ -17,7 +21,7 @@ enum DeviceCommandLock {
         let lockPath = stateDirectory
             .appendingPathComponent("command.lock")
             .path
-        let descriptor = Darwin.open(
+        let descriptor = open(
             lockPath,
             O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
             S_IRUSR | S_IWUSR
@@ -27,7 +31,7 @@ enum DeviceCommandLock {
                 "Cannot lock Device command state: errno \(errno)."
             )
         }
-        defer { Darwin.close(descriptor) }
+        defer { close(descriptor) }
         guard flock(descriptor, LOCK_EX) == 0 else {
             throw CLIParseError.invalidValue(
                 "Cannot acquire Device command lock: errno \(errno)."

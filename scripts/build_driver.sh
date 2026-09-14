@@ -276,6 +276,7 @@ if [ "$SIMULATOR_ONLY" != true ]; then
   xcodebuild build-for-testing \
     "${XCODE_COMMON[@]}" \
     -destination 'generic/platform=iOS' \
+    -IDEPackageEnablePrebuilts=NO \
     -skipMacroValidation \
     | tail -5
   STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
@@ -339,6 +340,7 @@ STEP_STARTED_AT="$(date +%s)"
 xcodebuild build-for-testing \
   "${XCODE_COMMON[@]}" \
   -destination 'generic/platform=iOS Simulator' \
+  -IDEPackageEnablePrebuilts=NO \
   -skipMacroValidation \
   | tail -5
 STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))

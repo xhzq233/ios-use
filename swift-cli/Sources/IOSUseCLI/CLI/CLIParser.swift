@@ -722,7 +722,11 @@ public enum CLIParser {
 
     private static func parseScreenshot(_ parser: inout ArgumentParser) throws -> DriverAction {
         var name: String?
+        #if os(Linux)
+        var ocr = false
+        #else
         var ocr = true
+        #endif
         while let arg = parser.consume() {
             switch arg {
             case "--name": name = try parser.value(for: arg)

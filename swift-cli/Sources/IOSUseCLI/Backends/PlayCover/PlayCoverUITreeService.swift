@@ -183,7 +183,7 @@ enum PlayCoverUITreeService {
             ]),
             "properties": .object(
                 node.properties.mapValues(
-                    StatusService.playCoverRuntimeJSONMachineValue
+                    machineRuntimeJSONValue
                 )
             ),
             "subviews": .array(node.subviews.map(machineNode)),

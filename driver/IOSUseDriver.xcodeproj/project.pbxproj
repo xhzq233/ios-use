@@ -670,8 +670,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/apache/fory.git";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = revision;
+				revision = affbd38a5869a3ec4deaf51a762bedf2c90400d5;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

@@ -75,3 +75,13 @@ when the consumer owns Skill discovery and should keep its existing copy.
 
 Keep credentials and signing material out of commands and reports.
 Redact device identifiers and signed URLs before sharing artifacts.
+
+## Linux hosts
+
+Linux supports externally managed TCP Drivers. Obtain a running Driver endpoint
+from the device provider, then use `ios-use attach -d <alias> --host <host> --port
+<port>`. Reuse the attachment with DOM, actions, waits, App lifecycle and
+screenshots. Linux screenshots omit OCR. Use `detach` when finished; it does not
+stop the provider's runtime. Device installation, signing and Driver startup
+remain provider operations. The published v2.1.0-alpha.1 is Mac-only; Linux
+requires the 2.1.0 preparation branch or a later release containing Linux assets.

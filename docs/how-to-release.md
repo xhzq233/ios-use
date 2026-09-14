@@ -1,7 +1,7 @@
 # How To Release
 
-ios-use releases from Git tags. A release publishes exactly five assets: the
-CLI, two driver IPAs, the Mac resource archive, and their checksum manifest.
+ios-use releases from Git tags. A release publishes seven assets: three host
+CLIs, two driver IPAs, the Mac resource archive, and their checksum manifest.
 
 ## 1. Pin the version
 
@@ -63,7 +63,7 @@ The build:
 6. writes `SHA256SUMS` for the four content assets and rejects any release
    directory that is not the exact five-file set.
 
-Expected `release/` entries:
+Expected local Mac `release/` entries:
 
 - `ios-use-darwin-arm64`
 - `driver.ipa`
@@ -114,8 +114,11 @@ git push origin vX.Y.Z
 
 Pushing the tag triggers `.github/workflows/release.yml`. The workflow rebuilds
 from the tag, reruns the isolated installed-layout validation, uses the tracked
-release note as the GitHub Release body, and uploads only the five explicit
-paths above.
+release note as the GitHub Release body, and adds `ios-use-linux-x86_64` and
+`ios-use-linux-arm64` from the Ubuntu 22.04 Linux builds. Their checksums are
+appended to the Mac manifest before all seven assets are published. Linux CLI
+builds use `bash scripts/build_swift_cli.sh` with the Swift runtime statically
+linked; the Swift CLI workflow tests both architectures before release.
 
 Release assets are immutable in the normal workflow: a tag whose Release
 already has assets is rejected, and duplicate names are never overwritten.
@@ -127,8 +130,8 @@ After the workflow succeeds, confirm:
 
 - the tag resolves to the intended commit;
 - the Release body matches `release-notes/CHANGELOG-vX.Y.Z.md`;
-- the Release has exactly the five expected assets;
-- `SHA256SUMS` has exactly four entries and validates every content asset;
+- the Release has exactly the seven expected assets;
+- `SHA256SUMS` has exactly six entries and validates every content asset;
 - the GitHub tag source contains the project/vendored licenses and source; and
 - every public Frida repository resolves the commit recorded in
   `ThirdParty/Frida/PROVENANCE.md`.
@@ -143,4 +146,4 @@ After the workflow succeeds, confirm:
 - [ ] `release/` contains exactly five files.
 - [ ] `git diff --check` passes.
 - [ ] Branch and tag are pushed.
-- [ ] GitHub Actions succeeds and the Release has exactly five assets.
+- [ ] GitHub Actions succeeds and the Release has exactly seven assets.

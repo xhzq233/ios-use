@@ -9,6 +9,13 @@ enum DeviceContextStore {
     }
 
     static let macDeviceID = "mac"
+    static var startHint: String {
+        #if os(Linux)
+        return "Run `ios-use attach` first."
+        #else
+        return "Run `ios-use start` first."
+        #endif
+    }
 
     static func realDeviceID(_ udid: String) -> String {
         udid
@@ -20,7 +27,7 @@ enum DeviceContextStore {
 
     static func deviceID(for info: SessionService.Info) -> String {
         switch info.deviceType {
-        case PlayCoverSessionService.deviceType:
+        case macDeviceID:
             return macDeviceID
         case "simulator":
             return simulatorDeviceID(info.udid)
@@ -134,7 +141,7 @@ enum DeviceContextStore {
                     paths: contextPaths
                   ) else {
                 throw CLIParseError.invalidValue(
-                    "No active driver for Device \(normalized). Run `ios-use start` first."
+                    "No active driver for Device \(normalized). \(startHint)"
                 )
             }
             return Context(
@@ -154,7 +161,7 @@ enum DeviceContextStore {
         guard active.count == 1 else {
             if active.isEmpty {
                 throw CLIParseError.invalidValue(
-                    "No active driver. Run `ios-use start` first."
+                    "No active driver. \(startHint)"
                 )
             }
             throw CLIParseError.invalidValue(

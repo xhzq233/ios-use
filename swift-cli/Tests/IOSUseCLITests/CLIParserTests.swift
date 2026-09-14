@@ -415,9 +415,14 @@ final class CLIParserTests: XCTestCase {
             ))
         )
 
+        #if os(Linux)
+        let defaultOCR = false
+        #else
+        let defaultOCR = true
+        #endif
         XCTAssertEqual(
             try CLIParser.parse(["screenshot", "--name", "home"]),
-            .driver(.screenshot(name: "home", ocr: true))
+            .driver(.screenshot(name: "home", ocr: defaultOCR))
         )
 
         XCTAssertEqual(

@@ -269,12 +269,14 @@ enum MachineOutput {
             classified.mutationMayHaveApplied = true
             return classified
         }
+#if os(macOS)
         if let readinessError = error as? OpenURLService.ReadinessError {
             var classified = classify(readinessError.underlying)
             classified.message = readinessError.description
             classified.mutationMayHaveApplied = true
             return classified
         }
+#endif
         if case DriverClientError.driverError(let message, let payload) = error {
             return MachineError(
                 message: message,
@@ -327,6 +329,7 @@ enum MachineOutput {
                 mutationMayHaveApplied: false
             )
         }
+#if os(macOS)
         if case PlayCoverRuntimeClientError.remoteError(
             let code,
             let message,
@@ -348,6 +351,7 @@ enum MachineOutput {
                     || code == "frida_invalid_query"
             )
         }
+#endif
         if case DriverCommandExecutionError.postconditionFailed(let label, let underlying) = error {
             let classified = classify(underlying)
             return MachineError(
@@ -360,6 +364,7 @@ enum MachineOutput {
                 mutationMayHaveApplied: true
             )
         }
+#if os(macOS)
         if let loggedError =
                 error as? PlayCoverSessionLoggedLaunchError {
             var classified = classify(loggedError.underlying)
@@ -557,6 +562,7 @@ enum MachineOutput {
                 mutationMayHaveApplied: false
             )
         }
+#endif
         if let parseError = error as? CLIParseError {
             return MachineError(
                 message: parseError.description,
@@ -582,6 +588,7 @@ enum MachineOutput {
     private static func macLogPath(
         in error: Error
     ) -> String? {
+#if os(macOS)
         if let loggedError =
                 error as? PlayCoverSessionLoggedLaunchError {
             return loggedError.logPath
@@ -598,6 +605,7 @@ enum MachineOutput {
                 error as? PlayCoverSessionCleanupError {
             return cleanupError.logPath
         }
+#endif
         return nil
     }
 

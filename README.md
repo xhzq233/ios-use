@@ -4,11 +4,12 @@
 
 [![Release](https://img.shields.io/github/v/release/xhzq233/ios-use?sort=semver)](https://github.com/xhzq233/ios-use/releases)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20iOS-lightgrey.svg)](#requirements)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20iOS-lightgrey.svg)](#requirements)
 
 `ios-use` drives real iPhones, Simulators, and supported iPhone Apps on Apple
 silicon Macs. It exposes a compact accessibility tree, semantic actions, JSON
-output, screenshots, logs, proxy capture, and multi-device operation.
+output, screenshots, logs, proxy capture, and multi-device operation. Linux hosts
+can operate externally managed iOS Drivers through TCP attachments.
 
 ## Install
 
@@ -25,6 +26,31 @@ Install a specific release or build from source:
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.1.0-alpha.1
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
+
+### Linux TCP client (2.1.0 preparation)
+
+Linux support is on `codex/prepare-210`. The published `v2.1.0-alpha.1` assets
+are macOS-only; use the branch build or its Linux CI artifacts until the next
+release. Building requires Swift 6.2+ and standard Linux build tools:
+
+```bash
+git clone --branch codex/prepare-210 https://github.com/xhzq233/ios-use.git
+cd ios-use
+bash scripts/build_swift_cli.sh
+./ios-use attach -d phone --host <driver-host> --port <forwarded-port>
+./ios-use dom -d phone
+./ios-use tap "<label>" -d phone --dom
+./ios-use screenshot -d phone
+./ios-use detach -d phone
+```
+
+The Linux release workflow builds x86_64 and arm64 binaries on Ubuntu 22.04
+with the Swift runtime statically linked. Running the binary needs glibc and
+libstdc++, without a Swift installation. The device provider handles leases,
+signing, IPA installation, port forwarding and XCTest startup. UI actions,
+waits, app activation/termination and JPEG screenshots use the shared protocol.
+OCR, capture sequences, local USB, Simulator, Mac, logging and proxy services require
+a macOS host. `stop` on Linux detaches and leaves the remote Driver running.
 
 ## Quick Start
 
@@ -154,11 +180,11 @@ Most automation commands support `--json`.
 
 ## Requirements
 
-- Apple silicon macOS.
+- Linux for TCP attachments; Apple silicon macOS for local device backends.
 - Real devices: iOS 17.4 or newer, USB, and a free or paid Apple Developer
   account for driver signing.
-- Simulators and source builds: full Xcode; source builds also require Swift
-  and `xcodegen`.
+- Simulator and Driver builds: full Xcode, Swift and `xcodegen`. Linux CLI
+  builds require Swift 6.2+ and do not need Xcode.
 - Proxy capture: `mitmproxy`.
 
 ## Development

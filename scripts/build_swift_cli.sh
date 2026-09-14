@@ -18,9 +18,14 @@ done
 
 echo "[swift-cli] Building ios-use ($CONFIGURATION)..."
 SOURCE_PREFIX_MAP="$ROOT_DIR=/ios-use"
+SWIFT_PLATFORM_ARGS=()
+if [ "$(uname -s)" = "Linux" ] && [ "$CONFIGURATION" = "release" ]; then
+  SWIFT_PLATFORM_ARGS+=(--static-swift-stdlib)
+fi
 swift build \
   --package-path "$ROOT_DIR/swift-cli" \
   -c "$CONFIGURATION" \
+  "${SWIFT_PLATFORM_ARGS[@]}" \
   -Xswiftc -file-prefix-map \
   -Xswiftc "$SOURCE_PREFIX_MAP" \
   -Xswiftc -debug-prefix-map \
@@ -42,7 +47,7 @@ if [ "$CONFIGURATION" = "release" ]; then
   echo "[swift-cli] Stripping release binary..."
   strip "$TMP_BIN"
   for local_path in "/Users/" "$ROOT_DIR/" "$HOME/"; do
-    if LC_ALL=C rg --text --fixed-strings --quiet -- \
+    if LC_ALL=C grep -aFq -- \
         "$local_path" "$TMP_BIN"; then
       echo \
         "[swift-cli] ERROR: release binary embeds local build path: $local_path" \
@@ -61,7 +66,7 @@ PLAYCOVER_RUNTIME="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
 PLAYCOVER_RUNTIME_EXECUTABLE="$PLAYCOVER_RUNTIME/IOSUsePlayRuntime"
 PLAYCOVER_RUNTIME_NEEDS_BUILD="false"
 
-if [ "$(uname -m)" = "arm64" ]; then
+if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
   if xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
     if [ ! -x "$PLAYCOVER_RUNTIME_EXECUTABLE" ]; then
       PLAYCOVER_RUNTIME_NEEDS_BUILD="true"

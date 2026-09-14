@@ -62,6 +62,7 @@ public enum SessionService {
             self.macLogPath = macLogPath
         }
 
+#if os(macOS)
         func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
             Info(
                 udid: udid,
@@ -84,6 +85,7 @@ public enum SessionService {
                 macLogPath: macLogPath
             )
         }
+#endif
     }
 
     static var simulatorDriverReachableForTesting: (() -> Bool)?
@@ -152,6 +154,7 @@ public enum SessionService {
         DriverSessionStore.clearDriverLock(paths: paths)
     }
 
+#if os(macOS)
     public static func start(udid requestedUdid: String?, paths: IOSUsePaths, verbose: Bool) throws -> String {
         try SessionOperationLock.withExclusiveLock(paths: paths) {
             try startLocked(
@@ -437,10 +440,18 @@ public enum SessionService {
         return output
     }
 
+#endif
+    #if os(Linux)
+    public static func stop(paths: IOSUsePaths) throws -> String {
+        try TCPAttachService.detach(paths: paths)
+    }
+    #endif
+
     public static func read(paths: IOSUsePaths) -> Info? {
         try? readDriverLockInfo(paths: paths)
     }
 
+#if os(macOS)
     public static func resolveDriverInfo(udid: String, paths: IOSUsePaths) throws -> Info {
         try DriverLifecycleService.resolveDriverInfo(udid: udid, paths: paths)
     }
@@ -464,4 +475,6 @@ public enum SessionService {
             simulatorLauncher: simulatorDriverLauncherForTesting
         )
     }
+#endif
+
 }

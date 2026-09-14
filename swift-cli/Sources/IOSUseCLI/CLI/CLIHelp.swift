@@ -2,7 +2,30 @@ import Foundation
 
 enum CLIHelp {
     static var rootText: String {
+        #if os(Linux)
+        return """
+        Usage: ios-use [--device <id>] <command>
+
+        Linux TCP client for an externally managed iOS Driver.
+        Start the Driver with your device provider, then attach its TCP endpoint:
+          ios-use attach -d phone --host <host> --port <port>
+          ios-use status
+          ios-use dom -d phone
+          ios-use tap "<label>" -d phone --dom
+          ios-use screenshot -d phone
+          ios-use detach -d phone
+
+        Commands: attach, detach, status, stop, dom, waitFor, screenshot, tap,
+          longpress, input, swipe, activateApp, terminateApp, home, rotate, dismissAlert
+        With multiple attachments, select one using -d <id>.
+        Inspect current DOM before acting and keep page-dependent actions sequential.
+        Use ios-use help <command> for options; --json returns structured results.
+        Screenshots save the original JPEG and geometry. OCR requires macOS.
+        Device installation, signing and Driver lifecycle belong to the provider.
+
         """
+        #else
+        return """
         Usage: ios-use [--help] [--version] [--device <device-id>] <command>
 
         Swift CLI for ios-use.
@@ -44,6 +67,7 @@ enum CLIHelp {
           activateApp, terminateApp, home, rotate, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
+        #endif
     }
 
     static func immediateResult(arguments: [String]) -> CLIResult? {

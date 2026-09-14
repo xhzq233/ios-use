@@ -1,5 +1,7 @@
 import Foundation
-#if canImport(Darwin)
+#if os(Linux)
+import Glibc
+#else
 import Darwin
 #endif
 
@@ -30,7 +32,7 @@ enum DriverSessionStore {
         guard deviceType == "real"
                 || deviceType == "simulator"
                 || deviceType == TCPAttachService.deviceType
-                || deviceType == PlayCoverSessionService.deviceType else {
+                || deviceType == DeviceContextStore.macDeviceID else {
             throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType).")
         }
         guard let startedAt = raw["startedAt"] as? Int else {
@@ -66,7 +68,8 @@ enum DriverSessionStore {
             }
             try TCPAttachService.validateEndpoint(host: host, port: port)
         }
-        if deviceType == PlayCoverSessionService.deviceType {
+#if os(macOS)
+        if deviceType == DeviceContextStore.macDeviceID {
             guard let appPath = info.macAppPath, !appPath.isEmpty,
                   let executablePath = info.macExecutablePath,
                   !executablePath.isEmpty,
@@ -130,14 +133,15 @@ enum DriverSessionStore {
             }
             try validateOwnedRunDirectory(paths.playcoverRun)
         }
+#endif
         return info
     }
 
     private static func readPrivateDriverLock(
         at path: String
     ) throws -> Data? {
-        #if canImport(Darwin)
-        let descriptor = Darwin.open(
+        #if os(macOS) || os(Linux)
+        let descriptor = open(
             path,
             O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
         )
@@ -150,7 +154,7 @@ enum DriverSessionStore {
                     + "following links (errno \(errno))."
             )
         }
-        defer { Darwin.close(descriptor) }
+        defer { close(descriptor) }
 
         var initial = stat()
         guard fstat(descriptor, &initial) == 0,
@@ -168,7 +172,7 @@ enum DriverSessionStore {
             }
             var offset = 0
             while offset < buffer.count {
-                let count = Darwin.read(
+                let count = read(
                     descriptor,
                     baseAddress.advanced(by: offset),
                     buffer.count - offset
@@ -190,7 +194,7 @@ enum DriverSessionStore {
         var finalDescriptor = stat()
         var finalPath = stat()
         guard fstat(descriptor, &finalDescriptor) == 0,
-              Darwin.lstat(path, &finalPath) == 0,
+              lstat(path, &finalPath) == 0,
               isSafeDriverLock(finalDescriptor),
               isSafeDriverLock(finalPath),
               sameDriverLockIdentity(initial, finalDescriptor),
@@ -221,7 +225,7 @@ enum DriverSessionStore {
         #endif
     }
 
-    #if canImport(Darwin)
+    #if os(macOS) || os(Linux)
     private static func isSafeDriverLock(_ status: stat) -> Bool {
         (status.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG)
             && status.st_uid == geteuid()
@@ -235,21 +239,25 @@ enum DriverSessionStore {
         _ expected: stat,
         _ actual: stat
     ) -> Bool {
-        actual.st_dev == expected.st_dev
+        #if os(Linux)
+        let modified = (actual.st_mtim.tv_sec, actual.st_mtim.tv_nsec)
+        let expectedModified = (expected.st_mtim.tv_sec, expected.st_mtim.tv_nsec)
+        let changed = (actual.st_ctim.tv_sec, actual.st_ctim.tv_nsec)
+        let expectedChanged = (expected.st_ctim.tv_sec, expected.st_ctim.tv_nsec)
+        #else
+        let modified = (actual.st_mtimespec.tv_sec, actual.st_mtimespec.tv_nsec)
+        let expectedModified = (expected.st_mtimespec.tv_sec, expected.st_mtimespec.tv_nsec)
+        let changed = (actual.st_ctimespec.tv_sec, actual.st_ctimespec.tv_nsec)
+        let expectedChanged = (expected.st_ctimespec.tv_sec, expected.st_ctimespec.tv_nsec)
+        #endif
+        return actual.st_dev == expected.st_dev
             && actual.st_ino == expected.st_ino
             && actual.st_mode == expected.st_mode
             && actual.st_uid == expected.st_uid
             && actual.st_gid == expected.st_gid
             && actual.st_nlink == expected.st_nlink
             && actual.st_size == expected.st_size
-            && actual.st_mtimespec.tv_sec
-                == expected.st_mtimespec.tv_sec
-            && actual.st_mtimespec.tv_nsec
-                == expected.st_mtimespec.tv_nsec
-            && actual.st_ctimespec.tv_sec
-                == expected.st_ctimespec.tv_sec
-            && actual.st_ctimespec.tv_nsec
-                == expected.st_ctimespec.tv_nsec
+            && modified == expectedModified && changed == expectedChanged
     }
     #endif
 
@@ -276,7 +284,7 @@ enum DriverSessionStore {
         if let runnerPid = info.runnerPid {
             root["runnerPid"] = runnerPid
         }
-        if info.deviceType == PlayCoverSessionService.deviceType,
+        if info.deviceType == DeviceContextStore.macDeviceID,
            let startMode = info.startMode {
             root["startMode"] = startMode
         }
@@ -315,9 +323,9 @@ enum DriverSessionStore {
     }
 
     static func removeDriverLock(paths: IOSUsePaths) throws {
-        #if canImport(Darwin)
+        #if os(macOS) || os(Linux)
         var status = stat()
-        guard Darwin.lstat(paths.driverLock, &status) == 0 else {
+        guard lstat(paths.driverLock, &status) == 0 else {
             if errno == ENOENT || errno == ENOTDIR {
                 return
             }
@@ -331,7 +339,7 @@ enum DriverSessionStore {
                     + "owner-only singly-linked regular file."
             )
         }
-        guard Darwin.unlink(paths.driverLock) == 0 else {
+        guard unlink(paths.driverLock) == 0 else {
             if errno == ENOENT {
                 return
             }
@@ -359,9 +367,9 @@ enum DriverSessionStore {
         _ data: Data,
         to path: String
     ) throws {
-        #if canImport(Darwin)
+        #if os(macOS) || os(Linux)
         var existing = stat()
-        if Darwin.lstat(path, &existing) == 0 {
+        if lstat(path, &existing) == 0 {
             guard isSafeDriverLock(existing) else {
                 throw CLIParseError.invalidValue(
                     "Refusing to replace driver.lock because it is not an "
@@ -379,7 +387,7 @@ enum DriverSessionStore {
                 ".driver-lock-\(UUID().uuidString).tmp"
             )
             .path
-        let descriptor = Darwin.open(
+        let descriptor = open(
             temporaryPath,
             O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
             S_IRUSR | S_IWUSR
@@ -391,9 +399,9 @@ enum DriverSessionStore {
         }
         var removeTemporary = true
         defer {
-            Darwin.close(descriptor)
+            close(descriptor)
             if removeTemporary {
-                Darwin.unlink(temporaryPath)
+                unlink(temporaryPath)
             }
         }
         try data.withUnsafeBytes { buffer in
@@ -402,7 +410,7 @@ enum DriverSessionStore {
             }
             var offset = 0
             while offset < buffer.count {
-                let written = Darwin.write(
+                let written = posixWrite(
                     descriptor,
                     baseAddress.advanced(by: offset),
                     buffer.count - offset
@@ -419,13 +427,13 @@ enum DriverSessionStore {
                 )
             }
         }
-        guard Darwin.fchmod(descriptor, 0o600) == 0,
-              Darwin.fsync(descriptor) == 0 else {
+        guard fchmod(descriptor, 0o600) == 0,
+              fsync(descriptor) == 0 else {
             throw CLIParseError.invalidValue(
                 "Cannot secure private driver.lock: errno \(errno)."
             )
         }
-        guard Darwin.rename(temporaryPath, path) == 0 else {
+        guard rename(temporaryPath, path) == 0 else {
             throw CLIParseError.invalidValue(
                 "Cannot install private driver.lock: errno \(errno)."
             )
@@ -441,14 +449,14 @@ enum DriverSessionStore {
         #endif
     }
 
-    #if canImport(Darwin)
+    #if os(macOS) || os(Linux)
     private static func syncParentDirectory(
         of path: String,
         label: String
     ) throws {
         let parent = URL(fileURLWithPath: path)
             .deletingLastPathComponent().path
-        let descriptor = Darwin.open(
+        let descriptor = open(
             parent,
             O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
         )
@@ -457,13 +465,13 @@ enum DriverSessionStore {
                 "Cannot open \(label) parent for fsync: errno \(errno)."
             )
         }
-        defer { Darwin.close(descriptor) }
+        defer { close(descriptor) }
         var status = stat()
-        guard Darwin.fstat(descriptor, &status) == 0,
+        guard fstat(descriptor, &status) == 0,
               (status.st_mode & mode_t(S_IFMT))
                 == mode_t(S_IFDIR),
               status.st_uid == geteuid(),
-              Darwin.fsync(descriptor) == 0 else {
+              fsync(descriptor) == 0 else {
             throw CLIParseError.invalidValue(
                 "Cannot fsync \(label) parent: errno \(errno)."
             )
@@ -481,9 +489,9 @@ enum DriverSessionStore {
     private static func validateOwnedRunDirectory(
         _ path: String
     ) throws {
-        #if canImport(Darwin)
+        #if os(macOS) || os(Linux)
         var info = stat()
-        guard Darwin.lstat(path, &info) == 0,
+        guard lstat(path, &info) == 0,
               (info.st_mode & mode_t(S_IFMT))
                 == mode_t(S_IFDIR),
               info.st_uid == geteuid(),

@@ -121,7 +121,7 @@ public enum StatusService {
                             }
                             runtime["diagnostics"] = .object(
                                 payload.diagnostics.mapValues(
-                                    playCoverRuntimeJSONMachineValue
+                                    machineRuntimeJSONValue
                                 )
                             )
                         }
@@ -916,7 +916,7 @@ public enum StatusService {
         }
         fields["diagnostics"] = .object(
             payload.diagnostics.mapValues(
-                playCoverRuntimeJSONMachineValue
+                machineRuntimeJSONValue
             )
         )
         return .object(fields)
@@ -985,24 +985,7 @@ public enum StatusService {
         ])
     }
 
-    static func playCoverRuntimeJSONMachineValue(
-        _ value: PlayCoverRuntimeJSONValue
-    ) -> MachineValue {
-        switch value {
-        case .null:
-            return .null
-        case .bool(let value):
-            return .boolean(value)
-        case .number(let value):
-            return .double(value)
-        case .string(let value):
-            return .string(value)
-        case .array(let values):
-            return .array(values.map(playCoverRuntimeJSONMachineValue))
-        case .object(let values):
-            return .object(values.mapValues(playCoverRuntimeJSONMachineValue))
-        }
-    }
+
 
     private static func formatRuntimeNumber(_ value: Double) -> String {
         value.rounded() == value

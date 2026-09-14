@@ -22,7 +22,30 @@ permissions:
   contents: write
 
 jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    container: swift:6.2.4-jammy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - run: bash scripts/build_swift_cli.sh
+      - run: mkdir -p release && cp ios-use release/ios-use-linux-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: release/ios-use-linux-${{ matrix.arch }}
+
   release:
+    needs: linux
     name: Build and upload release assets
     runs-on: macos-26
     steps:
@@ -117,12 +140,23 @@ jobs:
       - name: Verify the exact release assets through an isolated install
         run: bash scripts/test_playcover_installed_layout.sh --release-dir release --verify-only
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          merge-multiple: true
+          path: release
+
+      - name: Include Linux assets in release checksums
+        run: cd release && shasum -a 256 ios-use-linux-* >> SHA256SUMS
+
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.resolve_tag.outputs.tag }}
           files: |
             release/ios-use-darwin-arm64
+            release/ios-use-linux-x86_64
+            release/ios-use-linux-arm64
             release/driver.ipa
             release/driver-sim.ipa
             release/ios-use-mac-resources.tar.gz

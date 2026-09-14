@@ -12,7 +12,7 @@ let package = Package(
         .library(name: "IOSUseProtocol", targets: ["IOSUseProtocol"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apache/fory.git", branch: "main")
+        .package(url: "https://github.com/apache/fory.git", revision: "affbd38a5869a3ec4deaf51a762bedf2c90400d5")
     ],
     targets: [
         .target(

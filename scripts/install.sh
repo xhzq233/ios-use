@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "ios-use requires macOS." >&2
-  exit 1
-fi
+HOST_OS="$(uname -s)"
+case "$HOST_OS" in
+  Darwin|Linux) ;;
+  *) echo "ios-use requires macOS or Linux." >&2; exit 1 ;;
+esac
 
 USER_TARGET_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 PRIMARY_TARGET_DIR="$USER_TARGET_DIR"
@@ -48,7 +49,8 @@ Environment:
   IOS_USE_GITHUB_REPO   GitHub repository. Defaults to xhzq233/ios-use.
 
 Requirements:
-  Apple Silicon macOS. A source build additionally requires full Xcode,
+  Linux x86_64/aarch64 (Ubuntu 22.04+), or Apple Silicon macOS.
+  Linux source builds require Swift 6.2+; Mac source builds require full Xcode,
   Swift, and xcodegen; install xcodegen with `brew install xcodegen`.
 USAGE
 }
@@ -87,11 +89,13 @@ INSTALL_VERSION="${CLI_VERSION:-${IOS_USE_VERSION:-${IOS_USE_DRIVER_VERSION:-lat
 case "$(uname -m)" in
   arm64|aarch64) ;;
   x86_64)
-    echo "ios-use releases with the Mac Runtime require Apple Silicon; Intel macOS is unsupported." >&2
-    exit 1
+    if [[ "$HOST_OS" == "Darwin" ]]; then
+      echo "ios-use releases with the Mac Runtime require Apple Silicon; Intel macOS is unsupported." >&2
+      exit 1
+    fi
     ;;
   *)
-    echo "Unsupported macOS architecture: $(uname -m)" >&2
+    echo "Unsupported architecture: $(uname -m)" >&2
     exit 1
     ;;
 esac
@@ -100,14 +104,16 @@ if [[ "$BUILD_FROM_SOURCE" -eq 1 ]]; then
     echo "Swift is required for --build-from-source." >&2
     exit 1
   }
-  command -v xcodegen >/dev/null 2>&1 || {
-    echo "xcodegen is required for --build-from-source; install it with: brew install xcodegen" >&2
-    exit 1
-  }
-  xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1 || {
-    echo "Full Xcode with the iPhoneOS SDK is required for --build-from-source." >&2
-    exit 1
-  }
+  if [[ "$HOST_OS" == "Darwin" ]]; then
+    command -v xcodegen >/dev/null 2>&1 || {
+      echo "xcodegen is required for --build-from-source; install it with: brew install xcodegen" >&2
+      exit 1
+    }
+    xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1 || {
+      echo "Full Xcode with the iPhoneOS SDK is required for --build-from-source." >&2
+      exit 1
+    }
+  fi
 fi
 if [[ "$INSTALL_VERSION" == "latest" ]]; then
   release_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' \
@@ -169,6 +175,10 @@ build_or_download_cli() {
     fi
     echo "Compiling ios-use binary from source..."
     bash "$ROOT_DIR/scripts/build_swift_cli.sh"
+    if [[ "$HOST_OS" == "Linux" ]]; then
+      install -m 755 "$ROOT_DIR/ios-use" "$OUTFILE"
+      return
+    fi
     local engine="$ROOT_DIR/.ios-use/playcover/IOSUseFridaEngine.framework"
     if [[ -e "$engine" ]]; then
       bash "$ROOT_DIR/scripts/build_playcover_frida_engine.sh" \
@@ -186,6 +196,12 @@ build_or_download_cli() {
   fi
 
   download_release_checksums
+  if [[ "$HOST_OS" == "Linux" ]]; then
+    local arch="$(uname -m)"
+    [[ "$arch" != "aarch64" ]] || arch="arm64"
+    download_checked_release_asset "ios-use-linux-$arch" "$OUTFILE"
+    return
+  fi
   download_checked_release_asset "$(mac_cli_asset_name)" "$OUTFILE"
   download_checked_release_asset \
     "ios-use-mac-resources.tar.gz" \
@@ -213,7 +229,11 @@ download_checked_release_asset() {
 
   echo "Downloading ${asset} ${INSTALL_VERSION}..."
   curl -fsSL "$(release_asset_url "$INSTALL_VERSION" "$asset")" -o "$destination"
-  actual="$(shasum -a 256 "$destination" | awk '{print $1}')"
+  if [[ "$HOST_OS" == "Linux" ]]; then
+    actual="$(sha256sum "$destination" | awk '{print $1}')"
+  else
+    actual="$(shasum -a 256 "$destination" | awk '{print $1}')"
+  fi
   if [[ "$actual" != "$expected" ]]; then
     echo "Checksum mismatch for $asset." >&2
     exit 1
@@ -246,7 +266,11 @@ install_driver_artifact() {
   fi
   echo "Downloading ${asset} ${DRIVER_VERSION}..."
   curl -fsSL "$(release_asset_url "$DRIVER_VERSION" "$asset")" -o "$destination"
-  actual="$(shasum -a 256 "$destination" | awk '{print $1}')"
+  if [[ "$HOST_OS" == "Linux" ]]; then
+    actual="$(sha256sum "$destination" | awk '{print $1}')"
+  else
+    actual="$(shasum -a 256 "$destination" | awk '{print $1}')"
+  fi
   if [[ "$actual" != "$expected" ]]; then
     echo "Checksum mismatch for ${asset} ${DRIVER_VERSION}." >&2
     exit 1
@@ -393,10 +417,14 @@ install_binary() {
   local install_prefix="$2"
   mkdir -p "$target_dir" "$HOME/.ios-use/runtime"
   install -m 755 "$OUTFILE" "$target_dir/ios-use"
-  install_playcover_resources "$install_prefix"
+  if [[ "$HOST_OS" == "Darwin" ]]; then
+    install_playcover_resources "$install_prefix"
+  fi
 
   install_driver_artifact "driver.ipa" "$HOME/.ios-use/driver.ipa"
-  install_driver_artifact "driver-sim.ipa" "$HOME/.ios-use/driver-sim.ipa"
+  if [[ "$HOST_OS" == "Darwin" ]]; then
+    install_driver_artifact "driver-sim.ipa" "$HOME/.ios-use/driver-sim.ipa"
+  fi
 
   # skill: install to ~/.ios-use/skill/, symlink to ~/.agents/skills/ios-use
   local skill_src="$ROOT_DIR/ios-use-skill"
@@ -410,6 +438,8 @@ install_binary() {
   fi
 
   cleanup_legacy_flow_artifacts
+
+  [[ "$HOST_OS" == "Darwin" ]] || return 0
 
   # altsign-cli: GitHub Release
   local alt_bin="$HOME/.ios-use/altsign-cli/altsign-cli"
@@ -475,6 +505,14 @@ if [[ "$PRINT_PATH_ONLY" -eq 1 ]]; then
 fi
 
 echo "Installed ios-use to $TARGET_PATH"
+
+if [[ "$HOST_OS" == "Linux" ]]; then
+  echo "Next: start the Driver with your device provider, then attach:"
+  echo "  ios-use attach -d phone --host <host> --port <port>"
+  echo "  ios-use dom -d phone"
+  echo "Binary: $TARGET_PATH (add $TARGET_DIR to PATH if needed)"
+  exit 0
+fi
 
 if ! xcrun --find simctl >/dev/null 2>&1; then
   echo ""

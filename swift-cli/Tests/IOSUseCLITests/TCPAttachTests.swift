@@ -6,7 +6,11 @@ final class TCPAttachTests: XCTestCase {
     private func withPaths(_ body: (IOSUsePaths) throws -> Void) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
+        #if os(Linux)
+        try body(IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root.path]))
+        #else
         try body(resolvePlayCoverTestPaths(environment: ["IOS_USE_HOME": root.path]))
+        #endif
     }
 
     func testAttachRoutesTwoEndpointsAndDetachLeavesDriverAlive() throws {

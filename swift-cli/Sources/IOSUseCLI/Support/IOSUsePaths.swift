@@ -1,5 +1,7 @@
 import Foundation
+#if os(macOS)
 import CryptoKit
+#endif
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -50,6 +52,7 @@ public struct IOSUsePaths: Equatable, Sendable {
         homeID: String,
         socketRoot: String
     ) throws -> String {
+#if os(macOS)
         let token = sessionID
             .unicodeScalars
             .filter { CharacterSet.alphanumerics.contains($0) }
@@ -87,6 +90,9 @@ public struct IOSUsePaths: Equatable, Sendable {
             )
         }
         return socket
+#else
+        throw CLIParseError.invalidValue("Mac runtime sockets require macOS.")
+#endif
     }
 
     private static func canonicalExistingPath(_ path: String) -> String {
@@ -128,9 +134,13 @@ public struct IOSUsePaths: Equatable, Sendable {
         let canonicalConfiguredRoot = canonicalExistingPrefix(
             configured.root
         )
+#if os(macOS)
         let homeID = SHA256.hash(
             data: Data(canonicalConfiguredRoot.utf8)
         ).map { String(format: "%02x", $0) }.joined()
+#else
+        let homeID = "" // Only used by the Mac runtime.
+#endif
         let accountCacheRoot =
             "\(accountHome)/Library/Caches/dev.ios-use"
         let accountApplicationSupportRoot =

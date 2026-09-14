@@ -1,5 +1,7 @@
 import Foundation
-#if canImport(Darwin)
+#if os(Linux)
+import Glibc
+#else
 import Darwin
 #endif
 
@@ -26,7 +28,7 @@ enum SessionOperationLock {
         processLock.lock()
         defer { processLock.unlock() }
 
-        #if canImport(Darwin)
+        #if os(macOS) || os(Linux)
         return try withSecureStateDirectory(paths: paths) {
             descriptor,
             stateURL in
@@ -44,13 +46,13 @@ enum SessionOperationLock {
         #endif
     }
 
-    #if canImport(Darwin)
+    #if os(macOS) || os(Linux)
     static func withSecureStateDirectory<T>(
         paths: IOSUsePaths,
         _ operation: (Int32, URL) throws -> T
     ) throws -> T {
         let stateDirectory = try openManagedStateDirectory(paths: paths)
-        defer { Darwin.close(stateDirectory.descriptor) }
+        defer { close(stateDirectory.descriptor) }
         return try operation(
             stateDirectory.descriptor,
             stateDirectory.url
@@ -93,7 +95,7 @@ enum SessionOperationLock {
                 .dropFirst()
         )
         let ownerControlledStart = max(0, components.count - 2)
-        var descriptor = Darwin.open(
+        var descriptor = open(
             "/",
             O_RDONLY | O_DIRECTORY | O_CLOEXEC
         )
@@ -105,25 +107,25 @@ enum SessionOperationLock {
         var succeeded = false
         defer {
             if !succeeded {
-                Darwin.close(descriptor)
+                close(descriptor)
             }
         }
         for (index, component) in components.enumerated() {
             var created = false
-            var child = Darwin.openat(
+            var child = openat(
                 descriptor,
                 component,
                 O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
             )
             if child < 0, errno == ENOENT {
-                guard Darwin.mkdirat(descriptor, component, 0o700) == 0
+                guard mkdirat(descriptor, component, 0o700) == 0
                         || errno == EEXIST else {
                     throw SessionOperationLockError(
                         message: "cannot create Mac state component "
                             + "\(component): errno \(errno)"
                     )
                 }
-                child = Darwin.openat(
+                child = openat(
                     descriptor,
                     component,
                     O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
@@ -141,7 +143,7 @@ enum SessionOperationLock {
                 var status = stat()
                 guard fstat(child, &status) == 0,
                       status.st_uid == geteuid() else {
-                    Darwin.close(child)
+                    close(child)
                     throw SessionOperationLockError(
                         message: "Mac state component is not owner-controlled: "
                             + component
@@ -149,14 +151,14 @@ enum SessionOperationLock {
                 }
                 if status.st_mode & 0o7777 != 0o700,
                    fchmod(child, 0o700) != 0 {
-                    Darwin.close(child)
+                    close(child)
                     throw SessionOperationLockError(
                         message: "cannot secure Mac state component "
                             + "\(component): errno \(errno)"
                     )
                 }
             }
-            Darwin.close(descriptor)
+            close(descriptor)
             descriptor = child
         }
         succeeded = true
@@ -215,7 +217,7 @@ enum SessionOperationLock {
         }
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
         let resolved = existing.path.withCString {
-            Darwin.realpath($0, &buffer)
+            realpath($0, &buffer)
         }
         var result = resolved == nil
             ? existing.path
@@ -243,7 +245,7 @@ enum SessionOperationLock {
         }
 
         var created = false
-        var descriptor = Darwin.openat(
+        var descriptor = openat(
             directoryDescriptor,
             lockFilename,
             O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
@@ -252,7 +254,7 @@ enum SessionOperationLock {
         if descriptor >= 0 {
             created = true
         } else if errno == EEXIST {
-            descriptor = Darwin.openat(
+            descriptor = openat(
                 directoryDescriptor,
                 lockFilename,
                 O_RDWR | O_CLOEXEC | O_NOFOLLOW
@@ -263,21 +265,21 @@ enum SessionOperationLock {
                 message: "cannot open \(lockPath): errno \(errno)"
             )
         }
-        defer { Darwin.close(descriptor) }
+        defer { close(descriptor) }
 
         try validateLockDescriptor(
             descriptor,
             created: created
         )
 
-        while Darwin.lockf(descriptor, F_LOCK, 0) != 0 {
+        while lockf(descriptor, F_LOCK, 0) != 0 {
             guard errno == EINTR else {
                 throw SessionOperationLockError(
                     message: "cannot acquire \(lockPath): errno \(errno)"
                 )
             }
         }
-        defer { _ = Darwin.lockf(descriptor, F_ULOCK, 0) }
+        defer { _ = lockf(descriptor, F_ULOCK, 0) }
 
         try validateNamedLock(
             descriptor: descriptor,
@@ -334,7 +336,7 @@ enum SessionOperationLock {
         var descriptorStatus = stat()
         var namedStatus = stat()
         guard fstat(descriptor, &descriptorStatus) == 0,
-              Darwin.fstatat(
+              fstatat(
                 directoryDescriptor,
                 lockFilename,
                 &namedStatus,

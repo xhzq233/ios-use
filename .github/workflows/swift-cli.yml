@@ -50,3 +50,24 @@ jobs:
 
       - name: Run the complete Swift CLI gate once
         run: bash scripts/test_swift_cli.sh
+
+  linux:
+    name: Linux TCP (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    container: swift:6.2.4-jammy
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path swift-cli -j 4
+      - run: bash scripts/build_swift_cli.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-use-linux-${{ matrix.arch }}
+          path: ios-use
