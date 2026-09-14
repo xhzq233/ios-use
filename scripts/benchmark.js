@@ -353,15 +353,15 @@ Driver identity check:
 
 Examples:
   # Fast read-path ios-use benchmark, no signing/building/config:
-  node scripts/benchmark.js --bench ios-use --udid 00008150-0015309E2EE3401C \\
+  node scripts/benchmark.js --bench ios-use --udid '<device-udid>' \\
     --driver-ipa .ios-use/driver.ipa --preset read --iterations 5
 
   # Full ios-use benchmark with baseline comparison:
-  node scripts/benchmark.js --bench ios-use --udid 00008150-0015309E2EE3401C \\
+  node scripts/benchmark.js --bench ios-use --udid '<device-udid>' \\
     --driver-ipa .ios-use/driver.ipa --baseline ~/.ios-use/artifacts/benchmark/old.json
 
   # WDA/Appium benchmark only:
-  node scripts/benchmark.js --bench wda --udid 00008150-0015309E2EE3401C \\
+  node scripts/benchmark.js --bench wda --udid '<device-udid>' \\
     --wda-bundle-id com.example.WebDriverAgentRunner.xctrunner --preset read
 `.trim());
 }

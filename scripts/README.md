@@ -199,14 +199,14 @@ Benchmark quick examples:
 ```bash
 # ios-use read-path benchmark; no build/sign/config happens inside the script.
 node scripts/benchmark.js --bench ios-use \
-  --udid 00008150-0015309E2EE3401C \
+  --udid '<device-udid>' \
   --driver-ipa .ios-use/driver.ipa \
   --preset read \
   --iterations 5
 
 # WDA read-path benchmark.
 node scripts/benchmark.js --bench wda \
-  --udid 00008150-0015309E2EE3401C \
+  --udid '<device-udid>' \
   --wda-bundle-id com.example.WebDriverAgentRunner.xctrunner \
   --preset read
 ```
