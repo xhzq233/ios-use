@@ -6,7 +6,10 @@ import Fory
 
 enum ScreenCommands {
     /// Captures a JPEG screenshot and returns it as a ForyResponseFrame.
-    static func screenshot() throws -> ForyResponseFrame {
+    static func screenshot(_ args: ForyScreenshotArgs = ForyScreenshotArgs()) throws -> ForyResponseFrame {
+        if args.waitQuiescence {
+            Quiescence.wait(app: try Session.shared.ensureActive(), command: "screenshot")
+        }
         var error: NSError?
         guard let jpeg = XCRequestScreenshotJPEG(CGFloat(IOSUseProtocol.screenshotJpegQuality), &error) as Data? else {
             throw DriverError.screenshotFailed("JPEG capture failed: \(error?.localizedDescription ?? "unknown error")")

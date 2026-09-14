@@ -57,6 +57,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
     private let session: SessionService.Info
     private let runtimeRequester: RuntimeRequester
     private let mediaImporter: MediaImporter
+    private var verifiedSelectionInput = false
 
     convenience init(session: SessionService.Info) {
         self.init(
@@ -302,6 +303,41 @@ final class PlayCoverDriverClient: DriverCommandClient {
         ) else {
             throw PlayCoverDriverClientError
                 .malformedRuntimePayload("input response type")
+        }
+        return try mapAction(payload)
+    }
+
+    func textInput(_ args: ForyTextInputArgs) throws -> ForyElementPayload {
+        let isReturn = args.operation == "key"
+        if args.operation == "key" {
+            guard ["return", "enter", "kp_enter"].contains(args.text.lowercased()) else {
+                throw CLIParseError.invalidValue("Mac pressKey currently supports Return/Enter only")
+            }
+        }
+        guard isReturn || ["replace", "select", "type"].contains(args.operation) else {
+            throw CLIParseError.invalidValue("Unsupported Mac text operation: \(args.operation)")
+        }
+        // Older runtimes accept `input` but ignore new optional edit fields.
+        // Check their existing capability inventory once before any mutation.
+        if !verifiedSelectionInput {
+            guard case .hello(let hello) = try request(.hello, arguments: .empty()),
+                  hello.capabilities.contains("inputSelection") else {
+                throw CLIParseError.invalidValue("Restart the Mac App with this ios-use version before using MCP text input")
+            }
+            verifiedSelectionInput = true
+        }
+        var arguments = PlayCoverRuntimeInputArguments(
+            target: isReturn || args.operation == "type" ? nil : mapTarget(args.target, traits: nil, cindex: nil),
+            content: isReturn || args.operation == "select" ? "" : args.text,
+            enter: isReturn
+        )
+        arguments.textOperation = isReturn ? "type" : args.operation
+        arguments.selectionText = args.text
+        arguments.selectionPrefix = args.prefix
+        arguments.selectionSuffix = args.suffix
+        arguments.selectionType = args.selectionType
+        guard case .input(let payload) = try request(.input, arguments: .input(arguments)) else {
+            throw PlayCoverDriverClientError.malformedRuntimePayload("input response type")
         }
         return try mapAction(payload)
     }

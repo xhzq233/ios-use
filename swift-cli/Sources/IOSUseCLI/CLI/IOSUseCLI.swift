@@ -475,7 +475,7 @@ public struct IOSUseCLI: Sendable {
                 startUDID: nil
             )
 
-        case .du, .status, .config,
+        case .du, .status, .mcp, .config,
                 .proxy(.doctor), .proxy(.configca):
             guard explicitDeviceID == nil else {
                 throw CLIParseError.invalidValue(
@@ -606,6 +606,8 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .mcp:
+            return MCPService.run(paths: paths)
         case .config(let options) where options.playCover:
             return executePlayCoverConfiguration(json: json)
         case .config(let options) where options.list:
@@ -940,7 +942,7 @@ public struct IOSUseCLI: Sendable {
             )
         } catch {
             switch command {
-            case .du, .status, .config, .start, .stop:
+            case .du, .status, .mcp, .config, .start, .stop:
                 return nil
             case .open:
                 return commandFailure(
@@ -963,7 +965,7 @@ public struct IOSUseCLI: Sendable {
             return nil
         }
         switch command {
-        case .du, .status, .config, .start, .stop, .capture, .open, .oslog, .debug, .uiTree:
+        case .du, .status, .mcp, .config, .start, .stop, .capture, .open, .oslog, .debug, .uiTree:
             return nil
         case .mediaImport:
             return nil

@@ -382,6 +382,7 @@ public enum DriverCommand: String, CaseIterable, Sendable {
     case tap
     case longPress
     case input
+    case textInput
     case swipe
     case waitFor
     case dismissAlert
@@ -459,6 +460,12 @@ public enum InputCommand: DriverCommandBinding {
     public static let command = DriverCommand.input
 }
 
+public enum TextInputCommand: DriverCommandBinding {
+    public typealias Args = ForyTextInputArgs
+    public typealias Payload = ForyElementPayload
+    public static let command = DriverCommand.textInput
+}
+
 public enum SwipeCommand: DriverCommandBinding {
     public typealias Args = ForySwipeArgs
     public typealias Payload = ForySwipePayload
@@ -509,7 +516,7 @@ public extension DriverCommand {
         case .proxyCAPush:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyProxyCAPushArgs.self), payloadTypeName: String(describing: ForyProxyPayload.self), mutatesUI: true)
         case .screenshot:
-            DriverCommandMetadata(command: self, argsTypeName: nil, payloadTypeName: String(describing: ForyScreenshotPayload.self), mutatesUI: false)
+            DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyScreenshotArgs.self), payloadTypeName: String(describing: ForyScreenshotPayload.self), mutatesUI: false)
         case .dom:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyDomArgs.self), payloadTypeName: String(describing: ForyDomPayload.self), mutatesUI: false)
         case .tap:
@@ -518,6 +525,8 @@ public extension DriverCommand {
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyLongPressArgs.self), payloadTypeName: String(describing: ForyElementPayload.self), mutatesUI: true)
         case .input:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyInputArgs.self), payloadTypeName: nil, mutatesUI: true)
+        case .textInput:
+            DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyTextInputArgs.self), payloadTypeName: String(describing: ForyElementPayload.self), mutatesUI: true)
         case .swipe:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForySwipeArgs.self), payloadTypeName: String(describing: ForySwipePayload.self), mutatesUI: true)
         case .waitFor:

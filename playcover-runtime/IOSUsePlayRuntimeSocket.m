@@ -383,6 +383,7 @@ static NSArray<NSString *> *IOSUseCapabilities(BOOL requiredHooksReady) {
         @"longPress",
         @"swipe",
         @"input",
+        @"inputSelection",
         @"dismissAlert",
         @"dismissAlertByLabel",
         @"debug",

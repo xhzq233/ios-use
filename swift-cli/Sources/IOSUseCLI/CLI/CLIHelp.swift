@@ -22,7 +22,7 @@ enum CLIHelp {
           -d, --device <id>  Select a running Device; optional only when one runs
 
         Commands:
-          du, status, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
+          du, status, mcp, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
           activateApp, terminateApp, home, rotate, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
@@ -82,6 +82,27 @@ enum CLIHelp {
               --verbose    Enable verbose device output
               --json       Print the common machine-readable envelope
 
+            """
+        case "mcp":
+            return """
+            Usage: ios-use mcp
+
+            Run a local stdio MCP server with js and js_reset tools.
+            JavaScript variables, Device handles, and Driver connections persist
+            across js calls. Text and images are returned as MCP content.
+
+            Register with Codex:
+              codex mcp add ios-use -- ios-use mcp
+
+            In the js tool:
+              await cua.getState()
+              let device = await cua.getDevice("device-id")
+              await device.getAXState()
+              await device.getScreenshot()
+
+            JavaScript is embedded; no Node.js required. Use one server process per Agent conversation.
+            Exiting closes this client's connections; Device Drivers stay running.
+            Device setup remains: ios-use config --udid <id>; ios-use start <id>
             """
         case "config":
             return """

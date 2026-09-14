@@ -12,8 +12,14 @@ framework.
 | PlayTools | `d688f695e83bf080be9ad4b7346e914c7c343d96` | AGPL-3.0 — `playcover-runtime/PlayTools/LICENSE` | `playcover-runtime/PlayTools/PROVENANCE.md` |
 | inject | `e6d3aa4abe106f90fd8c5a1ca04db15c19d324eb` | GPL-3.0 — `ThirdParty/inject/LICENSE` | `ThirdParty/inject/PROVENANCE.md` |
 | Frida GumJS static closure | See `ThirdParty/Frida/PROVENANCE.md` | wxWindows/LGPL/MIT/BSD/Public Domain — generated as `IOSUseFridaEngine.framework/Resources/ThirdPartyNotices.txt` | `ThirdParty/Frida/PROVENANCE.md` |
+| QuickJS C engine / QuickJS-Swift SPM packaging | See `swift-cli/Package.resolved` | MIT — `ThirdParty/QuickJS/LICENSE` | Public source: https://github.com/zqqf16/QuickJS-Swift |
 
 The exact ios-use tag contains vendored PlayCover, PlayTools, and inject source.
 The release build creates the Frida Engine only after fetching and validating
 the exact public commits named in `ThirdParty/Frida/PROVENANCE.md`; those
 temporary build checkouts are not release assets.
+
+QuickJS is fetched by SwiftPM and statically linked into the MCP host. Its source
+version is recorded in `swift-cli/Package.resolved`; the notice above is retained
+with the tagged source. MCP uses the C embedding API, not the package's Swift
+runtime wrapper.

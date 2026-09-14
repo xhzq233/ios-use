@@ -9,6 +9,17 @@ Use the App project's context for business entry points and expected results.
 Keep an existing local or remote device session; device-host setup is separate
 from using that session.
 
+## MCP automation
+
+Use the ios-use `js` tool for UI actions. Start with `await cua.getState()` to
+discover Devices, or `let device = await cua.getDevice(knownDeviceID)` when the
+target is known. Selection returns API help and the initial AX state.
+
+Follow the returned API guidance. Keep the Device handle across calls, perform
+actions and observe their result in the same call when practical.
+[MCP](references/mcp.md) covers registration and ios-use-specific behavior.
+If the server is unavailable, register it and start a new Agent session.
+
 ## Native CLI
 
 When using the CLI, discover the target with `ios-use status`. With multiple

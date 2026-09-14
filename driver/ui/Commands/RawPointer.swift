@@ -2,6 +2,7 @@ import XCTest
 
 enum RawPointerEvent {
     case tap(CGPoint)
+    case clicks(CGPoint, count: Int)
     case longPress(CGPoint, duration: Double)
     case drag(start: XCUICoordinate, end: XCUICoordinate, pressDuration: Double, velocity: Double, holdDuration: Double)
 }
@@ -14,6 +15,9 @@ enum RawPointer {
         case .tap(let point):
             var error: NSError?
             guard XCSynthesizeTapAtPoint(point, &error) else { return error }
+        case .clicks(let point, let count):
+            var error: NSError?
+            guard XCSynthesizeTapsAtPoint(point, UInt(count), &error) else { return error }
 
         case .longPress(let point, let duration):
             var error: NSError?

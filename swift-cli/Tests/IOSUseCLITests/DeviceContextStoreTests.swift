@@ -50,6 +50,19 @@ final class DeviceContextStoreTests: XCTestCase {
         )
     }
 
+    func testMCPClientsAreIsolatedWithinOneHome() throws {
+        let paths = IOSUsePaths.resolve(environment: [
+            "IOS_USE_HOME": FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString).path,
+        ])
+        let pool = MCPDriverSessionPool()
+        defer { pool.close() }
+        let first = try paths.deviceContext("DEVICE-A")
+        let second = try paths.deviceContext("DEVICE-B")
+        XCTAssertTrue(pool.session(paths: first) === pool.session(paths: first))
+        XCTAssertFalse(pool.session(paths: first) === pool.session(paths: second))
+    }
+
     func testExplicitSelectionPreservesLegacyPriorityAndRefreshesTarget() throws {
         try withTemporaryPaths { paths in
             let targetPaths = try paths.deviceContext("DEVICE-A")

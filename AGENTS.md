@@ -14,6 +14,7 @@ Key paths:
 - `driver/tcp/`: TCP server and Fory codec.
 - `driver/ui/`: XCTest UI actions, DOM, element lookup, waits, screenshots, and driver-side commands.
 - `scripts/`: build, install, test, Simulator matrix, and benchmark entry points.
+- `eval/`: reproducible Agent task evaluations and environment templates.
 - `swift-cli/Tests/` and `driver/tests/`: host and driver unit tests.
 - `ios-use-skill/`: user-facing CLI usage guidance. Keep leaf implementation context in this repository, cross-project coordination context in ContextShell, and the installed skill strictly user-facing.
 
