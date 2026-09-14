@@ -785,6 +785,9 @@ BOOL SnapshotMatchesElement(id a, id b) {
     BOOL _focusCached;
     BOOL _keyboardFocusCached;
     NSArray<SafeSnapshot *> *_children;
+    // The tree owns its children; their backlinks must not retain it.
+    __weak SafeSnapshot *_treeParent;
+    // Standalone raw snapshots own the ancestor wrappers they create lazily.
     SafeSnapshot *_parent;
     BOOL _parentResolved;
     NSArray<SafeSnapshot *> *_allDescendantsCache;
@@ -1031,7 +1034,7 @@ BOOL SnapshotMatchesElement(id a, id b) {
             for (id child in childrenToWrap) {
                 @autoreleasepool {
                     SafeSnapshot *wrap = [[SafeSnapshot alloc] initWithRaw:child appFrame:_appFrame];
-                    wrap->_parent = self;
+                    wrap->_treeParent = self;
                     wrap->_parentResolved = YES;
                     [wrapped addObject:wrap];
                 }
@@ -1043,6 +1046,8 @@ BOOL SnapshotMatchesElement(id a, id b) {
 }
 
 - (SafeSnapshot *)parent {
+    SafeSnapshot *treeParent = _treeParent;
+    if (treeParent) return treeParent;
     if (!_parentResolved) {
         _parentResolved = YES;
         id rawParent = [self valueForKeySafely:@"parent"];
@@ -1056,7 +1061,7 @@ BOOL SnapshotMatchesElement(id a, id b) {
 - (NSArray<SafeSnapshot *> *)allDescendants {
     if (_allDescendantsCache) return _allDescendantsCache;
     NSMutableArray<SafeSnapshot *> *out = [NSMutableArray array];
-    NSMutableArray<SafeSnapshot *> *stack = [NSMutableArray arrayWithArray:self.children];
+    NSMutableArray<SafeSnapshot *> *stack = [NSMutableArray arrayWithArray:self.children.reverseObjectEnumerator.allObjects];
     while (stack.count > 0) {
         SafeSnapshot *node = stack.lastObject;
         [stack removeLastObject];

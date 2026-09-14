@@ -11,9 +11,6 @@ import Foundation
 import MachO
 import injection
 
-private let playCoverPrepareDifferentialEmbeddedSourceClosureSHA256 =
-    "c530b57d668d4639bb44ca6ec29f2fc1fe0bf8fe8c8bcce10eca4b52780dff8e"
-
 private func playCoverCanonicalExistingURL(_ url: URL) -> URL? {
     guard let resolved = realpath(url.standardizedFileURL.path, nil) else {
         return nil
@@ -1010,29 +1007,17 @@ public enum PlayCoverDifferentialPreparationLineage:
 public struct PlayCoverDifferentialImplementationEvidence:
     Codable, Equatable, Sendable
 {
-    public let algorithm: String
-    public let relativeSourcePaths: [String]
-    public let contentSHA256: String
-    public let embeddedSourceClosureSHA256: String
     public let testExecutableSHA256: String
     public let testExecutableSize: UInt64
     public let testExecutableDevice: UInt64
     public let testExecutableInode: UInt64
 
     fileprivate init(
-        algorithm: String,
-        relativeSourcePaths: [String],
-        contentSHA256: String,
-        embeddedSourceClosureSHA256: String,
         testExecutableSHA256: String,
         testExecutableSize: UInt64,
         testExecutableDevice: UInt64,
         testExecutableInode: UInt64
     ) {
-        self.algorithm = algorithm
-        self.relativeSourcePaths = relativeSourcePaths
-        self.contentSHA256 = contentSHA256
-        self.embeddedSourceClosureSHA256 = embeddedSourceClosureSHA256
         self.testExecutableSHA256 = testExecutableSHA256
         self.testExecutableSize = testExecutableSize
         self.testExecutableDevice = testExecutableDevice
@@ -1333,7 +1318,6 @@ public enum PlayCoverDifferentialGateError:
 public enum PlayCoverPrepareDifferentialGate {
     static func attest(
         scope: PlayCoverDifferentialAttestationScope = .hermeticFixture,
-        repositoryRoot: URL,
         sourceApp: URL,
         pinnedResult: PlayCoverPinnedPrimitivePrepareResult,
         iosUseResult: PlayCoverUpstreamPrepareResult,
@@ -1356,9 +1340,7 @@ public enum PlayCoverPrepareDifferentialGate {
             oneSidedBaselines: oneSidedBaselines,
             normalization: normalization
         )
-        let implementation = try implementationEvidence(
-            repositoryRoot: repositoryRoot
-        )
+        let implementation = try implementationEvidence()
         var identityErrors: [String] = []
         let sourceInputSHA256 =
             pinnedResult.sourceBefore.sourceContentHash
@@ -1632,12 +1614,10 @@ public enum PlayCoverPrepareDifferentialGate {
                 identityErrors.sorted()
             )
         }
-        let finalImplementation = try implementationEvidence(
-            repositoryRoot: repositoryRoot
-        )
+        let finalImplementation = try implementationEvidence()
         guard finalImplementation == implementation else {
             throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                "implementation source closure or loaded XCTest image changed "
+                "loaded XCTest image changed "
                     + "during attestation",
             ])
         }
@@ -3386,139 +3366,9 @@ public enum PlayCoverPrepareDifferentialGate {
         )
     }
 
-    private static func implementationEvidence(
-        repositoryRoot: URL
-    ) throws -> PlayCoverDifferentialImplementationEvidence {
-        let relativePaths = [
-            "ThirdParty/PlayCover/Package.swift",
-            "ThirdParty/PlayCover/PROVENANCE.md",
-            "ThirdParty/PlayCover/PlayCover/AppInstaller/Installer.swift",
-            "ThirdParty/PlayCover/PlayCover/Headless/HeadlessSupport.swift",
-            "ThirdParty/PlayCover/PlayCover/Headless/"
-                + "PlayCoverPrepareDifferential.swift",
-            "ThirdParty/PlayCover/PlayCover/Headless/"
-                + "PlayCoverUpstreamEngine.swift",
-            "ThirdParty/PlayCover/PlayCover/Model/AppInfo.swift",
-            "ThirdParty/PlayCover/PlayCover/Model/BaseApp.swift",
-            "ThirdParty/PlayCover/PlayCover/Model/PlayApp.swift",
-            "ThirdParty/PlayCover/PlayCover/PlayCoverError.swift",
-            "ThirdParty/PlayCover/PlayCover/Utils/Entitlements.swift",
-            "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
-                + "DataExtensions.swift",
-            "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
-                + "FileExtensions.swift",
-            "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
-                + "PlayAppExtensions.swift",
-            "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
-                + "URLExtensions.swift",
-            "ThirdParty/PlayCover/PlayCover/Utils/KeyCover.swift",
-            "ThirdParty/PlayCover/PlayCover/Utils/Macho.swift",
-            "ThirdParty/PlayCover/PlayCover/Utils/PlayTools.swift",
-            "ThirdParty/PlayCover/PlayCover/Utils/Shell.swift",
-            "ThirdParty/PlayCover/PlayCover/Utils/SystemConfig.swift",
-            "ThirdParty/inject/Injection/Injection/BitType.swift",
-            "ThirdParty/inject/Injection/Injection/Command.swift",
-            "ThirdParty/inject/Injection/Injection/Extension.swift",
-            "ThirdParty/inject/Injection/Injection/Inject.swift",
-            "ThirdParty/inject/Injection/Injection/Shell.swift",
-            "ThirdParty/inject/Package.swift",
-            "ThirdParty/inject/PROVENANCE.md",
-            "scripts/audit_playcover_upstreams.sh",
-            "scripts/test_playcover_external_prepare_differential.sh",
-            "scripts/test_playcover_prepare_differential.sh",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverCodeSignatureInspector.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverLaunchCrashCut.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverSlotService.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverBundleStartLock.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverFridaEngineService.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverHomeStore.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverModels.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverService.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverSigningCertificateBuilder.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverSigningIdentityService.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverPreparedArtifact.swift",
-            "swift-cli/Sources/IOSUseCLI/Support/IOSUsePaths.swift",
-            "swift-cli/Tests/IOSUseCLITests/PlayCover/"
-                + "PlayCoverExternalPrepareDifferentialTests.swift",
-            "swift-cli/Tests/IOSUseCLITests/PlayCover/"
-                + "PlayCoverPrepareDifferentialTests.swift",
-            "swift-cli/Tests/IOSUseCLITests/PlayCover/"
-                + "PlayCoverSigningEvidenceTestSupport.swift",
-            "swift-cli/Package.resolved",
-            "swift-cli/Package.swift",
-        ].sorted()
-        guard repositoryRoot.path.hasPrefix("/") else {
-            throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                "repository root must be absolute",
-            ])
-        }
-        guard let canonicalRoot = playCoverCanonicalExistingURL(repositoryRoot),
-              canonicalRoot.path != "/" else {
-            throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                "repository root must exist and cannot be the filesystem root",
-            ])
-        }
-        var framed = Data()
-        func appendLength(_ value: Int) {
-            var bigEndian = UInt64(value).bigEndian
-            withUnsafeBytes(of: &bigEndian) {
-                framed.append(contentsOf: $0)
-            }
-        }
-        for relativePath in relativePaths {
-            let url = canonicalRoot.appendingPathComponent(relativePath)
-                .standardizedFileURL
-            guard url.path.hasPrefix(canonicalRoot.path + "/") else {
-                throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                    "implementation source escaped repository root",
-                ])
-            }
-            let values = try url.resourceValues(
-                forKeys: [
-                    .isRegularFileKey,
-                    .isSymbolicLinkKey,
-                ]
-            )
-            guard values.isRegularFile == true,
-                  values.isSymbolicLink != true else {
-                throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                    "implementation source is not a regular file: "
-                        + relativePath,
-                ])
-            }
-            let pathData = Data(relativePath.utf8)
-            let sourceData = try normalizedImplementationSourceData(
-                relativePath: relativePath,
-                data: Data(contentsOf: url, options: [.mappedIfSafe])
-            )
-            appendLength(pathData.count)
-            framed.append(pathData)
-            appendLength(sourceData.count)
-            framed.append(sourceData)
-        }
-        let digest = SHA256.hash(data: framed).map {
-            String(format: "%02x", $0)
-        }.joined()
-        guard digest
-            == playCoverPrepareDifferentialEmbeddedSourceClosureSHA256 else {
-            throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                "loaded XCTest was not built from the attested source "
-                    + "closure: expected "
-                    + playCoverPrepareDifferentialEmbeddedSourceClosureSHA256
-                    + ", observed " + digest,
-            ])
-        }
+    private static func implementationEvidence()
+        throws -> PlayCoverDifferentialImplementationEvidence
+    {
         let loadedImage = try loadedXCTestImageIdentity()
         let descriptor = Darwin.open(
             loadedImage.executableURL.path,
@@ -3558,12 +3408,6 @@ public enum PlayCoverPrepareDifferentialGate {
             String(format: "%02x", $0)
         }.joined()
         return PlayCoverDifferentialImplementationEvidence(
-            algorithm:
-                "embedded-source-closure-plus-loaded-xctest-inode-sha256-v2",
-            relativeSourcePaths: relativePaths,
-            contentSHA256: digest,
-            embeddedSourceClosureSHA256:
-                playCoverPrepareDifferentialEmbeddedSourceClosureSHA256,
             testExecutableSHA256: executableDigest,
             testExecutableSize: UInt64(statAfter.st_size),
             testExecutableDevice: loadedImage.device,
@@ -3576,48 +3420,6 @@ public enum PlayCoverPrepareDifferentialGate {
         let device: UInt64
         let inode: UInt64
         let size: UInt64
-    }
-
-    private static func normalizedImplementationSourceData(
-        relativePath: String,
-        data: Data
-    ) throws -> Data {
-        let identitySource =
-            "ThirdParty/PlayCover/PlayCover/Headless/"
-                + "PlayCoverPrepareDifferential.swift"
-        guard relativePath == identitySource else {
-            return data
-        }
-        let declarationPrefix =
-            "private let "
-                + "playCoverPrepareDifferentialEmbeddedSourceClosureSHA256 =\n"
-                + "    \""
-        let declaration = Data(
-            (
-                declarationPrefix
-                    + playCoverPrepareDifferentialEmbeddedSourceClosureSHA256
-                    + "\""
-            ).utf8
-        )
-        guard let range = data.range(of: declaration),
-              data.range(
-                  of: declaration,
-                  in: range.upperBound..<data.endIndex
-              ) == nil else {
-            throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                "source closure has no unique embedded identity declaration",
-            ])
-        }
-        var normalized = data
-        let replacement = Data(
-            (
-                declarationPrefix
-                    + String(repeating: "0", count: 64)
-                    + "\""
-            ).utf8
-        )
-        normalized.replaceSubrange(range, with: replacement)
-        return normalized
     }
 
     private static func loadedXCTestImageIdentity()

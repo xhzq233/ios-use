@@ -68,6 +68,7 @@
 		DA5601431455E85F2C2A22DD /* AlertTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB2741BBB74FDE789DE9A76E /* AlertTests.swift */; };
 		DBC049498CB7F7EC52F82C1E /* Fory in Frameworks */ = {isa = PBXBuildFile; productRef = A7A16F95F6EFE334D2178CD8 /* Fory */; };
 		E1690C6B99691CCDC27F4FD6 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A0AC56CC6B8335709D4A71 /* App.swift */; };
+		E22B362CB94F81072E89664D /* SafeSnapshotLifetimeTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 74B30D4703D431F2CDA8F44C /* SafeSnapshotLifetimeTests.m */; };
 		EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
 		EFE1D91B69F3B440931AEBB9 /* DriverLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D2B90E83BBAE04E8408D34 /* DriverLog.swift */; };
 		F23939ACC634CC69D0D7C5E0 /* XCTestPrivate.m in Sources */ = {isa = PBXBuildFile; fileRef = 20C7C30497334B1AEE198AC3 /* XCTestPrivate.m */; };
@@ -95,6 +96,7 @@
 		688FE3DE301B8593639EAB9B /* Swipe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Swipe.swift; sourceTree = "<group>"; };
 		6E085B6529EF5B086A5B7A15 /* Types.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Types.swift; sourceTree = "<group>"; };
 		71A0AC56CC6B8335709D4A71 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		74B30D4703D431F2CDA8F44C /* SafeSnapshotLifetimeTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SafeSnapshotLifetimeTests.m; sourceTree = "<group>"; };
 		7C5B4B608C890EFE8841A177 /* Dom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dom.swift; sourceTree = "<group>"; };
 		7C773A75C11E5CE2360A4FB4 /* Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Input.swift; sourceTree = "<group>"; };
 		86D2B90E83BBAE04E8408D34 /* DriverLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverLog.swift; sourceTree = "<group>"; };
@@ -206,6 +208,7 @@
 				CB2741BBB74FDE789DE9A76E /* AlertTests.swift */,
 				AABACD4A116F231BF1D16712 /* CodecTests.swift */,
 				A475D40F69ED9E1065385F1D /* MediaTests.swift */,
+				74B30D4703D431F2CDA8F44C /* SafeSnapshotLifetimeTests.m */,
 				1FF2988F5EECDDB665288D5D /* ScrollMechanicsTests.swift */,
 				8A018728001BB6A88192EAFD /* ServerTests.swift */,
 				90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */,
@@ -353,6 +356,7 @@
 				2A99D7083199D3C052817376 /* Proxy.swift in Sources */,
 				C53710C5F3D909BEC3D85696 /* Quiescence.swift in Sources */,
 				71116604C00B45958024BAE0 /* RawPointer.swift in Sources */,
+				E22B362CB94F81072E89664D /* SafeSnapshotLifetimeTests.m in Sources */,
 				C17AD8E6E19EB9DF22D2E31E /* Screen.swift in Sources */,
 				1C91F8F5B711B3F109EAA537 /* ScrollMechanics.swift in Sources */,
 				B4E55F7E5EE6BCDF2396AC5C /* ScrollMechanicsTests.swift in Sources */,

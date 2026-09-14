@@ -1122,7 +1122,13 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertNil(lock.startMode)
         XCTAssertEqual(lock.sessionIdentifier, "SESSION-2")
         XCTAssertEqual(lock.bundleId, "com.example.driver")
-        let rawLock = try String(contentsOfFile: paths.driverLock, encoding: .utf8)
+        let contextPaths = try paths.deviceContext(
+            DeviceContextStore.realDeviceID("REAL-HOLDER")
+        )
+        let rawLock = try String(
+            contentsOfFile: contextPaths.driverLock,
+            encoding: .utf8
+        )
         XCTAssertFalse(rawLock.contains("startMode"))
     }
 
@@ -1271,21 +1277,45 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertNil(try SessionService.readDriverLockInfo(paths: paths))
     }
 
-    func testStartRejectsExistingLockAndPreservesIt() throws {
+    func testStartAllowsAnotherDeviceAndPreservesExistingLock() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try writeDriverLock(udid: "SIM-A", deviceType: "simulator", paths: paths, startedAt: 42)
-        SessionService.simulatorDriverLauncherForTesting = { _ in
-            XCTFail("start with existing driver.lock must not launch")
+        try """
+        {"devices":{"SIM-B":{"bundleId":"com.iosuse.xcuidriver.xctrunner","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(
+            toFile: "\(root)/config.json",
+            atomically: true,
+            encoding: .utf8
+        )
+        DeviceService.listDevicesOverrideForTesting = {
+            simulatorOnly,
+            _ in
+            simulatorOnly
+                ? [IOSDevice(
+                    name: "Second",
+                    version: "26.0",
+                    udid: "SIM-B",
+                    kind: .simulator
+                )]
+                : []
         }
+        SessionService.simulatorDriverLauncherForTesting = { _ in }
+        SessionService.simulatorDriverReachableForTesting = { true }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "SIM-B"])
 
-        XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("Driver already started for SIM-A"))
+        XCTAssertEqual(result.exitCode, 0)
         let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
         XCTAssertEqual(lock.udid, "SIM-A")
         XCTAssertEqual(lock.startedAt, 42)
+        let secondPaths = try paths.deviceContext(
+            DeviceContextStore.simulatorDeviceID("SIM-B")
+        )
+        XCTAssertEqual(
+            try SessionService.readDriverLockInfo(paths: secondPaths)?.udid,
+            "SIM-B"
+        )
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
     }
 

@@ -36,7 +36,7 @@ Usage: install.sh [--version <tag>] [--build-from-source] [--print-path]
 Options:
   --version <tag>      Release tag to install (e.g. v1.2.0). Defaults to latest.
   --build-from-source  Compile the Swift CLI and Mac Runtime from the
-                       selected source ref instead of downloading their
+                       selected release tag instead of downloading their
                        prebuilt GitHub Release assets.
   --print-path         Print the installed binary path after installation.
 
@@ -44,7 +44,7 @@ Environment:
   IOS_USE_VERSION       Release tag to install. Overridden by --version.
   IOS_USE_DRIVER_VERSION
                         Driver release tag override. Defaults to IOS_USE_VERSION.
-  IOS_USE_REF           Source ref used when source files are needed.
+  IOS_USE_INSTALL_SKILL Set to 0 when a consumer manages the Skill link.
   IOS_USE_GITHUB_REPO   GitHub repository. Defaults to xhzq233/ios-use.
 
 Requirements:
@@ -84,7 +84,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 INSTALL_VERSION="${CLI_VERSION:-${IOS_USE_VERSION:-${IOS_USE_DRIVER_VERSION:-latest}}}"
-DRIVER_VERSION="${IOS_USE_DRIVER_VERSION:-$INSTALL_VERSION}"
 case "$(uname -m)" in
   arm64|aarch64) ;;
   x86_64)
@@ -110,13 +109,12 @@ if [[ "$BUILD_FROM_SOURCE" -eq 1 ]]; then
     exit 1
   }
 fi
-if [[ -n "${IOS_USE_REF:-}" ]]; then
-  GITHUB_REF="$IOS_USE_REF"
-elif [[ "$INSTALL_VERSION" == "latest" ]]; then
-  GITHUB_REF="main"
-else
-  GITHUB_REF="$INSTALL_VERSION"
+if [[ "$INSTALL_VERSION" == "latest" ]]; then
+  release_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' \
+    "https://github.com/${GITHUB_REPO}/releases/latest")"
+  INSTALL_VERSION="${release_url##*/}"
 fi
+DRIVER_VERSION="${IOS_USE_DRIVER_VERSION:-$INSTALL_VERSION}"
 
 refresh_paths() {
   DIST_DIR="$ROOT_DIR/dist"
@@ -146,8 +144,8 @@ bootstrap_remote_repo() {
   fi
 
   BOOTSTRAP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ios-use-install.XXXXXX")"
-  local archive_url="https://codeload.github.com/${GITHUB_REPO}/tar.gz/${GITHUB_REF}"
-  echo "Downloading ios-use source from ${GITHUB_REPO}@${GITHUB_REF}..."
+  local archive_url="https://codeload.github.com/${GITHUB_REPO}/tar.gz/${INSTALL_VERSION}"
+  echo "Downloading ios-use source from ${GITHUB_REPO}@${INSTALL_VERSION}..."
   curl -fsSL "$archive_url" | tar -xzf - -C "$BOOTSTRAP_DIR"
   ROOT_DIR="$(find "$BOOTSTRAP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
   if [[ -z "$ROOT_DIR" || ! -d "$ROOT_DIR/ios-use-skill" ]]; then
@@ -404,7 +402,7 @@ install_binary() {
   local skill_src="$ROOT_DIR/ios-use-skill"
   local skill_dst="$HOME/.ios-use/skill"
   local skill_link="$HOME/.agents/skills/ios-use"
-  if [[ -d "$skill_src" ]]; then
+  if [[ "${IOS_USE_INSTALL_SKILL:-1}" != 0 && -d "$skill_src" ]]; then
     mkdir -p "$HOME/.agents/skills"
     rm -rf "$skill_dst"
     cp -R "$skill_src" "$skill_dst"

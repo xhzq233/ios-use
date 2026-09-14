@@ -7,7 +7,6 @@ enum DomCommands {
     /// doc 2.2 — nested tree with rule 1-6 applied (or raw if --raw).
     static func dom(_ args: ForyDomArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
-        let bundleId = app.value(forKey: "bundleID") as? String ?? ""
 
         if args.waitQuiescence {
             Quiescence.wait(app: app, command: "dom")
@@ -27,7 +26,7 @@ enum DomCommands {
             }
             let lines = formatRawTree(root, parentDisabled: false, indent: "")
             let payload = ForyDomPayload(
-                app: bundleId,
+                app: app.value(forKey: "bundleID") as? String ?? "",
                 windowSize: ForyPoint(
                     x: Double(Int(root.frame.size.width.rounded())),
                     y: Double(Int(root.frame.size.height.rounded()))
@@ -54,7 +53,7 @@ enum DomCommands {
         }
         let flatElements = serializeDomFlat(from: cs.elements)
         let payload = ForyDomPayload(
-            app: bundleId,
+            app: cs.bundleId,
             windowSize: ForyPoint(
                 x: Double(Int(cs.appFrame.size.width.rounded())),
                 y: Double(Int(cs.appFrame.size.height.rounded()))

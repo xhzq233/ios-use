@@ -977,4 +977,47 @@ final class CLIParserTests: XCTestCase {
             ParsedInvocation(command: .config(ConfigOptions(list: true)), json: true)
         )
     }
+
+    func testParsesGlobalDeviceSelection() throws {
+        XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "--device",
+                "real:DEVICE-1",
+                "--json",
+                "dom",
+            ]),
+            ParsedInvocation(
+                command: .driver(
+                    .dom(raw: false, fresh: false, waitQuiescence: false)
+                ),
+                json: true,
+                deviceID: "real:DEVICE-1"
+            )
+        )
+        XCTAssertThrowsError(
+            try CLIParser.parseInvocation([
+                "dom",
+                "--device",
+                "real:DEVICE-1",
+                "-d",
+                "real:DEVICE-2",
+            ])
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "dom",
+                "-d",
+                "mac",
+                "--json",
+            ]),
+            ParsedInvocation(
+                command: .driver(
+                    .dom(raw: false, fresh: false, waitQuiescence: false)
+                ),
+                json: true,
+                deviceID: "mac"
+            )
+        )
+    }
 }

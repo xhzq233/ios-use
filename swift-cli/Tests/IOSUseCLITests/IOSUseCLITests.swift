@@ -108,7 +108,7 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 64)
         XCTAssertTrue(result.stderr.contains("unknown option '--not-a-real-option'"))
-        XCTAssertTrue(result.stderr.contains("Usage: ios-use [--help] [--version] <command>"))
+        XCTAssertTrue(result.stderr.contains("Usage: ios-use [--help] [--version] [--device <device-id>] <command>"))
         XCTAssertTrue(result.stdout.isEmpty)
     }
 
@@ -509,7 +509,7 @@ final class IOSUseCLITests: XCTestCase {
     }
 
 
-    func testAppManagementCommandsRejectActiveSimulatorLock() throws {
+    func testSimulatorListsAppsButRejectsRealDevicePackageMutations() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-app-management-simulator-lock-\(UUID().uuidString)")
             .path
@@ -525,8 +525,11 @@ final class IOSUseCLITests: XCTestCase {
         AppManagementService.uninstallerForTesting = { _, _ in
             XCTFail("simulator lock must fail before uninstall")
         }
-        AppManagementService.appsProviderForTesting = { _, _ in
-            XCTFail("simulator lock must fail before apps")
+        var listRequests = 0
+        AppManagementService.appsProviderForTesting = { udid, includeSystem in
+            XCTAssertEqual(udid, "SIM-LOCK")
+            XCTAssertFalse(includeSystem)
+            listRequests += 1
             return []
         }
         addTeardownBlock {
@@ -542,8 +545,8 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(install.stderr.contains("install supports USB real devices only"))
         XCTAssertEqual(uninstall.exitCode, 1)
         XCTAssertTrue(uninstall.stderr.contains("uninstall supports USB real devices only"))
-        XCTAssertEqual(apps.exitCode, 1)
-        XCTAssertTrue(apps.stderr.contains("apps supports USB real devices only"))
+        XCTAssertEqual(apps.exitCode, 0)
+        XCTAssertEqual(listRequests, 1)
     }
 
 

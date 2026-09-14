@@ -96,8 +96,7 @@ Interrupting the stream closes observation; it does not remove the hook.
 ## Resolve APIs before attaching
 
 Use Frida's resolver in the App and keep both the module and symbol patterns
-narrow. This example searches the ExampleApp main module and caps displayed
-matches:
+narrow. This example searches one App module and caps displayed matches:
 
 ```bash
 ios-use debug - <<'JS'
@@ -121,7 +120,7 @@ Available resolver types and query shapes are:
   `+[<class-glob> <selector-glob>]` for Objective-C methods.
 
 Append `/i` to a whole query for case-insensitive matching, for example
-`functions:ExampleApp!*Feature*/i`. A resolver loads data lazily: reuse one resolver
+`functions:ExampleApp!*feature*/i`. A resolver loads data lazily: reuse one resolver
 instance for related queries in the same batch, and create a new instance for a
 later batch so its view is current. The Swift and Objective-C resolvers are only
 available when their runtimes are loaded; check `Swift.available` or

@@ -11,7 +11,10 @@ public enum CLIParser {
     }
 
     public static func parseInvocation(_ arguments: [String]) throws -> ParsedInvocation {
-        let (normalizedArguments, json) = extractGlobalJSONFlag(arguments)
+        let (argumentsWithoutJSON, json) = extractGlobalJSONFlag(arguments)
+        let (normalizedArguments, deviceID) = try extractGlobalDeviceFlag(
+            argumentsWithoutJSON
+        )
         var parser = ArgumentParser(normalizedArguments)
         guard let command = parser.consume() else {
             throw CLIParseError.missingCommand
@@ -94,7 +97,11 @@ public enum CLIParser {
                 throw CLIParseError.unknownOption("--json")
             }
         }
-        return ParsedInvocation(command: parsed, json: json)
+        return ParsedInvocation(
+            command: parsed,
+            json: json,
+            deviceID: deviceID
+        )
     }
 
     static func extractGlobalJSONFlag(_ arguments: [String]) -> ([String], Bool) {
@@ -104,7 +111,7 @@ public enum CLIParser {
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "--target", "--depth", "-i"
+            "--app", "--target", "--depth", "--device", "-d", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -125,6 +132,49 @@ public enum CLIParser {
             }
         }
         return (normalized, json)
+    }
+
+    static func extractGlobalDeviceFlag(
+        _ arguments: [String]
+    ) throws -> ([String], String?) {
+        let valueOptions: Set<String> = [
+            "--udid", "--path", "--name", "--pattern",
+            "--flags", "--timeout", "--last", "--capture-mode",
+            "--filter", "--interface", "--offset", "--offset-ratio",
+            "--traits", "--cindex", "--duration", "--tap", "--label",
+            "--content", "--delete", "--to", "--from", "--dir",
+            "--distance", "--match", "--fps", "--index", "--process",
+            "--pid", "--output", "--runtime", "--app", "--target",
+            "--depth", "-i",
+        ]
+        var normalized: [String] = []
+        var deviceID: String?
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "--device" || argument == "-d" {
+                guard deviceID == nil else {
+                    throw CLIParseError.invalidValue(
+                        "--device/-d may only be provided once"
+                    )
+                }
+                index += 1
+                guard index < arguments.count,
+                      !arguments[index].isEmpty else {
+                    throw CLIParseError.missingOptionValue(argument)
+                }
+                deviceID = arguments[index]
+                index += 1
+                continue
+            }
+            normalized.append(argument)
+            if valueOptions.contains(argument), index + 1 < arguments.count {
+                index += 1
+                normalized.append(arguments[index])
+            }
+            index += 1
+        }
+        return (normalized, deviceID)
     }
 
     private static func parseStatus(_ parser: inout ArgumentParser) throws -> StatusOptions {

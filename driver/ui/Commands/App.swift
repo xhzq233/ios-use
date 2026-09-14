@@ -209,6 +209,7 @@ enum AppCommands {
                 }
                 invalidateSnapshot()
                 if let cs = getCleanedSnapshot() {
+                    lastBundleId = cs.bundleId
                     guard snapshotBundleAccepted(
                         lastBundleId,
                         expectedBundleId: expected,

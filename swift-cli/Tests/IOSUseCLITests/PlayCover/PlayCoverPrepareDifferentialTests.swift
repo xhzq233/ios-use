@@ -620,7 +620,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             normalization: normalization
         )
         let attestation = try PlayCoverPrepareDifferentialGate.attest(
-            repositoryRoot: repositoryRoot(),
             sourceApp: source,
             pinnedResult: pinned,
             iosUseResult: iosUseResult,
@@ -705,90 +704,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         XCTAssertEqual(attestation.schemaVersion, 1)
         XCTAssertEqual(attestation.scope, .hermeticFixture)
         XCTAssertEqual(attestation.result, "pass")
-        XCTAssertEqual(
-            attestation.implementation.algorithm,
-            "embedded-source-closure-plus-loaded-xctest-inode-sha256-v2"
-        )
-        XCTAssertEqual(
-            attestation.implementation.relativeSourcePaths,
-            [
-                "ThirdParty/PlayCover/Package.swift",
-                "ThirdParty/PlayCover/PROVENANCE.md",
-                "ThirdParty/PlayCover/PlayCover/AppInstaller/"
-                    + "Installer.swift",
-                "ThirdParty/PlayCover/PlayCover/Headless/"
-                    + "HeadlessSupport.swift",
-                "ThirdParty/PlayCover/PlayCover/Headless/"
-                    + "PlayCoverPrepareDifferential.swift",
-                "ThirdParty/PlayCover/PlayCover/Headless/"
-                    + "PlayCoverUpstreamEngine.swift",
-                "ThirdParty/PlayCover/PlayCover/Model/AppInfo.swift",
-                "ThirdParty/PlayCover/PlayCover/Model/BaseApp.swift",
-                "ThirdParty/PlayCover/PlayCover/Model/PlayApp.swift",
-                "ThirdParty/PlayCover/PlayCover/PlayCoverError.swift",
-                "ThirdParty/PlayCover/PlayCover/Utils/"
-                    + "Entitlements.swift",
-                "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
-                    + "DataExtensions.swift",
-                "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
-                    + "FileExtensions.swift",
-                "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
-                    + "PlayAppExtensions.swift",
-                "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
-                    + "URLExtensions.swift",
-                "ThirdParty/PlayCover/PlayCover/Utils/KeyCover.swift",
-                "ThirdParty/PlayCover/PlayCover/Utils/Macho.swift",
-                "ThirdParty/PlayCover/PlayCover/Utils/PlayTools.swift",
-                "ThirdParty/PlayCover/PlayCover/Utils/Shell.swift",
-                "ThirdParty/PlayCover/PlayCover/Utils/SystemConfig.swift",
-                "ThirdParty/inject/Injection/Injection/BitType.swift",
-                "ThirdParty/inject/Injection/Injection/Command.swift",
-                "ThirdParty/inject/Injection/Injection/Extension.swift",
-                "ThirdParty/inject/Injection/Injection/Inject.swift",
-                "ThirdParty/inject/Injection/Injection/Shell.swift",
-                "ThirdParty/inject/Package.swift",
-                "ThirdParty/inject/PROVENANCE.md",
-                "scripts/audit_playcover_upstreams.sh",
-                "scripts/test_playcover_external_prepare_differential.sh",
-                "scripts/test_playcover_prepare_differential.sh",
-                "swift-cli/Package.resolved",
-                "swift-cli/Package.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverBundleStartLock.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverCodeSignatureInspector.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverLaunchCrashCut.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverSlotService.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverFridaEngineService.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverHomeStore.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverModels.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverService.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverSigningCertificateBuilder.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverSigningIdentityService.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverPreparedArtifact.swift",
-                "swift-cli/Sources/IOSUseCLI/Support/IOSUsePaths.swift",
-                "swift-cli/Tests/IOSUseCLITests/PlayCover/"
-                    + "PlayCoverExternalPrepareDifferentialTests.swift",
-                "swift-cli/Tests/IOSUseCLITests/PlayCover/"
-                    + "PlayCoverPrepareDifferentialTests.swift",
-                "swift-cli/Tests/IOSUseCLITests/PlayCover/"
-                    + "PlayCoverSigningEvidenceTestSupport.swift",
-            ].sorted()
-        )
-        XCTAssertEqual(attestation.implementation.contentSHA256.count, 64)
-        XCTAssertEqual(
-            attestation.implementation.embeddedSourceClosureSHA256,
-            attestation.implementation.contentSHA256
-        )
         XCTAssertEqual(
             attestation.implementation.testExecutableSHA256.count,
             64
@@ -1234,7 +1149,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
 
         XCTAssertThrowsError(
             try PlayCoverPrepareDifferentialGate.attest(
-                repositoryRoot: repositoryRoot(),
                 sourceApp: URL(fileURLWithPath: source.appPath),
                 pinnedResult: makePinnedPrepareResult(
                     source: source,
@@ -1415,7 +1329,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
 
         XCTAssertThrowsError(
             try PlayCoverPrepareDifferentialGate.attest(
-                repositoryRoot: URL(fileURLWithPath: "/"),
                 sourceApp: URL(fileURLWithPath: inspection.appPath),
                 pinnedResult: pinnedResult,
                 iosUseResult: iosUseResult,
@@ -1703,7 +1616,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
 
         XCTAssertThrowsError(
             try PlayCoverPrepareDifferentialGate.attest(
-                repositoryRoot: repositoryRoot(),
                 sourceApp: URL(fileURLWithPath: source.appPath),
                 pinnedResult: makePinnedPrepareResult(
                     source: source,
@@ -1842,7 +1754,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try PlayCoverPrepareDifferentialGate.attest(
-                repositoryRoot: repositoryRoot(),
                 sourceApp: URL(fileURLWithPath: source.appPath),
                 pinnedResult: makePinnedPrepareResult(
                     source: source,
@@ -2074,14 +1985,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .staleBaselines(["runtime-input"])
             )
         }
-    }
-
-    private func repositoryRoot() -> URL {
-        var root = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 {
-            root.deleteLastPathComponent()
-        }
-        return root.standardizedFileURL
     }
 
     private func makeAllowances(

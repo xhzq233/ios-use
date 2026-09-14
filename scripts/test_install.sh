@@ -117,7 +117,10 @@ write_output() {
 }
 
 case "$url" in
-  *codeload.github.com*)
+  */releases/latest)
+    printf 'https://github.com/example/ios-use/releases/tag/v1.0.3'
+    ;;
+  *codeload.github.com*/tar.gz/v1.0.3)
     if [[ -n "$out" ]]; then
       cp "$IOS_USE_INSTALL_TEST_TARBALL" "$out"
     else
@@ -306,7 +309,7 @@ DOWNLOAD_HOME="$FAKE_HOME/download"
 mkdir -p "$DOWNLOAD_HOME/share/ios-use/mac"
 printf 'legacy rules\n' > \
   "$DOWNLOAD_HOME/share/ios-use/mac/default-sandbox-rules.yaml"
-DOWNLOAD_PATH="$(run_install "$DOWNLOAD_HOME" | tail -n 1)"
+DOWNLOAD_PATH="$(run_install "$DOWNLOAD_HOME" --version latest | tail -n 1)"
 if [[ "$DOWNLOAD_PATH" != "$DOWNLOAD_HOME/bin/ios-use" || ! -x "$DOWNLOAD_PATH" ]]; then
   echo "[install-test] ERROR: release download install did not create expected binary" >&2
   exit 1

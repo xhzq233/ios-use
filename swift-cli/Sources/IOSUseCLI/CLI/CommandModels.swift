@@ -50,10 +50,16 @@ public enum ParsedCommand: Equatable, Sendable {
 public struct ParsedInvocation: Equatable, Sendable {
     public var command: ParsedCommand
     public var json: Bool
+    public var deviceID: String?
 
-    public init(command: ParsedCommand, json: Bool = false) {
+    public init(
+        command: ParsedCommand,
+        json: Bool = false,
+        deviceID: String? = nil
+    ) {
         self.command = command
         self.json = json
+        self.deviceID = deviceID
     }
 }
 

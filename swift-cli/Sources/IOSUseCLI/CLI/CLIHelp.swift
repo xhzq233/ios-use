@@ -3,7 +3,7 @@ import Foundation
 enum CLIHelp {
     static var rootText: String {
         """
-        Usage: ios-use [--help] [--version] <command>
+        Usage: ios-use [--help] [--version] [--device <device-id>] <command>
 
         Swift CLI for ios-use.
 
@@ -19,6 +19,7 @@ enum CLIHelp {
         Options:
           -h, --help       Show help
           -V, --version    Show version
+          -d, --device <id>  Select a running Device; optional only when one runs
 
         Commands:
           du, status, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
@@ -117,8 +118,10 @@ enum CLIHelp {
                    ios-use start --mac [--log] [--timeout <duration>]
 
             Start a configured XCTest driver or an iOS App on this Mac and
-            record it as the active backend in driver.lock.
+            record it in that Device's context under IOS_USE_HOME.
             Defaults to the first connected USB real device when udid is omitted.
+            Multiple Devices can run together. Use --device <device-id> on
+            later commands; status prints the stable IDs.
             The Mac backend automatically prepares an unmodified iPhoneOS App
             into its account-global Bundle slot, or directly launches the
             current slot. The current IOS_USE_HOME stores only its selected
@@ -189,12 +192,13 @@ enum CLIHelp {
             """
         case "stop":
             return """
-            Usage: ios-use stop [--json]
+            Usage: ios-use stop [-d <device-id>] [--json]
 
-            Stop the active XCTest driver or exact Mac process recorded
-            in driver.lock, then clear the active backend.
+            Stop one XCTest driver or exact Mac process recorded in its
+            Device Context. --device is required when multiple Devices run.
 
             Options:
+              -d, --device Device ID printed by status
               --json       Print the common machine-readable envelope
 
             """
@@ -228,11 +232,11 @@ enum CLIHelp {
             return """
             Usage: ios-use apps [--udid <udid>] [--system] [--json]
 
-            List apps installed on a USB real device using installation_proxy.
+            List apps installed on a USB real device or booted Simulator.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
-              --udid <udid>  Target USB real device UDID; overrides active driver.lock
+              --udid <udid>  Target real device or Simulator UDID; overrides active driver.lock
               --system       Include system apps
               --json         Print JSON
 
@@ -256,7 +260,7 @@ enum CLIHelp {
                 options: [
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
                     "--fresh             Ignore cached snapshot and rebuild",
-                    "--wait-quiescence   Wait until the UI is idle before returning a fresh DOM",
+                    "--wait-quiescence   Request native UI-idle waiting, then return a fresh DOM",
                 ]
             )
         case "ui-tree":
@@ -377,6 +381,7 @@ enum CLIHelp {
                 Preferred for an off-screen target: ios-use swipe --to "开发者" --from "蓝牙" --dom
                 Use the exact displayed target and a currently visible DOM label or value from the same scroll container for --from.
                 Use coordinate anchors or --dir/--distance only when Accessibility exposes no usable semantic target.
+                Target direction follows its viewport geometry. Fixed-distance swipes select the foreground scrollable when a sheet covers the page.
                 """
             )
         case "activateApp":
@@ -610,6 +615,7 @@ enum CLIHelp {
             Usage: ios-use proxy read [--filter <expression>] [--raw] [--last N]
 
             Read the most recent mitmdump capture recorded by proxy start.
+            Does not require a running Device.
 
             Options:
               --filter <expression>  mitmdump filter expression

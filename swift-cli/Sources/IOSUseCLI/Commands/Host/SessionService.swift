@@ -88,16 +88,33 @@ public enum SessionService {
     }
 
     public static func readDriverLock(paths: IOSUsePaths) -> String? {
-        DriverSessionStore.readDriverLock(paths: paths)
+        try? readDriverLockInfo(paths: paths)?.udid
     }
 
     public static func readDriverLockInfo(paths: IOSUsePaths) throws -> Info? {
         readDriverLockObserverForTesting?()
-        return try DriverSessionStore.readInfo(paths: paths)
+        if paths.deviceID != nil {
+            return try DriverSessionStore.readInfo(paths: paths)
+        }
+        if let legacy = try DriverSessionStore.readInfo(paths: paths) {
+            return legacy
+        }
+        let contexts = DeviceContextStore.sessions(paths: paths)
+        if contexts.count > 1 {
+            throw CLIParseError.invalidValue(
+                "Multiple active Devices. Pass --device <device-id>."
+            )
+        }
+        return contexts.first?.info
     }
 
     public static func requireDriverLock(paths: IOSUsePaths) throws -> Info {
-        try DriverSessionStore.requireInfo(paths: paths)
+        guard let info = try readDriverLockInfo(paths: paths) else {
+            throw CLIParseError.invalidValue(
+                "No active driver. Run `ios-use start` first."
+            )
+        }
+        return info
     }
 
     public static func resolveTargetUdid(

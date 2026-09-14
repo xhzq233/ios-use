@@ -321,6 +321,20 @@ final class ProxyServiceTests: XCTestCase {
             try ProxyService.read(filter: "~m POST", raw: true, last: 2, paths: paths),
             "two\nthree\n"
         )
+
+        // Reading a saved capture is host-only, including after its Device stops.
+        var reads = 0
+        ProxyService.mitmdumpReadOverrideForTesting = { file, raw, filter in
+            reads += 1
+            XCTAssertEqual(file, flowFile)
+            XCTAssertTrue(raw)
+            XCTAssertEqual(filter, "~m POST")
+            return "one\ntwo\nthree\n"
+        }
+        let cli = IOSUseCLI(pathsForTesting: paths)
+        XCTAssertEqual(cli.run(arguments: ["proxy", "read", "--raw", "--filter", "~m POST"]).exitCode, 0)
+        XCTAssertEqual(cli.run(arguments: ["--device", "DEVICE-A", "proxy", "read", "--raw", "--filter", "~m POST"]).exitCode, 0)
+        XCTAssertEqual(reads, 2)
     }
 
     func testProxyReadFailsWhenNoLastCaptureExists() throws {
