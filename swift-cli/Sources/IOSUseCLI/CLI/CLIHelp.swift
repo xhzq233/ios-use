@@ -28,43 +28,27 @@ enum CLIHelp {
         return """
         Usage: ios-use [--help] [--version] [--device <device-id>] <command>
 
-        Swift CLI for ios-use.
-
-        Workflow:
-          Start with `ios-use status` and reuse a running target. If none is running,
-          see `ios-use help config` and `ios-use help start` for setup.
-          With multiple running Devices, add -d <id> to each UI command; status
-          shows bare UDIDs for real devices/Simulators and mac for the Mac backend.
-
-          Inspect DOM, act on observed labels/values, then verify the result:
-            ios-use dom
-            ios-use tap "<label>" --dom
-            ios-use swipe --to "<offscreen-target>" --from "<visible-anchor>" --dom
-          Use an anchor in the same scroll container. Prefer semantic targets and
-          label-relative offsets; coordinates are for targets Accessibility cannot expose.
-          --dom returns a fresh tree after native idle, not guaranteed App readiness.
-          For App loading, wait on an observed condition:
-            ios-use waitFor "<loading-text>" --match contains --gone --timeout 20s
-
-          Keep page-dependent actions sequential. Batch a known sequence with &&
-          so failure stops later actions; inspect new UI before deciding unknown steps.
-          Save reusable flows as small .sh scripts with set -euo pipefail, labels and waits.
-          On failure, read inline target/candidate/rejection/suggestion/alert details first.
-          Refresh with dom --fresh when UI context is stale; use screenshot for visual gaps.
-
-        Command details:
-          ios-use help <command>       e.g. ios-use help swipe
-          ios-use <command> --help     e.g. ios-use input --help
-          Skill references cover optional setup, proxy and debugging workflows.
-
-        Options:
-          -h, --help       Show help
-          -V, --version    Show version
-          -d, --device <id>  Select a running Device; optional only when one runs
+        Control iOS apps on real devices, Simulators and Mac.
 
         Commands:
-          du, status, config, start, stop, attach, detach, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
-          activateApp, terminateApp, home, rotate, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
+          Devices    status, config, start, stop, attach, detach
+          Inspect    dom, screenshot, capture, ui-tree
+          Interact   tap, longpress, input, swipe, waitFor, dismissAlert
+          Apps       apps, activateApp, terminateApp, home, rotate, open
+          Manage     install, uninstall, media, ddi-mount, du
+          Diagnose   proxy, oslog, nslog, debug
+
+        Options:
+          -h, --help         Show help
+          -V, --version      Show version
+          -d, --device <id>  Use an ID from status; optional with one active target
+
+        Example (with a running target):
+          ios-use status
+          ios-use dom -d <id>
+          ios-use tap "<label-from-dom>" -d <id> --dom
+
+        Details: ios-use help <command> or ios-use <command> --help
 
         """
         #endif
@@ -329,12 +313,11 @@ enum CLIHelp {
                 options: [
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
                     "--fresh             Ignore cached snapshot and rebuild",
-                    "--wait-quiescence   Request native UI-idle waiting, then return a fresh DOM",
+                    "--wait-quiescence   Request UI-idle waiting, then refresh the tree",
                 ],
                 footer: """
-                Use displayed labels/values as targets, not entire DOM lines. An action's --dom result is already a fresh observation.
-                After navigation, scrolling or a failed lookup, use dom --fresh if no current observation is available.
-                Native idle does not guarantee that App loading is complete; use waitFor for the expected condition.
+                Use labels/values as action targets, not entire DOM lines. --dom on an action already returns an updated tree.
+                Example: ios-use dom --fresh
                 """
             )
         case "ui-tree":
@@ -363,15 +346,16 @@ enum CLIHelp {
                 options: [
                     "--label <label>      Legacy alternative to the positional target",
                     "--timeout <duration> Maximum wait, up to 300s; accepts s/ms suffixes and defaults to seconds",
-                    "--match <mode>       contains (default; normalized exact preferred), exact, or regex",
+                    "--match <mode>       contains (default; prefers exact matches), exact, or regex",
                     "--traits <traits>    Comma-separated trait filter",
-                    "--cindex <index>     Select the Nth cleaned child under a matched parent",
+                    "--cindex <index>     Select the Nth child under a matched parent",
                     "--gone               Wait until no matching visible element remains",
                 ],
                 footer: """
-                Wait for the expected page label after navigation, or for an observed loading label to disappear.
-                For changing text, use a stable substring: ios-use waitFor 'Loading' --match contains --gone --timeout 20s
-                Native idle is not an App-readiness guarantee; prefer a condition over an arbitrary sleep.
+                App loading may continue after an action's --dom output. Wait for the label you need:
+                  ios-use waitFor "通用" --timeout 10s
+                Or wait for an observed loading message to disappear, matching its stable text:
+                  ios-use waitFor "Loading" --match contains --gone --timeout 20s
                 """
             )
         case "screenshot":
@@ -403,21 +387,18 @@ enum CLIHelp {
         case "tap":
             return driverHelp(
                 usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
-                summary: "Tap a stable semantic label or value shown by DOM.",
+                summary: "Tap a label/value from DOM, or a coordinate such as 67,269.",
                 options: [
                     "--offset <x,y>        Pixel offset from target top-left",
                     "--offset-ratio <x,y>  Ratio offset from target top-left",
                     "--traits <traits>     Comma-separated trait filter",
-                    "--cindex <index>      Select the Nth cleaned child under a matched parent",
+                    "--cindex <index>      Select the Nth child under a matched parent",
                     postDOMOption,
                 ],
                 footer: """
-                Preferred: ios-use tap "通用" --dom
-                Pass only the displayed label/value, not the whole DOM line. Disambiguate observed duplicates with --traits or --cindex.
-                Use coordinates only when Accessibility exposes no usable label or value; prefer a label-relative --offset or --offset-ratio first.
-                Example inside a labeled control: ios-use tap "亮度" --offset-ratio 0.8,0.5 --dom
-                Last-resort coordinate forms: ios-use tap 67,269 or ios-use tap 67 269
-                On failure, inspect inline candidates and rejection details before retrying; obtain fresh UI context if needed.
+                Examples:
+                  ios-use tap "通用" --dom
+                  ios-use tap "亮度" --offset-ratio 0.8,0.5 --dom
                 """
             )
         case "longpress":
@@ -427,48 +408,44 @@ enum CLIHelp {
                 options: [
                     "--duration <duration> Press duration; accepts s/ms suffixes and defaults to milliseconds",
                     "--traits <traits>  Comma-separated trait filter",
-                    "--cindex <index>   Select the Nth cleaned child under a matched parent",
+                    "--cindex <index>   Select the Nth child under a matched parent",
                     postDOMOption,
                 ],
-                footer: "Use the displayed label/value from current DOM; use --traits or --cindex only for observed duplicates."
+                footer: "Example: ios-use longpress \"照片\" --duration 800ms --dom"
             )
         case "input":
             return driverHelp(
                 usage: "ios-use input [--tap <target>] --content <text> [--delete <n>] [--enter] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
-                summary: "Input text into the current keyboard focus, optionally tapping a target first.",
+                summary: "Insert text at the cursor; existing text is not replaced automatically.",
                 options: [
                     "--tap <target>     Optional label or x,y target to tap before typing",
-                    "--content <text>   Text to input",
+                    "--content <text>   Text to insert",
                     "--delete <n>       Send n delete characters before content",
                     "--enter            Send a trailing newline, which may trigger Enter, Done, Go, or send",
                     "--traits <traits>  Comma-separated trait filter for label tap target",
-                    "--cindex <index>   Select the Nth cleaned child under a label tap target",
+                    "--cindex <index>   Select the Nth child under a label tap target",
                     postDOMOption,
                 ],
-                footer: """
-                Example: ios-use input --tap "搜索" --content "蓝牙" --dom
-                --tap uses the displayed label/value from current DOM; --traits or --cindex disambiguates observed duplicates.
-                Content is inserted at the current focus; use --delete deliberately when existing text needs removal.
-                """
+                footer: "Example: ios-use input --tap \"搜索\" --content \"蓝牙\" --dom"
             )
         case "swipe":
             return driverHelp(
                 usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
-                summary: "Scroll toward a stable semantic DOM label; use a fixed distance only as a fallback.",
+                summary: "Scroll to a DOM label, or use a fixed distance when no label is available.",
                 options: [
                     "--to <label>       Target element",
                     "--from <label|x,y> Anchor element or coordinate",
                     "--dir forth|back   Fixed-distance direction",
                     "--distance <px>    Fixed distance in pixels",
                     "--traits <traits>  Comma-separated trait filter for --to",
-                    "--cindex <index>   Select the Nth cleaned child under a matched --to parent",
+                    "--cindex <index>   Select the Nth child under a matched --to parent",
                     postDOMOption,
                 ],
                 footer: """
-                Preferred for an off-screen target: ios-use swipe --to "开发者" --from "蓝牙" --dom
-                Use the exact displayed target and a currently visible DOM label or value from the same scroll container for --from.
-                Use coordinate anchors or --dir/--distance only when Accessibility exposes no usable semantic target.
-                Target direction follows its viewport geometry. Fixed-distance swipes select the foreground scrollable when a sheet covers the page.
+                Use the target's exact label and a visible anchor in the same list or panel:
+                  ios-use swipe --to "开发者" --from "蓝牙" --dom
+                Without a labeled target:
+                  ios-use swipe --dir forth --distance 300 --dom
                 """
             )
         case "activateApp":
@@ -619,7 +596,7 @@ enum CLIHelp {
         return CLIResult(exitCode: 0, stdout: help)
     }
 
-    private static let postDOMOption = "--dom [duration]      Fresh DOM after native idle; an explicit delay uses ms/s (bare numbers: ms, minimum 100ms)"
+    private static let postDOMOption = "--dom [duration]      Return updated UI; bare flag waits for idle, value sets a fixed delay (ms/s; default ms; min 100ms)"
 
     private static func driverHelp(usage: String, summary: String, options: [String] = [], footer: String? = nil) -> String {
         let renderedUsage = usage.contains("--json") ? usage : usage + " [--json]"
@@ -628,11 +605,11 @@ enum CLIHelp {
             "",
             summary,
             "",
-            "Requires a running Device. Use `ios-use status` to find its ID; run `ios-use start` if none is running.",
+            "Requires an active target; see `ios-use status`.",
         ]
         let renderedOptions = options + [
             "-d, --device <id>     Select a running Device; optional when only one runs",
-            "--json               Print the common machine-readable envelope",
+            "--json               Print JSON",
         ]
         if !renderedOptions.isEmpty {
             lines += ["", "Options:"]
