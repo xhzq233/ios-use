@@ -6,7 +6,9 @@ import Fory
 enum DomCommands {
     /// doc 2.2 — nested tree with rule 1-6 applied (or raw if --raw).
     static func dom(_ args: ForyDomArgs) throws -> ForyResponseFrame {
-        let app = try Session.shared.ensureActive()
+        // External device services can switch Apps without a Driver mutation.
+        // A fresh observation must refresh the active App as well as its tree.
+        let app = try args.fresh ? Session.shared.refreshActive() : Session.shared.ensureActive()
 
         if args.waitQuiescence {
             Quiescence.wait(app: app, command: "dom")

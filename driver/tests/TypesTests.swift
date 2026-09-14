@@ -141,14 +141,7 @@ final class TypesTests: XCTestCase {
 
     private func makeCleanedSnapshot(_ elements: [SnapshotElement]) -> CleanedSnapshot {
         let root = elements.first!.node
-        let searchEntries = elements.map { element in
-            let rawTexts = searchableTexts(for: element.node)
-            return SearchEntry(
-                element: element,
-                rawTexts: rawTexts,
-                normalizedTexts: normalizedSearchableTexts(from: rawTexts)
-            )
-        }
+        let searchEntries = buildSearchEntries(from: elements)
         let searchCandidates = searchEntries.flatMap { entry in
             entry.rawTexts.compactMap { text -> SearchCandidate? in
                 let normalized = normalizeSearchText(text)
@@ -165,6 +158,36 @@ final class TypesTests: XCTestCase {
             searchEntries: searchEntries,
             searchCandidates: searchCandidates
         )
+    }
+
+    func testApplicationContextDoesNotShadowButtonsOrBecomeSearchable() {
+        let first = FakeRawSnapshot(label: "Settings", elementType: .button)
+        let second = FakeRawSnapshot(label: "Settings", elementType: .button)
+        let panel = FakeRawSnapshot(label: "Panel", elementType: .scrollView, children: [first, second])
+        let app = FakeRawSnapshot(label: "Settings", elementType: .application, children: [panel])
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+        assignAutoLabels(elements)
+        let cs = makeCleanedSnapshot(elements)
+
+        XCTAssertTrue(cs.elements.contains { $0.node.raw as AnyObject === app })
+        XCTAssertFalse(cs.searchEntries.contains { $0.element.node.raw as AnyObject === app })
+        for (target, expected) in [
+            (ForyTarget(label: "Settings", traits: "Button"), first),
+            (ForyTarget(label: "Settings-1"), second),
+            (ForyTarget(label: "Panel", cindex: 1), second),
+        ] {
+            guard case .found(let element) = rawFindInSnapshot(target, cs: cs) else {
+                XCTFail("Expected a child element to remain selectable")
+                continue
+            }
+            XCTAssertTrue(element.node.raw as AnyObject === expected)
+        }
+
+        let rootOnly = makeCleanedSnapshot([makeElement(label: "Application context", type: .application)])
+        XCTAssertTrue(rootOnly.searchCandidates.isEmpty)
+        guard case .notFound = rawFindInSnapshot(ForyTarget(label: "Application context"), cs: rootOnly) else {
+            return XCTFail("Application context must not be an element target")
+        }
     }
 
     private func makeSnapshotElement(_ snapshot: SafeSnapshot) -> SnapshotElement {

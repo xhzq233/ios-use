@@ -223,10 +223,13 @@ private func dedupeDisplayLabel(_ baseLabel: String, nextIndexByBaseLabel: inout
     return nextIndex == 0 ? baseLabel : "\(baseLabel)-\(nextIndex)"
 }
 
-private func buildSearchEntries(from elements: [SnapshotElement]) -> [SearchEntry] {
+func buildSearchEntries(from elements: [SnapshotElement]) -> [SearchEntry] {
     var entries: [SearchEntry] = []
     entries.reserveCapacity(elements.count)
     for element in elements {
+        // Application nodes describe the page, not an actionable element.
+        // A matching app name must not shadow a button with the same label.
+        guard UInt(element.node.elementType) != XCUIElement.ElementType.application.rawValue else { continue }
         let rawTexts = searchableTexts(for: element.node)
         guard !rawTexts.isEmpty else { continue }
         let normalizedTexts = normalizedSearchableTexts(from: rawTexts)

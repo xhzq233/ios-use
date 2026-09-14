@@ -11,6 +11,10 @@ silicon Macs. It exposes a compact accessibility tree, semantic actions, JSON
 output, screenshots, logs, proxy capture, and multi-device operation. Linux hosts
 can operate externally managed iOS Drivers through TCP attachments.
 
+Application nodes in the DOM provide page context. Element selectors search
+their contents, so an App name does not shadow a button with the same label.
+On XCTest targets, `dom --fresh` also redetects the foreground App after an external App switch.
+
 ## Install
 
 ```bash
