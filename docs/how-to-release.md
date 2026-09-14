@@ -131,8 +131,9 @@ gh workflow run release.yml --ref <branch> -f tag=vX.Y.Z -F publish=false
 ```
 
 This uses the selected branch commit, retains the verified `release-assets`
-Actions artifact, and leaves the existing tag and Release untouched. A normal
-publication always checks out the tag. Independent versions can build at the
+Actions artifact, and leaves the existing tag and Release untouched. If the tag exists, a publication checks out that tag. If it does not exist,
+a manual publication builds the selected branch commit and creates the tag
+only after the assets pass verification. Independent versions can build at the
 same time; publication attempts for the same tag remain serialized.
 
 For separate local component builds, `build_swift_cli.sh --skip-runtime` skips
@@ -141,6 +142,18 @@ the companion Runtime, `build_driver.sh --release --device-only` or
 the resource archive. Driver variants must use separate checkouts if run
 concurrently. `release_build.sh --assemble-only` stamps the checksum manifest
 for the four Mac artifacts already in `release/`; it does not compile them.
+
+For repeated prereleases, publish from the same release branch so Actions can
+reuse its release compilation cache. GitHub does not share caches between
+different tags. Push the version/changelog commit to the branch, then run:
+
+```bash
+gh workflow run release.yml --ref <release-branch> -f tag=vX.Y.Z -F publish=true
+```
+
+This creates the tag at the built commit when publication succeeds. There is
+no separate tag push for this path. Tag-push releases remain supported, but
+without a cache on the default branch they perform a cold build.
 
 Release assets are immutable in the normal workflow: a tag whose Release
 already has assets is rejected, and duplicate names are never overwritten.

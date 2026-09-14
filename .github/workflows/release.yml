@@ -10,7 +10,7 @@ on:
         required: true
         type: string
       publish:
-        description: "Publish the tag; disable to build and verify the selected branch"
+        description: "Publish the version; disable to build and verify the selected branch"
         type: boolean
         default: true
 
@@ -35,6 +35,8 @@ jobs:
       - name: Resolve source and release tag
         id: resolve
         env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_FROM_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           BUILD_REF: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish && github.sha || inputs.tag || github.ref_name }}
         run: |
@@ -42,6 +44,17 @@ jobs:
             v*) ;;
             *) echo "Release tag must start with v" >&2; exit 1 ;;
           esac
+          if [ "$PUBLISH_FROM_BRANCH" = true ]; then
+            set +e
+            git ls-remote --exit-code "https://github.com/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_TAG" > /dev/null
+            tag_status=$?
+            set -e
+            case "$tag_status" in
+              0) BUILD_REF="$RELEASE_TAG" ;;
+              2) BUILD_REF="$GITHUB_SHA" ;;
+              *) echo "Unable to resolve release tag" >&2; exit "$tag_status" ;;
+            esac
+          fi
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
       - name: Refuse an existing asset set
@@ -220,6 +233,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ needs.prepare.outputs.ref }}
           files: |
             release/ios-use-darwin-arm64
             release/ios-use-linux-x86_64
