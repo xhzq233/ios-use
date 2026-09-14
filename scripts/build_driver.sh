@@ -288,7 +288,7 @@ if [ "$SIMULATOR_ONLY" != true ]; then
   xcodebuild build-for-testing \
     "${XCODE_COMMON[@]}" \
     -destination 'generic/platform=iOS' \
-    -IDEPackageEnablePrebuilts="${IOS_USE_SWIFT_PREBUILTS:-NO}" \
+    -IDEPackageEnablePrebuilts=NO \
     -skipMacroValidation \
     | tee "$BUILD_DIR/device-xcodebuild.log" | tail -20
   STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
@@ -358,7 +358,7 @@ STEP_STARTED_AT="$(date +%s)"
 xcodebuild build-for-testing \
   "${XCODE_COMMON[@]}" \
   -destination 'generic/platform=iOS Simulator' \
-  -IDEPackageEnablePrebuilts="${IOS_USE_SWIFT_PREBUILTS:-NO}" \
+  -IDEPackageEnablePrebuilts=NO \
   -skipMacroValidation \
   | tee "$BUILD_DIR/simulator-xcodebuild.log" | tail -20
 STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))

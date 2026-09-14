@@ -56,7 +56,8 @@ The build:
 
 1. audits the pinned PlayCover, PlayTools, and `inject` sources, licenses, and
    recorded local patches;
-2. forces fresh Runtime, CLI, and real-device/simulator driver builds;
+2. builds the CLI and both Drivers from the current checkout, reusing compiler
+   intermediates where valid, and builds the Runtime in fresh DerivedData;
 3. fetches and validates the exact public Frida commits before building the
    resident GumJS Engine;
 4. packages only `IOSUsePlayRuntime.framework` and
