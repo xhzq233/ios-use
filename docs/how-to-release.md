@@ -19,7 +19,9 @@ For a PR pre-release, use a full version such as `2.1.0-alpha.1` and tag
 `v2.1.0-alpha.1` on the PR commit. Push that branch and tag without merging it
 into main. Tags containing a hyphen publish as GitHub pre-releases and do not
 replace the stable latest release. Use the same full version in the changelog
-filename and explicit installer command.
+filename and explicit installer command. Use the tag in the installer URL for
+PR pre-releases so platform support comes from that release, even while main
+still contains an older installer.
 
 Driver IPAs retain the full version in `IOSUseDriverVersion`. Their Apple
 bundle version fields use the numeric release version (for example `2.1.0`);

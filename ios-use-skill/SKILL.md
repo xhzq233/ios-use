@@ -83,5 +83,9 @@ from the device provider, then use `ios-use attach -d <alias> --host <host> --po
 <port>`. Reuse the attachment with DOM, actions, waits, App lifecycle and
 screenshots. Linux screenshots omit OCR. Use `detach` when finished; it does not
 stop the provider's runtime. Device installation, signing and Driver startup
-remain provider operations. The published v2.1.0-alpha.1 is Mac-only; Linux
-requires the 2.1.0 preparation branch or a later release containing Linux assets.
+remain provider operations. Linux x86_64 releases start at v2.1.0-alpha.2.
+For this pre-release, use its versioned installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.2/scripts/install.sh | bash -s -- --version v2.1.0-alpha.2
+```
