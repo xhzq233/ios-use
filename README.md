@@ -21,8 +21,8 @@ The CLI and Skill come from the same release, including when installing latest.
 Install a specific release or build from source:
 
 ```bash
-# v2.1.0 is in preparation; this pinned command is for use after publication.
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.1.0
+# Opt in to the 2.1.0 alpha pre-release.
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v2.1.0-alpha.1
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 

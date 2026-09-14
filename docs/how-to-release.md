@@ -15,6 +15,16 @@ IOSUseCLI.version = "X.Y.Z"
 tag = vX.Y.Z
 ```
 
+For a PR pre-release, use a full version such as `2.1.0-alpha.1` and tag
+`v2.1.0-alpha.1` on the PR commit. Push that branch and tag without merging it
+into main. Tags containing a hyphen publish as GitHub pre-releases and do not
+replace the stable latest release. Use the same full version in the changelog
+filename and explicit installer command.
+
+Driver IPAs retain the full version in `IOSUseDriverVersion`. Their Apple
+bundle version fields use the numeric release version (for example `2.1.0`);
+`config` checks the full identity and still reads older IPAs without that key.
+
 ## 2. Run the repository gate
 
 Use Apple-silicon macOS with full Xcode and `xcodegen` installed:

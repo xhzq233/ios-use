@@ -65,6 +65,8 @@ if [ -z "$CLI_VERSION" ]; then
   exit 1
 fi
 echo "[build] Driver version: $CLI_VERSION"
+# Apple bundle versions are numeric; retain the full release identity separately.
+BUNDLE_VERSION="${CLI_VERSION%%-*}"
 
 # Debug artifacts go to IOS_USE_HOME, or cwd/.ios-use when IOS_USE_HOME is unset.
 # Release artifacts stay under driver/build/ and are copied only by release packaging.
@@ -91,8 +93,8 @@ XCODE_COMMON=(
   CONFIGURATION_BUILD_DIR="$BUILD_DIR"
   -derivedDataPath "$DERIVED_DATA"
   DEBUG_INFORMATION_FORMAT="$DEBUG_INFO_FORMAT"
-  MARKETING_VERSION="$CLI_VERSION"
-  CURRENT_PROJECT_VERSION="$CLI_VERSION"
+  MARKETING_VERSION="$BUNDLE_VERSION"
+  CURRENT_PROJECT_VERSION="$BUNDLE_VERSION"
   CODE_SIGNING_ALLOWED=NO
   "OTHER_SWIFT_FLAGS=\$(inherited) -file-prefix-map $SOURCE_PREFIX_MAP -debug-prefix-map $SOURCE_PREFIX_MAP"
   "OTHER_CFLAGS=\$(inherited) -ffile-prefix-map=$SOURCE_PREFIX_MAP -fdebug-prefix-map=$SOURCE_PREFIX_MAP -fmacro-prefix-map=$SOURCE_PREFIX_MAP"
@@ -182,10 +184,12 @@ stamp_driver_version() {
 
   for plist in "${plist_paths[@]}"; do
     [ -f "$plist" ] || continue
-    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CLI_VERSION" "$plist" 2>/dev/null \
-      || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $CLI_VERSION" "$plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CLI_VERSION" "$plist" 2>/dev/null \
-      || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CLI_VERSION" "$plist"
+    /usr/libexec/PlistBuddy -c "Set :IOSUseDriverVersion $CLI_VERSION" "$plist" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :IOSUseDriverVersion string $CLI_VERSION" "$plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $BUNDLE_VERSION" "$plist" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $BUNDLE_VERSION" "$plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_VERSION" "$plist" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUNDLE_VERSION" "$plist"
   done
 }
 
