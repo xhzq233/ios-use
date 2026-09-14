@@ -18,14 +18,12 @@ done
 
 echo "[swift-cli] Building ios-use ($CONFIGURATION)..."
 SOURCE_PREFIX_MAP="$ROOT_DIR=/ios-use"
-SWIFT_PLATFORM_ARGS=()
+SWIFT_BUILD_ARGS=(--package-path "$ROOT_DIR/swift-cli" -c "$CONFIGURATION")
 if [ "$(uname -s)" = "Linux" ] && [ "$CONFIGURATION" = "release" ]; then
-  SWIFT_PLATFORM_ARGS+=(--static-swift-stdlib)
+  SWIFT_BUILD_ARGS+=(--static-swift-stdlib)
 fi
 swift build \
-  --package-path "$ROOT_DIR/swift-cli" \
-  -c "$CONFIGURATION" \
-  "${SWIFT_PLATFORM_ARGS[@]}" \
+  "${SWIFT_BUILD_ARGS[@]}" \
   -Xswiftc -file-prefix-map \
   -Xswiftc "$SOURCE_PREFIX_MAP" \
   -Xswiftc -debug-prefix-map \
@@ -85,12 +83,11 @@ if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
     fi
 
     if [ "$PLAYCOVER_RUNTIME_NEEDS_BUILD" = "true" ]; then
-      PLAYCOVER_RUNTIME_ARGS=()
+      PLAYCOVER_RUNTIME_ARGS=("$ROOT_DIR/scripts/build_playcover_runtime.sh")
       if [ -e "$PLAYCOVER_RUNTIME" ]; then
         PLAYCOVER_RUNTIME_ARGS+=(--replace)
       fi
-      bash "$ROOT_DIR/scripts/build_playcover_runtime.sh" \
-        "${PLAYCOVER_RUNTIME_ARGS[@]}"
+      bash "${PLAYCOVER_RUNTIME_ARGS[@]}"
     else
       echo "[swift-cli] PlayCover runtime is up to date: $PLAYCOVER_RUNTIME"
     fi

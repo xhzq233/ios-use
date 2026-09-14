@@ -18,23 +18,24 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 ```
 
 The CLI and Skill come from the same release, including when installing latest.
+Linux users currently need the explicit alpha install below.
 
 Install a specific release or build from source:
 
 ```bash
 # Opt in to the 2.1.0 alpha pre-release.
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.2/scripts/install.sh | bash -s -- --version v2.1.0-alpha.2
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.3/scripts/install.sh | bash -s -- --version v2.1.0-alpha.3
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
 ### Linux TCP client
 
-Linux x86_64 is available starting with `v2.1.0-alpha.2`; use the versioned
+Linux x86_64 is available starting with `v2.1.0-alpha.3`; use the versioned
 installer command above. For a source build, Swift 6.2+ and standard Linux
 build tools are required:
 
 ```bash
-git clone --branch v2.1.0-alpha.2 https://github.com/xhzq233/ios-use.git
+git clone --branch v2.1.0-alpha.3 https://github.com/xhzq233/ios-use.git
 cd ios-use
 bash scripts/build_swift_cli.sh
 ./ios-use attach -d phone --host <driver-host> --port <forwarded-port>
