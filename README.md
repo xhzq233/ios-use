@@ -44,7 +44,7 @@ bash scripts/build_swift_cli.sh
 ./ios-use detach -d phone
 ```
 
-The Linux release workflow builds x86_64 and arm64 binaries on Ubuntu 22.04
+The Linux release workflow builds an x86_64 binary on Ubuntu 22.04
 with the Swift runtime statically linked. Running the binary needs glibc and
 libstdc++, without a Swift installation. The device provider handles leases,
 signing, IPA installation, port forwarding and XCTest startup. UI actions,
@@ -180,7 +180,7 @@ Most automation commands support `--json`.
 
 ## Requirements
 
-- Linux for TCP attachments; Apple silicon macOS for local device backends.
+- Linux x86_64 for TCP attachments; Apple silicon macOS for local device backends.
 - Real devices: iOS 17.4 or newer, USB, and a free or paid Apple Developer
   account for driver signing.
 - Simulator and Driver builds: full Xcode, Swift and `xcodegen`. Linux CLI

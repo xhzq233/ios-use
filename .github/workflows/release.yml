@@ -23,26 +23,18 @@ permissions:
 
 jobs:
   linux:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            arch: x86_64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-22.04
     container: swift:6.2.4-jammy
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref_name }}
       - run: bash scripts/build_swift_cli.sh
-      - run: mkdir -p release && cp ios-use release/ios-use-linux-${{ matrix.arch }}
+      - run: mkdir -p release && cp ios-use release/ios-use-linux-x86_64
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-${{ matrix.arch }}
-          path: release/ios-use-linux-${{ matrix.arch }}
+          name: linux-x86_64
+          path: release/ios-use-linux-x86_64
 
   release:
     needs: linux
@@ -142,12 +134,11 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: linux-*
-          merge-multiple: true
+          name: linux-x86_64
           path: release
 
       - name: Include Linux assets in release checksums
-        run: cd release && shasum -a 256 ios-use-linux-* >> SHA256SUMS
+        run: cd release && shasum -a 256 ios-use-linux-x86_64 >> SHA256SUMS
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
@@ -156,7 +147,6 @@ jobs:
           files: |
             release/ios-use-darwin-arm64
             release/ios-use-linux-x86_64
-            release/ios-use-linux-arm64
             release/driver.ipa
             release/driver-sim.ipa
             release/ios-use-mac-resources.tar.gz

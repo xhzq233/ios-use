@@ -49,7 +49,7 @@ Environment:
   IOS_USE_GITHUB_REPO   GitHub repository. Defaults to xhzq233/ios-use.
 
 Requirements:
-  Linux x86_64/aarch64 (Ubuntu 22.04+), or Apple Silicon macOS.
+  Linux x86_64 (Ubuntu 22.04+), or Apple Silicon macOS.
   Linux source builds require Swift 6.2+; Mac source builds require full Xcode,
   Swift, and xcodegen; install xcodegen with `brew install xcodegen`.
 USAGE
@@ -86,16 +86,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 INSTALL_VERSION="${CLI_VERSION:-${IOS_USE_VERSION:-${IOS_USE_DRIVER_VERSION:-latest}}}"
-case "$(uname -m)" in
-  arm64|aarch64) ;;
-  x86_64)
-    if [[ "$HOST_OS" == "Darwin" ]]; then
-      echo "ios-use releases with the Mac Runtime require Apple Silicon; Intel macOS is unsupported." >&2
-      exit 1
-    fi
+case "$HOST_OS:$(uname -m)" in
+  Darwin:arm64|Darwin:aarch64|Linux:x86_64) ;;
+  Linux:*)
+    echo "ios-use Linux releases support x86_64 only." >&2
+    exit 1
     ;;
-  *)
-    echo "Unsupported architecture: $(uname -m)" >&2
+  Darwin:*)
+    echo "ios-use releases with the Mac Runtime require Apple Silicon; Intel macOS is unsupported." >&2
     exit 1
     ;;
 esac
@@ -197,9 +195,7 @@ build_or_download_cli() {
 
   download_release_checksums
   if [[ "$HOST_OS" == "Linux" ]]; then
-    local arch="$(uname -m)"
-    [[ "$arch" != "aarch64" ]] || arch="arm64"
-    download_checked_release_asset "ios-use-linux-$arch" "$OUTFILE"
+    download_checked_release_asset "ios-use-linux-x86_64" "$OUTFILE"
     return
   fi
   download_checked_release_asset "$(mac_cli_asset_name)" "$OUTFILE"
