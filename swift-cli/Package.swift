@@ -40,7 +40,7 @@ let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("Sources/IOSUseCLI")
 let excludedSources = (FileManager.default.enumerator(atPath: sourceRoot.path)?.allObjects as? [String] ?? [])
     .filter { $0.hasSuffix(".swift") && !tcpSources.contains($0) }
-let tcpTests = ["TCPAttachTests.swift", "FakeDriverServer.swift", "CLIParserTests.swift"]
+let tcpTests = ["TCPAttachTests.swift", "FakeDriverServer.swift", "CLIParserTests.swift", "LinuxScreenshotTests.swift"]
 let testRoot = sourceRoot.deletingLastPathComponent().deletingLastPathComponent()
     .appendingPathComponent("Tests/IOSUseCLITests")
 let excludedTests = (FileManager.default.enumerator(atPath: testRoot.path)?.allObjects as? [String] ?? [])
