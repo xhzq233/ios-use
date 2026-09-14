@@ -13,11 +13,9 @@ let posixWrite = Darwin.write
 func posixSocketWrite(_ fd: Int32, _ buffer: UnsafeRawPointer, _ count: Int) -> Int {
     #if os(Linux)
     return Glibc.send(fd, buffer, count, Int32(MSG_NOSIGNAL))
-    
-#else
+    #else
     return Darwin.write(fd, buffer, count)
-    
-#endif
+    #endif
 }
 
 /// Nonblocking connect keeps the same deadline on Darwin and Linux.
@@ -30,11 +28,9 @@ func posixConnect(
     defer { _ = fcntl(fd, F_SETFL, flags) }
     #if os(Linux)
     let result = Glibc.connect(fd, address, length)
-    
-#else
+    #else
     let result = Darwin.connect(fd, address, length)
-    
-#endif
+    #endif
     if result == 0 { return true }
     guard errno == EINPROGRESS else { return false }
     var event = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
