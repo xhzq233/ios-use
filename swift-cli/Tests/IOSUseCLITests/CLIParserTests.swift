@@ -978,6 +978,12 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
+    func testParsesMCPWithoutLegacyScriptArguments() throws {
+        XCTAssertEqual(try CLIParser.parse(["mcp"]), .mcp)
+        XCTAssertThrowsError(try CLIParser.parse(["mcp", "await cua.getState()"]))
+        XCTAssertThrowsError(try CLIParser.parse(["repl"]))
+    }
+
     func testParsesGlobalDeviceSelection() throws {
         XCTAssertEqual(
             try CLIParser.parseInvocation([

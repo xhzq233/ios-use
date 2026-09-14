@@ -235,6 +235,11 @@ struct PlayCoverRuntimeInputArguments: Codable, Equatable, Sendable {
     let content: String
     let deleteCount: Int
     let enter: Bool
+    var textOperation: String? = nil
+    var selectionText: String? = nil
+    var selectionPrefix: String? = nil
+    var selectionSuffix: String? = nil
+    var selectionType: String? = nil
 
     init(
         target: PlayCoverRuntimeTarget?,

@@ -21,6 +21,7 @@ public enum ParsedCommand: Equatable, Sendable {
     case proxy(ProxyCommand)
     case debug(DebugOptions)
     case uiTree(UITreeOptions)
+    case mcp
 
     public var commandName: String {
         switch self {
@@ -43,6 +44,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .proxy(let command): return "proxy \(command.subcommand)"
         case .debug: return "debug"
         case .uiTree: return "ui-tree"
+        case .mcp: return "mcp"
         }
     }
 }

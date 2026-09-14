@@ -49,7 +49,10 @@ protocol DriverCommandClient: AnyObject {
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode) throws -> ForyWaitForPayload
     func screenshot() throws -> Data
     func screenshotCapture() throws -> ScreenshotCapture
+    func screenshotCapture(waitQuiescence: Bool) throws -> ScreenshotCapture
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint?) throws -> ForyElementPayload
+    func click(target: ForyTarget, count: Int) throws -> ForyElementPayload
+    func textInput(_ args: ForyTextInputArgs) throws -> ForyElementPayload
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload
     func input(tap: ForyTarget?, content: String) throws -> ForyElementPayload
     func input(
@@ -130,6 +133,15 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
+    func click(target: ForyTarget, count: Int) throws -> ForyElementPayload {
+        guard count == 1 else { throw CLIParseError.invalidValue("Multiple clicks are not supported by this backend") }
+        return try tap(target: target, traits: nil, cindex: nil, offset: nil, ratio: nil)
+    }
+
+    func textInput(_ args: ForyTextInputArgs) throws -> ForyElementPayload {
+        throw CLIParseError.invalidValue("This backend does not support \(args.operation) text operations")
+    }
+
     func rotate(orientation: IOSUseDeviceOrientation) throws -> ForyRotatePayload {
         throw CLIParseError.invalidValue("rotate is not supported by this driver client")
     }
@@ -177,6 +189,11 @@ extension DriverCommandClient {
 
     func screenshotCapture() throws -> ScreenshotCapture {
         ScreenshotCapture(jpeg: try screenshot())
+    }
+
+    func screenshotCapture(waitQuiescence: Bool) throws -> ScreenshotCapture {
+        if waitQuiescence { _ = try dom(raw: false, fresh: true, waitQuiescence: true) }
+        return try screenshotCapture()
     }
 
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool) throws -> ForyWaitForPayload {
@@ -426,7 +443,12 @@ final class DriverClient: DriverCommandClient {
     }
 
     func screenshotCapture() throws -> ScreenshotCapture {
-        let payload = try sendRawPayload(command: DriverCommand.screenshot.rawValue, payload: Data())
+        try screenshotCapture(waitQuiescence: false)
+    }
+
+    func screenshotCapture(waitQuiescence: Bool) throws -> ScreenshotCapture {
+        let args = waitQuiescence ? try fory.serialize(ForyScreenshotArgs(waitQuiescence: true)) : Data()
+        let payload = try sendRawPayload(command: DriverCommand.screenshot.rawValue, payload: args)
         let decoded = try fory.deserialize(payload, as: ForyScreenshotPayload.self)
         let logicalSize = decoded.logicalSize.x > 0 && decoded.logicalSize.y > 0
             ? decoded.logicalSize
@@ -456,6 +478,15 @@ final class DriverClient: DriverCommandClient {
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32? = nil) throws -> ForyElementPayload {
         let durationSeconds = durationMs.map { Double($0) / 1000.0 } ?? 0
         return try send(LongPressCommand.self, args: ForyLongPressArgs(target: target.withLookup(traits: traits, cindex: cindex), duration: durationSeconds))
+    }
+
+    func click(target: ForyTarget, count: Int) throws -> ForyElementPayload {
+        guard (1...10).contains(count) else { throw CLIParseError.invalidValue("clickCount must be between 1 and 10") }
+        return try send(TapCommand.self, args: ForyTapArgs(target: target, clickCount: Int32(count)))
+    }
+
+    func textInput(_ args: ForyTextInputArgs) throws -> ForyElementPayload {
+        try send(TextInputCommand.self, args: args)
     }
 
     func input(tap: ForyTarget?, content: String) throws -> ForyElementPayload {

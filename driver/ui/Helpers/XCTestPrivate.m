@@ -406,7 +406,7 @@ NSUInteger XCDefaultTypingFrequency(void) {
     return defaultFreq > 0 ? (NSUInteger)defaultFreq : 60;
 }
 
-static BOOL XCSynthesizeEventRecord(id record, NSError **error) {
+static BOOL XCSynthesizeEventRecordWithTimeout(id record, double timeout, NSError **error) {
     id device = [XCUIDevice sharedDevice];
     id synthesizer = [device respondsToSelector:NSSelectorFromString(@"eventSynthesizer")]
         ? [device performSelector:NSSelectorFromString(@"eventSynthesizer")]
@@ -432,8 +432,10 @@ static BOOL XCSynthesizeEventRecord(id record, NSError **error) {
     }
 
     __block NSError *innerError = nil;
+    __block BOOL succeeded = NO;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     id completion = ^(BOOL result, NSError *invokeError) {
+        succeeded = result;
         if (invokeError) {
             innerError = invokeError;
         }
@@ -448,12 +450,22 @@ static BOOL XCSynthesizeEventRecord(id record, NSError **error) {
     [inv retainArguments];
     [inv invoke];
 
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, XCSynthesizeEventTimeoutSeconds * NSEC_PER_SEC));
-    if (innerError) {
-        if (error) *error = innerError;
+    BOOL timedOut = dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC))) != 0;
+    if (timedOut) {
+        if (error) *error = [NSError errorWithDomain:@"ios-use" code:19 userInfo:@{NSLocalizedDescriptionKey:@"Event synthesis timed out; input may have applied"}];
+        return NO;
+    }
+    if (!succeeded || innerError) {
+        if (error) *error = innerError ?: [NSError errorWithDomain:@"ios-use" code:19 userInfo:@{
+            NSLocalizedDescriptionKey: @"Event synthesizer rejected the input"
+        }];
         return NO;
     }
     return YES;
+}
+
+static BOOL XCSynthesizeEventRecord(id record, NSError **error) {
+    return XCSynthesizeEventRecordWithTimeout(record, XCSynthesizeEventTimeoutSeconds, error);
 }
 
 static BOOL XCSynthesizeTouchPath(CGPoint point, double holdDuration, NSString *name, NSError **error) {
@@ -517,6 +529,201 @@ static BOOL XCSynthesizeTouchPath(CGPoint point, double holdDuration, NSString *
 
 BOOL XCSynthesizeTapAtPoint(CGPoint point, NSError **error) {
     return XCSynthesizeTouchPath(point, XCTapLiftUpDelay, @"Tap", error);
+}
+
+BOOL XCSynthesizeTapsAtPoint(CGPoint point, NSUInteger count, NSError **error) {
+    if (count == 1) return XCSynthesizeTapAtPoint(point, error);
+    Class recordClass = NSClassFromString(@"XCSynthesizedEventRecord");
+    Class pathClass = NSClassFromString(@"XCPointerEventPath");
+    SEL recordInit = NSSelectorFromString(@"initWithName:");
+    SEL pathInit = NSSelectorFromString(@"initForTouchAtPoint:offset:");
+    SEL addPath = NSSelectorFromString(@"addPointerEventPath:");
+    SEL lift = NSSelectorFromString(@"liftUpAtOffset:");
+    if (![recordClass instancesRespondToSelector:recordInit] ||
+        ![recordClass instancesRespondToSelector:addPath] ||
+        ![pathClass instancesRespondToSelector:pathInit] ||
+        ![pathClass instancesRespondToSelector:lift]) {
+        if (error) *error = [NSError errorWithDomain:@"ios-use" code:20 userInfo:@{NSLocalizedDescriptionKey:@"Multi-tap synthesis is unavailable"}];
+        return NO;
+    }
+    id record = ((id (*)(id, SEL, id))objc_msgSend)([recordClass alloc], recordInit, @"Multi Tap");
+    for (NSUInteger index = 0; index < count; index++) {
+        double start = index * 0.15;
+        id path = ((id (*)(id, SEL, CGPoint, double))objc_msgSend)([pathClass alloc], pathInit, point, start);
+        ((void (*)(id, SEL, double))objc_msgSend)(path, lift, start + XCTapLiftUpDelay);
+        ((void (*)(id, SEL, id))objc_msgSend)(record, addPath, path);
+    }
+    return XCSynthesizeEventRecord(record, error);
+}
+
+static BOOL XCSynthesizeKeyWithTimeout(NSString *key, NSUInteger modifiers, double timeout, NSError **error) {
+    Class recordClass = NSClassFromString(@"XCSynthesizedEventRecord");
+    Class pathClass = NSClassFromString(@"XCPointerEventPath");
+    SEL recordInit = NSSelectorFromString(@"initWithName:");
+    SEL pathInit = NSSelectorFromString(@"initForTextInput");
+    SEL type = NSSelectorFromString(@"typeKey:modifiers:atOffset:");
+    SEL addPath = NSSelectorFromString(@"addPointerEventPath:");
+    if (![recordClass instancesRespondToSelector:recordInit] ||
+        ![recordClass instancesRespondToSelector:addPath] ||
+        ![pathClass instancesRespondToSelector:pathInit] ||
+        ![pathClass instancesRespondToSelector:type]) {
+        if (error) *error = [NSError errorWithDomain:@"ios-use" code:21 userInfo:@{NSLocalizedDescriptionKey:@"Key synthesis is unavailable"}];
+        return NO;
+    }
+    id record = ((id (*)(id, SEL, id))objc_msgSend)([recordClass alloc], recordInit, @"Key");
+    id path = ((id (*)(id, SEL))objc_msgSend)([pathClass alloc], pathInit);
+    ((void (*)(id, SEL, id, NSUInteger, double))objc_msgSend)(path, type, key, modifiers, 0.0);
+    ((void (*)(id, SEL, id))objc_msgSend)(record, addPath, path);
+    return XCSynthesizeEventRecordWithTimeout(record, timeout, error);
+}
+
+BOOL XCSynthesizeKey(NSString *key, NSUInteger modifiers, NSError **error) {
+    return XCSynthesizeKeyWithTimeout(key, modifiers, XCSynthesizeEventTimeoutSeconds, error);
+}
+
+static id XCAXElement(id snapshot, NSError **error) {
+    id element = XCValueForKeySafely(snapshot, @"accessibilityElement");
+    if (!element && error) *error = [NSError errorWithDomain:@"ios-use" code:22 userInfo:@{NSLocalizedDescriptionKey:@"Target has no remote accessibility element"}];
+    return element;
+}
+
+static id XCAXRequest(id client, id (^request)(void), NSError **error) {
+    SEL timeoutSelector = NSSelectorFromString(@"_setAXTimeout:error:");
+    double previousTimeout = [[client valueForKey:@"AXTimeout"] doubleValue];
+    NSError *timeoutError = nil;
+    if (!((BOOL (*)(id, SEL, double, NSError **))objc_msgSend)(client, timeoutSelector, 2.0, &timeoutError)) {
+        if (error) *error = timeoutError;
+        return nil;
+    }
+    @try { return request(); }
+    @catch (NSException *exception) {
+        if (error) *error = [NSError errorWithDomain:@"ios-use" code:27 userInfo:@{NSLocalizedDescriptionKey:exception.reason ?: @"Accessibility text request failed"}];
+        return nil;
+    }
+    @finally {
+        ((BOOL (*)(id, SEL, double, NSError **))objc_msgSend)(client, timeoutSelector, previousTimeout, nil);
+    }
+}
+
+static id XCAXAttribute(id snapshot, NSString *attribute, NSError **error) {
+    id element = XCAXElement(snapshot, error);
+    id client = AccessibilityClient();
+    SEL selector = NSSelectorFromString(@"attributesForElement:attributes:error:");
+    if (!element || ![client respondsToSelector:selector]) return nil;
+    NSDictionary *values = XCAXRequest(client, ^id {
+        return ((id (*)(id, SEL, id, id, NSError **))objc_msgSend)(client, selector, element, @[attribute], error);
+    }, error);
+    return values[attribute];
+}
+
+NSString *XCTextValue(id snapshot, NSError **error) {
+    id value = XCAXAttribute(snapshot, @"XC_kAXXCAttributeValue", error);
+    if (error && *error) return nil;
+    if ([value isKindOfClass:NSString.class]) return value;
+    if (value == nil || value == NSNull.null) return @"";
+    if (error) *error = [NSError errorWithDomain:@"ios-use" code:24 userInfo:@{NSLocalizedDescriptionKey:@"Target does not expose editable text"}];
+    return nil;
+}
+
+static BOOL XCReadTextRange(id snapshot, NSRange *range, NSError **error) {
+    id selected = XCAXAttribute(snapshot, @"XC_kAXXCAttributeSelectedTextRange", error);
+    if ([selected isKindOfClass:NSString.class]) {
+        NSRange parsed = NSRangeFromString(selected);
+        if ([NSStringFromRange(parsed) isEqualToString:selected]) { *range = parsed; return YES; }
+    }
+    if ([selected isKindOfClass:NSValue.class] && strcmp([selected objCType], @encode(NSRange)) == 0) {
+        *range = [selected rangeValue];
+        return YES;
+    }
+    if (error && !*error) *error = [NSError errorWithDomain:@"ios-use" code:25 userInfo:@{NSLocalizedDescriptionKey:@"Target does not expose its text selection"}];
+    return NO;
+}
+
+NSString *XCSelectAllText(id snapshot, NSError **error) {
+    NSString *value = XCTextValue(snapshot, error);
+    if (!value || !XCSynthesizeKey(@"a", XCUIKeyModifierCommand, error)) return nil;
+    NSRange selected;
+    if (!XCReadTextRange(snapshot, &selected, error)) return nil;
+    if (NSEqualRanges(selected, NSMakeRange(0, value.length))) return value;
+    if (NSEqualRanges(selected, NSMakeRange(0, 0)) &&
+        [value isEqualToString:XCAXAttribute(snapshot, @"XC_kAXXCAttributePlaceholderValue", error)]) return @"";
+    if (error && !*error) *error = [NSError errorWithDomain:@"ios-use" code:25 userInfo:@{NSLocalizedDescriptionKey:@"Select-all did not match the editable text; no text was changed"}];
+    return nil;
+}
+
+BOOL XCTextValueMatches(id snapshot, NSString *expected, NSError **error) {
+    NSString *actual = XCTextValue(snapshot, error);
+    if (!actual) return NO;
+    NSRange selected;
+    if (!XCReadTextRange(snapshot, &selected, error) || !NSEqualRanges(selected, NSMakeRange(expected.length, 0))) return NO;
+    return [actual isEqualToString:expected] ||
+        (expected.length == 0 && [actual isEqualToString:XCAXAttribute(snapshot, @"XC_kAXXCAttributePlaceholderValue", error)]);
+}
+
+BOOL XCSelectTextRange(id snapshot, NSString *value, NSRange range, NSError **error) {
+    NSMutableArray<NSNumber *> *boundaries = [NSMutableArray arrayWithObject:@0];
+    [value enumerateSubstringsInRange:NSMakeRange(0, value.length) options:NSStringEnumerationByComposedCharacterSequences
+                          usingBlock:^(NSString *substring, NSRange substringRange, NSRange enclosingRange, BOOL *stop) {
+        [boundaries addObject:@(NSMaxRange(substringRange))];
+    }];
+    NSUInteger start = [boundaries indexOfObject:@(range.location)];
+    NSUInteger end = [boundaries indexOfObject:@(NSMaxRange(range))];
+    if (start == NSNotFound || end == NSNotFound || end < start) {
+        if (error) *error = [NSError errorWithDomain:@"ios-use" code:25 userInfo:@{NSLocalizedDescriptionKey:@"Selection must follow complete character boundaries"}];
+        return NO;
+    }
+    NSMutableArray<NSString *> *keys = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *flags = [NSMutableArray array];
+    NSRange current;
+    if (!XCReadTextRange(snapshot, &current, error)) return NO;
+    if (NSEqualRanges(current, range)) return YES;
+    if (range.location == 0 && range.length == value.length) {
+        [keys addObject:@"a"];
+        [flags addObject:@(XCUIKeyModifierCommand)];
+    } else {
+        NSUInteger total = boundaries.count - 1;
+        BOOL fromEnd = total - end < start;
+        NSUInteger cursor = [boundaries indexOfObject:@(current.location)];
+        BOOL canUseCursor = current.length == 0 && cursor != NSNotFound;
+        NSUInteger endpoint = fromEnd ? end : start;
+        NSUInteger edgeCost = (fromEnd ? total - end : start) + 2;
+        if (canUseCursor) {
+            NSUInteger startDistance = cursor > start ? cursor - start : start - cursor;
+            NSUInteger endDistance = cursor > end ? cursor - end : end - cursor;
+            endpoint = startDistance < endDistance ? start : end;
+            canUseCursor = MIN(startDistance, endDistance) <= edgeCost;
+        }
+        if (!canUseCursor) {
+            [keys addObject:@"a"];
+            [flags addObject:@(XCUIKeyModifierCommand)];
+            [keys addObject:fromEnd ? XCUIKeyboardKeyRightArrow : XCUIKeyboardKeyLeftArrow];
+            [flags addObject:@0];
+            cursor = fromEnd ? total : 0;
+            endpoint = fromEnd ? end : start;
+        }
+        NSString *direction = cursor > endpoint ? XCUIKeyboardKeyLeftArrow : XCUIKeyboardKeyRightArrow;
+        NSUInteger movement = cursor > endpoint ? cursor - endpoint : endpoint - cursor;
+        for (NSUInteger index = 0; index < movement + end - start; index++) {
+            [keys addObject:index < movement ? direction : (endpoint == start ? XCUIKeyboardKeyRightArrow : XCUIKeyboardKeyLeftArrow)];
+            [flags addObject:@(index < movement ? 0 : XCUIKeyModifierShift)];
+        }
+    }
+    // XCTest handles only one text event per synthesized record on iOS. Keep
+    // native key events sequential, and stop before dispatching more on timeout.
+    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 5.0;
+    for (NSUInteger index = 0; index < keys.count; index++) {
+        double remaining = deadline - CFAbsoluteTimeGetCurrent();
+        if (remaining <= 0) {
+            if (error) *error = [NSError errorWithDomain:@"ios-use" code:25 userInfo:@{NSLocalizedDescriptionKey:@"Text selection exceeded its time budget; no text was changed"}];
+            return NO;
+        }
+        if (!XCSynthesizeKeyWithTimeout(keys[index], flags[index].unsignedIntegerValue, MIN(remaining, XCSynthesizeEventTimeoutSeconds), error)) return NO;
+    }
+    NSRange selected;
+    if (!XCReadTextRange(snapshot, &selected, error)) return NO;
+    if (NSEqualRanges(selected, range)) return YES;
+    if (error && !*error) *error = [NSError errorWithDomain:@"ios-use" code:25 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"Text selection was not confirmed (expected %@, observed %@)", NSStringFromRange(range), NSStringFromRange(selected)]}];
+    return NO;
 }
 
 BOOL XCSynthesizeLongPressAtPoint(CGPoint point, double duration, NSError **error) {

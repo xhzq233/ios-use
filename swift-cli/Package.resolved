@@ -1,12 +1,30 @@
 {
   "pins" : [
     {
+      "identity" : "eventsource",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mattt/eventsource.git",
+      "state" : {
+        "revision" : "86b5096ac59ab46e66bd1f6377c604bc1dab0bc2",
+        "version" : "1.5.1"
+      }
+    },
+    {
       "identity" : "fory",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apache/fory.git",
       "state" : {
         "branch" : "main",
         "revision" : "398ad2f80c55bbe1f8d75def24009d1291019257"
+      }
+    },
+    {
+      "identity" : "quickjs-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/zqqf16/QuickJS-Swift.git",
+      "state" : {
+        "branch" : "50eb132",
+        "revision" : "50eb132d6bc89736f478cf8336948fb62133a264"
       }
     },
     {
@@ -28,6 +46,15 @@
       }
     },
     {
+      "identity" : "swift-log",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-log.git",
+      "state" : {
+        "revision" : "9c6fb14227f55d8f711ce3847dc2f419fb0ecacb",
+        "version" : "1.15.1"
+      }
+    },
+    {
       "identity" : "swift-nio",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
@@ -43,6 +70,15 @@
       "state" : {
         "revision" : "3f337058ccd7243c4cac7911477d8ad4c598d4da",
         "version" : "2.37.0"
+      }
+    },
+    {
+      "identity" : "swift-sdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/modelcontextprotocol/swift-sdk.git",
+      "state" : {
+        "revision" : "a0ae212ebf6eab5f754c3129608bc5557637e605",
+        "version" : "0.12.1"
       }
     },
     {

@@ -542,6 +542,9 @@ final class UIKitFixtureViewController:
         )
         longPress.minimumPressDuration = 0.35
         longPressTarget.addGestureRecognizer(longPress)
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(doubleTapRecognized))
+        doubleTap.numberOfTapsRequired = 2
+        longPressTarget.addGestureRecognizer(doubleTap)
 
         let replaceScene = UIButton(type: .system)
         replaceScene.setTitle("Replace Scene Window", for: .normal)
@@ -1071,6 +1074,11 @@ final class UIKitFixtureViewController:
         }
         longPressStatusLabel.text = "Long press recognized"
         longPressStatusLabel.accessibilityValue = "recognized"
+    }
+
+    @objc private func doubleTapRecognized() {
+        longPressStatusLabel.text = "Double tap recognized"
+        longPressStatusLabel.accessibilityValue = "double tap"
     }
 
     @objc private func replaceSceneWindow() {

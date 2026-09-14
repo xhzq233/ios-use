@@ -27,6 +27,9 @@ public enum CLIParser {
             parsed = .du
         case "status":
             parsed = .status(try parseStatus(&parser))
+        case "mcp":
+            try parser.requireEnd()
+            parsed = .mcp
         case "config":
             parsed = .config(try parseConfig(&parser))
         case "start":
@@ -111,7 +114,7 @@ public enum CLIParser {
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "--target", "--depth", "--device", "-d", "-i"
+            "--app", "--target", "--depth", "--device", "-d", "--file", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -145,7 +148,7 @@ public enum CLIParser {
             "--content", "--delete", "--to", "--from", "--dir",
             "--distance", "--match", "--fps", "--index", "--process",
             "--pid", "--output", "--runtime", "--app", "--target",
-            "--depth", "-i",
+            "--depth", "--file", "-i",
         ]
         var normalized: [String] = []
         var deviceID: String?

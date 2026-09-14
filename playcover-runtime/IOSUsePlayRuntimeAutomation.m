@@ -3585,6 +3585,16 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
     }
     NSInteger requestedDeleteCount = [deleteValue integerValue];
     BOOL enter = [enterValue boolValue];
+    NSString *textOperation = arguments[@"textOperation"];
+    if (textOperation != nil &&
+        (![@[@"replace", @"select", @"type"] containsObject:textOperation] ||
+         ![arguments[@"selectionText"] isKindOfClass:NSString.class] ||
+         ![arguments[@"selectionPrefix"] isKindOfClass:NSString.class] ||
+         ![arguments[@"selectionSuffix"] isKindOfClass:NSString.class] ||
+         ![@[@"text", @"cursor_before", @"cursor_after"] containsObject:arguments[@"selectionType"]])) {
+        if (commandError) *commandError = IOSUseAutomationError(@"invalid_arguments", @"Invalid text operation or selection", @"validation", @"validation", NO, arguments[@"target"], @[]);
+        return nil;
+    }
     IOSUseAutomationCandidate *candidate = nil;
     BOOL webTarget = NO;
     BOOL webNativeResponderActivated = NO;
@@ -4000,12 +4010,61 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
         requestedDeleteCount,
         &appliedDeleteCount
     );
-    NSString *retainedPrefix = [beforeValue
-        substringToIndex:replacementRange.location];
-    NSString *expectedValue = [retainedPrefix
-        stringByAppendingString:content];
+    BOOL selectionOnly = [textOperation isEqualToString:@"select"];
+    if ([textOperation isEqualToString:@"replace"]) {
+        replacementRange = NSMakeRange(0, beforeValue.length);
+    } else if ([textOperation isEqualToString:@"type"]) {
+        if (supportedWebInput) {
+            NSInteger start = [webState[@"selectionStart"] integerValue];
+            NSInteger end = [webState[@"selectionEnd"] integerValue];
+            replacementRange = NSMakeRange(start, end - start);
+        } else {
+            UITextRange *selected = textInput.selectedTextRange;
+            if (selected == nil) {
+                if (commandError) *commandError = IOSUseAutomationUnsupportedInputError(@"unverifiable_selection", @"The active input has no selection", target, firstResponder);
+                return nil;
+            }
+            replacementRange = NSMakeRange(
+                [textInput offsetFromPosition:textInput.beginningOfDocument toPosition:selected.start],
+                [textInput offsetFromPosition:selected.start toPosition:selected.end]
+            );
+        }
+    } else if (selectionOnly) {
+        NSString *needle = arguments[@"selectionText"];
+        NSString *prefix = arguments[@"selectionPrefix"];
+        NSString *suffix = arguments[@"selectionSuffix"];
+        NSRange found = NSMakeRange(NSNotFound, 0);
+        NSUInteger offset = 0;
+        while (needle.length > 0 && offset < beforeValue.length) {
+            NSRange candidateRange = [beforeValue rangeOfString:needle options:NSLiteralSearch range:NSMakeRange(offset, beforeValue.length - offset)];
+            if (candidateRange.location == NSNotFound) break;
+            if ([[beforeValue substringToIndex:candidateRange.location] hasSuffix:prefix] &&
+                [[beforeValue substringFromIndex:NSMaxRange(candidateRange)] hasPrefix:suffix]) {
+                if (found.location != NSNotFound) {
+                    if (commandError) *commandError = IOSUseAutomationError(@"invalid_arguments", @"Selection is ambiguous; supply prefix or suffix", @"validation", @"validation", NO, target, @[]);
+                    return nil;
+                }
+                found = candidateRange;
+            }
+            offset = candidateRange.location + 1;
+        }
+        if (found.location == NSNotFound) {
+            if (commandError) *commandError = IOSUseAutomationError(@"invalid_arguments", @"Selection text is not present in this editable element", @"validation", @"validation", NO, target, @[]);
+            return nil;
+        }
+        NSString *selectionType = arguments[@"selectionType"];
+        replacementRange = [selectionType isEqualToString:@"cursor_before"] ? NSMakeRange(found.location, 0)
+            : [selectionType isEqualToString:@"cursor_after"] ? NSMakeRange(NSMaxRange(found), 0) : found;
+    }
+    if (replacementRange.location > beforeValue.length || replacementRange.length > beforeValue.length - replacementRange.location) {
+        if (commandError) *commandError = IOSUseAutomationUnsupportedInputError(@"unverifiable_selection", @"Selection is outside the text document", target, firstResponder);
+        return nil;
+    }
+    BOOL preserveForReturn = textOperation != nil && enter && content.length == 0;
+    NSString *expectedValue = selectionOnly || preserveForReturn ? beforeValue
+        : [beforeValue stringByReplacingCharactersInRange:replacementRange withString:content];
     BOOL selectionReady = NO;
-    if (supportedWebInput) {
+    if (supportedWebInput && textOperation == nil) {
         selectionReady =
             [webState[@"selectionStart"] integerValue] ==
                 (NSInteger)beforeValue.length &&
@@ -4016,6 +4075,11 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
             textInput,
             replacementRange
         );
+        if (selectionReady && supportedWebInput) {
+            webState = IOSUsePlayRuntimeWebInputState((UIView *)firstResponder, webTarget ? candidate.serialized : nil, &webStateFailure);
+            selectionReady = webState != nil && [webState[@"selectionStart"] unsignedIntegerValue] == replacementRange.location &&
+                [webState[@"selectionEnd"] unsignedIntegerValue] == NSMaxRange(replacementRange);
+        }
     }
     if (!selectionReady) {
         if (commandError != NULL) {
@@ -4052,7 +4116,9 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
         }
         return nil;
     }
-    if (supportedWebInput) {
+    if (selectionOnly || preserveForReturn) {
+        // Selection itself is the operation; leave document content unchanged.
+    } else if (supportedWebInput && textOperation == nil) {
         for (NSInteger index = 0;
              index < appliedDeleteCount;
              index += 1) {
@@ -4105,7 +4171,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
             }
             return nil;
         }
-        BOOL returnSelectionReady = supportedWebInput
+        BOOL returnSelectionReady = textOperation != nil || (supportedWebInput
             ? [webState[@"selectionStart"] integerValue] ==
                     (NSInteger)expectedValue.length &&
                 [webState[@"selectionEnd"] integerValue] ==
@@ -4113,7 +4179,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
             : IOSUseAutomationSelectTextRange(
                 textInput,
                 NSMakeRange(expectedValue.length, 0)
-            );
+            ));
         if (!returnSelectionReady) {
             if (commandError != NULL) {
                 *commandError =
@@ -4130,8 +4196,9 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
         if ([firstResponder isKindOfClass:UITextView.class] ||
             (supportedWebInput &&
              [webState[@"tag"] isEqualToString:@"textarea"])) {
-            expectedValue = [expectedValue
-                stringByAppendingString:@"\n"];
+            expectedValue = textOperation != nil
+                ? [expectedValue stringByReplacingCharactersInRange:replacementRange withString:@"\n"]
+                : [expectedValue stringByAppendingString:@"\n"];
         }
         IOSUseAutomationPump(0.03);
         if (supportedWebInput) {
@@ -4204,9 +4271,9 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
             @"requestedDeleteCount": @(requestedDeleteCount),
             @"appliedDeleteCount": @(appliedDeleteCount),
             @"enter": @(enter),
-            @"editMode": requestedDeleteCount > 0
+            @"editMode": textOperation ?: (requestedDeleteCount > 0
                 ? @"replace"
-                : @"append",
+                : @"append"),
             @"beforeValue": beforeValue,
             @"value": afterValue,
             @"exactValueVerified": @YES,

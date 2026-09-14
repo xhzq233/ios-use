@@ -6,6 +6,9 @@ import Fory
 enum TouchCommands {
     /// doc 1.2 — tap. `target` is decoded from ForyTapArgs.target (ForyTarget).
     static func tap(_ args: ForyTapArgs) throws -> ForyResponseFrame {
+        guard (1...10).contains(args.clickCount) else {
+            return try Codec.foryError("clickCount must be between 1 and 10", category: IOSUseErrorCategory.validation, code: IOSUseErrorCode.invalidArguments, phase: IOSUseErrorPhase.validation)
+        }
         let app = try Session.shared.ensureActive()
         defer { invalidateSnapshot() }
 
@@ -23,7 +26,7 @@ enum TouchCommands {
                 )
             }
             let point = CGPoint(x: pt.x, y: pt.y)
-            try tapAtPoint(point, app: app)
+            try tapAtPoint(point, count: Int(args.clickCount), app: app)
             let payload = ForyElementPayload(
                 elemType: IOSUseProtocol.XCConstants.coordinateElementTypeRawValue,
                 label: "",
@@ -63,7 +66,7 @@ enum TouchCommands {
                 )
             }
             let point = resolveTapPoint(frame: frame, offset: args.offset, ratio: args.ratio)
-            try tapAtPoint(point, app: app)
+            try tapAtPoint(point, count: Int(args.clickCount), app: app)
             let payload = ForyElementPayload(
                 element: makeForyElementSummary(elem.node)
             )
@@ -151,8 +154,8 @@ enum TouchCommands {
 
     // MARK: - Internals
 
-    private static func tapAtPoint(_ p: CGPoint, app: XCUIApplication) throws {
-        if let error = RawPointer.perform(app: app, event: .tap(p)) {
+    private static func tapAtPoint(_ p: CGPoint, count: Int, app: XCUIApplication) throws {
+        if let error = RawPointer.perform(app: app, event: .clicks(p, count: count)) {
             throw DriverError.gestureFailed("tap synthesis failed: \(error.localizedDescription)")
         }
     }

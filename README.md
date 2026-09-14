@@ -8,7 +8,7 @@
 
 `ios-use` drives real iPhones, Simulators, and supported iPhone Apps on Apple
 silicon Macs. It exposes a compact accessibility tree, semantic actions, JSON
-output, screenshots, logs, proxy capture, and multi-device operation.
+output, screenshots, logs, proxy capture, and persistent multi-device MCP tools.
 
 ## Install
 
@@ -91,6 +91,43 @@ Real devices and Simulators use their bare UDID; the Mac Backend uses `mac`.
 Per-Device state, logs, and artifacts live under `~/.ios-use/{state,logs,artifacts}/devices/<device-id>/`.
 Existing single-Device state is still read and moves to the new layout after its next stop/start.
 
+## MCP automation
+
+Register `ios-use mcp` as a local stdio MCP server. For Codex:
+
+```bash
+codex mcp add ios-use -- ios-use mcp
+```
+
+Start a new Agent session to discover `js` and `js_reset`. Call `js` with
+`{"code":"let device = await cua.getDevice(\"<device-id>\");"}`. Each call returns
+its text and image content when the code completes; variables and Device
+handles persist across calls. No terminal polling is needed. `timeout_ms`
+defaults to 30,000 and can be raised to 300,000 for longer batches.
+
+Use `cua.help()` and `device.help()` for the current API. Common Device methods
+include `getAXState`, `getScreenshot`, `getAXStateAndScreenshot`, `click`, `drag`,
+`longPress`, `scroll`, `scrollTo`, `waitFor`, `setValue`, `selectText`, `typeText`,
+`paste`, and `pressKey`. Observations request native quiescence by default;
+this does not guarantee that every navigation transition has finished.
+`get()` reads the complete cached tree without another request. Use
+`getAXState({emit:false})` to refresh it before making decisions in a JS loop.
+`listApps`, `activateApp(bundleId)`, and `terminateApp(bundleId)` manage iOS / Simulator
+Apps. Activation makes the ready AX available through `get()`; UI methods
+operate on the Device's current foreground. `start()` / `stop()` control configured Drivers; select
+an idle Device with `cua.getDevice(id, {observe:false})`. See the
+[MCP guide](ios-use-skill/references/mcp.md) for examples.
+
+JavaScript runs in embedded QuickJS inside the Swift MCP process and calls
+native services directly. No Node installation, JavaScript child process or
+localhost RPC is needed; the Host reuses a Driver connection per Device.
+Each MCP connection owns its own JavaScript context. `js_reset`, execution
+timeout, or cancellation clears that context; disconnection releases its
+resources. Drivers and Apps remain running. Device actions already issued may
+still finish, so observe before retrying. Device setup, lifecycle, logs and
+artifact-producing commands remain available through the native CLI.
+The old `ios-use repl` command has been removed.
+
 ## Performance Snapshot
 
 Historical real-iPhone Settings benchmark (2026-05-30), comparing the native CLI
@@ -109,7 +146,7 @@ with the full Appium Server → WebDriverAgent stack. Lower latency is better.
 | Terminate app | 1,195.1 | 1,144.0 | −4.5% |
 
 Command cases are means of three iterations; cold session start is one sample.
-These are tool timings, not Agent success/token benchmarks,
+These are tool timings, not REPL comparisons or Agent success/token benchmarks,
 and have not been rerun for the current development version. See the
 [full results and methodology](docs/benchmark.md).
 
@@ -119,6 +156,7 @@ and have not been rerun for the current development version. See the
 | --- | --- |
 | `status`, `config` | Discover Devices and install or inspect Drivers |
 | `start`, `stop` | Start or release a Device Context |
+| `mcp` | Serve persistent JavaScript tools over stdio MCP |
 | `apps`, `install`, `activateApp`, `terminateApp` | Manage Apps |
 | `dom`, `waitFor` | Observe and query UI state |
 | `tap`, `longpress`, `swipe`, `input`, `rotate` | Interact with the UI |
@@ -137,6 +175,7 @@ Most automation commands support `--json`.
   account for driver signing.
 - Simulators and source builds: full Xcode; source builds also require Swift
   and `xcodegen`.
+- MCP: included in the native binary; no separate JavaScript runtime installation.
 - Proxy capture: `mitmproxy`.
 
 ## Development
@@ -152,6 +191,9 @@ bash scripts/ci_test.sh
 See [scripts/README.md](scripts/README.md) for build and test entry points,
 [docs/benchmark.md](docs/benchmark.md) for benchmarks, and
 [ios-use Skill](ios-use-skill/SKILL.md) for operational workflows.
+
+For reproducible Agent task comparisons, including the 2.1.0 MCP / 2.0.4 CLI
+Settings experiment, see [eval/README.md](eval/README.md).
 
 ## Acknowledgments
 

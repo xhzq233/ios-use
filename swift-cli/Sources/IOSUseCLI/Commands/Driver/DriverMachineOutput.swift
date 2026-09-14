@@ -50,14 +50,7 @@ extension DriverCommandResult {
             }
             return .object(value)
         case (.swipe, .swipe(let swipe)):
-            return .object([
-                "element": machineElement(swipe.element),
-                "hitView": swipe.hitView.map(machineHitView) ?? .null,
-                "finalState": swipe.finalState.map(machineFinalState) ?? .null,
-                "postcondition": swipe.postcondition.map(machinePostcondition) ?? .null,
-                "scrolls": .integer(Int(swipe.scrolls)),
-                "direction": .string(swipe.scrollDirection),
-            ])
+            return machineSwipe(swipe)
         case (.activateApp(let bundleId), _):
             return .object(["bundleId": .string(bundleId), "activated": .boolean(true)])
         case (.terminateApp(let bundleId), _):
@@ -219,12 +212,16 @@ private func machineErrorCandidate(
 }
 
 func machineDom(_ payload: ForyDomPayload) -> MachineValue {
+    machineDom(payload, presentation: true)
+}
+
+func machineDom(_ payload: ForyDomPayload, presentation: Bool) -> MachineValue {
     .object([
         "app": .string(payload.app),
         "windowSize": machinePoint(payload.windowSize),
         "raw": payload.raw.isEmpty ? .null : .string(payload.raw),
         "snapshotGeneration": .integer(Int(payload.snapshotGeneration)),
-        "elements": .array(DriverOutput.presentationDomElements(payload.elements).map(machineDomElement)),
+        "elements": .array((presentation ? DriverOutput.presentationDomElements(payload.elements) : payload.elements).map(machineDomElement)),
     ])
 }
 
@@ -270,7 +267,18 @@ private func machineElement(_ element: ForyElementSummary) -> MachineValue {
     ])
 }
 
-private func machineAction(
+func machineSwipe(_ payload: ForySwipePayload) -> MachineValue {
+    .object([
+        "element": machineElement(payload.element),
+        "hitView": payload.hitView.map(machineHitView) ?? .null,
+        "finalState": payload.finalState.map(machineFinalState) ?? .null,
+        "postcondition": payload.postcondition.map(machinePostcondition) ?? .null,
+        "scrolls": .integer(Int(payload.scrolls)),
+        "direction": .string(payload.scrollDirection),
+    ])
+}
+
+func machineAction(
     _ payload: ForyElementPayload
 ) -> MachineValue {
     .object([
