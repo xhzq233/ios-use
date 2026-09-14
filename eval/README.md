@@ -11,7 +11,7 @@
 - [2026-09-13 当前结果](reports/2026-09-13.md)：盘点 cb R2 已撤出；76a0779 的 R3 为 306.771 s / 1,326,647 tokens，覆盖较深，不混算同候选均值。
 - [2026-09-13 姿势引导 A/B](reports/2026-09-13-guide-ab.md)：短 Prompt、204 CLI / 20cc02a MCP 各一轮；两组完成，256.452 s / 165.439 s，不作稳定提速结论。
 - [2026-09-14 三项重复 A/B 与 Settings 历史](reports/2026-09-14.md)：10 个新增 run 完成；三项各 A/B 两轮，旋转 A2 有跨轮资料暴露，Settings 异版本单列。
-- [2026-09-14 Mac 亮度撤销](reports/2026-09-14-mac.md)：204 两轮通过，平均 138.919 s / 810,211 tokens；210 按要求跳过，Computer Use 独立通道调用超时，正式两轮未启动。
+- [2026-09-14 Mac 亮度撤销](reports/2026-09-14-mac.md)：204 CLI / 桌面 Computer Use 各两轮通过；均值 138.919 / 143.890 s，CUA 总 tokens +18.0%、未缓存 input −21.3%；含阶段对照，210 跳过。
 - [环境与版本记录](environment.md)。结果与原始轨迹暂留本地，不随方法提交。
 - [CLI 配置](codex.toml)、[MCP 配置](codex-mcp.toml)。
 - `run.py`：直接调用 `codex exec`，记录一次运行；也可离线汇总原始记录。
