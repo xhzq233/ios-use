@@ -104,11 +104,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.ref }}
+      - name: Resolve Swift toolchain
+        id: toolchain
+        run: |
+          swift --version
+          echo "xcode=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
+      # Dependency builds survive version/source edits; swift build still runs.
       - name: Cache Swift CLI build
         uses: actions/cache@v4
         with:
           path: swift-cli/.build
-          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-release-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'swift-cli/Sources/**/*.swift', 'shared/IOSUseProtocol/**/*.swift', 'ThirdParty/PlayCover/**/*.swift', 'ThirdParty/inject/**/*.swift') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-release-${{ steps.toolchain.outputs.xcode }}-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'shared/IOSUseProtocol/Package.swift', 'ThirdParty/PlayCover/Package.swift', 'ThirdParty/inject/Package.swift') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-swift-cli-release-
       - run: bash scripts/build_swift_cli.sh --skip-runtime
@@ -145,7 +151,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: driver/build
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-release-${{ matrix.platform }}-${{ hashFiles('driver/project.yml', 'driver/**/*.swift', 'driver/**/*.m', 'driver/**/*.h', 'shared/IOSUseProtocol/**/*.swift') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-release-${{ matrix.platform }}-${{ hashFiles('driver/project.yml', 'shared/IOSUseProtocol/Package.swift') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-release-${{ matrix.platform }}-
       - name: Build driver
