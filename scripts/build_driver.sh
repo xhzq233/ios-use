@@ -64,6 +64,7 @@ else
 fi
 
 BUILD_DIR="$PROJECT_DIR/build"
+mkdir -p "$BUILD_DIR"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 XCTEST_WRAPPER_PATH="$BUILD_DIR/IOSUseDriver-Runner.app"
 
