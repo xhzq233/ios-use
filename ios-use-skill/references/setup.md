@@ -10,6 +10,24 @@ ios-use config --udid <udid>
 ios-use start <udid>
 ```
 
+For an externally started driver, obtain its forwarded endpoint from the device
+provider and attach using a local alias:
+
+```bash
+ios-use attach --device remote-phone --host <host> --port <port>
+ios-use dom -d remote-phone
+ios-use detach -d remote-phone
+```
+
+Use a driver from the same release over a trusted network or secure tunnel.
+No local `config` or `start` is needed. `detach` and `stop` only forget this
+attachment; the provider owns installation, driver startup, and cleanup.
+If disconnected, restore the endpoint through the provider and retry. If the
+endpoint changed, detach and attach again. `status` reports the saved binding;
+run `dom` to check whether the endpoint is currently responsive.
+Host operations such as install, open, media import, logs and proxy require the
+provider; `activateApp --log` is unavailable over TCP.
+
 For the Mac backend, complete its one-time setup and start an App:
 
 ```bash
@@ -25,7 +43,7 @@ real device, or a Simulator for reliable automation.
 rerun the same command. This setup is shared across `IOS_USE_HOME` values.
 
 One `IOS_USE_HOME` can hold multiple independent Device Contexts. `status`
-prints their stable IDs: the bare UDID for a real device or Simulator, and `mac`. When more
+prints their stable IDs: the bare UDID for a real device or Simulator, `mac`, or the TCP attachment alias. When more
 than one Device runs, pass `-d <device-id>` (or `--device`) to every Device command;
 with exactly one running Device, it remains optional.
 

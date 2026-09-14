@@ -40,7 +40,7 @@ enum CLIHelp {
           -d, --device <id>  Select a running Device; optional only when one runs
 
         Commands:
-          du, status, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
+          du, status, config, start, stop, attach, detach, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
           activateApp, terminateApp, home, rotate, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
@@ -127,6 +127,33 @@ enum CLIHelp {
               --mac                  Initialize the dedicated stable Mac-backend signing identity
               --verbose              Enable verbose output
               --json                 Print the common machine-readable envelope
+
+            """
+        case "attach":
+            return """
+            Usage: ios-use attach --device <id> --host <host> --port <port> [--json]
+
+            Attach to an already-running ios-use driver over TCP. The caller
+            starts the driver and provides a reachable, trusted endpoint.
+            Host accepts an IP address or hostname; port is 1..65535.
+            A DOM protocol check must succeed before the attachment is saved.
+            Device ID is a local alias; mac is reserved. No USB or config needed.
+            Use --device <id> on later commands when multiple Devices are active.
+
+            Supports DOM, screenshot, capture, gestures, input, waits, alerts,
+            activateApp, terminateApp, home, and rotate. Device installation,
+            URL opening, media import, logs, and proxy require the external provider.
+            TCP has no built-in authentication or encryption; use a trusted
+            network or a secure tunnel. Use the matching driver release.
+
+            """
+        case "detach":
+            return """
+            Usage: ios-use detach [--device <id>] [--json]
+
+            Forget a TCP attachment, even when its endpoint is offline.
+            The external driver and forwarding processes remain running.
+            stop also detaches a TCP target. Locally managed targets use stop.
 
             """
         case "start":

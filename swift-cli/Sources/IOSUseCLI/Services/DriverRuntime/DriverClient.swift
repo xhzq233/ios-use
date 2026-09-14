@@ -16,7 +16,7 @@ enum DriverClientError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .socketCreateFailed(let errno): return "socket create failed: \(errno)"
-        case .connectFailed(let errno): return "driver TCP connect failed: \(errno). Is the Simulator driver running?"
+        case .connectFailed(let errno): return "driver TCP connect failed: \(errno). Check that the driver is running and its TCP endpoint is reachable."
         case .connectFailedMessage(let message, _): return "driver TCP connect failed: \(message)"
         case .readFailed: return "driver TCP read failed"
         case .writeFailed: return "driver TCP write failed"
@@ -211,7 +211,8 @@ final class LockedDriverClientSession {
         do {
             return try body(currentClient(for: lock))
         } catch {
-            guard lock.deviceType != PlayCoverSessionService.deviceType,
+            guard !lock.isAttached,
+                  lock.deviceType != PlayCoverSessionService.deviceType,
                   (error as? DriverClientError)?.isRecoverableConnectFailure == true,
                   !didRecoverConnectFailure else {
                 throw error
@@ -364,6 +365,8 @@ final class DriverClient: DriverCommandClient {
         socketTimeoutSeconds: Int = IOSUseProtocol.commandSocketReadTimeoutSeconds
     ) {
         self.init(
+            host: session.driverHost ?? "127.0.0.1",
+            port: UInt16(session.driverPort ?? Int(IOSUseProtocol.defaultDriverPort)),
             udid: session.udid,
             deviceType: session.deviceType,
             cliLogPath: paths.map { CLILogService.logPath(paths: $0) },
@@ -794,27 +797,37 @@ final class DriverClient: DriverCommandClient {
             return try connectRealDeviceOnce(udid: udid)
         }
 
-        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw DriverClientError.socketCreateFailed(errno) }
-        configureSocket(fd)
-
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        addr.sin_addr.s_addr = inet_addr(host)
-
-        let result = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        hints.ai_protocol = IPPROTO_TCP
+        var addresses: UnsafeMutablePointer<addrinfo>?
+        let result = getaddrinfo(host, String(port), &hints, &addresses)
+        guard result == 0, let first = addresses else {
+            throw DriverClientError.connectFailedMessage(
+                "Cannot resolve \(host): \(String(cString: gai_strerror(result)))",
+                recoverable: false
+            )
+        }
+        defer { freeaddrinfo(first) }
+        var next: UnsafeMutablePointer<addrinfo>? = first
+        var lastError = ECONNREFUSED
+        while let address = next {
+            next = address.pointee.ai_next
+            let fd = Darwin.socket(address.pointee.ai_family, SOCK_STREAM, IPPROTO_TCP)
+            guard fd >= 0 else { lastError = errno; continue }
+            configureSocket(fd)
+            // Bound unreachable external endpoints, in addition to the read/write deadlines.
+            var connectionTimeout: UInt32 = 10
+            setsockopt(fd, IPPROTO_TCP, TCP_CONNECTIONTIMEOUT, &connectionTimeout,
+                       socklen_t(MemoryLayout<UInt32>.size))
+            if Darwin.connect(fd, address.pointee.ai_addr, address.pointee.ai_addrlen) == 0 {
+                return fd
             }
-        }
-
-        guard result == 0 else {
-            let err = errno
+            lastError = errno
             Darwin.close(fd)
-            throw DriverClientError.connectFailed(err)
         }
-        return fd
+        throw DriverClientError.connectFailed(lastError)
     }
 
     private func connectRealDeviceOnce(udid: String) throws -> Int32 {

@@ -1508,7 +1508,7 @@ final class ConfigServiceTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: "\(root)/altsign-cli", withIntermediateDirectories: true)
         try "#!/bin/sh\nexit 0\n".write(toFile: altsign, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: altsign)
-        try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
+        try makeMinimalDriverIpa(path: "\(root)/driver.ipa", version: "2.1.0", releaseVersion: IOSUseCLI.version)
         ConfigService.driverIPAPathProviderForTesting = { _, _ in "\(root)/driver.ipa" }
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             XCTAssertFalse(simulatorOnly)
@@ -1546,7 +1546,7 @@ final class ConfigServiceTests: XCTestCase {
                 "LookupResult": [
                     bundleID: [
                         "CFBundleIdentifier": bundleID,
-                        "CFBundleShortVersionString": IOSUseCLI.version,
+                        "CFBundleShortVersionString": "2.1.0",
                     ],
                 ],
             ]
@@ -1554,7 +1554,7 @@ final class ConfigServiceTests: XCTestCase {
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["config", "--udid", "REAL-CONFIG"])
 
-        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
         XCTAssertEqual(nativePackages.count, 1)
         XCTAssertEqual(nativePackages.first?.uploadMode, .file)
         XCTAssertEqual(nativePackages.first?.remotePath, "PublicStaging/com.ios-use.driver.real-config.xctrunner")
@@ -1755,16 +1755,18 @@ final class ConfigServiceTests: XCTestCase {
         return root
     }
 
-    private func makeMinimalDriverIpa(path: String, version: String = IOSUseCLI.version) throws {
+    private func makeMinimalDriverIpa(path: String, version: String = IOSUseCLI.version, releaseVersion: String? = nil) throws {
         let tmp = try temporaryRoot()
         let appPath = "\(tmp)/Payload/IOSUseDriver-Runner.app"
         let xctestPath = "\(appPath)/PlugIns/IOSUseDriver.xctest"
         try FileManager.default.createDirectory(atPath: xctestPath, withIntermediateDirectories: true)
-        try writePlist([
+        var info: [String: Any] = [
             "CFBundleIdentifier": "com.iosuse.xcuidriver.xctrunner",
             "CFBundleExecutable": "IOSUseDriver-Runner",
             "CFBundleShortVersionString": version,
-        ], path: "\(appPath)/Info.plist")
+        ]
+        if let releaseVersion { info["IOSUseDriverVersion"] = releaseVersion }
+        try writePlist(info, path: "\(appPath)/Info.plist")
         FileManager.default.createFile(atPath: "\(appPath)/IOSUseDriver-Runner", contents: Data(), attributes: nil)
         try writePlist(["CFBundleIdentifier": "com.iosuse.xcuidriver"], path: "\(xctestPath)/Info.plist")
         _ = try runProcess(executable: "zip", arguments: ["-r", "-q", path, "Payload"], cwd: tmp, combineStderr: false)

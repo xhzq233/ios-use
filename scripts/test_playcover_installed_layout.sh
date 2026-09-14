@@ -256,7 +256,7 @@ else
     "$ASSET_DIR/ios-use-darwin-arm64" --version |
       tr -d '[:space:]'
   )"
-  if [[ ! "$release_binary_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  if [[ ! "$release_binary_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
     echo "[installed-layout] ERROR: release binary has an invalid version" >&2
     exit 1
   fi

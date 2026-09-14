@@ -197,7 +197,8 @@ public enum ConfigService {
             guard let info = try PropertyListSerialization.propertyList(from: infoData, options: [], format: nil) as? [String: Any] else {
                 return nil
             }
-            return (info["CFBundleShortVersionString"] as? String)?.nonEmpty
+            return (info["IOSUseDriverVersion"] as? String)?.nonEmpty
+                ?? (info["CFBundleShortVersionString"] as? String)?.nonEmpty
         } catch {
             return nil
         }

@@ -128,5 +128,7 @@ jobs:
             release/ios-use-mac-resources.tar.gz
             release/SHA256SUMS
           body_path: release-notes/CHANGELOG-${{ steps.resolve_tag.outputs.tag }}.md
+          prerelease: ${{ contains(steps.resolve_tag.outputs.tag, '-') }}
+          make_latest: ${{ !contains(steps.resolve_tag.outputs.tag, '-') }}
           overwrite_files: false
           fail_on_unmatched_files: true

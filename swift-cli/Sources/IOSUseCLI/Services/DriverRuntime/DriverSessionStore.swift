@@ -29,6 +29,7 @@ enum DriverSessionStore {
         }
         guard deviceType == "real"
                 || deviceType == "simulator"
+                || deviceType == TCPAttachService.deviceType
                 || deviceType == PlayCoverSessionService.deviceType else {
             throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType).")
         }
@@ -40,6 +41,8 @@ enum DriverSessionStore {
             deviceName: raw["deviceName"] as? String ?? "",
             deviceVersion: raw["deviceVersion"] as? String ?? "",
             deviceType: deviceType,
+            driverHost: raw["driverHost"] as? String,
+            driverPort: raw["driverPort"] as? Int,
             startedAt: startedAt,
             holderPid: raw["holderPid"] as? Int,
             runnerPid: raw["runnerPid"] as? Int,
@@ -57,6 +60,12 @@ enum DriverSessionStore {
             macLogPath:
                 raw["macLogPath"] as? String
         )
+        if info.isAttached {
+            guard let host = info.driverHost, let port = info.driverPort else {
+                throw CLIParseError.invalidValue("Invalid driver.lock: missing TCP endpoint.")
+            }
+            try TCPAttachService.validateEndpoint(host: host, port: port)
+        }
         if deviceType == PlayCoverSessionService.deviceType {
             guard let appPath = info.macAppPath, !appPath.isEmpty,
                   let executablePath = info.macExecutablePath,
@@ -259,6 +268,8 @@ enum DriverSessionStore {
             "deviceType": info.deviceType,
             "startedAt": info.startedAt,
         ]
+        if let host = info.driverHost { root["driverHost"] = host }
+        if let port = info.driverPort { root["driverPort"] = port }
         if let holderPid = info.holderPid {
             root["holderPid"] = holderPid
         }
