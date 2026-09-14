@@ -3,9 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIGURATION="release"
+BUILD_RUNTIME=true
 
 for arg in "$@"; do
   case "$arg" in
+    --skip-runtime)
+      BUILD_RUNTIME=false
+      ;;
     --debug)
       CONFIGURATION="debug"
       ;;
@@ -59,6 +63,10 @@ mv "$TMP_BIN" "$ROOT_DIR/ios-use"
 trap - EXIT
 
 echo "[swift-cli] Built $ROOT_DIR/ios-use"
+
+if [ "$BUILD_RUNTIME" = false ]; then
+  exit 0
+fi
 
 PLAYCOVER_RUNTIME="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
 PLAYCOVER_RUNTIME_EXECUTABLE="$PLAYCOVER_RUNTIME/IOSUsePlayRuntime"

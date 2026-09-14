@@ -114,12 +114,32 @@ git push origin main
 git push origin vX.Y.Z
 ```
 
-Pushing the tag triggers `.github/workflows/release.yml`. The workflow rebuilds
-from the tag, reruns the isolated installed-layout validation, uses the tracked
-release note as the GitHub Release body, and adds `ios-use-linux-x86_64` from
-the Ubuntu 22.04 Linux build. Its checksum is appended to the Mac manifest before all six assets are published. Linux CLI
-builds use `bash scripts/build_swift_cli.sh` with the Swift runtime statically
-linked; the Swift CLI workflow tests Linux x86_64 before release.
+Pushing the tag triggers `.github/workflows/release.yml`. Linux CLI, Mac CLI,
+device Driver, Simulator Driver, and Mac resources build in five independent
+jobs. Each Driver has its own checkout and DerivedData directory. The final
+job downloads those artifacts, assembles the Mac package without recompiling,
+runs the isolated installed-layout validation, then adds the Linux checksum
+and publishes all six assets with the tracked release note. Linux uses Swift
+6.2.4 on Ubuntu 22.04 with the Swift runtime statically linked.
+
+To measure the complete build without publishing, dispatch the workflow on
+the candidate branch with `publish=false` and the version in that branch:
+
+```bash
+gh workflow run release.yml --ref <branch> -f tag=vX.Y.Z -F publish=false
+```
+
+This uses the selected branch commit, retains the verified `release-assets`
+Actions artifact, and leaves the existing tag and Release untouched. A normal
+publication always checks out the tag. Independent versions can build at the
+same time; publication attempts for the same tag remain serialized.
+
+For separate local component builds, `build_swift_cli.sh --skip-runtime` skips
+the companion Runtime, `build_driver.sh --release --device-only` or
+`--simulator-only` selects one IPA, and `build_release_mac_resources.sh` builds
+the resource archive. Driver variants must use separate checkouts if run
+concurrently. `release_build.sh --assemble-only` stamps the checksum manifest
+for the four Mac artifacts already in `release/`; it does not compile them.
 
 Release assets are immutable in the normal workflow: a tag whose Release
 already has assets is rejected, and duplicate names are never overwritten.

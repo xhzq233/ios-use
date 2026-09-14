@@ -7,12 +7,14 @@ set -euo pipefail
 # Usage:
 #   ./scripts/build_driver.sh        # Debug build with dSYM to IOS_USE_HOME or cwd/.ios-use
 #   ./scripts/build_driver.sh --release # Release build to driver/build/
+#   ./scripts/build_driver.sh --device-only # Build only the real-device IPA
 #   ./scripts/build_driver.sh --simulator-only # Build only the simulator IPA for the selected mode
 #   ./scripts/build_driver.sh --debug-perf # Debug build with DEBUG_PERF driver timing enabled
 # =============================================================================
 
 BUILD_MODE="debug"
 SIMULATOR_ONLY=false
+DEVICE_ONLY=false
 DEBUG_PERF=false
 BUILD_STARTED_AT="$(date +%s)"
 for arg in "$@"; do
@@ -22,6 +24,9 @@ for arg in "$@"; do
       ;;
     --release)
       BUILD_MODE="release"
+      ;;
+    --device-only)
+      DEVICE_ONLY=true
       ;;
     --simulator-only)
       SIMULATOR_ONLY=true
@@ -36,6 +41,11 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [ "$DEVICE_ONLY" = true ] && [ "$SIMULATOR_ONLY" = true ]; then
+  echo "[build] ERROR: choose either --device-only or --simulator-only" >&2
+  exit 1
+fi
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_DIR="$ROOT_DIR/driver"
@@ -90,6 +100,7 @@ XCODE_COMMON=(
   -project "$PROJECT_DIR/IOSUseDriver.xcodeproj"
   -scheme IOSUseDriver
   -configuration "$CONFIGURATION"
+  -showBuildTimingSummary
   CONFIGURATION_BUILD_DIR="$BUILD_DIR"
   -derivedDataPath "$DERIVED_DATA"
   DEBUG_INFORMATION_FORMAT="$DEBUG_INFO_FORMAT"
@@ -276,9 +287,9 @@ if [ "$SIMULATOR_ONLY" != true ]; then
   xcodebuild build-for-testing \
     "${XCODE_COMMON[@]}" \
     -destination 'generic/platform=iOS' \
-    -IDEPackageEnablePrebuilts=NO \
+    -IDEPackageEnablePrebuilts="${IOS_USE_SWIFT_PREBUILTS:-NO}" \
     -skipMacroValidation \
-    | tail -5
+    | tee "$BUILD_DIR/device-xcodebuild.log" | tail -20
   STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
   printf '[build] iOS device xcodebuild completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 
@@ -333,6 +344,12 @@ fi
 # Simulator build
 # =============================================================================
 
+if [ "$DEVICE_ONLY" = true ]; then
+  TOTAL_ELAPSED=$(($(date +%s) - BUILD_STARTED_AT))
+  printf '[build] Total completed in %dm%02ds\n' "$((TOTAL_ELAPSED / 60))" "$((TOTAL_ELAPSED % 60))"
+  exit 0
+fi
+
 echo "[build] Building IOSUseDriver for Simulator..."
 rm -rf "$XCTEST_WRAPPER_PATH"
 
@@ -340,9 +357,9 @@ STEP_STARTED_AT="$(date +%s)"
 xcodebuild build-for-testing \
   "${XCODE_COMMON[@]}" \
   -destination 'generic/platform=iOS Simulator' \
-  -IDEPackageEnablePrebuilts=NO \
+  -IDEPackageEnablePrebuilts="${IOS_USE_SWIFT_PREBUILTS:-NO}" \
   -skipMacroValidation \
-  | tail -5
+  | tee "$BUILD_DIR/simulator-xcodebuild.log" | tail -20
 STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
 printf '[build] Simulator xcodebuild completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 
