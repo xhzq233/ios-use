@@ -63,17 +63,16 @@ On the device's Mac host, install the CLI and Skill:
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
 ```
 
-For a remote consumer that only needs the Skill:
+The Skill is installed at `~/.ios-use/skill`. To expose it in another existing
+skills directory, create a link:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install_skill.sh | bash
+ln -s "$HOME/.ios-use/skill" /path/to/skills/ios-use
 ```
 
-Both installers accept `--version <tag>`. From a checkout,
-`bash scripts/install_skill.sh` installs its Skill. For the full CLI installer,
-add `--no-skill` to skip the default `~/.agents/skills/ios-use` link. Skill files
-still update at `~/.ios-use/skill`; link that directory into your chosen skills
-directory yourself. Existing discovery paths are preserved.
+The installer accepts `--version <tag>` and `--no-skill` to skip the default
+`~/.agents/skills/ios-use` link. Skill files still update with the CLI; existing
+discovery paths are preserved.
 
 Keep credentials and signing material out of commands and reports.
 Redact device identifiers and signed URLs before sharing artifacts.

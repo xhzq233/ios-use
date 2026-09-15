@@ -7,9 +7,8 @@
 - Run multiple Devices in one `IOS_USE_HOME`, with separate Driver sessions,
   logs, and artifacts. Use the stable Device IDs shown by `status` with
   `--device` / `-d` when more than one Device is running.
-- Install only the ios-use Skill on a remote Agent without installing the Mac
-  binary or configuring a device host. The full installer also supports
-  `--no-skill` for consumers that manage Skill discovery themselves.
+- The installer keeps the Skill at `~/.ios-use/skill` and supports `--no-skill`
+  for consumers that create their own discovery links.
 
 ## Fixes
 
@@ -22,7 +21,7 @@
   selection.
 - Fix IPA metadata inspection for App installation and Driver version checks.
 - Keep the installed Skill and CLI on the same release, including default
-  latest installs. Both installers accept `--version <tag>`.
+  latest installs. The installer accepts `--version <tag>`.
 
 ## Compatibility and Upgrade Notes
 
@@ -30,8 +29,8 @@
   expected page/container before collecting results; it is not a universal
   readiness guarantee.
 - The Skill is now named `ios-use`. Source selection follows the release version;
-  the separate `IOS_USE_REF` override has been removed. Local Skill development
-  still uses `bash scripts/install_skill.sh` from a checkout.
+  the separate `IOS_USE_REF` override has been removed. Link the installed
+  `~/.ios-use/skill` directory into any additional agent skills directory.
 - Real-device and Simulator IDs are bare UDIDs; the Mac Backend uses `mac`.
   With exactly one running Device, the selector remains optional.
 - Existing single-Device state remains readable and moves to the per-Device

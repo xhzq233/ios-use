@@ -178,18 +178,19 @@ replay lives in `.github/workflows/simulator.yml` and is manual-only.
 
 ## Install And Benchmark
 
-Agents using a remote Mac can install only the operational Skill on Linux or
-macOS with `bash scripts/install_skill.sh`. It does not install the CLI or touch
-devices. `IOS_USE_SKILL_DIR` and `IOS_USE_SKILL_LINK` override its content and
-discovery paths. Without a local checkout it downloads the latest release's
-Skill. Pass `--version <tag>` (or `IOS_USE_VERSION`) to install a specific
-release, even from a local checkout. The full installer also takes its source
-and Skill from the selected release; latest is resolved to one tag before
-downloading.
+`scripts/install.sh` installs the CLI and Skill from the selected release;
+latest is resolved to one tag before downloading. Pass `--version <tag>`
+(or `IOS_USE_VERSION`) to select a specific release.
 
 The full installer accepts `--no-skill` to skip the default
 `~/.agents/skills/ios-use` link while keeping `~/.ios-use/skill` available and
 updated for manual linking. Existing discovery paths are preserved.
+
+To expose the installed Skill in another existing skills directory:
+
+```bash
+ln -s "$HOME/.ios-use/skill" /path/to/skills/ios-use
+```
 
 | Script | Purpose |
 | --- | --- |
