@@ -24,6 +24,16 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 The CLI and Skill come from the same release, including when installing latest.
 Linux users currently need the explicit alpha install below.
 
+By default, the installer links `~/.agents/skills/ios-use` to
+`~/.ios-use/skill`. Add `--no-skill` to skip creating the default link; existing
+Skill paths are left unchanged. Skill files still update with the CLI, so you
+can link them into a project's or another agent's skills directory yourself:
+
+```bash
+mkdir -p .agents/skills
+ln -s "$HOME/.ios-use/skill" .agents/skills/ios-use
+```
+
 Install a specific release or build from source:
 
 ```bash

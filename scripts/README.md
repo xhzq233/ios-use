@@ -187,6 +187,10 @@ release, even from a local checkout. The full installer also takes its source
 and Skill from the selected release; latest is resolved to one tag before
 downloading.
 
+The full installer accepts `--no-skill` to skip the default
+`~/.agents/skills/ios-use` link while keeping `~/.ios-use/skill` available and
+updated for manual linking. Existing discovery paths are preserved.
+
 | Script | Purpose |
 | --- | --- |
 | `scripts/install.sh` | On Apple Silicon, verify checksums and install the release CLI, driver IPAs, and prebuilt Mac Runtime plus Frida Engine under `<prefix>/share/ios-use/mac/`; both frameworks are signature-verified immutable preparation inputs. Also installs the skill and altsign helper. `--build-from-source` additionally requires full Xcode, Swift, xcodegen, and the pinned Frida build toolchain. Intel macOS is unsupported. |

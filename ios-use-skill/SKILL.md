@@ -70,8 +70,10 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 ```
 
 Both installers accept `--version <tag>`. From a checkout,
-`bash scripts/install_skill.sh` installs its Skill. Set `IOS_USE_INSTALL_SKILL=0`
-when the consumer owns Skill discovery and should keep its existing copy.
+`bash scripts/install_skill.sh` installs its Skill. For the full CLI installer,
+add `--no-skill` to skip the default `~/.agents/skills/ios-use` link. Skill files
+still update at `~/.ios-use/skill`; link that directory into your chosen skills
+directory yourself. Existing discovery paths are preserved.
 
 Keep credentials and signing material out of commands and reports.
 Redact device identifiers and signed URLs before sharing artifacts.

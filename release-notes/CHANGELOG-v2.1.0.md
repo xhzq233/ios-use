@@ -9,7 +9,7 @@
   `--device` / `-d` when more than one Device is running.
 - Install only the ios-use Skill on a remote Agent without installing the Mac
   binary or configuring a device host. The full installer also supports
-  `IOS_USE_INSTALL_SKILL=0` for consumers that manage Skill discovery themselves.
+  `--no-skill` for consumers that manage Skill discovery themselves.
 
 ## Fixes
 

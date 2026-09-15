@@ -18,6 +18,7 @@ BOOTSTRAP_DIR=""
 ROOT_DIR=""
 PRINT_PATH_ONLY=0
 BUILD_FROM_SOURCE=0
+INSTALL_SKILL=1
 DIST_DIR=""
 OUTFILE=""
 CHECKSUM_FILE=""
@@ -32,7 +33,7 @@ trap cleanup EXIT
 
 usage() {
   cat <<'USAGE'
-Usage: install.sh [--version <tag>] [--build-from-source] [--print-path]
+Usage: install.sh [--version <tag>] [--build-from-source] [--no-skill] [--print-path]
 
 Options:
   --version <tag>      Release tag to install (e.g. v1.2.0). Defaults to latest.
@@ -40,12 +41,13 @@ Options:
                        selected release tag instead of downloading their
                        prebuilt GitHub Release assets.
   --print-path         Print the installed binary path after installation.
+  --no-skill           Skip the default ~/.agents/skills/ios-use link.
+                       Skill files remain in ~/.ios-use/skill for manual linking.
 
 Environment:
   IOS_USE_VERSION       Release tag to install. Overridden by --version.
   IOS_USE_DRIVER_VERSION
                         Driver release tag override. Defaults to IOS_USE_VERSION.
-  IOS_USE_INSTALL_SKILL Set to 0 when a consumer manages the Skill link.
   IOS_USE_GITHUB_REPO   GitHub repository. Defaults to xhzq233/ios-use.
 
 Requirements:
@@ -71,6 +73,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --print-path)
       PRINT_PATH_ONLY=1
+      shift
+      ;;
+    --no-skill)
+      INSTALL_SKILL=0
       shift
       ;;
     --help|-h)
@@ -426,11 +432,21 @@ install_binary() {
   local skill_src="$ROOT_DIR/ios-use-skill"
   local skill_dst="$HOME/.ios-use/skill"
   local skill_link="$HOME/.agents/skills/ios-use"
-  if [[ "${IOS_USE_INSTALL_SKILL:-1}" != 0 && -d "$skill_src" ]]; then
-    mkdir -p "$HOME/.agents/skills"
+  if [[ -d "$skill_src" ]]; then
     rm -rf "$skill_dst"
     cp -R "$skill_src" "$skill_dst"
-    ln -sfn "$skill_dst" "$skill_link"
+    echo "Skill source: $skill_dst"
+    if [[ "$INSTALL_SKILL" != 0 ]]; then
+      if [[ -e "$skill_link" || -L "$skill_link" ]]; then
+        echo "Existing Skill path kept: $skill_link"
+      else
+        mkdir -p "$(dirname "$skill_link")"
+        ln -s "$skill_dst" "$skill_link"
+        echo "Linked Skill: $skill_link"
+      fi
+    else
+      echo "Skipped default Skill link; existing links are unchanged."
+    fi
   fi
 
   cleanup_legacy_flow_artifacts
