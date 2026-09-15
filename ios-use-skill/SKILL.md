@@ -83,12 +83,12 @@ from the device provider, then use `ios-use start -d <alias> --host <host> --por
 <port>`. Reuse the attachment with DOM, actions, waits, App lifecycle and
 screenshots. Linux screenshots omit OCR. Use `stop` when finished; it does not
 stop the provider's runtime. Device installation, signing and Driver startup
-remain provider operations. Linux x86_64 releases start at v2.1.0-alpha.3.
+remain provider operations. Use v2.1.0-alpha.4 for the unified TCP start entry.
 For this pre-release, use its versioned installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.3/scripts/install.sh | bash -s -- --version v2.1.0-alpha.3
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.4/scripts/install.sh | bash -s -- --version v2.1.0-alpha.4
 ```
 
-Alpha 3 uses `attach` with the same host/port options; the unified TCP `start`
-entry point requires a newer build. `attach` and `detach` remain compatible.
+Older builds use `attach` with the same host/port options. `attach` and `detach`
+remain compatible in Alpha 4.

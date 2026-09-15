@@ -28,25 +28,25 @@ Install a specific release or build from source:
 
 ```bash
 # Opt in to the 2.1.0 alpha pre-release.
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.3/scripts/install.sh | bash -s -- --version v2.1.0-alpha.3
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.4/scripts/install.sh | bash -s -- --version v2.1.0-alpha.4
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
 ### Linux TCP client
 
-Linux x86_64 is available starting with `v2.1.0-alpha.3`; use the versioned
+Linux x86_64 is available in `v2.1.0-alpha.4`; use the versioned
 installer command above. For a source build, Swift 6.2+ and standard Linux
 build tools are required:
 
 ```bash
-git clone --branch v2.1.0-alpha.3 https://github.com/xhzq233/ios-use.git
+git clone --branch v2.1.0-alpha.4 https://github.com/xhzq233/ios-use.git
 cd ios-use
 bash scripts/build_swift_cli.sh
-./ios-use attach -d phone --host <driver-host> --port <forwarded-port>
+./ios-use start -d phone --host <driver-host> --port <forwarded-port>
 ./ios-use dom -d phone
 ./ios-use tap "<label>" -d phone --dom
 ./ios-use screenshot -d phone
-./ios-use detach -d phone
+./ios-use stop -d phone
 ```
 
 The Linux release workflow builds an x86_64 binary on Ubuntu 22.04
@@ -56,8 +56,7 @@ signing, IPA installation, port forwarding and XCTest startup. UI actions,
 waits, app activation/termination and JPEG screenshots use the shared protocol.
 OCR, capture sequences, local USB, Simulator, Mac, logging and proxy services require
 a macOS host. `stop` on Linux detaches and leaves the remote Driver running.
-Current source also accepts `start -d phone --host <host> --port <port>` as the
-unified session entry point. Alpha 3 uses the compatible `attach` form above.
+`attach` and `detach` remain compatible entry points for TCP sessions.
 
 ## Quick Start
 
@@ -102,8 +101,8 @@ ios-use activateApp com.apple.Preferences -d remote-phone --dom
 ios-use stop -d remote-phone
 ```
 
-`start --host/--port` is available in current source; on Alpha 3 use `attach`
-with the same endpoint options. `attach` remains supported. Both endpoint options
+`start --host/--port` is available from Alpha 4. `attach` remains supported
+with the same endpoint options. Both endpoint options
 are required and cannot be mixed with a UDID or local start flags.
 The host can be an IP address or hostname. Start checks the Fory protocol before
 saving the session. UI commands use this endpoint; installation, URL opening,
@@ -119,7 +118,7 @@ than continuously probing remote health.
 Screenshots default to JPEG output without OCR on both hosts. On macOS, use
 `screenshot --ocr` to also recognize text and save an OCR sidecar. `--no-ocr`
 remains accepted; Linux has no OCR engine. These defaults apply to local and
-remote targets in current source; Alpha 3 on macOS defaults to OCR enabled.
+remote targets from Alpha 4; earlier macOS releases default to OCR enabled.
 
 ### Mac backend
 
