@@ -38,9 +38,32 @@ protocol MachineErrorConvertible {
     var machineError: MachineError { get }
 }
 
+struct CLIUIContext: Codable, Equatable, Sendable {
+    let sceneState: String
+    let minimized: Bool?
+    let activeSpace: Bool?
+
+    var isBackground: Bool {
+        sceneState == "background" || minimized == true || activeSpace == false
+    }
+
+    var logFields: String {
+        "sceneState=\(sceneState) minimized=\(minimized.map(String.init) ?? "unknown") activeSpace=\(activeSpace.map(String.init) ?? "unknown")"
+    }
+
+    var machineValue: MachineValue {
+        .object([
+            "sceneState": .string(sceneState),
+            "minimized": minimized.map(MachineValue.boolean) ?? .null,
+            "activeSpace": activeSpace.map(MachineValue.boolean) ?? .null,
+        ])
+    }
+}
+
 struct CLIInvocationSnapshot: Equatable, Sendable {
     let interactionState: MachineValue?
     let warnings: [String]
+    var uiContext: CLIUIContext? = nil
 }
 
 final class CLIInvocationState: @unchecked Sendable {
@@ -48,6 +71,7 @@ final class CLIInvocationState: @unchecked Sendable {
     private var alertRefreshClaimed = false
     private var interactionState: MachineValue?
     private var warnings: [String] = []
+    private var uiContext: CLIUIContext?
 
     func claimAlertRefresh() -> Bool {
         withLock {
@@ -82,11 +106,16 @@ final class CLIInvocationState: @unchecked Sendable {
         }
     }
 
+    func recordUIContext(_ value: CLIUIContext) {
+        withLock { uiContext = value }
+    }
+
     func snapshot() -> CLIInvocationSnapshot {
         withLock {
             CLIInvocationSnapshot(
                 interactionState: interactionState,
-                warnings: warnings
+                warnings: warnings,
+                uiContext: uiContext
             )
         }
     }
@@ -232,6 +261,12 @@ enum MachineOutput {
             fields["macLogPath"] = .string(logPath)
             failureData = .object(fields)
         }
+        if let context = CLIInvocationContext.current?.snapshot().uiContext,
+           context.isBackground,
+           case .object(var fields) = failureData {
+            fields["uiContext"] = context.machineValue
+            failureData = .object(fields)
+        }
         let metadata = invocationMetadata(
             baseWarnings: warnings
         )
@@ -256,7 +291,17 @@ enum MachineOutput {
         if expectsMachineOutput {
             return result
         }
-        return appendHumanWarnings(snapshot.warnings, to: result)
+        var finalized = appendHumanWarnings(snapshot.warnings, to: result)
+        if result.exitCode != 0,
+           let context = snapshot.uiContext,
+           context.isBackground {
+            finalized = CLIResult(
+                exitCode: finalized.exitCode,
+                stdout: finalized.stdout,
+                stderr: finalized.stderr + "UI context: \(context.logFields)\n"
+            )
+        }
+        return finalized
     }
 
     static func classify(_ error: Error) -> MachineError {
@@ -269,12 +314,14 @@ enum MachineOutput {
             classified.mutationMayHaveApplied = true
             return classified
         }
+#if os(macOS)
         if let readinessError = error as? OpenURLService.ReadinessError {
             var classified = classify(readinessError.underlying)
             classified.message = readinessError.description
             classified.mutationMayHaveApplied = true
             return classified
         }
+#endif
         if case DriverClientError.driverError(let message, let payload) = error {
             return MachineError(
                 message: message,
@@ -327,6 +374,7 @@ enum MachineOutput {
                 mutationMayHaveApplied: false
             )
         }
+#if os(macOS)
         if case PlayCoverRuntimeClientError.remoteError(
             let code,
             let message,
@@ -348,6 +396,7 @@ enum MachineOutput {
                     || code == "frida_invalid_query"
             )
         }
+#endif
         if case DriverCommandExecutionError.postconditionFailed(let label, let underlying) = error {
             let classified = classify(underlying)
             return MachineError(
@@ -360,6 +409,7 @@ enum MachineOutput {
                 mutationMayHaveApplied: true
             )
         }
+#if os(macOS)
         if let loggedError =
                 error as? PlayCoverSessionLoggedLaunchError {
             var classified = classify(loggedError.underlying)
@@ -557,6 +607,7 @@ enum MachineOutput {
                 mutationMayHaveApplied: false
             )
         }
+#endif
         if let parseError = error as? CLIParseError {
             return MachineError(
                 message: parseError.description,
@@ -582,6 +633,7 @@ enum MachineOutput {
     private static func macLogPath(
         in error: Error
     ) -> String? {
+#if os(macOS)
         if let loggedError =
                 error as? PlayCoverSessionLoggedLaunchError {
             return loggedError.logPath
@@ -598,6 +650,7 @@ enum MachineOutput {
                 error as? PlayCoverSessionCleanupError {
             return cleanupError.logPath
         }
+#endif
         return nil
     }
 

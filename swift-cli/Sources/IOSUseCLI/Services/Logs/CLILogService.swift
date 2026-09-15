@@ -1,4 +1,8 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
 
 enum CLILogService {
@@ -26,13 +30,13 @@ enum CLILogService {
         let content = lines.map { "\(timestamp) \($0)" }.joined(separator: "\n") + "\n"
         let url = URL(fileURLWithPath: logPath)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let descriptor = Darwin.open(
+        let descriptor = open(
             logPath,
             O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
             S_IRUSR | S_IWUSR
         )
         guard descriptor >= 0 else { return }
-        defer { Darwin.close(descriptor) }
+        defer { close(descriptor) }
         guard flock(descriptor, LOCK_EX) == 0 else {
             return
         }
@@ -44,7 +48,7 @@ enum CLILogService {
             }
             var offset = 0
             while offset < bytes.count {
-                let count = Darwin.write(
+                let count = write(
                     descriptor,
                     baseAddress.advanced(by: offset),
                     bytes.count - offset

@@ -7,6 +7,8 @@ public enum ParsedCommand: Equatable, Sendable {
     case config(ConfigOptions)
     case start(StartOptions)
     case stop
+    case attach(AttachOptions)
+    case detach
     case install(AppInstallOptions)
     case uninstall(AppUninstallOptions)
     case apps(AppsOptions)
@@ -29,6 +31,8 @@ public enum ParsedCommand: Equatable, Sendable {
         case .config: return "config"
         case .start: return "start"
         case .stop: return "stop"
+        case .attach: return "attach"
+        case .detach: return "detach"
         case .install: return "install"
         case .uninstall: return "uninstall"
         case .apps: return "apps"
@@ -50,10 +54,16 @@ public enum ParsedCommand: Equatable, Sendable {
 public struct ParsedInvocation: Equatable, Sendable {
     public var command: ParsedCommand
     public var json: Bool
+    public var deviceID: String?
 
-    public init(command: ParsedCommand, json: Bool = false) {
+    public init(
+        command: ParsedCommand,
+        json: Bool = false,
+        deviceID: String? = nil
+    ) {
         self.command = command
         self.json = json
+        self.deviceID = deviceID
     }
 }
 
@@ -71,6 +81,7 @@ public struct ConfigOptions: Equatable, Sendable {
     public var simulator = false
     public var verbose = false
     public var playCover = false
+    public var macDevice: String?
 
     public init(
         udid: String? = nil,
@@ -97,7 +108,18 @@ public struct SessionOptions: Equatable, Sendable {
     }
 }
 
+public struct AttachOptions: Equatable, Sendable {
+    public var host: String
+    public var port: Int
+
+    public init(host: String, port: Int) {
+        self.host = host
+        self.port = port
+    }
+}
+
 public struct StartOptions: Equatable, Sendable {
+    public var endpoint: AttachOptions?
     public var udid: String?
     public var verbose = false
     public var mac = false
@@ -111,8 +133,10 @@ public struct StartOptions: Equatable, Sendable {
         mac: Bool = false,
         appPath: String? = nil,
         log: Bool = false,
-        timeout: Double = 60
+        timeout: Double = 60,
+        endpoint: AttachOptions? = nil
     ) {
+        self.endpoint = endpoint
         self.udid = udid
         self.verbose = verbose
         self.mac = mac

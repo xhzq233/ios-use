@@ -5,6 +5,20 @@ enum ScrollAxis {
     case horizontal
 }
 
+/// An offscreen target and its viewport share App coordinates. Prefer geometry
+/// over accessibility traversal order, which need not match visual placement.
+func scrollBackwardsToward(targetFrame: CGRect, scrollFrame: CGRect, axis: ScrollAxis) -> Bool? {
+    guard !targetFrame.isEmpty, !targetFrame.isInfinite, !targetFrame.isNull,
+          !scrollFrame.isEmpty, !scrollFrame.isInfinite, !scrollFrame.isNull else { return nil }
+    let targetMin = axis == .vertical ? targetFrame.minY : targetFrame.minX
+    let targetMax = axis == .vertical ? targetFrame.maxY : targetFrame.maxX
+    let viewMin = axis == .vertical ? scrollFrame.minY : scrollFrame.minX
+    let viewMax = axis == .vertical ? scrollFrame.maxY : scrollFrame.maxX
+    if targetMin < viewMin && targetMax <= viewMax { return true }
+    if targetMax > viewMax && targetMin >= viewMin { return false }
+    return nil
+}
+
 // MARK: - Normalized direction helpers (doc 5.8)
 
 /// Content scrolls up → finger moves down (+dy)
@@ -78,14 +92,18 @@ func scrollSegments(for vector: CGVector, scrollFrame: CGRect) -> [CGVector] {
 
 /// Infers the dominant scroll axis from visible cells first, then falls back to
 /// frame geometry when the subtree has too little structure to inspect.
-/// Time complexity: O(1).
+/// Use the whole visible span: the first few items may share one grid row.
+/// Time complexity: O(n).
 func primaryScrollAxis(visibleCellFrames: [CGRect], scrollFrame: CGRect) -> ScrollAxis {
     if visibleCellFrames.count >= 2,
-       let first = visibleCellFrames.first,
-       let last = visibleCellFrames.last {
-        let dx = first.minX - last.minX
-        let dy = first.minY - last.minY
-        return abs(dy) >= abs(dx) ? .vertical : .horizontal
+       let first = visibleCellFrames.first {
+        var minX = first.minX, maxX = first.minX
+        var minY = first.minY, maxY = first.minY
+        for frame in visibleCellFrames.dropFirst() {
+            minX = min(minX, frame.minX); maxX = max(maxX, frame.minX)
+            minY = min(minY, frame.minY); maxY = max(maxY, frame.minY)
+        }
+        return maxY - minY >= maxX - minX ? .vertical : .horizontal
     }
     return scrollFrame.height >= scrollFrame.width ? .vertical : .horizontal
 }

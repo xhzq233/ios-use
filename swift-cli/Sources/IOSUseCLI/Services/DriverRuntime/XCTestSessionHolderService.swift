@@ -12,10 +12,14 @@ enum XCTestSessionHolderService {
         let udid: String
         let bundleId: String
         let controlSocket: String
+        let deviceID: String?
     }
 
-    static func run(arguments: [String], paths: IOSUsePaths) throws -> String {
+    static func run(arguments: [String], paths basePaths: IOSUsePaths) throws -> String {
         let options = try parse(arguments)
+        let paths = try options.deviceID.map {
+            try basePaths.deviceContext($0)
+        } ?? basePaths
         try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
         let log: (String) -> Void = { message in
             CLILogService.appendHolder(paths: paths, ["[xctest-holder] \(message)"])
@@ -148,6 +152,7 @@ enum XCTestSessionHolderService {
         var udid: String?
         var bundleId: String?
         var controlSocket: String?
+        var deviceID: String?
         var index = 0
 
         while index < arguments.count {
@@ -165,6 +170,10 @@ enum XCTestSessionHolderService {
                 index += 1
                 guard index < arguments.count else { throw CLIParseError.missingOptionValue("--control-socket") }
                 controlSocket = arguments[index]
+            case "--device":
+                index += 1
+                guard index < arguments.count else { throw CLIParseError.missingOptionValue("--device") }
+                deviceID = arguments[index]
             case "--verbose":
                 break
             default:
@@ -179,7 +188,12 @@ enum XCTestSessionHolderService {
         guard let udid, !udid.isEmpty else { throw CLIParseError.missingRequiredOption("--udid") }
         guard let bundleId, !bundleId.isEmpty else { throw CLIParseError.missingRequiredOption("--bundle-id") }
         guard let controlSocket, !controlSocket.isEmpty else { throw CLIParseError.missingRequiredOption("--control-socket") }
-        return Options(udid: udid, bundleId: bundleId, controlSocket: controlSocket)
+        return Options(
+            udid: udid,
+            bundleId: bundleId,
+            controlSocket: controlSocket,
+            deviceID: deviceID
+        )
     }
 
     private static func clearDriverLockIfCurrent(

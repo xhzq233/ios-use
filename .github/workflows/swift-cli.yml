@@ -50,3 +50,16 @@ jobs:
 
       - name: Run the complete Swift CLI gate once
         run: bash scripts/test_swift_cli.sh
+
+  linux:
+    name: Linux TCP (x86_64)
+    runs-on: ubuntu-22.04
+    container: swift:6.2.4-jammy
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path swift-cli -j 4
+      - run: bash scripts/build_swift_cli.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-use-linux-x86_64
+          path: ios-use

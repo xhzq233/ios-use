@@ -8,12 +8,9 @@
 typedef id (*IOSUseCompositorSendID)(id, SEL);
 
 static const CGFloat IOSUseCompositorGeometryTolerance = 0.01;
-static const CGFloat IOSUseCompositorDeviceLogicalWidth =
-    (CGFloat)IOSUsePlayDeviceLogicalWidth;
-static const CGFloat IOSUseCompositorDeviceLogicalHeight =
-    (CGFloat)IOSUsePlayDeviceLogicalHeight;
-static const CGFloat IOSUseCompositorDeviceScale =
-    (CGFloat)IOSUsePlayDeviceScale;
+#define IOSUseCompositorDeviceLogicalWidth ((CGFloat)IOSUsePlayDeviceLogicalWidth)
+#define IOSUseCompositorDeviceLogicalHeight ((CGFloat)IOSUsePlayDeviceLogicalHeight)
+#define IOSUseCompositorDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
 static const CGBitmapInfo IOSUseCompositorBitmapInfo = (CGBitmapInfo)(
     (uint32_t)kCGBitmapByteOrder32Little |
     (uint32_t)kCGImageAlphaPremultipliedFirst
@@ -652,7 +649,7 @@ CGImageRef IOSUsePlayCropAndNormalizeCanvasCapture(
     return normalized;
 }
 
-NSArray *IOSUsePlayOrderForegroundScenes(
+NSArray *IOSUsePlayOrderConnectedScenes(
     NSArray *scenes,
     NSInteger (^activationRank)(id scene),
     NSString * _Nullable (^stableIdentifier)(id scene),
@@ -663,7 +660,7 @@ NSArray *IOSUsePlayOrderForegroundScenes(
     }
     if (activationRank == nil || stableIdentifier == nil) {
         if (failure != NULL) {
-            *failure = @"foreground scene policy accessors are unavailable";
+            *failure = @"connected scene policy accessors are unavailable";
         }
         return nil;
     }
@@ -681,7 +678,7 @@ NSArray *IOSUsePlayOrderForegroundScenes(
             [identifiers containsObject:identifier]) {
             if (failure != NULL) {
                 *failure =
-                    @"foreground scenes do not have unique stable "
+                    @"connected scenes do not have unique stable "
                     @"identifiers";
             }
             return nil;
@@ -806,12 +803,12 @@ NSArray *IOSUsePlayUnionCaptureWindows(
         NSInteger rawWindowNumber =
             window == nil ? 0 : windowNumber(window);
         if (window == nil ||
-            !isVisible(window) ||
+            (!required && !isVisible(window)) ||
             rawWindowNumber <= 0 ||
             (uint64_t)rawWindowNumber > UINT32_MAX) {
             if (required) {
                 appendFailure =
-                    @"mapped UIKit host is not a visible numbered "
+                    @"mapped UIKit host is not a numbered "
                     @"native window";
             }
             return !required;

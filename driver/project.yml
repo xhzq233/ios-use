@@ -9,7 +9,7 @@ options:
 packages:
   Fory:
     url: https://github.com/apache/fory.git
-    branch: main
+    revision: affbd38a5869a3ec4deaf51a762bedf2c90400d5
 
 targets:
   IOSUseDriver:

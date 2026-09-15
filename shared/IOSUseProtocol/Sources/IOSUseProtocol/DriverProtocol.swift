@@ -405,8 +405,8 @@ public struct DriverCommandMetadata: Equatable, Sendable {
 }
 
 public protocol DriverCommandBinding {
-    associatedtype Args: Serializer
-    associatedtype Payload: Serializer
+    associatedtype Args: Serializer where Args.Target == Args
+    associatedtype Payload: Serializer where Payload.Target == Payload
 
     static var command: DriverCommand { get }
 }

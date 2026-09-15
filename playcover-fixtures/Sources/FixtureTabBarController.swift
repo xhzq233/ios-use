@@ -160,7 +160,7 @@ final class FixtureTabBarController: UITabBarController {
             false
         view.addSubview(firstReadHeaderLabel)
         // This height is intentionally immutable. A late Runtime invalidation
-        // cannot repair an incorrect first read, matching the ExampleApp header.
+        // cannot repair an incorrect first read of this header.
         NSLayoutConstraint.activate([
             firstReadHeaderLabel.leadingAnchor.constraint(
                 equalTo: view.leadingAnchor

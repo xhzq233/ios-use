@@ -14,12 +14,9 @@ static const NSUInteger IOSUseScreenshotMaximumJPEGBytes = 11 * 1024 * 1024;
 static const NSUInteger IOSUseScreenshotMaximumBase64Bytes =
     15 * 1024 * 1024;
 static const CGFloat IOSUseScreenshotGeometryTolerance = 0.01;
-static const CGFloat IOSUseScreenshotDeviceLogicalWidth =
-    (CGFloat)IOSUsePlayDeviceLogicalWidth;
-static const CGFloat IOSUseScreenshotDeviceLogicalHeight =
-    (CGFloat)IOSUsePlayDeviceLogicalHeight;
-static const CGFloat IOSUseScreenshotDeviceScale =
-    (CGFloat)IOSUsePlayDeviceScale;
+#define IOSUseScreenshotDeviceLogicalWidth ((CGFloat)IOSUsePlayDeviceLogicalWidth)
+#define IOSUseScreenshotDeviceLogicalHeight ((CGFloat)IOSUsePlayDeviceLogicalHeight)
+#define IOSUseScreenshotDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
 static const CGBitmapInfo IOSUseScreenshotBitmapInfo = (CGBitmapInfo)(
     (uint32_t)kCGBitmapByteOrder32Little |
     (uint32_t)kCGImageAlphaPremultipliedFirst
@@ -200,10 +197,10 @@ static BOOL IOSUseScreenshotLogicalRectIsInsideDevice(CGRect rect) {
 }
 
 static NSArray<UIWindowScene *> *
-IOSUseScreenshotForegroundScenes(NSString **failure) {
+IOSUseScreenshotConnectedScenes(NSString **failure) {
     NSArray *connectedScenes =
         UIApplication.sharedApplication.connectedScenes.allObjects;
-    return IOSUsePlayOrderForegroundScenes(
+    return IOSUsePlayOrderConnectedScenes(
         connectedScenes,
         ^NSInteger(id candidate) {
             if (![candidate isKindOfClass:UIWindowScene.class]) {
@@ -216,6 +213,9 @@ IOSUseScreenshotForegroundScenes(NSString **failure) {
             }
             if (state == UISceneActivationStateForegroundInactive) {
                 return 1;
+            }
+            if (state == UISceneActivationStateBackground) {
+                return 2;
             }
             return -1;
         },
@@ -413,13 +413,13 @@ IOSUseScreenshotCGWindowMetadata(
         return nil;
     }
     CFArrayRef raw = copyWindowInfo(
-        kCGWindowListOptionOnScreenOnly,
+        kCGWindowListOptionAll,
         kCGNullWindowID
     );
     if (raw == NULL) {
         IOSUseScreenshotSetFailure(
             @"compositor_z_order_unavailable",
-            @"CGWindow order metadata returned no on-screen windows",
+            @"CGWindow order metadata returned no windows",
             failureCode,
             failureMessage
         );
@@ -606,7 +606,7 @@ IOSUseScreenshotCollectNativeWindows(
     }
     NSString *scenePolicyFailure = nil;
     NSArray<UIWindowScene *> *orderedScenes =
-        IOSUseScreenshotForegroundScenes(&scenePolicyFailure);
+        IOSUseScreenshotConnectedScenes(&scenePolicyFailure);
     if (orderedScenes == nil) {
         IOSUseScreenshotSetFailure(
             @"compositor_scene_policy_invalid",
@@ -897,13 +897,12 @@ IOSUseScreenshotCollectNativeWindows(
         }
         NSDictionary *metadata =
             cgMetadata[@(record.windowNumber)];
-        if (metadata == nil ||
-            ![metadata[@"onscreen"] boolValue]) {
+        if (metadata == nil) {
             IOSUseScreenshotSetFailure(
-                @"compositor_window_not_onscreen",
+                @"compositor_window_unavailable",
                 [NSString stringWithFormat:
                     @"visible AppKit window %u has no exact own-process "
-                    @"CGWindow onscreen metadata",
+                    @"CGWindow metadata",
                     record.windowNumber
                 ],
                 failureCode,

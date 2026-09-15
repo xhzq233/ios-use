@@ -2,6 +2,16 @@ import XCTest
 
 final class ScrollMechanicsTests: XCTestCase {
 
+    func testOffscreenTargetDirectionUsesViewportGeometryOnBothAxes() {
+        let viewport = CGRect(x: 40, y: 120, width: 320, height: 640)
+        XCTAssertEqual(scrollBackwardsToward(targetFrame: CGRect(x: 50, y: 1100, width: 60, height: 30), scrollFrame: viewport, axis: .vertical), false)
+        XCTAssertEqual(scrollBackwardsToward(targetFrame: CGRect(x: 50, y: 30, width: 60, height: 30), scrollFrame: viewport, axis: .vertical), true)
+        XCTAssertEqual(scrollBackwardsToward(targetFrame: CGRect(x: 600, y: 150, width: 60, height: 30), scrollFrame: viewport, axis: .horizontal), false)
+        XCTAssertEqual(scrollBackwardsToward(targetFrame: CGRect(x: -100, y: 150, width: 60, height: 30), scrollFrame: viewport, axis: .horizontal), true)
+        XCTAssertNil(scrollBackwardsToward(targetFrame: .zero, scrollFrame: viewport, axis: .vertical))
+        XCTAssertNil(scrollBackwardsToward(targetFrame: CGRect(x: 50, y: 200, width: 60, height: 30), scrollFrame: viewport, axis: .vertical))
+    }
+
     func testScrollSegments_SplitsLargeVerticalDistance() {
         let frame = CGRect(x: 0, y: 0, width: 375, height: 812)
         let segments = scrollSegments(for: CGVector(dx: 0, dy: -900), scrollFrame: frame)

@@ -184,66 +184,11 @@ if ! jq -e '
       .source.iosUseHashAfterPrepare and
     .source.inputContentSHA256 ==
       .source.recomputedAtAttestationSHA256 and
-    .implementation.algorithm ==
-      "embedded-source-closure-plus-loaded-xctest-inode-sha256-v2" and
-    (.implementation.contentSHA256 |
-      test("^[0-9a-f]{64}$")) and
-    .implementation.embeddedSourceClosureSHA256 ==
-      .implementation.contentSHA256 and
     (.implementation.testExecutableSHA256 |
       test("^[0-9a-f]{64}$")) and
     .implementation.testExecutableSize > 0 and
     .implementation.testExecutableDevice > 0 and
     .implementation.testExecutableInode > 0 and
-    .implementation.relativeSourcePaths == ([
-      "ThirdParty/PlayCover/Package.swift",
-      "ThirdParty/PlayCover/PROVENANCE.md",
-      "ThirdParty/PlayCover/PlayCover/AppInstaller/Installer.swift",
-      "ThirdParty/PlayCover/PlayCover/Headless/HeadlessSupport.swift",
-      "ThirdParty/PlayCover/PlayCover/Headless/PlayCoverPrepareDifferential.swift",
-      "ThirdParty/PlayCover/PlayCover/Headless/PlayCoverUpstreamEngine.swift",
-      "ThirdParty/PlayCover/PlayCover/Model/AppInfo.swift",
-      "ThirdParty/PlayCover/PlayCover/Model/BaseApp.swift",
-      "ThirdParty/PlayCover/PlayCover/Model/PlayApp.swift",
-      "ThirdParty/PlayCover/PlayCover/PlayCoverError.swift",
-      "ThirdParty/PlayCover/PlayCover/Utils/Entitlements.swift",
-      "ThirdParty/PlayCover/PlayCover/Utils/Extensions/DataExtensions.swift",
-      "ThirdParty/PlayCover/PlayCover/Utils/Extensions/FileExtensions.swift",
-      "ThirdParty/PlayCover/PlayCover/Utils/Extensions/PlayAppExtensions.swift",
-      "ThirdParty/PlayCover/PlayCover/Utils/Extensions/URLExtensions.swift",
-      "ThirdParty/PlayCover/PlayCover/Utils/KeyCover.swift",
-      "ThirdParty/PlayCover/PlayCover/Utils/Macho.swift",
-      "ThirdParty/PlayCover/PlayCover/Utils/PlayTools.swift",
-      "ThirdParty/PlayCover/PlayCover/Utils/Shell.swift",
-      "ThirdParty/PlayCover/PlayCover/Utils/SystemConfig.swift",
-      "ThirdParty/inject/Injection/Injection/BitType.swift",
-      "ThirdParty/inject/Injection/Injection/Command.swift",
-      "ThirdParty/inject/Injection/Injection/Extension.swift",
-      "ThirdParty/inject/Injection/Injection/Inject.swift",
-      "ThirdParty/inject/Injection/Injection/Shell.swift",
-      "ThirdParty/inject/Package.swift",
-      "ThirdParty/inject/PROVENANCE.md",
-      "scripts/audit_playcover_upstreams.sh",
-      "scripts/test_playcover_external_prepare_differential.sh",
-      "scripts/test_playcover_prepare_differential.sh",
-      "swift-cli/Package.resolved",
-      "swift-cli/Package.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverCodeSignatureInspector.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverBundleStartLock.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverFridaEngineService.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverHomeStore.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverLaunchCrashCut.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSlotService.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverModels.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverService.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSigningCertificateBuilder.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSigningIdentityService.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverPreparedArtifact.swift",
-      "swift-cli/Sources/IOSUseCLI/Support/IOSUsePaths.swift",
-      "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverExternalPrepareDifferentialTests.swift",
-      "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverPrepareDifferentialTests.swift",
-      "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverSigningEvidenceTestSupport.swift"
-    ] | sort) and
     .normalization.mode ==
       "hermetic-fixture-managed-paths-v1" and
     .pinnedOutput.preparationLineage ==

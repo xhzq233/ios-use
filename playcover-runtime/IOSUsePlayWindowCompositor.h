@@ -78,7 +78,7 @@ IOSUsePlayCropAndNormalizeCanvasCapture(
 /// Produces a total foreground scene order: active first, inactive second,
 /// then stable identifier. The caller supplies platform-specific accessors so
 /// the same policy can be fixture-tested without UIKit.
-FOUNDATION_EXPORT NSArray * _Nullable IOSUsePlayOrderForegroundScenes(
+FOUNDATION_EXPORT NSArray * _Nullable IOSUsePlayOrderConnectedScenes(
     NSArray *scenes,
     NSInteger (^activationRank)(id scene),
     NSString * _Nullable (^stableIdentifier)(id scene),

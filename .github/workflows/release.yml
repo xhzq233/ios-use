@@ -6,12 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to upload assets to, for example v1.0.0"
+        description: "Release version, for example v2.1.0-alpha.3"
         required: true
         type: string
+      publish:
+        description: "Publish the version; disable to build and verify the selected branch"
+        type: boolean
+        default: true
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ inputs.tag || github.ref_name }}-${{ github.event_name == 'push' || inputs.publish }}
   cancel-in-progress: false
 
 env:
@@ -19,42 +23,45 @@ env:
   IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    name: Build and upload release assets
-    runs-on: macos-26
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      ref: ${{ steps.resolve.outputs.ref }}
     steps:
-      - name: Resolve release tag
-        id: resolve_tag
-        run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            release_tag="${{ github.ref_name }}"
-          elif [ -n "${{ inputs.tag }}" ]; then
-            release_tag="${{ inputs.tag }}"
-          else
-            echo "Release workflow must run from a tag push or workflow_dispatch tag input." >&2
-            exit 1
-          fi
-          case "$release_tag" in
-            v*) ;;
-            *)
-              echo "Release tag must start with v, for example v1.3.2." >&2
-              exit 1
-              ;;
-          esac
-          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ steps.resolve_tag.outputs.tag }}
-
-      - name: Refuse an existing asset set
+      - name: Resolve source and release tag
+        id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.resolve_tag.outputs.tag }}
+          PUBLISH_FROM_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          BUILD_REF: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish && github.sha || inputs.tag || github.ref_name }}
+        run: |
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) echo "Release tag must start with v" >&2; exit 1 ;;
+          esac
+          if [ "$PUBLISH_FROM_BRANCH" = true ]; then
+            set +e
+            git ls-remote --exit-code "https://github.com/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_TAG" > /dev/null
+            tag_status=$?
+            set -e
+            case "$tag_status" in
+              0) BUILD_REF="$RELEASE_TAG" ;;
+              2) BUILD_REF="$GITHUB_SHA" ;;
+              *) echo "Unable to resolve release tag" >&2; exit "$tag_status" ;;
+            esac
+          fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
+      - name: Refuse an existing asset set
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set +e
           release_probe="$(gh api --include "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>&1)"
@@ -70,63 +77,178 @@ jobs:
           fi
           existing_assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
           if [ -n "$existing_assets" ]; then
-            echo "Release $RELEASE_TAG already has assets; refusing a mixed or overwritten asset set:" >&2
-            printf '%s\n' "$existing_assets" >&2
-            echo "Publish a new version instead of retrying this tag." >&2
+            echo "Release $RELEASE_TAG already has assets; publish a new version." >&2
             exit 1
           fi
 
-      - name: Install release build tools
-        run: brew install xcodegen meson ninja
+  linux:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    container: swift:6.2.4-jammy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - run: bash scripts/build_swift_cli.sh
+      - run: mkdir -p release && cp ios-use release/ios-use-linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: release/ios-use-linux-x86_64
+          compression-level: 0
 
-      - name: Resolve Xcode cache key
-        id: xcode-cache
+  mac-cli:
+    needs: prepare
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - name: Resolve Swift toolchain
+        id: toolchain
         run: |
-          xcodebuild -version
-          echo "version=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-
+          swift --version
+          echo "xcode=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
+      # Dependency builds survive version/source edits; swift build still runs.
       - name: Cache Swift CLI build
         uses: actions/cache@v4
         with:
           path: swift-cli/.build
-          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'swift-cli/Sources/**/*.swift', 'swift-cli/Tests/**/*.swift', 'shared/IOSUseProtocol/Package.swift', 'shared/IOSUseProtocol/Sources/**/*.swift') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-release-${{ steps.toolchain.outputs.xcode }}-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'shared/IOSUseProtocol/Package.swift', 'ThirdParty/PlayCover/Package.swift', 'ThirdParty/inject/Package.swift') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-swift-cli-
+            ${{ runner.os }}-${{ runner.arch }}-swift-cli-release-
+      - run: bash scripts/build_swift_cli.sh --skip-runtime
+      - run: mkdir -p release && cp ios-use release/ios-use-darwin-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-cli
+          path: release/ios-use-darwin-arm64
+          compression-level: 0
 
-      - name: Cache driver DerivedData
+  driver:
+    needs: prepare
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: device
+            asset: driver.ipa
+          - platform: simulator
+            asset: driver-sim.ipa
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - run: brew install xcodegen
+      - name: Resolve Xcode cache key
+        id: xcode-cache
+        run: |
+          xcodebuild -version
+          swift --version
+          echo "version=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+      - name: Cache driver build products
         uses: actions/cache@v4
         with:
-          path: driver/build/DerivedData
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-${{ hashFiles('driver/project.yml', 'driver/**/*.swift', 'driver/**/*.m', 'driver/**/*.h', 'shared/IOSUseProtocol/**/*.swift') }}
+          path: driver/build
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-release-${{ matrix.platform }}-${{ hashFiles('driver/project.yml', 'shared/IOSUseProtocol/Package.swift') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-
+            ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-release-${{ matrix.platform }}-
+      - name: Build driver
+        run: bash scripts/build_driver.sh --release --${{ matrix.platform }}-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: driver-${{ matrix.platform }}
+          path: driver/build/${{ matrix.asset }}
+          compression-level: 0
+      - name: Retain compiler timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: driver-${{ matrix.platform }}-logs
+          path: driver/build/*-xcodebuild.log
 
+  mac-resources:
+    needs: prepare
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - run: brew install xcodegen meson ninja
       - name: Cache pinned PlayCover upstream audit checkouts
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/ios-use-playcover-upstream-audit
           key: ${{ runner.os }}-${{ runner.arch }}-playcover-upstreams-7190cc9-d688f6-e6d3aa
-
-      - name: Build release assets
+      - name: Build Mac resource archive
         env:
-          IOS_USE_RELEASE_VERSION: ${{ steps.resolve_tag.outputs.tag }}
           IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
           PYTHON: /usr/bin/python3
-        run: bash scripts/release_build.sh
+        run: bash scripts/build_release_mac_resources.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-resources
+          path: release/ios-use-mac-resources.tar.gz
+          compression-level: 0
 
+  release:
+    needs: [prepare, linux, mac-cli, driver, mac-resources]
+    name: Verify and publish release assets
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mac-*
+          merge-multiple: true
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: driver-device
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: driver-simulator
+          path: release
+      - name: Assemble Mac assets
+        env:
+          IOS_USE_RELEASE_VERSION: ${{ needs.prepare.outputs.tag }}
+        run: bash scripts/release_build.sh --assemble-only
       - name: Verify the exact release assets through an isolated install
         run: bash scripts/test_playcover_installed_layout.sh --release-dir release --verify-only
-
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64
+          path: release
+      - name: Include Linux assets in release checksums
+        run: cd release && shasum -a 256 ios-use-linux-x86_64 >> SHA256SUMS
+      - name: Retain verified assets for build-only runs
+        if: github.event_name == 'workflow_dispatch' && !inputs.publish
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release/*
+          compression-level: 0
       - name: Upload to Release
+        if: github.event_name == 'push' || inputs.publish
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ steps.resolve_tag.outputs.tag }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ needs.prepare.outputs.ref }}
           files: |
             release/ios-use-darwin-arm64
+            release/ios-use-linux-x86_64
             release/driver.ipa
             release/driver-sim.ipa
             release/ios-use-mac-resources.tar.gz
             release/SHA256SUMS
-          body_path: release-notes/CHANGELOG-${{ steps.resolve_tag.outputs.tag }}.md
+          body_path: release-notes/CHANGELOG-${{ needs.prepare.outputs.tag }}.md
+          prerelease: ${{ contains(needs.prepare.outputs.tag, '-') }}
+          make_latest: ${{ !contains(needs.prepare.outputs.tag, '-') }}
           overwrite_files: false
           fail_on_unmatched_files: true

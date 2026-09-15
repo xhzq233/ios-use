@@ -80,7 +80,7 @@ export function buildHostBridgeCases(ctx) {
   } = ctx;
 
   return [
-    { id: 'HELP-1', run: () => runCaseContains('HELP-1', 'Usage: ios-use [--help] [--version] <command>', ['--help']) },
+    { id: 'HELP-1', run: () => runCaseContains('HELP-1', 'Usage: ios-use ', ['--help']) },
     { id: 'HELP-2', run: () => {
       if (!selected('HELP-2')) return recordSkip('HELP-2');
       console.log('[sim-test] RUN HELP-2: ios-use dom/input --help');

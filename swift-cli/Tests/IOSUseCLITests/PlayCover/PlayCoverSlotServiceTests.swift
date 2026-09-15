@@ -355,7 +355,7 @@ final class PlayCoverSlotServiceTests: XCTestCase {
     func testBundleIdentifierCannotEscapeSlotRoot() throws {
         for value in [
             "", ".", "..", "a/b", "bad\0id", "bad\nid",
-            "com.example.ExampleApp", "com_example_demo",
+            "com.example.\u{00e9}", "com_example_demo",
         ] {
             XCTAssertThrowsError(
                 try PlayCoverSlotService.validateBundleIdentifier(value)

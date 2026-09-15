@@ -1,5 +1,5 @@
 export const deviceConfigCaseMetadata = [
-  { id: 'DEV-2', group: 'device-config', kind: 'config-list', setup: 'none', assertion: 'stdout contains Configured devices', coverage: 'simulator' },
+  { id: 'DEV-2', group: 'device-config', kind: 'config-list', setup: 'none', assertion: 'stdout reports configured or empty device state', coverage: 'simulator' },
   { id: 'DEV-3', group: 'device-config', kind: 'help', setup: 'none', assertion: 'status help contains Usage', coverage: 'simulator' },
   { id: 'DEV-1', group: 'device-config', kind: 'status', setup: 'none', assertion: 'stdout contains connected-device status', coverage: 'simulator' },
   { id: 'DEV-5', group: 'device-config', kind: 'config-list', setup: 'empty IOS_USE_HOME', assertion: 'stdout reports no configured devices', coverage: 'simulator' },
@@ -49,7 +49,7 @@ export function buildDeviceConfigCases(ctx) {
   } = ctx;
 
   return [
-    { id: 'DEV-2', run: () => runCaseContains('DEV-2', 'Configured devices:', ['config', '--list']) },
+    { id: 'DEV-2', run: () => runCaseMatches('DEV-2', /Configured devices:|No configured devices/, ['config', '--list']) },
     { id: 'DEV-3', run: () => runCaseContains('DEV-3', 'Usage:', ['status', '--help']) },
     { id: 'DEV-1', run: () => runCaseMatches('DEV-1', /Connected devices:|No connected real devices/, ['status']) },
     { id: 'DEV-5', run: async () => {

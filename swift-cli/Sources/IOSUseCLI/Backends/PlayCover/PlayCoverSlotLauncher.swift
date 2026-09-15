@@ -127,6 +127,7 @@ enum PlayCoverSlotLauncher {
                 sessionID: sessionID,
                 runtimeSocketPath: runtimeSocketPath,
                 playChainPath: paths.playcoverPlayChain,
+                devicePreset: try PlayCoverDevicePreset.configured(paths: paths).name,
                 stdioLog: stdioLog,
                 deadline: deadline,
                 submitted: &submitted
@@ -272,6 +273,7 @@ enum PlayCoverSlotLauncher {
         sessionID: String,
         runtimeSocketPath: String,
         playChainPath: String,
+        devicePreset: String = PlayCoverDevicePreset.defaultPreset.name,
         stdioLog: PlayCoverStdioLogIdentity?,
         deadline: TimeInterval,
         submitted: inout Bool
@@ -287,6 +289,7 @@ enum PlayCoverSlotLauncher {
             runtimeSocketPath: runtimeSocketPath,
             installRevision: slot.metadata.installRevision,
             playChainPath: playChainPath,
+            devicePreset: devicePreset,
             stdioLog: stdioLog
         )
         let existingPIDs = Set(
@@ -535,7 +538,8 @@ enum PlayCoverSlotLauncher {
             uiState: payload.uiState.state,
             uiStage: payload.uiState.stage,
             uiFailure: payload.uiState.failure,
-            capabilities: payload.capabilities
+            capabilities: payload.capabilities,
+            devicePreset: payload.devicePreset
         )
     }
 
@@ -560,6 +564,7 @@ enum PlayCoverSlotLauncher {
         runtimeSocketPath: String,
         installRevision: String,
         playChainPath: String,
+        devicePreset: String = PlayCoverDevicePreset.defaultPreset.name,
         stdioLog: PlayCoverStdioLogIdentity?
     ) -> [String: String] {
         var result = source.mapValues { _ in "" }
@@ -572,6 +577,7 @@ enum PlayCoverSlotLauncher {
                 allowed[key] = value
             }
         }
+        allowed["IOS_USE_MAC_DEVICE"] = devicePreset
         allowed["IOS_USE_PLAY_SESSION_ID"] = sessionID
         allowed["IOS_USE_PLAY_RUNTIME_SOCKET"] = runtimeSocketPath
         allowed["IOS_USE_PLAY_INSTALL_REVISION"] = installRevision

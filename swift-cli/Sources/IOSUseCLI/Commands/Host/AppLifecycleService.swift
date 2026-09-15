@@ -65,16 +65,41 @@ enum AppLifecycleService {
             paths: paths,
             missingMessage: "\(options.action.commandName) requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`."
         )
+#if os(macOS)
         let deviceType = activeDriver?.udid == udid
             ? activeDriver?.deviceType
             : (DeviceService.looksLikeSimulatorUDID(udid) ? "simulator" : "real")
 
+#else
+        let deviceType = activeDriver?.udid == udid ? activeDriver?.deviceType : nil
+#endif
         let result: Result
         switch deviceType {
+#if os(macOS)
         case "simulator":
             result = try runSimulator(options: options, udid: udid, paths: paths)
+#endif
+        case TCPAttachService.deviceType:
+            guard !options.log else {
+                throw CLIParseError.invalidValue("activateApp --log is unavailable through a TCP attachment.")
+            }
+            result = try DriverCommandExecution.withLockedClient(paths: paths, verbose: options.session.verbose) { client in
+                switch options.action {
+                case .activate:
+                    if options.terminateExisting {
+                        try client.terminateApp(bundleId: options.bundleID)
+                    }
+                    try client.activateApp(bundleId: options.bundleID)
+                    return Result(message: "App \(options.bundleID) activated")
+                case .terminate:
+                    try client.terminateApp(bundleId: options.bundleID)
+                    return Result(message: "App \(options.bundleID) terminated")
+                }
+            }
+#if os(macOS)
         case "real":
             result = try runRealDevice(options: options, udid: udid, paths: paths)
+#endif
         default:
             throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType ?? "(missing)").")
         }
@@ -187,6 +212,7 @@ enum AppLifecycleService {
         }
     }
 
+#if os(macOS)
     private static func runSimulator(options: AppLifecycleOptions, udid: String, paths: IOSUsePaths) throws -> Result {
         if let simulatorRunnerForTesting {
             return try simulatorRunnerForTesting(options, udid)
@@ -236,8 +262,10 @@ enum AppLifecycleService {
         }
         return Result(message: message, didTerminateApp: terminated)
     }
+#endif
 }
 
+#if os(macOS)
 protocol CoreDeviceAppLifecycleServicing {
     func launchApplication(
         bundleID: String,
@@ -427,3 +455,4 @@ final class CoreDeviceAppLifecycleRunner {
         return try body(appService)
     }
 }
+#endif

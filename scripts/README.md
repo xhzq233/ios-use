@@ -77,7 +77,7 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | `scripts/test_playcover_packaging_contract.sh` | Hermetic packaging audit tests, including negative cases for a deleted expected source, a one-sided provenance pin change, a mismatched license declaration, and a Frida pin change. |
 | `scripts/test_playcover_live_workflow_contract.sh` | Small hermetic contract proving that PlayCover integration is manual-only, both jobs use the provisioned runner and disposable-account secrets, the core aggregate owns the launch-recovery and Runtime stress gates, only runner-temporary `run.log` is uploaded, and release remains hosted and isolated. |
 | `scripts/test_playcover_pending_launch_crash_live.sh --live` | Clean-HEAD public-fixture gate that builds committed HEAD outside the checkout and crashes the debug CLI at the two durable Mac launch boundaries (`afterOpenReturned`, `afterDriverLockDurable`). It proves the phase-free `launching.json` create→recover→remove lifecycle, next-start census plus authenticated Runtime hello adoption, exact stop, and the `driver.lock` handoff; while the asynchronous App is not yet visible, only the retryable typed `mac_launch_recovery_unresolved` result is accepted. A submitted record remains recoverable across transient zero-process observations; `stop` preserves it during the asynchronous submit window and reports successful no-process cleanup only after the stale window. Unknown-process refusal remains a deterministic unit boundary. |
-| `scripts/test_playcover_prepare_differential.sh` | Run the hermetic pinned Installer-vs-ios-use prepare differential suite in an isolated SwiftPM scratch directory and publish its fixture-only schema-v1 attestation without replacing existing evidence. It binds the embedded source-closure digest to the loaded XCTest image's exact device/inode and content hash; it does not consume a private live UI scenario. |
+| `scripts/test_playcover_prepare_differential.sh` | Run the hermetic pinned Installer-vs-ios-use prepare differential suite in an isolated SwiftPM scratch directory and publish its fixture-only schema-v1 attestation without replacing existing evidence. It records the loaded XCTest image's device/inode and content hash without freezing checkout source files; it does not consume a private live UI scenario. |
 | `scripts/test_playcover_entitlement_capabilities.sh --prepared-app <App.app> --playchain-root <path>` | Test-only manual gate that copies the exact signed entitlements from an installed account-global App slot's main executable onto a standalone probe, verifies semantic entitlement equality, and directly exercises the fixed UID socket root plus account PlayChain filesystem capabilities without `sandbox-exec`. |
 | `scripts/test_playcover_runtime_stdio.sh` | Compiles the production early-constructor stdio redirector with a small harness and proves exact device/inode capture plus fail-closed rejection of missing identity, replacement, symlink, broad mode, and multiple-link files. |
 | `scripts/characterize_playcover_external_prepare.sh --scenario <path> --runtime <path> --playtools <path> --work-root <path> --report <path> --commit <sha>` | Collect a diagnostic-only external-App prepare report from the full pinned PlayTools Installer oracle and the real ios-use service prepare path. Every input is mandatory; the clean committed HEAD, fresh absolute work/report paths outside the checkout, cleared environment, fixed XCTest, owner-only report, and no-overwrite publication are enforced. The schema-v2 report contains observed typed identities, raw differences, and only the SHA-256 binding of the canonical requested work-root path, never that path itself. The command deliberately retains the work root for operator inspection and never recursively removes it. |
@@ -178,10 +178,25 @@ replay lives in `.github/workflows/simulator.yml` and is manual-only.
 
 ## Install And Benchmark
 
+`scripts/install.sh` installs the CLI and Skill from the selected release;
+latest is resolved to one tag before downloading. Pass `--version <tag>`
+(or `IOS_USE_VERSION`) to select a specific release.
+
+The full installer accepts `--no-skill` to skip the default
+`~/.agents/skills/ios-use` link while keeping `~/.ios-use/skill` available and
+updated for manual linking. Existing discovery paths are preserved.
+
+To expose the installed Skill in another existing skills directory:
+
+```bash
+ln -s "$HOME/.ios-use/skill" /path/to/skills/ios-use
+```
+
 | Script | Purpose |
 | --- | --- |
 | `scripts/install.sh` | On Apple Silicon, verify checksums and install the release CLI, driver IPAs, and prebuilt Mac Runtime plus Frida Engine under `<prefix>/share/ios-use/mac/`; both frameworks are signature-verified immutable preparation inputs. Also installs the skill and altsign helper. `--build-from-source` additionally requires full Xcode, Swift, xcodegen, and the pinned Frida build toolchain. Intel macOS is unsupported. |
-| `scripts/release_build.sh` | From a clean Git tree, audit all pins/licenses, force fresh Runtime, CLI, driver, and pinned Frida Engine builds, then stage the exact five-asset release set under `release/`; validates `IOS_USE_RELEASE_VERSION` when provided. See [docs/how-to-release.md](../docs/how-to-release.md). |
+| `scripts/release_build.sh` | Build and stage the five Mac release files from a clean checkout; `--assemble-only` uses already-built artifacts in `release/`. Validates `IOS_USE_RELEASE_VERSION`. CI builds components in independent jobs; see [docs/how-to-release.md](../docs/how-to-release.md). |
+| `scripts/build_release_mac_resources.sh` | Audit pinned upstreams, build the Runtime and Frida Engine, and package `release/ios-use-mac-resources.tar.gz`. |
 | `scripts/benchmark.js --bench ios-use --udid <udid> --driver-ipa <path>` | Measure ios-use on a real device and write JSON only. Screenshot cases pass `--no-ocr` to isolate pixel capture. The script never builds, signs, installs, or runs `config`; the device must already be prepared with a driver whose configured `driverVersion` matches the IPA version. |
 | `scripts/benchmark.js --bench wda --udid <udid> --wda-bundle-id <id>` | Measure Appium/WebDriverAgent on a real device and write JSON only. This is a separate WDA run, not an implicit ios-use comparison. |
 
@@ -190,14 +205,14 @@ Benchmark quick examples:
 ```bash
 # ios-use read-path benchmark; no build/sign/config happens inside the script.
 node scripts/benchmark.js --bench ios-use \
-  --udid 00008150-0015309E2EE3401C \
+  --udid '<device-udid>' \
   --driver-ipa .ios-use/driver.ipa \
   --preset read \
   --iterations 5
 
 # WDA read-path benchmark.
 node scripts/benchmark.js --bench wda \
-  --udid 00008150-0015309E2EE3401C \
+  --udid '<device-udid>' \
   --wda-bundle-id com.example.WebDriverAgentRunner.xctrunner \
   --preset read
 ```

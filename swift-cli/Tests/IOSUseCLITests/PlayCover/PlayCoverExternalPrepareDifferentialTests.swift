@@ -399,7 +399,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         )
         let differential = try PlayCoverPrepareDifferentialGate.attest(
             scope: .externalApp,
-            repositoryRoot: repository,
             sourceApp: URL(
                 fileURLWithPath: comparison.snapshotBefore.appPath,
                 isDirectory: true

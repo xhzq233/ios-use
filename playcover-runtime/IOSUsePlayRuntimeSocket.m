@@ -32,18 +32,12 @@
 static const NSUInteger IOSUseMaximumRequestFrameSize = 64 * 1024;
 static const NSUInteger IOSUseMaximumResponseFrameSize = 16 * 1024 * 1024;
 static const NSTimeInterval IOSUseSocketIOTimeoutSeconds = 15;
-static const CGFloat IOSUseRuntimeDeviceLogicalWidth =
-    (CGFloat)IOSUsePlayDeviceLogicalWidth;
-static const CGFloat IOSUseRuntimeDeviceLogicalHeight =
-    (CGFloat)IOSUsePlayDeviceLogicalHeight;
-static const CGFloat IOSUseRuntimeDeviceNativeWidth =
-    (CGFloat)IOSUsePlayDeviceNativeWidth;
-static const CGFloat IOSUseRuntimeDeviceNativeHeight =
-    (CGFloat)IOSUsePlayDeviceNativeHeight;
-static const CGFloat IOSUseRuntimeDeviceScale =
-    (CGFloat)IOSUsePlayDeviceScale;
-static const CGFloat IOSUseRuntimeDeviceSafeAreaTop =
-    (CGFloat)IOSUsePlayDeviceSafeAreaTop;
+#define IOSUseRuntimeDeviceLogicalWidth ((CGFloat)IOSUsePlayDeviceLogicalWidth)
+#define IOSUseRuntimeDeviceLogicalHeight ((CGFloat)IOSUsePlayDeviceLogicalHeight)
+#define IOSUseRuntimeDeviceNativeWidth ((CGFloat)IOSUsePlayDeviceNativeWidth)
+#define IOSUseRuntimeDeviceNativeHeight ((CGFloat)IOSUsePlayDeviceNativeHeight)
+#define IOSUseRuntimeDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
+#define IOSUseRuntimeDeviceSafeAreaTop ((CGFloat)IOSUsePlayDeviceSafeAreaTop)
 
 static NSString *IOSUseRuntimeSessionID;
 static NSString *IOSUseRuntimeSocketPath;
@@ -64,6 +58,9 @@ static os_unfair_lock IOSUseRuntimeUIStateLock =
     OS_UNFAIR_LOCK_INIT;
 static NSDictionary<NSString *, id> *IOSUseRuntimeUIState;
 static NSDictionary<NSString *, id> *IOSUseRuntimeUISnapshot;
+// UI requests are serialized; each readiness check records the state actually
+// observed on the main thread, without an extra diagnostic round trip.
+static NSDictionary<NSString *, id> *IOSUseRuntimeCommandUIContext;
 static dispatch_queue_t IOSUseRuntimeCommandQueue;
 static dispatch_queue_t IOSUseRuntimeDebugQueue;
 static dispatch_queue_t IOSUseRuntimeConnectionQueue;
@@ -168,7 +165,7 @@ void IOSUsePlayRuntimeSetUIReadiness(
     NSString *stage,
     NSString *failure
 ) {
-    if (![@[@"initializing", @"ready", @"backgrounded", @"failed"]
+    if (![@[@"initializing", @"ready", @"failed"]
             containsObject:state] ||
         stage.length == 0) {
         return;
@@ -714,7 +711,7 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         isfinite(sceneRasterizationScale) &&
         sceneRasterizationScale > 0 &&
         isfinite(fixedBackingScale) &&
-        (fixedBackingScale == 0 || fixedBackingScale == 3) &&
+        (fixedBackingScale == 0 || fixedBackingScale == IOSUsePlayDeviceScale) &&
         IOSUseSocketMatchesFixedLogicalCanvas(
             canvasBounds,
             0.01,
@@ -1091,7 +1088,7 @@ void IOSUsePlayRuntimePublishUIReadiness(void) {
     if (![state isEqualToString:@"failed"] &&
         ![availability[@"available"] boolValue] &&
         ![availabilityReason isEqualToString:@"window-unavailable"]) {
-        state = @"backgrounded";
+        state = @"initializing";
         stage = availabilityReason;
     }
     NSDictionary<NSString *, id> *runtime = snapshot[@"runtime"];
@@ -1145,6 +1142,7 @@ static NSDictionary<NSString *, id> *IOSUseControlHelloPayload(void) {
         @"installRevision": IOSUseRuntimeInstallRevision ?: @"",
         @"capabilities": IOSUseCapabilities(requiredHooksReady),
         @"controlStage": controlStage,
+        @"devicePreset": [NSString stringWithUTF8String:IOSUsePlayDeviceCurrent()->name],
         @"controlFailure":
             IOSUsePlayRuntimeRequiredHooksFailure() ?: NSNull.null,
         @"uiState": IOSUseCurrentUIReadiness(),
@@ -1589,7 +1587,6 @@ IOSUseRuntimeUIReadinessErrorObject(
         ? uiState[@"stage"]
         : @"runtime-constructor";
     BOOL failed = [state isEqualToString:@"failed"];
-    BOOL backgrounded = [state isEqualToString:@"backgrounded"];
     id rawFailure = uiState[@"failure"];
     NSString *failure = [rawFailure isKindOfClass:NSString.class]
         ? rawFailure
@@ -1597,29 +1594,21 @@ IOSUseRuntimeUIReadinessErrorObject(
     return @{
         @"code": failed
             ? @"runtime_ui_failed"
-            : backgrounded
-                ? @"runtime_ui_backgrounded"
-                : @"runtime_ui_not_ready",
+            : @"runtime_ui_not_ready",
         @"message": failed
             ? failure ?: @"Runtime UI initialization failed"
-            : backgrounded
-                ? [NSString stringWithFormat:
-                    @"Runtime UI is not available: %@",
-                    stage]
-                : @"Runtime UI is still initializing; retry this command",
+            : @"Runtime UI is still initializing; retry this command",
         @"details": @{
             @"category": @"precondition",
             @"phase": stage,
-            @"reason": backgrounded ? stage : (id)NSNull.null,
+            @"reason": stage,
             @"retryable": @((BOOL)!failed),
             @"fatal": @(failed),
             @"candidateCount": @0,
             @"candidates": @[],
             @"suggestions": failed
                 ? @[]
-                : backgrounded
-                    ? @[@"make the App window visible on the active Space, then retry"]
-                    : @[@"retry the same UI command"],
+                : @[@"retry the same UI command"],
         },
     };
 }
@@ -1629,6 +1618,11 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeUICommandError(void) {
         NSThread.isMainThread,
         @"UI command readiness validation is main-only"
     );
+    NSDictionary<NSString *, id> *context =
+        [IOSUsePlayAppKitBridge uiAutomationContext];
+    os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
+    IOSUseRuntimeCommandUIContext = context;
+    os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
     NSDictionary<NSString *, id> *uiState = IOSUseCurrentUIReadiness();
     if ([uiState[@"state"] isEqualToString:@"failed"]) {
         return IOSUseRuntimeUIReadinessErrorObject(uiState);
@@ -1645,12 +1639,16 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeUICommandError(void) {
             return IOSUseRuntimeUIReadinessErrorObject(uiState);
         }
         IOSUsePlayRuntimeSetUIReadiness(
-            @"backgrounded",
+            @"initializing",
             reason,
             nil
         );
-        return IOSUseRuntimeUIReadinessErrorObject(
-            IOSUseCurrentUIReadiness()
+        return IOSUseErrorObject(
+            @"runtime_ui_unavailable",
+            [NSString stringWithFormat:@"Runtime UI is not available: %@", reason],
+            @"precondition",
+            reason,
+            YES
         );
     }
     if (![uiState[@"state"] isEqualToString:@"ready"]) {
@@ -2198,6 +2196,13 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
     void * _Nullable fridaEventContext,
     BOOL * _Nullable fridaEventSubscription
 ) {
+    BOOL isUICommand = [object isKindOfClass:NSDictionary.class] &&
+        IOSUseRuntimeIsUICommand(object[@"command"] ?: @"");
+    if (isUICommand) {
+        os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
+        IOSUseRuntimeCommandUIContext = nil;
+        os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
+    }
     NSDictionary<NSString *, id> *interactionState = nil;
     NSNumber *alertRefreshElapsedMs = nil;
     NSDictionary<NSString *, id> *response =
@@ -2209,11 +2214,21 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
             fridaEventContext,
             fridaEventSubscription
         );
-    return IOSUseRuntimeResponseWithMetadata(
+    NSMutableDictionary<NSString *, id> *result =
+        [IOSUseRuntimeResponseWithMetadata(
         response,
         interactionState,
         alertRefreshElapsedMs
-    );
+    ) mutableCopy];
+    if (isUICommand) {
+        os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
+        NSDictionary<NSString *, id> *context = IOSUseRuntimeCommandUIContext;
+        os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
+        if (context != nil) {
+            result[@"uiContext"] = context;
+        }
+    }
+    return result;
 }
 
 static void IOSUseWriteResponse(
@@ -2244,6 +2259,7 @@ static void IOSUseWriteResponse(
             response[@"interactionState"] ?: NSNull.null;
         fallback[@"performance"] =
             response[@"performance"] ?: NSNull.null;
+        fallback[@"uiContext"] = response[@"uiContext"] ?: NSNull.null;
         response = fallback;
         data = [NSJSONSerialization
             dataWithJSONObject:response

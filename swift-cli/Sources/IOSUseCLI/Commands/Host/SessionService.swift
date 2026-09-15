@@ -6,6 +6,9 @@ public enum SessionService {
         public let deviceName: String
         public let deviceVersion: String
         public let deviceType: String
+        public let driverHost: String?
+        public let driverPort: Int?
+        public var isAttached: Bool { deviceType == TCPAttachService.deviceType }
         public let startedAt: Int
         public let holderPid: Int?
         public let runnerPid: Int?
@@ -18,12 +21,15 @@ public enum SessionService {
         public let macInstallRevision: String?
         public let macRuntimeSocketPath: String?
         public let macLogPath: String?
+        public let macDevicePreset: String?
 
         public init(
             udid: String,
             deviceName: String,
             deviceVersion: String,
             deviceType: String,
+            driverHost: String? = nil,
+            driverPort: Int? = nil,
             startedAt: Int = Int(Date().timeIntervalSince1970 * 1000),
             holderPid: Int? = nil,
             runnerPid: Int? = nil,
@@ -35,12 +41,15 @@ public enum SessionService {
             macExecutablePath: String? = nil,
             macInstallRevision: String? = nil,
             macRuntimeSocketPath: String? = nil,
-            macLogPath: String? = nil
+            macLogPath: String? = nil,
+            macDevicePreset: String? = nil
         ) {
             self.udid = udid
             self.deviceName = deviceName
             self.deviceVersion = deviceVersion
             self.deviceType = deviceType
+            self.driverHost = driverHost
+            self.driverPort = driverPort
             self.startedAt = startedAt
             self.holderPid = holderPid
             self.runnerPid = runnerPid
@@ -53,14 +62,18 @@ public enum SessionService {
             self.macInstallRevision = macInstallRevision
             self.macRuntimeSocketPath = macRuntimeSocketPath
             self.macLogPath = macLogPath
+            self.macDevicePreset = macDevicePreset
         }
 
+#if os(macOS)
         func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
             Info(
                 udid: udid,
                 deviceName: deviceName,
                 deviceVersion: deviceVersion,
                 deviceType: deviceType,
+                driverHost: driverHost,
+                driverPort: driverPort,
                 startedAt: startedAt,
                 holderPid: metadata.holderPid,
                 runnerPid: metadata.runnerPid,
@@ -72,9 +85,11 @@ public enum SessionService {
                 macExecutablePath: macExecutablePath,
                 macInstallRevision: macInstallRevision,
                 macRuntimeSocketPath: macRuntimeSocketPath,
-                macLogPath: macLogPath
+                macLogPath: macLogPath,
+                macDevicePreset: macDevicePreset
             )
         }
+#endif
     }
 
     static var simulatorDriverReachableForTesting: (() -> Bool)?
@@ -88,16 +103,33 @@ public enum SessionService {
     }
 
     public static func readDriverLock(paths: IOSUsePaths) -> String? {
-        DriverSessionStore.readDriverLock(paths: paths)
+        try? readDriverLockInfo(paths: paths)?.udid
     }
 
     public static func readDriverLockInfo(paths: IOSUsePaths) throws -> Info? {
         readDriverLockObserverForTesting?()
-        return try DriverSessionStore.readInfo(paths: paths)
+        if paths.deviceID != nil {
+            return try DriverSessionStore.readInfo(paths: paths)
+        }
+        if let legacy = try DriverSessionStore.readInfo(paths: paths) {
+            return legacy
+        }
+        let contexts = DeviceContextStore.sessions(paths: paths)
+        if contexts.count > 1 {
+            throw CLIParseError.invalidValue(
+                "Multiple active Devices. Pass --device <device-id>."
+            )
+        }
+        return contexts.first?.info
     }
 
     public static func requireDriverLock(paths: IOSUsePaths) throws -> Info {
-        try DriverSessionStore.requireInfo(paths: paths)
+        guard let info = try readDriverLockInfo(paths: paths) else {
+            throw CLIParseError.invalidValue(
+                "No active driver. Run `ios-use start` first."
+            )
+        }
+        return info
     }
 
     public static func resolveTargetUdid(
@@ -126,6 +158,7 @@ public enum SessionService {
         DriverSessionStore.clearDriverLock(paths: paths)
     }
 
+#if os(macOS)
     public static func start(udid requestedUdid: String?, paths: IOSUsePaths, verbose: Bool) throws -> String {
         try SessionOperationLock.withExclusiveLock(paths: paths) {
             try startLocked(
@@ -377,6 +410,9 @@ public enum SessionService {
                 "requireDriverLock must throw when driver.lock is absent"
             )
         }
+        if current.isAttached {
+            return try TCPAttachService.detachLocked(info: current, paths: paths)
+        }
         if current.deviceType == PlayCoverSessionService.deviceType {
             let pid = try PlayCoverSessionService.terminate(
                 session: current,
@@ -408,10 +444,18 @@ public enum SessionService {
         return output
     }
 
+#endif
+    #if os(Linux)
+    public static func stop(paths: IOSUsePaths) throws -> String {
+        try TCPAttachService.detach(paths: paths)
+    }
+    #endif
+
     public static func read(paths: IOSUsePaths) -> Info? {
         try? readDriverLockInfo(paths: paths)
     }
 
+#if os(macOS)
     public static func resolveDriverInfo(udid: String, paths: IOSUsePaths) throws -> Info {
         try DriverLifecycleService.resolveDriverInfo(udid: udid, paths: paths)
     }
@@ -435,4 +479,6 @@ public enum SessionService {
             simulatorLauncher: simulatorDriverLauncherForTesting
         )
     }
+#endif
+
 }

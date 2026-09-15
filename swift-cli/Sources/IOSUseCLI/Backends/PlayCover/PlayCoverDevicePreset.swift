@@ -1,0 +1,55 @@
+import Foundation
+import IOSUsePlayDevice
+
+struct PlayCoverDevicePreset: Equatable {
+    let name: String
+    let productType: String
+    let logicalSize: CGSize
+    let scale: Double
+    var nativeSize: CGSize {
+        CGSize(width: logicalSize.width * scale, height: logicalSize.height * scale)
+    }
+
+    static let presets: [Self] = {
+        var result: [Self] = []
+        var index: Int32 = 0
+        while let pointer = IOSUsePlayDevicePresetAt(index) {
+            let value = pointer.pointee
+            result.append(Self(name: String(cString: value.name),
+                               productType: String(cString: value.productType),
+                               logicalSize: CGSize(width: Int(value.logicalWidth), height: Int(value.logicalHeight)),
+                               scale: Double(value.scale)))
+            index += 1
+        }
+        return result
+    }()
+    static let defaultPreset = presets[0]
+
+    static func named(_ name: String) throws -> Self {
+        guard let preset = presets.first(where: { $0.name == name }) else {
+            throw CLIParseError.invalidValue("Unknown Mac device preset \(name). Available: \(presets.map(\.name).joined(separator: ", "))")
+        }
+        return preset
+    }
+
+    static func configured(paths: IOSUsePaths) throws -> Self {
+        let path = URL(fileURLWithPath: paths.playcover).appendingPathComponent("device.json")
+        guard FileManager.default.fileExists(atPath: path.path) else { return defaultPreset }
+        let value = try JSONDecoder().decode(Selection.self, from: Data(contentsOf: path))
+        return try named(value.preset)
+    }
+
+    func save(paths: IOSUsePaths) throws {
+        let directory = URL(fileURLWithPath: paths.playcover)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(Selection(preset: name)).write(to: directory.appendingPathComponent("device.json"), options: .atomic)
+    }
+
+    var machineData: MachineValue {
+        .object(["preset": .string(name), "productType": .string(productType),
+                 "logicalWidth": .integer(Int(logicalSize.width)),
+                 "logicalHeight": .integer(Int(logicalSize.height)), "scale": .integer(Int(scale))])
+    }
+
+    private struct Selection: Codable { let preset: String }
+}

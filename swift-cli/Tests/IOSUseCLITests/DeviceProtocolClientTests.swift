@@ -1025,7 +1025,9 @@ final class DeviceProtocolClientTests: XCTestCase {
         guard environment["IOS_USE_REAL_DEVICE_APPINSTALL_PROBE"] == "1" else {
             throw XCTSkip("set IOS_USE_REAL_DEVICE_APPINSTALL_PROBE=1 to run real-device AppInstallAction probe")
         }
-        let udid = environment["IOS_USE_REAL_DEVICE_UDID"] ?? "00008150-0015309E2EE3401C"
+        guard let udid = environment["IOS_USE_REAL_DEVICE_UDID"], !udid.isEmpty else {
+            throw XCTSkip("set IOS_USE_REAL_DEVICE_UDID for the real-device AppInstallAction probe")
+        }
         let appPath = environment["IOS_USE_REAL_DEVICE_APP_PATH"] ?? "/path/to/TestApp.app"
         let appURL = URL(fileURLWithPath: appPath, isDirectory: true).absoluteString
         let feature = environment["IOS_USE_REAL_DEVICE_APPINSTALL_FEATURE"] ?? "com.apple.coredevice.feature.installapp"

@@ -37,7 +37,7 @@ final class Codec {
             try Codec.writeLengthPrefixedData(fd, data: data)
         }
 
-        func deserialize<T: Serializer>(_ data: Data, as type: T.Type) throws -> T {
+        func deserialize<T: Serializer>(_ data: Data, as type: T.Type) throws -> T where T.Target == T {
             try fory.deserialize(data, as: type)
         }
     }

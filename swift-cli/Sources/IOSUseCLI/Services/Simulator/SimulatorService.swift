@@ -211,6 +211,23 @@ enum SimulatorService {
         }
     }
 
+    static func listApps(udid: String, includeSystem: Bool) throws -> [AppManagementService.AppInfo] {
+        let output = try Shell.run("xcrun", arguments: ["simctl", "listapps", udid])
+        guard let apps = try PropertyListSerialization.propertyList(from: Data(output.utf8), format: nil) as? [String: [String: Any]] else {
+            throw CLIParseError.invalidValue("simctl listapps did not return an App dictionary")
+        }
+        return apps.compactMap { bundleID, item in
+            let type = item["ApplicationType"] as? String ?? ""
+            if !includeSystem && type != "User" { return nil }
+            return AppManagementService.AppInfo(
+                bundleID: item["CFBundleIdentifier"] as? String ?? bundleID,
+                displayName: (item["CFBundleDisplayName"] as? String) ?? (item["CFBundleName"] as? String) ?? bundleID,
+                version: (item["CFBundleShortVersionString"] as? String) ?? (item["CFBundleVersion"] as? String) ?? "",
+                applicationType: type
+            )
+        }
+    }
+
     static func terminateApp(bundleID: String, udid: String) throws -> Bool {
         let result = try Shell.runWithResult("xcrun", arguments: ["simctl", "terminate", udid, bundleID])
         switch result.exitCode {

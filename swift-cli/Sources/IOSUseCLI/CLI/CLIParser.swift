@@ -11,7 +11,10 @@ public enum CLIParser {
     }
 
     public static func parseInvocation(_ arguments: [String]) throws -> ParsedInvocation {
-        let (normalizedArguments, json) = extractGlobalJSONFlag(arguments)
+        let (argumentsWithoutJSON, json) = extractGlobalJSONFlag(arguments)
+        let (normalizedArguments, deviceID) = try extractGlobalDeviceFlag(
+            argumentsWithoutJSON
+        )
         var parser = ArgumentParser(normalizedArguments)
         guard let command = parser.consume() else {
             throw CLIParseError.missingCommand
@@ -28,6 +31,11 @@ public enum CLIParser {
             parsed = .config(try parseConfig(&parser))
         case "start":
             parsed = .start(try parseStart(&parser))
+        case "attach":
+            parsed = .attach(try parseAttach(&parser))
+        case "detach":
+            try parser.requireEnd()
+            parsed = .detach
         case "stop":
             try parser.requireEnd()
             parsed = .stop
@@ -86,7 +94,7 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .du, .start, .stop, .status, .install, .apps, .open,
+            case .du, .start, .stop, .attach, .detach, .status, .install, .apps, .open,
                     .config, .appLifecycle, .driver, .mediaImport,
                     .debug, .uiTree:
                 break
@@ -94,17 +102,21 @@ public enum CLIParser {
                 throw CLIParseError.unknownOption("--json")
             }
         }
-        return ParsedInvocation(command: parsed, json: json)
+        return ParsedInvocation(
+            command: parsed,
+            json: json,
+            deviceID: deviceID
+        )
     }
 
     static func extractGlobalJSONFlag(_ arguments: [String]) -> ([String], Bool) {
         let valueOptions: Set<String> = [
-            "--udid", "--path", "--name", "--pattern",
+            "--host", "--port", "--udid", "--path", "--name", "--pattern",
             "--flags", "--timeout", "--last", "--capture-mode", "--filter", "--interface",
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "--target", "--depth", "-i"
+            "--app", "--target", "--depth", "--device", "-d", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -127,6 +139,49 @@ public enum CLIParser {
         return (normalized, json)
     }
 
+    static func extractGlobalDeviceFlag(
+        _ arguments: [String]
+    ) throws -> ([String], String?) {
+        let valueOptions: Set<String> = [
+            "--host", "--port", "--udid", "--path", "--name", "--pattern",
+            "--flags", "--timeout", "--last", "--capture-mode",
+            "--filter", "--interface", "--offset", "--offset-ratio",
+            "--traits", "--cindex", "--duration", "--tap", "--label",
+            "--content", "--delete", "--to", "--from", "--dir",
+            "--distance", "--match", "--fps", "--index", "--process",
+            "--pid", "--output", "--runtime", "--app", "--target",
+            "--depth", "-i",
+        ]
+        var normalized: [String] = []
+        var deviceID: String?
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "--device" || argument == "-d" {
+                guard deviceID == nil else {
+                    throw CLIParseError.invalidValue(
+                        "--device/-d may only be provided once"
+                    )
+                }
+                index += 1
+                guard index < arguments.count,
+                      !arguments[index].isEmpty else {
+                    throw CLIParseError.missingOptionValue(argument)
+                }
+                deviceID = arguments[index]
+                index += 1
+                continue
+            }
+            normalized.append(argument)
+            if valueOptions.contains(argument), index + 1 < arguments.count {
+                index += 1
+                normalized.append(arguments[index])
+            }
+            index += 1
+        }
+        return (normalized, deviceID)
+    }
+
     private static func parseStatus(_ parser: inout ArgumentParser) throws -> StatusOptions {
         var options = StatusOptions()
         while let arg = parser.consume() {
@@ -147,8 +202,12 @@ public enum CLIParser {
             case "--simulator": options.simulator = true
             case "--verbose": options.verbose = true
             case "--mac": options.playCover = true
+            case "--device-model": options.macDevice = try parser.value(for: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
+        }
+        if options.macDevice != nil && !options.playCover {
+            throw CLIParseError.invalidValue("--device-model requires --mac")
         }
         if options.playCover,
            options.udid != nil
@@ -162,11 +221,36 @@ public enum CLIParser {
         return options
     }
 
+    private static func parseAttach(_ parser: inout ArgumentParser) throws -> AttachOptions {
+        var host: String?
+        var port: Int?
+        while let arg = parser.consume() {
+            switch arg {
+            case "--host":
+                guard host == nil else { throw CLIParseError.invalidValue("--host may only be provided once") }
+                host = try parser.value(for: arg)
+            case "--port":
+                guard port == nil else { throw CLIParseError.invalidValue("--port may only be provided once") }
+                port = try parsePositiveIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            default: throw CLIParseError.unknownOption(arg)
+            }
+        }
+        let resolvedHost = try require(host, option: "--host")
+        guard let port else { throw CLIParseError.missingRequiredOption("--port") }
+        let options = AttachOptions(host: resolvedHost, port: port)
+        try TCPAttachService.validateEndpoint(host: options.host, port: options.port)
+        return options
+    }
+
     private static func parseStart(_ parser: inout ArgumentParser) throws -> StartOptions {
         var options = StartOptions()
+        var endpointArguments: [String] = []
         var timeoutWasProvided = false
         while let arg = parser.consume() {
             switch arg {
+            case "--host", "--port":
+                endpointArguments.append(arg)
+                endpointArguments.append(try parser.valueAllowingLeadingDash(for: arg))
             case "--verbose": options.verbose = true
             case "--mac":
                 guard !options.mac else {
@@ -202,7 +286,16 @@ public enum CLIParser {
                 options.udid = arg
             }
         }
-        if options.mac {
+        if !endpointArguments.isEmpty {
+            guard options.udid == nil, !options.mac, options.appPath == nil,
+                  !options.log, !options.verbose, !timeoutWasProvided else {
+                throw CLIParseError.invalidValue(
+                    "--host/--port cannot be combined with a UDID, --mac, --app, --log, --verbose, or --timeout"
+                )
+            }
+            var endpointParser = ArgumentParser(endpointArguments)
+            options.endpoint = try parseAttach(&endpointParser)
+        } else if options.mac {
             guard options.udid == nil else {
                 throw CLIParseError.invalidValue("a device UDID cannot be used with --mac")
             }
@@ -646,10 +739,11 @@ public enum CLIParser {
 
     private static func parseScreenshot(_ parser: inout ArgumentParser) throws -> DriverAction {
         var name: String?
-        var ocr = true
+        var ocr = false
         while let arg = parser.consume() {
             switch arg {
             case "--name": name = try parser.value(for: arg)
+            case "--ocr": ocr = true
             case "--no-ocr": ocr = false
             default: throw CLIParseError.unknownOption(arg)
             }

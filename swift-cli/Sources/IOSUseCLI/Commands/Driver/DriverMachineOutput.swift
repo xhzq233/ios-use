@@ -379,7 +379,7 @@ private func machineArtifact(_ artifact: ScreenshotArtifactService.Result) -> Ma
         "runtimeEvidence": artifact.runtimeEvidence.map {
             .object(
                 $0.mapValues(
-                    StatusService.playCoverRuntimeJSONMachineValue
+                    machineRuntimeJSONValue
                 )
             )
         } ?? .null,

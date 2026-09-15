@@ -74,6 +74,9 @@ public enum NSLogService {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: try executablePath())
         var arguments = ["nslog", "--capture-mode", "daemon"]
+        if let deviceID = paths.deviceID {
+            arguments += ["--device", deviceID]
+        }
         if let name = options.name, !name.isEmpty {
             arguments += ["--name", name]
         }

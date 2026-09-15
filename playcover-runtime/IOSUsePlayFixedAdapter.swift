@@ -2,11 +2,10 @@ import CoreGraphics
 import Foundation
 import UIKit
 
-/// Headless, compile-time replacement for PlayTools' plist-backed settings.
+/// Headless, launch-selected replacement for PlayTools' plist-backed settings.
 ///
 /// The property surface deliberately matches the pinned PlaySettings selectors
-/// consumed by PlayLoader, PlayScreen and NSObject+Swizzle.  It is not a
-/// configurable profile: every value comes from IOSUsePlayDevice.h or the
+/// consumed by PlayLoader, PlayScreen and NSObject+Swizzle.  The selected preset comes from IOSUsePlayDevice.h alongside the
 /// fixed headless policy.
 @objc(PlaySettings)
 @objcMembers
@@ -15,7 +14,7 @@ public final class PlaySettings: NSObject {
 
     public let deviceModel = String(cString: IOSUsePlayDeviceProductType())
     public let oemID = String(cString: IOSUsePlayDeviceHardwareTarget())
-    public let customScaler = Double(IOSUsePlayDeviceScale)
+    public let customScaler = Double(IOSUsePlayDeviceCurrent().pointee.scale)
     public let adaptiveDisplay = true
     public let inverseScreenValues = false
     public let resizableWindow = false
@@ -29,8 +28,8 @@ public final class PlaySettings: NSObject {
     public let limitMotionUpdateFrequency = false
     public let disableBuiltinMouse = false
     public let ignoreUnityKeyboardInitializationError = false
-    public var windowSizeWidth = CGFloat(IOSUsePlayDeviceLogicalWidth)
-    public var windowSizeHeight = CGFloat(IOSUsePlayDeviceLogicalHeight)
+    public var windowSizeWidth = CGFloat(IOSUsePlayDeviceCurrent().pointee.logicalWidth)
+    public var windowSizeHeight = CGFloat(IOSUsePlayDeviceCurrent().pointee.logicalHeight)
 
     private override init() {
         super.init()
