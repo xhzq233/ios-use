@@ -118,6 +118,7 @@ public struct AttachOptions: Equatable, Sendable {
 }
 
 public struct StartOptions: Equatable, Sendable {
+    public var endpoint: AttachOptions?
     public var udid: String?
     public var verbose = false
     public var mac = false
@@ -131,8 +132,10 @@ public struct StartOptions: Equatable, Sendable {
         mac: Bool = false,
         appPath: String? = nil,
         log: Bool = false,
-        timeout: Double = 60
+        timeout: Double = 60,
+        endpoint: AttachOptions? = nil
     ) {
+        self.endpoint = endpoint
         self.udid = udid
         self.verbose = verbose
         self.mac = mac

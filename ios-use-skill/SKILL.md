@@ -79,9 +79,9 @@ Redact device identifiers and signed URLs before sharing artifacts.
 ## Linux hosts
 
 Linux supports externally managed TCP Drivers. Obtain a running Driver endpoint
-from the device provider, then use `ios-use attach -d <alias> --host <host> --port
+from the device provider, then use `ios-use start -d <alias> --host <host> --port
 <port>`. Reuse the attachment with DOM, actions, waits, App lifecycle and
-screenshots. Linux screenshots omit OCR. Use `detach` when finished; it does not
+screenshots. Linux screenshots omit OCR. Use `stop` when finished; it does not
 stop the provider's runtime. Device installation, signing and Driver startup
 remain provider operations. Linux x86_64 releases start at v2.1.0-alpha.3.
 For this pre-release, use its versioned installer:
@@ -89,3 +89,6 @@ For this pre-release, use its versioned installer:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.3/scripts/install.sh | bash -s -- --version v2.1.0-alpha.3
 ```
+
+Alpha 3 uses `attach` with the same host/port options; the unified TCP `start`
+entry point requires a newer build. `attach` and `detach` remain compatible.

@@ -82,8 +82,12 @@ Use a screenshot when the DOM cannot describe visual state:
 ```bash
 ios-use dom
 ios-use screenshot --name result
-ios-use screenshot --no-ocr --name pixels-only
+ios-use screenshot --ocr --name recognized-text  # macOS host only
 ```
+
+OCR is off by default on both hosts. Add `--ocr` on macOS when recognized text
+is needed; Linux has no OCR engine. `--no-ocr` remains accepted.
+On older Alpha 3 macOS builds, use `--no-ocr` to skip its default OCR pass.
 
 Use a short image sequence for transient animation:
 

@@ -43,17 +43,9 @@ public struct IOSUseCLI: Sendable {
         do {
             switch invocation.command {
             case .attach(let options):
-                CLIInvocationContext.current?.suppressAlertRefresh()
-                guard let id = invocation.deviceID else { throw CLIParseError.missingRequiredOption("--device") }
-                guard id != DeviceContextStore.macDeviceID else {
-                    throw CLIParseError.invalidValue("The Device ID mac is reserved. Choose another TCP alias.")
-                }
-                let context = try paths.deviceContext(id)
-                let output = try TCPAttachService.attach(options: options, paths: context)
-                return json ? MachineOutput.success(command: command, data: .object([
-                    "deviceId": .string(id), "host": .string(options.host),
-                    "port": .integer(options.port), "status": .string("attached")
-                ])) : CLIResult(exitCode: 0, stdout: output)
+                return executeAttachment(options, paths: try attachmentPaths(invocation.deviceID), command: command, json: json)
+            case .start(let options) where options.endpoint != nil:
+                return executeAttachment(options.endpoint!, paths: try attachmentPaths(invocation.deviceID), command: command, json: json)
             case .status:
                 let contexts: [DeviceContextStore.Context]
                 if let id = invocation.deviceID {
@@ -65,18 +57,19 @@ public struct IOSUseCLI: Sendable {
                         "devices": .array(contexts.map { context in .object([
                             "deviceId": .string(context.deviceID), "deviceType": .string(context.info.deviceType),
                             "status": .string("attached"),
+                            "lifecycleOwner": .string("external"),
                             "driverHost": context.info.driverHost.map(MachineValue.string) ?? .null,
                             "driverPort": context.info.driverPort.map(MachineValue.integer) ?? .null,
                             "versionMatchesCli": .null
                         ]) })
                     ]))
                 }
-                let output = contexts.map { "\($0.deviceID) attached \($0.info.driverHost ?? ""):\($0.info.driverPort ?? 0)" }.joined(separator: "\n")
-                return CLIResult(exitCode: 0, stdout: contexts.isEmpty ? "No attached Devices. Run ios-use attach.\n" : output + "\n")
+                let output = contexts.map { "\($0.deviceID) attached (external) \($0.info.driverHost ?? ""):\($0.info.driverPort ?? 0)" }.joined(separator: "\n")
+                return CLIResult(exitCode: 0, stdout: contexts.isEmpty ? "No attached Devices. Run ios-use start -d <id> --host <host> --port <port>.\n" : output + "\n")
             case .driver, .appLifecycle, .detach, .stop:
                 let context = try DeviceContextStore.activeContext(explicitDeviceID: invocation.deviceID, paths: paths)
                 guard context.info.isAttached else {
-                    throw CLIParseError.invalidValue("Linux requires a TCP attachment. Run ios-use attach.")
+                    throw CLIParseError.invalidValue("Linux requires a TCP attachment. Run ios-use start -d <id> --host <host> --port <port>.")
                 }
                 switch invocation.command {
                 case .driver(let action):
@@ -91,10 +84,18 @@ public struct IOSUseCLI: Sendable {
                     ])) : CLIResult(exitCode: 0, stdout: output)
                 }
             default:
-                throw CLIParseError.invalidValue("\(command) is unavailable on Linux. Start and manage the device through its provider, then use ios-use attach for UI operations.")
+                throw CLIParseError.invalidValue("\(command) is unavailable on Linux. Start and manage the device through its provider, then use ios-use start -d <id> --host <host> --port <port> for UI operations.")
             }
         } catch {
             return commandFailure(command: command, error: error, json: json)
         }
+    }
+
+    private func attachmentPaths(_ deviceID: String?) throws -> IOSUsePaths {
+        guard let deviceID else { throw CLIParseError.missingRequiredOption("--device") }
+        guard deviceID != DeviceContextStore.macDeviceID else {
+            throw CLIParseError.invalidValue("The Device ID mac is reserved. Choose another TCP alias.")
+        }
+        return try paths.deviceContext(deviceID)
     }
 }

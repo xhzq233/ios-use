@@ -240,9 +240,13 @@ public enum CLIParser {
 
     private static func parseStart(_ parser: inout ArgumentParser) throws -> StartOptions {
         var options = StartOptions()
+        var endpointArguments: [String] = []
         var timeoutWasProvided = false
         while let arg = parser.consume() {
             switch arg {
+            case "--host", "--port":
+                endpointArguments.append(arg)
+                endpointArguments.append(try parser.valueAllowingLeadingDash(for: arg))
             case "--verbose": options.verbose = true
             case "--mac":
                 guard !options.mac else {
@@ -278,7 +282,16 @@ public enum CLIParser {
                 options.udid = arg
             }
         }
-        if options.mac {
+        if !endpointArguments.isEmpty {
+            guard options.udid == nil, !options.mac, options.appPath == nil,
+                  !options.log, !options.verbose, !timeoutWasProvided else {
+                throw CLIParseError.invalidValue(
+                    "--host/--port cannot be combined with a UDID, --mac, --app, --log, --verbose, or --timeout"
+                )
+            }
+            var endpointParser = ArgumentParser(endpointArguments)
+            options.endpoint = try parseAttach(&endpointParser)
+        } else if options.mac {
             guard options.udid == nil else {
                 throw CLIParseError.invalidValue("a device UDID cannot be used with --mac")
             }
@@ -722,14 +735,11 @@ public enum CLIParser {
 
     private static func parseScreenshot(_ parser: inout ArgumentParser) throws -> DriverAction {
         var name: String?
-        #if os(Linux)
         var ocr = false
-        #else
-        var ocr = true
-        #endif
         while let arg = parser.consume() {
             switch arg {
             case "--name": name = try parser.value(for: arg)
+            case "--ocr": ocr = true
             case "--no-ocr": ocr = false
             default: throw CLIParseError.unknownOption(arg)
             }

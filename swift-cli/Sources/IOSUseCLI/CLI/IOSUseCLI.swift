@@ -302,6 +302,9 @@ public struct IOSUseCLI: Sendable {
             return InvocationTarget(paths: try paths.deviceContext(id), startUDID: nil)
 
         case .start(let options):
+            if let endpoint = options.endpoint {
+                return try resolveInvocationTarget(for: .attach(endpoint), explicitDeviceID: explicitDeviceID)
+            }
             if options.mac {
                 if let explicitDeviceID {
                     let normalized = try DeviceContextStore
@@ -610,20 +613,7 @@ public struct IOSUseCLI: Sendable {
         }
         switch parsed {
         case .attach(let options):
-            do {
-                let output = try TCPAttachService.attach(options: options, paths: commandPaths)
-                if json {
-                    return MachineOutput.success(command: "attach", data: .object([
-                        "deviceId": .string(commandPaths.deviceID!),
-                        "host": .string(options.host),
-                        "port": .integer(options.port),
-                        "status": .string("attached"),
-                    ]))
-                }
-                return CLIResult(exitCode: 0, stdout: output)
-            } catch {
-                return commandFailure(command: parsed.commandName, error: error, json: json)
-            }
+            return executeAttachment(options, paths: commandPaths, command: parsed.commandName, json: json)
         case .detach:
             do {
                 let output = try TCPAttachService.detach(paths: commandPaths)
@@ -711,6 +701,9 @@ public struct IOSUseCLI: Sendable {
                 )
             }
         case .start(let options):
+            if let endpoint = options.endpoint {
+                return executeAttachment(endpoint, paths: commandPaths, command: parsed.commandName, json: json)
+            }
             do {
                 let output: String
                 if options.mac {

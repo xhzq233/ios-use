@@ -56,6 +56,8 @@ signing, IPA installation, port forwarding and XCTest startup. UI actions,
 waits, app activation/termination and JPEG screenshots use the shared protocol.
 OCR, capture sequences, local USB, Simulator, Mac, logging and proxy services require
 a macOS host. `stop` on Linux detaches and leaves the remote Driver running.
+Current source also accepts `start -d phone --host <host> --port <port>` as the
+unified session entry point. Alpha 3 uses the compatible `attach` form above.
 
 ## Quick Start
 
@@ -91,24 +93,33 @@ ios-use start <simulator-udid>
 ### External TCP driver
 
 When another host or device provider starts the matching ios-use driver and
-forwards its TCP port, attach without local USB or signing configuration:
+forwards its TCP port, connect without local USB or signing configuration:
 
 ```bash
-ios-use attach --device remote-phone --host 127.0.0.1 --port 18102
+ios-use start --device remote-phone --host 127.0.0.1 --port 18102
 ios-use dom -d remote-phone
 ios-use activateApp com.apple.Preferences -d remote-phone --dom
-ios-use detach -d remote-phone
+ios-use stop -d remote-phone
 ```
 
-The host can be an IP address or hostname. Attach checks the Fory protocol before
+`start --host/--port` is available in current source; on Alpha 3 use `attach`
+with the same endpoint options. `attach` remains supported. Both endpoint options
+are required and cannot be mixed with a UDID or local start flags.
+The host can be an IP address or hostname. Start checks the Fory protocol before
 saving the session. UI commands use this endpoint; installation, URL opening,
 media import, logs and proxy remain the provider's responsibility.
 `detach` (or `stop` on this target) only removes the local attachment. It also
 works offline and never stops the externally managed driver. Restore a lost
 endpoint through its provider, then retry; ios-use does not launch a local driver
 for a TCP attachment. Use a trusted network or secure tunnel for this plain TCP
-connection. `status` reports `attached`, which records the binding rather than
-continuously probing remote health.
+connection. `status` reports `attached` and `lifecycleOwner: external`;
+local sessions report `lifecycleOwner: ios-use`. This records the binding rather
+than continuously probing remote health.
+
+Screenshots default to JPEG output without OCR on both hosts. On macOS, use
+`screenshot --ocr` to also recognize text and save an OCR sidecar. `--no-ocr`
+remains accepted; Linux has no OCR engine. These defaults apply to local and
+remote targets in current source; Alpha 3 on macOS defaults to OCR enabled.
 
 ### Mac backend
 

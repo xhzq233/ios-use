@@ -7,15 +7,15 @@ enum CLIHelp {
         Usage: ios-use [--device <id>] <command>
 
         Linux TCP client for an externally managed iOS Driver.
-        Start the Driver with your device provider, then attach its TCP endpoint:
-          ios-use attach -d phone --host <host> --port <port>
+        Start the Driver with your device provider, then connect its TCP endpoint:
+          ios-use start -d phone --host <host> --port <port>
           ios-use status
           ios-use dom -d phone
           ios-use tap "<label>" -d phone --dom
           ios-use screenshot -d phone
-          ios-use detach -d phone
+          ios-use stop -d phone
 
-        Commands: attach, detach, status, stop, dom, waitFor, screenshot, tap,
+        Commands: start, stop, attach, detach, status, dom, waitFor, screenshot, tap,
           longpress, input, swipe, activateApp, terminateApp, home, rotate, dismissAlert
         With multiple attachments, select one using -d <id>.
         Inspect current DOM before acting and keep page-dependent actions sequential.
@@ -103,6 +103,9 @@ enum CLIHelp {
 
             Show connected devices, capture processes, proxy state, config state,
             and read-only Mac backend resource/signer/session readiness.
+            Session lifecycleOwner is ios-use for local runtimes and external
+            for TCP attachments. Attached status records the saved binding;
+            run dom to check remote responsiveness.
 
             Options:
               --verbose    Enable verbose device output
@@ -146,11 +149,13 @@ enum CLIHelp {
             Host accepts an IP address or hostname; port is 1..65535.
             A DOM protocol check must succeed before the attachment is saved.
             Device ID is a local alias; mac is reserved. No USB or config needed.
+            This is the compatibility form of start -d <id> --host ... --port ... .
             Use --device <id> on later commands when multiple Devices are active.
 
-            Supports DOM, screenshot, capture, gestures, input, waits, alerts,
+            Supports DOM, screenshot, gestures, input, waits, alerts,
             activateApp, terminateApp, home, and rotate. Device installation,
             URL opening, media import, logs, and proxy require the external provider.
+            Screenshot sequences (capture) are available on macOS hosts.
             TCP has no built-in authentication or encryption; use a trusted
             network or a secure tunnel. Use the matching driver release.
 
@@ -167,12 +172,19 @@ enum CLIHelp {
         case "start":
             return """
             Usage: ios-use start [udid] [--verbose]
+                   ios-use start -d <id> --host <host> --port <port>
                    ios-use start --mac --app <source.app> [--log] [--timeout <duration>]
                    ios-use start --mac [--log] [--timeout <duration>]
 
             Start a configured XCTest driver or an iOS App on this Mac and
             record it in that Device's context under IOS_USE_HOME.
             Defaults to the first connected USB real device when udid is omitted.
+            With --host and --port, connect an already running external Driver
+            on macOS or Linux. A DOM protocol check must pass before saving the
+            binding; -d supplies a local alias. Both endpoint options are required
+            and cannot be mixed with a UDID or local start options.
+            The provider owns remote startup and cleanup. stop only unbinds it,
+            including while offline. attach remains a compatible entry point.
             Multiple Devices can run together. Use --device <device-id> on
             later commands; status prints the stable IDs.
             The Mac backend automatically prepares an unmodified iPhoneOS App
@@ -192,6 +204,8 @@ enum CLIHelp {
             crash, or launch failure.
 
             Options:
+              --host <host>                External Driver IP address or hostname
+              --port <port>                External Driver TCP port (1..65535)
               --verbose                    Enable verbose XCTest output
               --mac                        Select the Mac backend
               --app <source.app>            Install or update, then launch this App
@@ -360,11 +374,12 @@ enum CLIHelp {
             )
         case "screenshot":
             return driverHelp(
-                usage: "ios-use screenshot [--name <name>] [--no-ocr]",
-                summary: "Save a screenshot under ios-use artifacts.",
+                usage: "ios-use screenshot [--name <name>] [--ocr | --no-ocr]",
+                summary: "Save a screenshot under ios-use artifacts. OCR is off by default.",
                 options: [
                     "--name <name>  Output name",
-                    "--no-ocr       Skip host-side Vision OCR"
+                    "--ocr          Enable host-side Vision OCR (macOS only)",
+                    "--no-ocr       Skip OCR (default; retained for compatibility)"
                 ]
             )
         case "capture":

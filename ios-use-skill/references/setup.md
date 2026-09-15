@@ -11,19 +11,21 @@ ios-use start <udid>
 ```
 
 For an externally started driver, obtain its forwarded endpoint from the device
-provider and attach using a local alias:
+provider and connect using a local alias:
 
 ```bash
-ios-use attach --device remote-phone --host <host> --port <port>
+ios-use start --device remote-phone --host <host> --port <port>
 ios-use dom -d remote-phone
-ios-use detach -d remote-phone
+ios-use stop -d remote-phone
 ```
 
 Use a driver from the same release over a trusted network or secure tunnel.
-No local `config` or `start` is needed. `detach` and `stop` only forget this
+No local `config` is needed. Do not mix host/port with a UDID or local start flags.
+`attach` accepts the same endpoint options for compatibility (use it on Alpha 3).
+`detach` and `stop` only forget this
 attachment; the provider owns installation, driver startup, and cleanup.
 If disconnected, restore the endpoint through the provider and retry. If the
-endpoint changed, detach and attach again. `status` reports the saved binding;
+endpoint changed, stop and start with the new endpoint. `status` reports the saved binding and its lifecycle owner;
 run `dom` to check whether the endpoint is currently responsive.
 Host operations such as install, open, media import, logs and proxy require the
 provider; `activateApp --log` is unavailable over TCP.

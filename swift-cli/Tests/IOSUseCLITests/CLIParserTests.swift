@@ -377,6 +377,25 @@ final class CLIParserTests: XCTestCase {
         }
     }
 
+    func testTCPStartUsesAttachValidationAndRejectsLocalSelectors() throws {
+        let endpoint = ["--host", "127.0.0.1", "--port", "8102"]
+        XCTAssertEqual(
+            try CLIParser.parse(["start"] + endpoint),
+            .start(StartOptions(endpoint: AttachOptions(host: "127.0.0.1", port: 8102)))
+        )
+        for local in [["test-udid"], ["--mac"], ["--app", "Example.app"],
+                      ["--log"], ["--verbose"], ["--timeout", "1s"]] {
+            XCTAssertThrowsError(try CLIParser.parse(["start"] + endpoint + local))
+        }
+        for invalid in [["--host", "localhost"], ["--port", "8102"],
+                        ["--host", "localhost", "--port", "-1"],
+                        endpoint + ["--host", "localhost"], endpoint + ["--port", "8103"]] {
+            for command in ["start", "attach"] {
+                XCTAssertThrowsError(try CLIParser.parse([command] + invalid))
+            }
+        }
+    }
+
     func testParsesDriverReadCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["dom", "--wait-quiescence"]),
@@ -415,14 +434,14 @@ final class CLIParserTests: XCTestCase {
             ))
         )
 
-        #if os(Linux)
-        let defaultOCR = false
-        #else
-        let defaultOCR = true
-        #endif
         XCTAssertEqual(
             try CLIParser.parse(["screenshot", "--name", "home"]),
-            .driver(.screenshot(name: "home", ocr: defaultOCR))
+            .driver(.screenshot(name: "home", ocr: false))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["screenshot", "--ocr"]),
+            .driver(.screenshot(name: nil, ocr: true))
         )
 
         XCTAssertEqual(
