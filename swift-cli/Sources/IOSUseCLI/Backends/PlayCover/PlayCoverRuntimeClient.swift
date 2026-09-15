@@ -1897,6 +1897,7 @@ final class PlayCoverRuntimeClient {
             "error",
             "interactionState",
             "performance",
+            "uiContext",
         ])
         let actualKeys = Set(object.keys)
         guard requiredKeys.isSubset(of: actualKeys),
@@ -1919,6 +1920,9 @@ final class PlayCoverRuntimeClient {
         }
         guard envelope.sessionID == sessionID else {
             throw PlayCoverRuntimeClientError.sessionIDMismatch
+        }
+        if let context = envelope.uiContext {
+            CLIInvocationContext.current?.recordUIContext(context)
         }
         try consumeResponseMetadata(
             interactionState: envelope.interactionState,
@@ -2097,6 +2101,7 @@ private extension PlayCoverRuntimeClient {
             PlayCoverRuntimeInteractionState?
         let performance:
             PlayCoverRuntimeResponsePerformance?
+        let uiContext: CLIUIContext?
     }
 
     struct DebugEventEnvelope: Decodable {

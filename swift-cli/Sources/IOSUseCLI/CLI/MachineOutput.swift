@@ -38,9 +38,32 @@ protocol MachineErrorConvertible {
     var machineError: MachineError { get }
 }
 
+struct CLIUIContext: Codable, Equatable, Sendable {
+    let sceneState: String
+    let minimized: Bool?
+    let activeSpace: Bool?
+
+    var isBackground: Bool {
+        sceneState == "background" || minimized == true || activeSpace == false
+    }
+
+    var logFields: String {
+        "sceneState=\(sceneState) minimized=\(minimized.map(String.init) ?? "unknown") activeSpace=\(activeSpace.map(String.init) ?? "unknown")"
+    }
+
+    var machineValue: MachineValue {
+        .object([
+            "sceneState": .string(sceneState),
+            "minimized": minimized.map(MachineValue.boolean) ?? .null,
+            "activeSpace": activeSpace.map(MachineValue.boolean) ?? .null,
+        ])
+    }
+}
+
 struct CLIInvocationSnapshot: Equatable, Sendable {
     let interactionState: MachineValue?
     let warnings: [String]
+    var uiContext: CLIUIContext? = nil
 }
 
 final class CLIInvocationState: @unchecked Sendable {
@@ -48,6 +71,7 @@ final class CLIInvocationState: @unchecked Sendable {
     private var alertRefreshClaimed = false
     private var interactionState: MachineValue?
     private var warnings: [String] = []
+    private var uiContext: CLIUIContext?
 
     func claimAlertRefresh() -> Bool {
         withLock {
@@ -82,11 +106,16 @@ final class CLIInvocationState: @unchecked Sendable {
         }
     }
 
+    func recordUIContext(_ value: CLIUIContext) {
+        withLock { uiContext = value }
+    }
+
     func snapshot() -> CLIInvocationSnapshot {
         withLock {
             CLIInvocationSnapshot(
                 interactionState: interactionState,
-                warnings: warnings
+                warnings: warnings,
+                uiContext: uiContext
             )
         }
     }
@@ -232,6 +261,12 @@ enum MachineOutput {
             fields["macLogPath"] = .string(logPath)
             failureData = .object(fields)
         }
+        if let context = CLIInvocationContext.current?.snapshot().uiContext,
+           context.isBackground,
+           case .object(var fields) = failureData {
+            fields["uiContext"] = context.machineValue
+            failureData = .object(fields)
+        }
         let metadata = invocationMetadata(
             baseWarnings: warnings
         )
@@ -256,7 +291,17 @@ enum MachineOutput {
         if expectsMachineOutput {
             return result
         }
-        return appendHumanWarnings(snapshot.warnings, to: result)
+        var finalized = appendHumanWarnings(snapshot.warnings, to: result)
+        if result.exitCode != 0,
+           let context = snapshot.uiContext,
+           context.isBackground {
+            finalized = CLIResult(
+                exitCode: finalized.exitCode,
+                stdout: finalized.stdout,
+                stderr: finalized.stderr + "UI context: \(context.logFields)\n"
+            )
+        }
+        return finalized
     }
 
     static func classify(_ error: Error) -> MachineError {

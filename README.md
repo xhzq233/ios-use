@@ -133,6 +133,14 @@ ios-use stop
 The Mac backend requires an unencrypted arm64 iPhone App. It is not fully
 supported on macOS 26 or newer.
 
+Background scenes, minimized windows, and windows on another Space do not
+automatically block UI commands. Apps can still pause work or rendering in the
+background: a successful action or DOM update does not guarantee fresh pixels
+from every renderer. Mac UI command entries in `logs/cli.log` include `sceneState`,
+`minimized`, and `activeSpace`; failures in those states also include `uiContext`
+in JSON output or a context line in text output. Successful commands do not
+emit a background warning.
+
 ## Multiple Devices
 
 One `IOS_USE_HOME` can keep independent Device Contexts running at the same

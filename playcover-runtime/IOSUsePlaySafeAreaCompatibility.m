@@ -175,10 +175,7 @@ static BOOL IOSUsePlaySafeAreaSceneSupportsFixedGeometry(
     UIWindowScene *scene
 ) {
     return scene != nil &&
-        (scene.activationState ==
-            UISceneActivationStateForegroundActive ||
-         scene.activationState ==
-            UISceneActivationStateForegroundInactive);
+        scene.activationState != UISceneActivationStateUnattached;
 }
 
 static UIWindow *IOSUsePlaySafeAreaSceneDelegateWindow(
@@ -295,7 +292,7 @@ static UIWindow *IOSUsePlaySafeAreaPrimaryWindow(
     return nil;
 }
 
-static UIWindowScene *IOSUsePlaySafeAreaForegroundScene(void) {
+static UIWindowScene *IOSUsePlaySafeAreaConnectedScene(void) {
     UIWindowScene *existing = IOSUsePlaySafeAreaTargetScene;
     if (existing.activationState ==
             UISceneActivationStateForegroundActive &&
@@ -836,7 +833,7 @@ IOSUsePlaySafeAreaCompatibilityDiagnostics(void) {
     NSCAssert(NSThread.isMainThread, @"safe-area diagnostics are main-only");
     UIWindowScene *scene = IOSUsePlaySafeAreaTargetScene;
     UIWindow *window = IOSUsePlaySafeAreaTargetWindow;
-    UIWindowScene *selectedScene = IOSUsePlaySafeAreaForegroundScene();
+    UIWindowScene *selectedScene = IOSUsePlaySafeAreaConnectedScene();
     UIWindow *selectedWindow =
         IOSUsePlaySafeAreaPrimaryWindow(selectedScene);
     UIViewController *root = window.rootViewController;
@@ -1046,7 +1043,7 @@ BOOL IOSUsePlaySafeAreaCompatibilityReconcile(
         }
         return NO;
     }
-    UIWindowScene *scene = IOSUsePlaySafeAreaForegroundScene();
+    UIWindowScene *scene = IOSUsePlaySafeAreaConnectedScene();
     UIWindow *window = IOSUsePlaySafeAreaPrimaryWindow(scene);
     if (scene == nil || window == nil) {
         IOSUsePlaySafeAreaBind(nil, nil);
@@ -1057,8 +1054,8 @@ BOOL IOSUsePlaySafeAreaCompatibilityReconcile(
             ? @"foreground_scene_unavailable"
             : @"primary_app_window_unavailable";
         IOSUsePlaySafeAreaFailure = scene == nil
-            ? @"foreground-active/inactive UIWindowScene is unavailable"
-            : @"foreground scene has no primary App UIWindow";
+            ? @"connected UIWindowScene is unavailable"
+            : @"connected scene has no primary App UIWindow";
         if (error != NULL) {
             *error = [NSError
                 errorWithDomain:IOSUsePlaySafeAreaErrorDomain
@@ -1307,8 +1304,7 @@ UIEdgeInsets IOSUsePlaySafeAreaProviderInsetsForTesting(
 BOOL IOSUsePlaySafeAreaSceneActivationStateSupportsFixedGeometryForTesting(
     UISceneActivationState state
 ) {
-    return state == UISceneActivationStateForegroundActive ||
-        state == UISceneActivationStateForegroundInactive;
+    return state != UISceneActivationStateUnattached;
 }
 
 BOOL IOSUsePlaySafeAreaPreBindContractMatchesForTesting(

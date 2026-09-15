@@ -409,8 +409,7 @@ static NSArray<UIView *> *IOSUseViewTreeWindowRoots(void) {
     NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class] ||
-            (scene.activationState != UISceneActivationStateForegroundActive &&
-             scene.activationState != UISceneActivationStateForegroundInactive)) {
+            scene.activationState == UISceneActivationStateUnattached) {
             continue;
         }
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {

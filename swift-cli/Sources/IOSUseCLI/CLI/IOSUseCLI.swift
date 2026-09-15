@@ -133,7 +133,8 @@ public struct IOSUseCLI: Sendable {
                         command: command,
                         ok: finalized.exitCode == 0,
                         totalElapsedMs: totalElapsedMs,
-                        snapshot: performanceCollector.snapshot()
+                        snapshot: performanceCollector.snapshot(),
+                        uiContext: invocationSnapshot.uiContext
                     )
                 }
                 return finalized
@@ -260,7 +261,8 @@ public struct IOSUseCLI: Sendable {
         command: String,
         ok: Bool,
         totalElapsedMs: Double,
-        snapshot: CLIInvocationPerformanceSnapshot
+        snapshot: CLIInvocationPerformanceSnapshot,
+        uiContext: CLIUIContext?
     ) {
         var fields = [
             "[cli]",
@@ -273,6 +275,9 @@ public struct IOSUseCLI: Sendable {
             fields.append(
                 "alertRefreshElapsedMs=\(alertRefreshElapsedMs)"
             )
+        }
+        if let uiContext {
+            fields.append(uiContext.logFields)
         }
         CLILogService.append(
             paths: paths,

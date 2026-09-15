@@ -66,7 +66,7 @@ void IOSUsePlayAppKitBridgeSetNativeAlertWindowsProviderForTesting(
     IOSUseBridgeNativeAlertWindowsProvider windowsProvider
 );
 NSDictionary<NSNumber *, NSDictionary<NSString *, id> *> * _Nullable
-IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting(void);
+IOSUsePlayAppKitBridgeCopyOwnCGWindowMetadataForTesting(void);
 NSDictionary<NSString *, id> * _Nullable
 IOSUsePlayAppKitBridgeSelectVisibleNativeAlertForTesting(
     NSArray * _Nullable windows,
@@ -132,10 +132,7 @@ static UIWindow *IOSUseBridgeKeyUIKitWindow(void) {
     for (UIScene *scene in
          UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class] ||
-            (scene.activationState !=
-                UISceneActivationStateForegroundActive &&
-             scene.activationState !=
-                UISceneActivationStateForegroundInactive)) {
+            scene.activationState == UISceneActivationStateUnattached) {
             continue;
         }
         [scenes addObject:(UIWindowScene *)scene];
@@ -145,10 +142,8 @@ static UIWindow *IOSUseBridgeKeyUIKitWindow(void) {
         UIWindowScene *right
     ) {
         if (left.activationState != right.activationState) {
-            return left.activationState ==
-                    UISceneActivationStateForegroundActive
-                ? NSOrderedAscending
-                : NSOrderedDescending;
+            return left.activationState < right.activationState
+                ? NSOrderedAscending : NSOrderedDescending;
         }
         NSString *leftIdentifier =
             left.session.persistentIdentifier ?: @"";
@@ -328,7 +323,7 @@ static CGDirectDisplayID IOSUseBridgeDisplayIDForScreen(id screen) {
 static NSDictionary<
     NSNumber *,
     NSDictionary<NSString *, id> *
-> *IOSUseBridgeOwnOnscreenCGWindowMetadata(void) {
+> *IOSUseBridgeOwnCGWindowMetadata(void) {
     IOSUseBridgeCGWindowListCopyWindowInfo copyWindowInfo = NULL;
 #if defined(IOS_USE_PLAY_APPKIT_BRIDGE_TESTING)
     copyWindowInfo =
@@ -351,7 +346,7 @@ static NSDictionary<
         return nil;
     }
     CFArrayRef raw = copyWindowInfo(
-        kCGWindowListOptionOnScreenOnly,
+        kCGWindowListOptionAll,
         kCGNullWindowID
     );
     if (raw == NULL ||
@@ -377,15 +372,11 @@ static NSDictionary<
             entry[(__bridge NSString *)kCGWindowOwnerPID];
         NSNumber *number =
             entry[(__bridge NSString *)kCGWindowNumber];
-        NSNumber *onscreen =
-            entry[(__bridge NSString *)kCGWindowIsOnscreen];
         if (![owner isKindOfClass:NSNumber.class] ||
             owner.intValue != processID ||
             ![number isKindOfClass:NSNumber.class] ||
             number.unsignedLongLongValue == 0 ||
-            number.unsignedLongLongValue > UINT32_MAX ||
-            ([onscreen isKindOfClass:NSNumber.class] &&
-             !onscreen.boolValue)) {
+            number.unsignedLongLongValue > UINT32_MAX) {
             continue;
         }
         id rawBounds =
@@ -426,13 +417,13 @@ void IOSUsePlayAppKitBridgeSetCGWindowListCopyWindowInfoForTesting(
 }
 
 NSDictionary<NSNumber *, NSDictionary<NSString *, id> *> * _Nullable
-IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting(void) {
-    return IOSUseBridgeOwnOnscreenCGWindowMetadata();
+IOSUsePlayAppKitBridgeCopyOwnCGWindowMetadataForTesting(void) {
+    return IOSUseBridgeOwnCGWindowMetadata();
 }
 #endif
 
 static NSDictionary<NSString *, id> *
-IOSUseBridgeExactOnscreenCGWindowMetadata(
+IOSUseBridgeExactCGWindowMetadata(
     id window,
     NSDictionary<
         NSNumber *,
@@ -1330,7 +1321,7 @@ IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
             continue;
         }
         NSDictionary<NSString *, id> *exactMetadata =
-            IOSUseBridgeExactOnscreenCGWindowMetadata(
+            IOSUseBridgeExactCGWindowMetadata(
                 window,
                 cgMetadata
             );
@@ -1396,7 +1387,7 @@ IOSUseBridgeVisibleNativeAlertSelection(void) {
     NSDictionary<
         NSNumber *,
         NSDictionary<NSString *, id> *
-    > *cgMetadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
+    > *cgMetadata = IOSUseBridgeOwnCGWindowMetadata();
     return IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
         windows,
         cgMetadata
@@ -1775,7 +1766,7 @@ IOSUseBridgeHostCanvasCaptureGeometry(
         return nil;
     }
     NSDictionary<NSString *, id> *hostMetadata =
-        IOSUseBridgeExactOnscreenCGWindowMetadata(window, cgMetadata);
+        IOSUseBridgeExactCGWindowMetadata(window, cgMetadata);
     CGRect hostCGWindowBounds = hostMetadata == nil
         ? CGRectNull
         : [hostMetadata[@"boundsValue"] CGRectValue];
@@ -1847,7 +1838,7 @@ static CGRect IOSUseBridgeWindowLogicalFrame(
 ) {
     id hostWindow = IOSUsePlayHostWindow;
     NSDictionary<NSString *, id> *windowMetadata =
-        IOSUseBridgeExactOnscreenCGWindowMetadata(window, cgMetadata);
+        IOSUseBridgeExactCGWindowMetadata(window, cgMetadata);
     NSError *canvasError = nil;
     NSDictionary<NSString *, id> *canvasGeometry =
         IOSUseBridgeHostCanvasCaptureGeometry(
@@ -2608,7 +2599,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     NSDictionary<
         NSNumber *,
         NSDictionary<NSString *, id> *
-    > *cgMetadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
+    > *cgMetadata = IOSUseBridgeOwnCGWindowMetadata();
     NSDictionary<NSString *, id> *selection =
         IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
             windows,
@@ -2672,7 +2663,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     NSDictionary<
         NSNumber *,
         NSDictionary<NSString *, id> *
-    > *metadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
+    > *metadata = IOSUseBridgeOwnCGWindowMetadata();
     return IOSUseBridgeHostCanvasCaptureGeometry(
         IOSUsePlayHostWindow,
         metadata,
@@ -2918,7 +2909,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     > *cgWindowMetadata =
         [rawCapturedMetadata isKindOfClass:NSDictionary.class]
             ? rawCapturedMetadata
-            : IOSUseBridgeOwnOnscreenCGWindowMetadata();
+            : IOSUseBridgeOwnCGWindowMetadata();
     CGRect frame = IOSUseBridgeRect(window, @"frame");
     id contentView = [window respondsToSelector:
         NSSelectorFromString(@"contentView")]
@@ -3016,7 +3007,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     UISceneSizeRestrictions *restrictions =
         uiWindow.windowScene.sizeRestrictions;
     NSDictionary<NSString *, id> *baseCGWindow =
-        IOSUseBridgeExactOnscreenCGWindowMetadata(
+        IOSUseBridgeExactCGWindowMetadata(
             window,
             cgWindowMetadata
         );
@@ -3054,6 +3045,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             ? nativeAlertSnapshot[@"actions"] ?: @[]
             : IOSUseBridgePublicNativeAlertActions(nativeAlertWindow);
     [result addEntriesFromDictionary:@{
+        @"uiContext": [self uiAutomationContext],
         @"attempts": @(IOSUsePlayWindowAttemptCount),
         @"contentLayoutRect": IOSUseBridgeRectJSON(
             IOSUseBridgeRect(window, @"contentLayoutRect")
@@ -3210,7 +3202,6 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     NSParameterAssert(NSThread.isMainThread);
     UIWindow *uiWindow = IOSUseBridgeAutomationUIKitWindow();
     if (uiWindow == nil) {
-        BOOL hasBackgroundScene = NO;
         BOOL hasDisconnectedScene = NO;
         for (UIScene *candidate in
              UIApplication.sharedApplication.connectedScenes) {
@@ -3220,32 +3211,23 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
                         UIWindowSceneSessionRoleApplication]) {
                 continue;
             }
-            hasBackgroundScene = hasBackgroundScene ||
-                candidate.activationState ==
-                    UISceneActivationStateBackground;
             hasDisconnectedScene = hasDisconnectedScene ||
                 candidate.activationState ==
                     UISceneActivationStateUnattached;
         }
         return @{
             @"available": @NO,
-            @"reason": hasBackgroundScene
-                ? @"scene-backgrounded"
-                : hasDisconnectedScene || IOSUsePlayHostWindow != nil
+            @"reason": hasDisconnectedScene || IOSUsePlayHostWindow != nil
                     ? @"scene-disconnected"
                     : @"window-unavailable",
         };
     }
     UISceneActivationState activationState =
         uiWindow.windowScene.activationState;
-    if (activationState == UISceneActivationStateBackground ||
-        activationState == UISceneActivationStateUnattached) {
+    if (activationState == UISceneActivationStateUnattached) {
         return @{
             @"available": @NO,
-            @"reason": activationState ==
-                    UISceneActivationStateBackground
-                ? @"scene-backgrounded"
-                : @"scene-disconnected",
+            @"reason": @"scene-disconnected",
         };
     }
     id window = IOSUseBridgeWindowForUIKitWindow(uiWindow, NO);
@@ -3255,43 +3237,40 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             @"reason": @"window-unavailable",
         };
     }
-    if (IOSUseBridgeBool(window, @"isMiniaturized")) {
-        return @{
-            @"available": @NO,
-            @"reason": @"minimized",
-        };
-    }
-    if (uiWindow.hidden || uiWindow.alpha <= 0.01 ||
-        !IOSUseBridgeBool(window, @"isVisible")) {
-        return @{
-            @"available": @NO,
-            @"reason": @"hidden",
-        };
-    }
-    SEL activeSpaceSelector = NSSelectorFromString(@"isOnActiveSpace");
-    if (![window respondsToSelector:activeSpaceSelector] ||
-        !((IOSUseBridgeSendBool)objc_msgSend)(
-            window,
-            activeSpaceSelector
-        )) {
-        return @{
-            @"available": @NO,
-            @"reason": @"inactive-space",
-        };
-    }
-    SEL screenSelector = NSSelectorFromString(@"screen");
-    id screen = [window respondsToSelector:screenSelector]
-        ? ((IOSUseBridgeSendID)objc_msgSend)(window, screenSelector)
-        : nil;
-    if (screen == nil || [self screenCount] == 0) {
-        return @{
-            @"available": @NO,
-            @"reason": @"display-unavailable",
-        };
-    }
     return @{
         @"available": @YES,
         @"reason": NSNull.null,
+    };
+}
+
++ (NSDictionary<NSString *, id> *)uiAutomationContext {
+    NSParameterAssert(NSThread.isMainThread);
+    UIWindow *uiWindow = IOSUseBridgeAutomationUIKitWindow();
+    UIWindowScene *scene = uiWindow.windowScene;
+    NSString *sceneState = @"unavailable";
+    if (scene != nil) {
+        switch (scene.activationState) {
+            case UISceneActivationStateForegroundActive:
+                sceneState = @"foreground-active";
+                break;
+            case UISceneActivationStateForegroundInactive:
+                sceneState = @"foreground-inactive";
+                break;
+            case UISceneActivationStateBackground:
+                sceneState = @"background";
+                break;
+            case UISceneActivationStateUnattached:
+                sceneState = @"unattached";
+                break;
+        }
+    }
+    id window = IOSUseBridgeWindowForUIKitWindow(uiWindow, NO);
+    return @{
+        @"sceneState": sceneState,
+        @"minimized": window == nil ? (id)NSNull.null
+            : @(IOSUseBridgeBool(window, @"isMiniaturized")),
+        @"activeSpace": window == nil ? (id)NSNull.null
+            : @(IOSUseBridgeBool(window, @"isOnActiveSpace")),
     };
 }
 

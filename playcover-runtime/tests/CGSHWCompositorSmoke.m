@@ -144,9 +144,14 @@ static BOOL RunMappingAndCountFixtures(void) {
         @"rank": @0,
         @"windows": @[activeKey],
     };
+    NSDictionary *backgroundScene = @{
+        @"identifier": @"scene-background",
+        @"rank": @2,
+        @"windows": @[],
+    };
     NSString *sceneFailure;
-    NSArray *orderedScenes = IOSUsePlayOrderForegroundScenes(
-        @[inactiveScene, activeSceneZ, activeSceneA],
+    NSArray *orderedScenes = IOSUsePlayOrderConnectedScenes(
+        @[backgroundScene, inactiveScene, activeSceneZ, activeSceneA],
         ^NSInteger(id scene) {
             return [scene[@"rank"] integerValue];
         },
@@ -166,16 +171,19 @@ static BOOL RunMappingAndCountFixtures(void) {
         }
     );
     BOOL scenePolicyWorks =
-        orderedScenes.count == 3 &&
+        orderedScenes.count == 4 &&
         orderedScenes[0] == activeSceneA &&
         orderedScenes[1] == activeSceneZ &&
         orderedScenes[2] == inactiveScene &&
+        orderedScenes[3] == backgroundScene &&
         primary == activeKey &&
         sceneFailure == nil;
 
     MappingFixtureAppKitWindow *main =
         [[MappingFixtureAppKitWindow alloc] init];
-    main.visible = YES;
+    // A mapped host remains capturable when minimized. Hidden unrelated
+    // auxiliary windows still stay out of the capture set.
+    main.visible = NO;
     main.number = 41;
     MappingFixtureAppKitWindow *visibleAlert =
         [[MappingFixtureAppKitWindow alloc] init];

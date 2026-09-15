@@ -181,6 +181,10 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         for (command, arguments, validate) in cases {
             let fixture = try RuntimeClientFixture()
             defer { fixture.remove() }
+            let uiContext = CLIUIContext(
+                sceneState: "background", minimized: true, activeSpace: false
+            )
+            let invocation = CLIInvocationState()
             let server = try FakeUnixRuntimeServer(
                 socketPath: fixture.socketPath
             ) { request in
@@ -227,14 +231,25 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                         "\(command.rawValue) returned session-wide evidence"
                     )
                 }
-                return .body(try self.successResponse(
+                let response = try self.successResponse(
                     requestID: requestID,
                     payload: payload
-                ))
+                )
+                var envelope = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: response) as? [String: Any]
+                )
+                envelope["uiContext"] = try JSONSerialization.jsonObject(
+                    with: JSONEncoder().encode(uiContext)
+                )
+                return .body(try JSONSerialization.data(withJSONObject: envelope))
             }
 
-            _ = try makeClient(socketPath: fixture.socketPath)
-                .request(command, arguments: arguments)
+            _ = try CLIInvocationContext.$current.withValue(invocation) {
+                try makeClient(socketPath: fixture.socketPath)
+                    .request(command, arguments: arguments)
+            }
+            XCTAssertEqual(invocation.snapshot().uiContext, uiContext)
+            XCTAssertTrue(invocation.snapshot().warnings.isEmpty)
             try server.wait()
             XCTAssertEqual(server.peerUID, geteuid())
         }

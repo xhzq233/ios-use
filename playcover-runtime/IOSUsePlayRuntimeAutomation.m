@@ -282,10 +282,7 @@ static NSArray<UIWindow *> *IOSUseAutomationWindows(void) {
     for (UIScene *scene in
          UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class] ||
-            (scene.activationState !=
-                UISceneActivationStateForegroundActive &&
-             scene.activationState !=
-                UISceneActivationStateForegroundInactive)) {
+            scene.activationState == UISceneActivationStateUnattached) {
             continue;
         }
         [scenes addObject:(UIWindowScene *)scene];
@@ -295,10 +292,8 @@ static NSArray<UIWindow *> *IOSUseAutomationWindows(void) {
         UIWindowScene *right
     ) {
         if (left.activationState != right.activationState) {
-            return left.activationState ==
-                    UISceneActivationStateForegroundActive
-                ? NSOrderedAscending
-                : NSOrderedDescending;
+            return left.activationState < right.activationState
+                ? NSOrderedAscending : NSOrderedDescending;
         }
         NSString *leftIdentifier =
             left.session.persistentIdentifier ?: @"";
