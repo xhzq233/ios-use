@@ -4,6 +4,10 @@
 
 ## Highlights
 
+- Choose a Mac device preset with `config --mac --device-model`: iPhone SE,
+  iPhone 13, iPhone 15 Pro/Pro Max and iPad Pro 11-inch. The next cold App launch
+  applies the model, screen geometry and safe areas; active sessions keep their
+  existing geometry. Status exposes the active and configured selections.
 - Run multiple Devices in one `IOS_USE_HOME`, with separate Driver sessions,
   logs, and artifacts. Use the stable Device IDs shown by `status` with
   `--device` / `-d` when more than one Device is running.

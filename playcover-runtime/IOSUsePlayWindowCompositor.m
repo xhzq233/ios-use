@@ -8,12 +8,9 @@
 typedef id (*IOSUseCompositorSendID)(id, SEL);
 
 static const CGFloat IOSUseCompositorGeometryTolerance = 0.01;
-static const CGFloat IOSUseCompositorDeviceLogicalWidth =
-    (CGFloat)IOSUsePlayDeviceLogicalWidth;
-static const CGFloat IOSUseCompositorDeviceLogicalHeight =
-    (CGFloat)IOSUsePlayDeviceLogicalHeight;
-static const CGFloat IOSUseCompositorDeviceScale =
-    (CGFloat)IOSUsePlayDeviceScale;
+#define IOSUseCompositorDeviceLogicalWidth ((CGFloat)IOSUsePlayDeviceLogicalWidth)
+#define IOSUseCompositorDeviceLogicalHeight ((CGFloat)IOSUsePlayDeviceLogicalHeight)
+#define IOSUseCompositorDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
 static const CGBitmapInfo IOSUseCompositorBitmapInfo = (CGBitmapInfo)(
     (uint32_t)kCGBitmapByteOrder32Little |
     (uint32_t)kCGImageAlphaPremultipliedFirst

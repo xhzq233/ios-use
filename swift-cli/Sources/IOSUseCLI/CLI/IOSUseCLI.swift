@@ -653,7 +653,7 @@ public struct IOSUseCLI: Sendable {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .config(let options) where options.playCover:
-            return executePlayCoverConfiguration(json: json)
+            return executePlayCoverConfiguration(options: options, json: json)
         case .config(let options) where options.list:
             let output = ConfigService.formatList(
                 ConfigService.listEntries(paths: paths)
@@ -929,9 +929,19 @@ public struct IOSUseCLI: Sendable {
     }
 
     private func executePlayCoverConfiguration(
+        options: ConfigOptions,
         json: Bool
     ) -> CLIResult {
         do {
+            if let model = options.macDevice {
+                let preset = try PlayCoverDevicePreset.named(model)
+                try preset.save(paths: paths)
+                return json
+                    ? MachineOutput.success(command: "config", data: .object([
+                        "device": preset.machineData, "appliesOn": .string("nextColdStart")
+                    ]))
+                    : CLIResult(exitCode: 0, stdout: "Mac device: \(preset.name) (\(Int(preset.logicalSize.width)) × \(Int(preset.logicalSize.height)), \(Int(preset.scale))×. Applies on the next cold start; stop the running App first.\n")
+            }
             let evidence = try playCoverSignerInitializer()
             if json {
                 return MachineOutput.success(

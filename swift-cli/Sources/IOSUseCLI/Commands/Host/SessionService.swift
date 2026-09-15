@@ -21,6 +21,7 @@ public enum SessionService {
         public let macInstallRevision: String?
         public let macRuntimeSocketPath: String?
         public let macLogPath: String?
+        public let macDevicePreset: String?
 
         public init(
             udid: String,
@@ -40,7 +41,8 @@ public enum SessionService {
             macExecutablePath: String? = nil,
             macInstallRevision: String? = nil,
             macRuntimeSocketPath: String? = nil,
-            macLogPath: String? = nil
+            macLogPath: String? = nil,
+            macDevicePreset: String? = nil
         ) {
             self.udid = udid
             self.deviceName = deviceName
@@ -60,6 +62,7 @@ public enum SessionService {
             self.macInstallRevision = macInstallRevision
             self.macRuntimeSocketPath = macRuntimeSocketPath
             self.macLogPath = macLogPath
+            self.macDevicePreset = macDevicePreset
         }
 
 #if os(macOS)
@@ -82,7 +85,8 @@ public enum SessionService {
                 macExecutablePath: macExecutablePath,
                 macInstallRevision: macInstallRevision,
                 macRuntimeSocketPath: macRuntimeSocketPath,
-                macLogPath: macLogPath
+                macLogPath: macLogPath,
+                macDevicePreset: macDevicePreset
             )
         }
 #endif

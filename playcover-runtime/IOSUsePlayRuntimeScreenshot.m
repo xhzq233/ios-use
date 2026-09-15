@@ -14,12 +14,9 @@ static const NSUInteger IOSUseScreenshotMaximumJPEGBytes = 11 * 1024 * 1024;
 static const NSUInteger IOSUseScreenshotMaximumBase64Bytes =
     15 * 1024 * 1024;
 static const CGFloat IOSUseScreenshotGeometryTolerance = 0.01;
-static const CGFloat IOSUseScreenshotDeviceLogicalWidth =
-    (CGFloat)IOSUsePlayDeviceLogicalWidth;
-static const CGFloat IOSUseScreenshotDeviceLogicalHeight =
-    (CGFloat)IOSUsePlayDeviceLogicalHeight;
-static const CGFloat IOSUseScreenshotDeviceScale =
-    (CGFloat)IOSUsePlayDeviceScale;
+#define IOSUseScreenshotDeviceLogicalWidth ((CGFloat)IOSUsePlayDeviceLogicalWidth)
+#define IOSUseScreenshotDeviceLogicalHeight ((CGFloat)IOSUsePlayDeviceLogicalHeight)
+#define IOSUseScreenshotDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
 static const CGBitmapInfo IOSUseScreenshotBitmapInfo = (CGBitmapInfo)(
     (uint32_t)kCGBitmapByteOrder32Little |
     (uint32_t)kCGImageAlphaPremultipliedFirst

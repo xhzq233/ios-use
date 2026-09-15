@@ -21,7 +21,7 @@ enum PlayCoverDriverClientError:
         case .incompleteSessionIdentity(let field):
             return "active Mac session is missing \(field)"
         case .runtimeGeometryMismatch(let field):
-            return "Mac Runtime geometry does not match the fixed device contract: \(field)"
+            return "Mac Runtime geometry does not match the selected device preset: \(field)"
         case .malformedRuntimePayload(let field):
             return "Mac Runtime returned a malformed \(field) payload"
         case .capabilityUnavailable(let command):
@@ -42,15 +42,13 @@ final class PlayCoverDriverClient: DriverCommandClient {
         ForyMediaImportArgs
     ) throws -> ForyMediaImportPayload
 
-    static let logicalSize = CGSize(
-        width: Int(IOSUsePlayDeviceLogicalWidth),
-        height: Int(IOSUsePlayDeviceLogicalHeight)
-    )
-    static let nativePixelSize = CGSize(
-        width: Int(IOSUsePlayDeviceNativeWidth),
-        height: Int(IOSUsePlayDeviceNativeHeight)
-    )
-    static let deviceScale = Double(IOSUsePlayDeviceScale)
+    static let logicalSize = PlayCoverDevicePreset.defaultPreset.logicalSize
+    static let nativePixelSize = PlayCoverDevicePreset.defaultPreset.nativeSize
+    static let deviceScale = PlayCoverDevicePreset.defaultPreset.scale
+    private var devicePreset: PlayCoverDevicePreset {
+        PlayCoverDevicePreset.presets.first { $0.name == session.macDevicePreset }
+            ?? PlayCoverDevicePreset.defaultPreset
+    }
     static let maximumRuntimeJPEGBytes = 11 * 1024 * 1024
     static let maximumRuntimeBase64Bytes = 15 * 1024 * 1024
 
@@ -663,7 +661,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
             throw PlayCoverDriverClientError
                 .malformedRuntimePayload("screenshot generation")
         }
-        try Self.validateScreenshotFullFrame(screenshot)
+        try Self.validateScreenshotFullFrame(screenshot, preset: devicePreset)
         let jpeg = try decodeRuntimeJPEG(screenshot)
         var runtimeEvidence:
             [String: PlayCoverRuntimeJSONValue] = [
@@ -722,11 +720,11 @@ final class PlayCoverDriverClient: DriverCommandClient {
     ) throws -> ForyDomPayload {
         guard Self.approximatelyEqual(
                   payload.windowSize.x,
-                  Self.logicalSize.width
+                  devicePreset.logicalSize.width
               ),
               Self.approximatelyEqual(
                   payload.windowSize.y,
-                  Self.logicalSize.height
+                  devicePreset.logicalSize.height
               ) else {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch("DOM window size")
@@ -901,55 +899,56 @@ final class PlayCoverDriverClient: DriverCommandClient {
 
     static func validateFixedDevice(
         _ geometry: PlayCoverRuntimeGeometry,
-        stage: String
+        stage: String,
+        preset: PlayCoverDevicePreset = .defaultPreset
     ) throws {
         let checks: [(Bool, String)] = [
             (
                 approximatelyEqual(
                     geometry.logical.width,
-                    Self.logicalSize.width
+                    preset.logicalSize.width
                 ),
                 "logical width"
             ),
             (
                 approximatelyEqual(
                     geometry.logical.height,
-                    Self.logicalSize.height
+                    preset.logicalSize.height
                 ),
                 "logical height"
             ),
             (
                 approximatelyEqual(
                     geometry.native.width,
-                    Self.nativePixelSize.width
+                    preset.nativeSize.width
                 ),
                 "native width"
             ),
             (
                 approximatelyEqual(
                     geometry.native.height,
-                    Self.nativePixelSize.height
+                    preset.nativeSize.height
                 ),
                 "native height"
             ),
             (
                 approximatelyEqual(
                     geometry.scale,
-                    Self.deviceScale
+                    preset.scale
                 ),
                 "scale"
             ),
             (
                 approximatelyEqual(
                     geometry.window.width,
-                    Self.logicalSize.width
+                    preset.logicalSize.width
                 ),
                 "window width"
             ),
             (
                 approximatelyEqual(
                     geometry.window.height,
-                    Self.logicalSize.height
+                    preset.logicalSize.height
                 ),
                 "window height"
             ),
@@ -970,7 +969,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch(mismatch.1)
         }
-        try validateNativeCatalystHost(geometry.host)
+        try validateNativeCatalystHost(geometry.host, preset: preset)
     }
 
     private static func validNaturalSafeArea(
@@ -996,7 +995,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
     }
 
     private static func validateNativeCatalystHost(
-        _ host: PlayCoverRuntimeHostGeometry?
+        _ host: PlayCoverRuntimeHostGeometry?,
+        preset: PlayCoverDevicePreset
     ) throws {
         guard let host else {
             throw PlayCoverDriverClientError
@@ -1019,7 +1019,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
         }
         let fixedBackingIsSupported =
             approximatelyEqual(host.fixedBackingScale, 0) ||
-            approximatelyEqual(host.fixedBackingScale, 3)
+            approximatelyEqual(host.fixedBackingScale, preset.scale)
         let rasterMatchesPolicy =
             approximatelyEqual(host.fixedBackingScale, 0)
                 ? approximatelyEqual(
@@ -1028,7 +1028,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
                 )
                 : approximatelyEqual(
                     host.sceneRasterizationScale,
-                    3
+                    preset.scale
                 )
         let checks: [(Bool, String)] = [
             (
@@ -1052,7 +1052,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
             (
                 fixedLogicalCanvasRect(
                     host.canvasBounds,
-                    tolerance: 0.01
+                    tolerance: 0.01,
+                    preset: preset
                 ),
                 "fixed UIKit canvas bounds"
             ),
@@ -1133,12 +1134,13 @@ final class PlayCoverDriverClient: DriverCommandClient {
 
     private static func fixedLogicalCanvasRect(
         _ frame: PlayCoverRuntimeFrame,
-        tolerance: Double
+        tolerance: Double,
+        preset: PlayCoverDevicePreset
     ) -> Bool {
         return abs(frame.x) <= tolerance &&
             abs(frame.y) <= tolerance &&
-            abs(frame.width - logicalSize.width) <= tolerance &&
-            abs(frame.height - logicalSize.height) <= tolerance
+            abs(frame.width - preset.logicalSize.width) <= tolerance &&
+            abs(frame.height - preset.logicalSize.height) <= tolerance
     }
 
 
@@ -1156,7 +1158,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
     }
 
     private static func validateScreenshotFullFrame(
-        _ screenshot: PlayCoverRuntimeScreenshotPayload
+        _ screenshot: PlayCoverRuntimeScreenshotPayload,
+        preset: PlayCoverDevicePreset
     ) throws {
         guard screenshot.syntheticChrome == false else {
             throw PlayCoverDriverClientError
@@ -1168,15 +1171,15 @@ final class PlayCoverDriverClient: DriverCommandClient {
               approximatelyEqual(logicalRect.y, 0),
               approximatelyEqual(
                   logicalRect.width,
-                  Self.logicalSize.width
+                  preset.logicalSize.width
               ),
               approximatelyEqual(
                   logicalRect.height,
-                  Self.logicalSize.height
+                  preset.logicalSize.height
               ),
-              fullFrame.pixelWidth == Int(Self.nativePixelSize.width),
-              fullFrame.pixelHeight == Int(Self.nativePixelSize.height),
-              approximatelyEqual(fullFrame.scale, Self.deviceScale),
+              fullFrame.pixelWidth == Int(preset.nativeSize.width),
+              fullFrame.pixelHeight == Int(preset.nativeSize.height),
+              approximatelyEqual(fullFrame.scale, preset.scale),
               fullFrame.uncropped,
               fullFrame.safeAreaCropped == false,
               fullFrame.nativeCanvas else {
@@ -1396,20 +1399,20 @@ final class PlayCoverDriverClient: DriverCommandClient {
         _ screenshot: PlayCoverRuntimeScreenshotPayload
     ) throws -> Data {
         guard screenshot.pixelWidth
-                == Int(Self.nativePixelSize.width),
+                == Int(devicePreset.nativeSize.width),
               screenshot.pixelHeight
-                == Int(Self.nativePixelSize.height),
+                == Int(devicePreset.nativeSize.height),
               Self.approximatelyEqual(
                   screenshot.logicalWidth,
-                  Self.logicalSize.width
+                  devicePreset.logicalSize.width
               ),
               Self.approximatelyEqual(
                   screenshot.logicalHeight,
-                  Self.logicalSize.height
+                  devicePreset.logicalSize.height
               ),
               Self.approximatelyEqual(
                   screenshot.scale,
-                  Self.deviceScale
+                  devicePreset.scale
               ) else {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch("screenshot geometry")

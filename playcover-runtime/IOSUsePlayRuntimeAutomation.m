@@ -15,10 +15,8 @@ static const NSTimeInterval IOSUseAutomationMainTimeout = 40.0;
 static const NSUInteger IOSUseAutomationMaximumSemanticScrolls = 25;
 static const CGFloat IOSUseAutomationScrollProportion = 0.75;
 static const CGFloat IOSUseAutomationScrollEpsilon = 0.5;
-static const CGFloat IOSUseAutomationDeviceLogicalWidth =
-    (CGFloat)IOSUsePlayDeviceLogicalWidth;
-static const CGFloat IOSUseAutomationDeviceLogicalHeight =
-    (CGFloat)IOSUsePlayDeviceLogicalHeight;
+#define IOSUseAutomationDeviceLogicalWidth ((CGFloat)IOSUsePlayDeviceLogicalWidth)
+#define IOSUseAutomationDeviceLogicalHeight ((CGFloat)IOSUsePlayDeviceLogicalHeight)
 
 NSTimeInterval IOSUsePlayRuntimeAutomationMainThreadTimeout(void) {
     return IOSUseAutomationMainTimeout;

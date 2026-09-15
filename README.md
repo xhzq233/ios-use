@@ -143,6 +143,24 @@ ios-use stop
 The Mac backend requires an unencrypted arm64 iPhone App. It is not fully
 supported on macOS 26 or newer.
 
+Choose a device preset with `ios-use config --mac --device-model ipad-pro-11`.
+This saves the selection in the current `IOS_USE_HOME` and applies on the next
+cold launch: stop the App, then run `ios-use start --mac`. A running App keeps
+its current model. Setting a preset does not run signing setup.
+
+| Preset | Logical size | Scale |
+| --- | --- | --- |
+| `iphone-se` | 375 × 667 | 2× |
+| `iphone-13` | 390 × 844 | 3× |
+| `iphone-15-pro` | 393 × 852 | 3× |
+| `iphone-15-pro-max` (default) | 430 × 932 | 3× |
+| `ipad-pro-11` | 834 × 1194 | 2× |
+
+The preset controls device identity, phone/tablet layout, portrait screen size,
+safe areas and screenshot resolution. `status --json` reports the active
+`macDevice` and the pending `configuredMacDevice`. App-specific iPad support
+still depends on the App's layouts; this does not emulate hardware or iPadOS.
+
 Background scenes, minimized windows, and windows on another Space do not
 automatically block UI commands. Apps can still pause work or rendering in the
 background: a successful action or DOM update does not guarantee fresh pixels

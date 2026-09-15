@@ -81,6 +81,7 @@ public struct ConfigOptions: Equatable, Sendable {
     public var simulator = false
     public var verbose = false
     public var playCover = false
+    public var macDevice: String?
 
     public init(
         udid: String? = nil,

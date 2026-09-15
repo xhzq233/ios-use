@@ -83,6 +83,7 @@ public enum StatusService {
                     "macInstallRevision": info.macInstallRevision.map(MachineValue.string) ?? .null,
                     "macRuntimeSocketPath": info.macRuntimeSocketPath.map(MachineValue.string) ?? .null,
                     "macLogPath": info.macLogPath.map(MachineValue.string) ?? .null,
+                    "macDevice": macDeviceValue(info: info),
                     "driverVersion": config.flatMap(\.driverVersion).map(MachineValue.string) ?? .null,
                     "versionMatchesCli": info.isAttached || info.deviceType == PlayCoverSessionService.deviceType
                         ? .null
@@ -220,6 +221,7 @@ public enum StatusService {
                 "connectedDevices": .array(deviceValues),
                 "driver": driver,
                 "macBackend": macReadinessMachineValue(paths: paths),
+                "configuredMacDevice": (try? PlayCoverDevicePreset.configured(paths: paths).machineData) ?? .null,
                 "configuredDevices": .array(configValues),
             ]),
             warnings
@@ -359,6 +361,12 @@ public enum StatusService {
         }
     }
 
+    private static func macDeviceValue(info: SessionService.Info) -> MachineValue {
+        guard info.deviceType == PlayCoverSessionService.deviceType else { return .null }
+        return (PlayCoverDevicePreset.presets.first { $0.name == info.macDevicePreset }
+                ?? .defaultPreset).machineData
+    }
+
     private static func aggregateDriverValue(
         context: DeviceContextStore.Context
     ) -> MachineValue {
@@ -380,6 +388,7 @@ public enum StatusService {
             "legacyContext": .boolean(context.legacy),
         ]
         if info.deviceType == PlayCoverSessionService.deviceType {
+            fields["macDevice"] = macDeviceValue(info: info)
             switch playCoverRuntimeHealth(info: info) {
             case .healthy:
                 fields["status"] = .string("healthy")
@@ -653,6 +662,7 @@ public enum StatusService {
             if let sessionIdentifier = info.sessionIdentifier, !sessionIdentifier.isEmpty {
                 parts.append("session: \(sessionIdentifier)")
             }
+            if let model = info.macDevicePreset { parts.append("device preset: \(model)") }
             if let appPath = info.macAppPath, !appPath.isEmpty {
                 parts.append("app: \(appPath)")
             }

@@ -412,18 +412,18 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             let screenshot: [String: Any] = [
                 "jpegBase64": jpeg.base64EncodedString(),
                 "pixelWidth": Int(
-                    IOSUsePlayDeviceNativeWidth
+                    PlayCoverDevicePreset.defaultPreset.nativeSize.width
                 ),
                 "pixelHeight": Int(
-                    IOSUsePlayDeviceNativeHeight
+                    PlayCoverDevicePreset.defaultPreset.nativeSize.height
                 ),
                 "logicalWidth": Int(
-                    IOSUsePlayDeviceLogicalWidth
+                    PlayCoverDevicePreset.defaultPreset.logicalSize.width
                 ),
                 "logicalHeight": Int(
-                    IOSUsePlayDeviceLogicalHeight
+                    PlayCoverDevicePreset.defaultPreset.logicalSize.height
                 ),
-                "scale": Int(IOSUsePlayDeviceScale),
+                "scale": Int(PlayCoverDevicePreset.defaultPreset.scale),
                 "source": "window-compositor",
                 "complete": true,
                 "syntheticChrome": false,
@@ -458,8 +458,8 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             .init(
                 x: 0,
                 y: 0,
-                width: Double(IOSUsePlayDeviceLogicalWidth),
-                height: Double(IOSUsePlayDeviceLogicalHeight)
+                width: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.width),
+                height: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.height)
             )
         )
         let element = try XCTUnwrap(result.dom.elements.first)
@@ -1333,17 +1333,17 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     .map(\.rawValue),
             "geometry": [
                 "logical": [
-                    "width": Int(IOSUsePlayDeviceLogicalWidth),
-                    "height": Int(IOSUsePlayDeviceLogicalHeight),
+                    "width": Int(PlayCoverDevicePreset.defaultPreset.logicalSize.width),
+                    "height": Int(PlayCoverDevicePreset.defaultPreset.logicalSize.height),
                 ],
                 "native": [
-                    "width": Int(IOSUsePlayDeviceNativeWidth),
-                    "height": Int(IOSUsePlayDeviceNativeHeight),
+                    "width": Int(PlayCoverDevicePreset.defaultPreset.nativeSize.width),
+                    "height": Int(PlayCoverDevicePreset.defaultPreset.nativeSize.height),
                 ],
-                "scale": Int(IOSUsePlayDeviceScale),
+                "scale": Int(PlayCoverDevicePreset.defaultPreset.scale),
                 "window": [
-                    "width": Int(IOSUsePlayDeviceLogicalWidth),
-                    "height": Int(IOSUsePlayDeviceLogicalHeight),
+                    "width": Int(PlayCoverDevicePreset.defaultPreset.logicalSize.width),
+                    "height": Int(PlayCoverDevicePreset.defaultPreset.logicalSize.height),
                 ],
                 "safeArea": [
                     "top": 17,
@@ -1377,11 +1377,11 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             "jpegBase64": Data([
                 0xFF, 0xD8, 0xFF, 0xD9,
             ]).base64EncodedString(),
-            "pixelWidth": Int(IOSUsePlayDeviceNativeWidth),
-            "pixelHeight": Int(IOSUsePlayDeviceNativeHeight),
-            "logicalWidth": Int(IOSUsePlayDeviceLogicalWidth),
-            "logicalHeight": Int(IOSUsePlayDeviceLogicalHeight),
-            "scale": Int(IOSUsePlayDeviceScale),
+            "pixelWidth": Int(PlayCoverDevicePreset.defaultPreset.nativeSize.width),
+            "pixelHeight": Int(PlayCoverDevicePreset.defaultPreset.nativeSize.height),
+            "logicalWidth": Int(PlayCoverDevicePreset.defaultPreset.logicalSize.width),
+            "logicalHeight": Int(PlayCoverDevicePreset.defaultPreset.logicalSize.height),
+            "scale": Int(PlayCoverDevicePreset.defaultPreset.scale),
             "source": "window-compositor",
             "complete": true,
             "syntheticChrome": false,
@@ -1399,8 +1399,8 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         [
             "app": "Demo",
             "windowSize": [
-                "x": Int(IOSUsePlayDeviceLogicalWidth),
-                "y": Int(IOSUsePlayDeviceLogicalHeight),
+                "x": Int(PlayCoverDevicePreset.defaultPreset.logicalSize.width),
+                "y": Int(PlayCoverDevicePreset.defaultPreset.logicalSize.height),
             ],
             "raw": "Application, Demo",
             "snapshotGeneration": generation,
@@ -1474,12 +1474,12 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             "logicalRect": [
                 "x": 0,
                 "y": 0,
-                "width": Int(IOSUsePlayDeviceLogicalWidth),
-                "height": Int(IOSUsePlayDeviceLogicalHeight),
+                "width": Int(PlayCoverDevicePreset.defaultPreset.logicalSize.width),
+                "height": Int(PlayCoverDevicePreset.defaultPreset.logicalSize.height),
             ],
-            "pixelWidth": Int(IOSUsePlayDeviceNativeWidth),
-            "pixelHeight": Int(IOSUsePlayDeviceNativeHeight),
-            "scale": Int(IOSUsePlayDeviceScale),
+            "pixelWidth": Int(PlayCoverDevicePreset.defaultPreset.nativeSize.width),
+            "pixelHeight": Int(PlayCoverDevicePreset.defaultPreset.nativeSize.height),
+            "scale": Int(PlayCoverDevicePreset.defaultPreset.scale),
             "uncropped": true,
             "safeAreaCropped": false,
             "nativeCanvas": true,

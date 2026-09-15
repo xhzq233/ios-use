@@ -32,18 +32,12 @@
 static const NSUInteger IOSUseMaximumRequestFrameSize = 64 * 1024;
 static const NSUInteger IOSUseMaximumResponseFrameSize = 16 * 1024 * 1024;
 static const NSTimeInterval IOSUseSocketIOTimeoutSeconds = 15;
-static const CGFloat IOSUseRuntimeDeviceLogicalWidth =
-    (CGFloat)IOSUsePlayDeviceLogicalWidth;
-static const CGFloat IOSUseRuntimeDeviceLogicalHeight =
-    (CGFloat)IOSUsePlayDeviceLogicalHeight;
-static const CGFloat IOSUseRuntimeDeviceNativeWidth =
-    (CGFloat)IOSUsePlayDeviceNativeWidth;
-static const CGFloat IOSUseRuntimeDeviceNativeHeight =
-    (CGFloat)IOSUsePlayDeviceNativeHeight;
-static const CGFloat IOSUseRuntimeDeviceScale =
-    (CGFloat)IOSUsePlayDeviceScale;
-static const CGFloat IOSUseRuntimeDeviceSafeAreaTop =
-    (CGFloat)IOSUsePlayDeviceSafeAreaTop;
+#define IOSUseRuntimeDeviceLogicalWidth ((CGFloat)IOSUsePlayDeviceLogicalWidth)
+#define IOSUseRuntimeDeviceLogicalHeight ((CGFloat)IOSUsePlayDeviceLogicalHeight)
+#define IOSUseRuntimeDeviceNativeWidth ((CGFloat)IOSUsePlayDeviceNativeWidth)
+#define IOSUseRuntimeDeviceNativeHeight ((CGFloat)IOSUsePlayDeviceNativeHeight)
+#define IOSUseRuntimeDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
+#define IOSUseRuntimeDeviceSafeAreaTop ((CGFloat)IOSUsePlayDeviceSafeAreaTop)
 
 static NSString *IOSUseRuntimeSessionID;
 static NSString *IOSUseRuntimeSocketPath;
@@ -717,7 +711,7 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         isfinite(sceneRasterizationScale) &&
         sceneRasterizationScale > 0 &&
         isfinite(fixedBackingScale) &&
-        (fixedBackingScale == 0 || fixedBackingScale == 3) &&
+        (fixedBackingScale == 0 || fixedBackingScale == IOSUsePlayDeviceScale) &&
         IOSUseSocketMatchesFixedLogicalCanvas(
             canvasBounds,
             0.01,
@@ -1148,6 +1142,7 @@ static NSDictionary<NSString *, id> *IOSUseControlHelloPayload(void) {
         @"installRevision": IOSUseRuntimeInstallRevision ?: @"",
         @"capabilities": IOSUseCapabilities(requiredHooksReady),
         @"controlStage": controlStage,
+        @"devicePreset": [NSString stringWithUTF8String:IOSUsePlayDeviceCurrent()->name],
         @"controlFailure":
             IOSUsePlayRuntimeRequiredHooksFailure() ?: NSNull.null,
         @"uiState": IOSUseCurrentUIReadiness(),

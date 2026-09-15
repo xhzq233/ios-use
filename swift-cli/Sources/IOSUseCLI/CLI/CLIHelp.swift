@@ -115,11 +115,15 @@ enum CLIHelp {
         case "config":
             return """
             Usage: ios-use config [--udid <udid>] [--simulator] [--list] [--verbose] [--json]
-                   ios-use config --mac [--verbose] [--json]
+                   ios-use config --mac [--device-model <preset>] [--verbose] [--json]
 
             Configure a device or Simulator, or explicitly initialize the
             dedicated stable Mac-backend signing identity.
             Run `config --mac` once before the first Mac backend start.
+            `config --mac --device-model <preset>` only saves the device selection
+            for the next cold start; it does not initialize signing or restart an App.
+            Presets: iphone-se, iphone-13, iphone-15-pro, iphone-15-pro-max (default),
+            ipad-pro-11. Stop the running App, then start --mac to apply a change.
             macOS will show user authentication dialogs while the identity is
             created and trusted. If you cancel, safely retry the same command;
             the retry resumes the same signing identity instead of replacing it.

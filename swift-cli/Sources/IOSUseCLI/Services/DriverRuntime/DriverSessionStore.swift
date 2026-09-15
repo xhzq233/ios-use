@@ -60,7 +60,8 @@ enum DriverSessionStore {
             macRuntimeSocketPath:
                 raw["macRuntimeSocketPath"] as? String,
             macLogPath:
-                raw["macLogPath"] as? String
+                raw["macLogPath"] as? String,
+            macDevicePreset: raw["macDevicePreset"] as? String
         )
         if info.isAttached {
             guard let host = info.driverHost, let port = info.driverPort else {
@@ -312,6 +313,7 @@ enum DriverSessionStore {
         if let logPath = info.macLogPath {
             root["macLogPath"] = logPath
         }
+        if let preset = info.macDevicePreset { root["macDevicePreset"] = preset }
         let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])

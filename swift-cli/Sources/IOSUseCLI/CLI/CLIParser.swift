@@ -202,8 +202,12 @@ public enum CLIParser {
             case "--simulator": options.simulator = true
             case "--verbose": options.verbose = true
             case "--mac": options.playCover = true
+            case "--device-model": options.macDevice = try parser.value(for: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
+        }
+        if options.macDevice != nil && !options.playCover {
+            throw CLIParseError.invalidValue("--device-model requires --mac")
         }
         if options.playCover,
            options.udid != nil

@@ -37,6 +37,12 @@ ios-use config --mac
 ios-use start --mac --app <App.app>
 ```
 
+Select a Mac device preset with `ios-use config --mac --device-model <preset>`:
+`iphone-se`, `iphone-13`, `iphone-15-pro`, `iphone-15-pro-max` (default), or
+`ipad-pro-11`. Stop the App and cold-start it again to apply the selection.
+Changing the preset does not restart an App or initialize signing. The active
+`macDevice` and pending `configuredMacDevice` are shown by `status --json`.
+
 On macOS 26 or newer, `start --mac` warns and continues, but Mac UI interaction
 is not fully supported and may crash. Prefer a validated older macOS host, a
 real device, or a Simulator for reliable automation.

@@ -543,6 +543,7 @@ struct PlayCoverRuntimeHelloPayload:
     let controlFailure: String?
     let uiState: PlayCoverRuntimeUIReadiness
     let stdio: PlayCoverRuntimeStdioState
+    var devicePreset: String? = nil
 }
 
 struct PlayCoverRuntimeDiagnosticsPayload:
