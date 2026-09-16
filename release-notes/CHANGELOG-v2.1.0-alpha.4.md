@@ -65,3 +65,14 @@ A scroll target absent from the current accessibility tree may require an
 explicit direction. The Mac App backend retains its documented macOS 26 UI
 compatibility limitations. Default latest installs continue using the stable
 release; this alpha must be selected explicitly.
+
+### Prepare 210: remote device services
+
+- `start --connection` accepts provider-established usbmux and Driver endpoints.
+  ios-use manages XCTest on macOS and Linux x86_64 without go-ios.
+- Remote App listing, signed package installation, uninstall, URL opening and
+  `activateApp --terminateExisting --log` reuse native Apple device protocols.
+- `stop` ends owned XCTest and App log capture while retaining provider transport;
+  UI-only TCP attachments retain their existing detach behavior.
+- Linux Foundation decodes XCTest capabilities without host XCTest classes and
+  reports unsupported archive types as errors instead of aborting the process.

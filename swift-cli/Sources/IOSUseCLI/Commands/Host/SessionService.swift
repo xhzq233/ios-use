@@ -8,6 +8,7 @@ public enum SessionService {
         public let deviceType: String
         public let driverHost: String?
         public let driverPort: Int?
+        public let remoteConnection: RemoteDeviceConnection?
         public var isAttached: Bool { deviceType == TCPAttachService.deviceType }
         public let startedAt: Int
         public let holderPid: Int?
@@ -30,6 +31,7 @@ public enum SessionService {
             deviceType: String,
             driverHost: String? = nil,
             driverPort: Int? = nil,
+            remoteConnection: RemoteDeviceConnection? = nil,
             startedAt: Int = Int(Date().timeIntervalSince1970 * 1000),
             holderPid: Int? = nil,
             runnerPid: Int? = nil,
@@ -50,6 +52,7 @@ public enum SessionService {
             self.deviceType = deviceType
             self.driverHost = driverHost
             self.driverPort = driverPort
+            self.remoteConnection = remoteConnection
             self.startedAt = startedAt
             self.holderPid = holderPid
             self.runnerPid = runnerPid
@@ -74,6 +77,7 @@ public enum SessionService {
                 deviceType: deviceType,
                 driverHost: driverHost,
                 driverPort: driverPort,
+                remoteConnection: remoteConnection,
                 startedAt: startedAt,
                 holderPid: metadata.holderPid,
                 runnerPid: metadata.runnerPid,

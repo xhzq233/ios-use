@@ -45,6 +45,7 @@ enum DriverSessionStore {
             deviceType: deviceType,
             driverHost: raw["driverHost"] as? String,
             driverPort: raw["driverPort"] as? Int,
+            remoteConnection: try RemoteDeviceConnection.decode(raw["remoteConnection"]),
             startedAt: startedAt,
             holderPid: raw["holderPid"] as? Int,
             runnerPid: raw["runnerPid"] as? Int,
@@ -314,6 +315,9 @@ enum DriverSessionStore {
             root["macLogPath"] = logPath
         }
         if let preset = info.macDevicePreset { root["macDevicePreset"] = preset }
+        if let connection = info.remoteConnection {
+            root["remoteConnection"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(connection))
+        }
         let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])

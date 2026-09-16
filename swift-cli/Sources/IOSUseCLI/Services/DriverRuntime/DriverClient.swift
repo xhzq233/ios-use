@@ -384,7 +384,7 @@ final class DriverClient: DriverCommandClient {
             host: session.driverHost ?? "127.0.0.1",
             port: UInt16(session.driverPort ?? Int(IOSUseProtocol.defaultDriverPort)),
             udid: session.udid,
-            deviceType: session.deviceType,
+            deviceType: session.remoteConnection == nil ? session.deviceType : "tcp",
             cliLogPath: paths.map { CLILogService.logPath(paths: $0) },
             socketTimeoutSeconds: socketTimeoutSeconds
         )

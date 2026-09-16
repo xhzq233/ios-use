@@ -165,3 +165,15 @@ Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
 Never place passwords, two-factor codes, certificates, or complete provisioning
 profiles in commands, logs, artifacts, or reports. A full UDID is required in some
 local commands; redact it before sharing logs, artifacts, or reports.
+
+## Remote device services (Prepare 210)
+
+When the provider supplies a paired usbmux endpoint and Driver endpoint, use
+`ios-use start -d phone --connection device-connection.json`. The JSON contains
+`udid`, `driverBundleID`, `usbmux: {host, port}` and `driver: {host, port}`.
+The provider installs/signs the Driver and maintains the transport. ios-use
+owns XCTest, App management, URL opening and `activateApp --terminateExisting
+--log` on macOS and Linux x86_64. `stop` stops XCTest and log capture; release
+the provider lease separately. Signed App packages use `ios-use install`;
+provider re-signing stays outside ios-use. A UI-only `start --host/--port`
+attachment continues to leave its externally owned Driver running on stop.

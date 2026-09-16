@@ -307,6 +307,13 @@ public struct IOSUseCLI: Sendable {
             return InvocationTarget(paths: try paths.deviceContext(id), startUDID: nil)
 
         case .start(let options):
+            if let path = options.connectionPath {
+                let connection = try RemoteDeviceConnection.load(path: path)
+                return try resolveInvocationTarget(
+                    for: .attach(AttachOptions(host: connection.driver.host, port: connection.driver.port)),
+                    explicitDeviceID: explicitDeviceID ?? connection.udid
+                )
+            }
             if let endpoint = options.endpoint {
                 return try resolveInvocationTarget(for: .attach(endpoint), explicitDeviceID: explicitDeviceID)
             }
@@ -596,6 +603,16 @@ public struct IOSUseCLI: Sendable {
                 json: json
             )
         }
+        return RemoteDeviceConnection.$current.withValue(SessionService.read(paths: target.paths)?.remoteConnection) {
+            executeTarget(parsed, target: target, deviceID: deviceID, json: json,
+                          explicitMacSigningIdentity: explicitMacSigningIdentity)
+        }
+    }
+
+    private func executeTarget(
+        _ parsed: ParsedCommand, target: InvocationTarget, deviceID: String?, json: Bool,
+        explicitMacSigningIdentity: PlayCoverSigningIdentityEvidence?
+    ) -> CLIResult {
         let commandPaths = target.paths
         if let routedFailure = playCoverRoutingFailure(
             for: parsed,
@@ -721,6 +738,8 @@ public struct IOSUseCLI: Sendable {
                         timeout: options.timeout,
                         paths: commandPaths
                     )
+                } else if let path = options.connectionPath {
+                    output = try RemoteDeviceService.start(connectionPath: path, paths: commandPaths, verbose: options.verbose)
                 } else {
                     output = try SessionService.start(
                         udid: target.startUDID,
@@ -776,9 +795,11 @@ public struct IOSUseCLI: Sendable {
             }
         case .uninstall(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try AppManagementService.uninstall(options: options, paths: commandPaths))
+                let output = try AppManagementService.uninstall(options: options, paths: commandPaths)
+                return json ? MachineOutput.success(command: parsed.commandName, data: .object(["display": .string(output)]))
+                    : CLIResult(exitCode: 0, stdout: output)
             } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+                return commandFailure(command: parsed.commandName, error: error, json: json)
             }
         case .apps(let options):
             do {
@@ -831,6 +852,13 @@ public struct IOSUseCLI: Sendable {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .stop:
+            if let info = SessionService.read(paths: commandPaths), info.remoteConnection != nil {
+                do {
+                    let output = try RemoteDeviceService.stop(info: info, paths: commandPaths)
+                    return json ? MachineOutput.success(command: "stop", data: .object(["status": .string("stopped")]))
+                        : CLIResult(exitCode: 0, stdout: output)
+                } catch { return commandFailure(command: "stop", error: error, json: json) }
+            }
             do {
                 let output = try SessionService.stop(paths: commandPaths)
                 if json {
@@ -1075,75 +1103,6 @@ public struct IOSUseCLI: Sendable {
                 error: PlayCoverBackendError.capabilityUnavailable(command.commandName),
                 json: json
             )
-        }
-    }
-
-    private func executeOpen(
-        _ options: OpenURLOptions,
-        paths: IOSUsePaths,
-        json: Bool,
-        hostDeviceTypeHint: String? = nil
-    ) -> CLIResult {
-        do {
-            let validatedURL = try OpenURLService.validatedURL(
-                options.url
-            )
-            let result = try DeviceCommandLock.withExclusiveLock(
-                paths: paths
-            ) { () throws -> OpenURLService.OpenResult in
-                if options.dom {
-                    return try OpenURLService.openWithDom(
-                        url: validatedURL,
-                        session: options.session,
-                        paths: paths
-                    )
-                }
-                let resolved: OpenURLService.OpenResult?
-                if options.session.udid != nil
-                    || hostDeviceTypeHint != nil {
-                    resolved = try OpenURLService
-                        .openHostSideIfAvailable(
-                            url: validatedURL,
-                            udid: options.session.udid,
-                            deviceType: hostDeviceTypeHint,
-                            paths: paths
-                        )
-                        ?? OpenURLService.openHostSideIfAvailable(
-                            url: validatedURL,
-                            session: options.session,
-                            paths: paths
-                        )
-                } else {
-                    resolved = try OpenURLService
-                        .openHostSideIfAvailable(
-                            url: validatedURL,
-                            session: options.session,
-                            paths: paths
-                        )
-                }
-                guard let resolved else {
-                    throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start` first.")
-                }
-                return resolved
-            }
-            var stdout = "\(result.message)\n"
-            if let dom = result.dom {
-                stdout += "\n" + DriverOutput.formatDom(dom) + "\n"
-            }
-            if json {
-                return MachineOutput.success(command: "open", data: OpenURLService.machineData(result))
-            }
-            return CLIResult(exitCode: 0, stdout: stdout)
-        } catch {
-            if json, let readinessError = error as? OpenURLService.ReadinessError {
-                return MachineOutput.failure(
-                    command: "open",
-                    error: error,
-                    data: OpenURLService.machineData(readinessError.hostResult),
-                    mutationMayHaveApplied: true
-                )
-            }
-            return commandFailure(command: "open", error: error, json: json)
         }
     }
 

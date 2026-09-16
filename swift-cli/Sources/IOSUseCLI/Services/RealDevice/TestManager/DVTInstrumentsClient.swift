@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 enum DVTClientError: Error, CustomStringConvertible, Equatable {
     case invalidReply(String)
@@ -267,8 +268,14 @@ final class DTXStreamTransport {
         guard !data.isEmpty else { return nil }
         let unarchiver = try NSKeyedUnarchiver(forReadingFrom: data)
         unarchiver.requiresSecureCoding = false
+        // XCTest classes are not installed on the host (including Linux).
+        unarchiver.setClass(DecodedXCTestCapabilities.self, forClassName: "XCTCapabilities")
+        unarchiver.decodingFailurePolicy = .setErrorAndReturn
         defer { unarchiver.finishDecoding() }
-        return unarchiver.decodeObject(forKey: NSKeyedArchiveRootObjectKey)
+        let object = unarchiver.decodeObject(forKey: NSKeyedArchiveRootObjectKey)
+        if let error = unarchiver.error { throw error }
+        if let capabilities = object as? DecodedXCTestCapabilities { return capabilities.values }
+        return object
     }
 
     private func reserveIdentifier() -> UInt32 {
@@ -283,6 +290,24 @@ final class DTXStreamTransport {
         writeLock.lock()
         defer { writeLock.unlock() }
         try stream.write(data)
+    }
+}
+
+#if canImport(ObjectiveC)
+@objc(IOSUseDecodedXCTestCapabilities)
+#endif
+private final class DecodedXCTestCapabilities: NSObject, NSCoding {
+    let values: [String: Any]
+
+    required init?(coder: NSCoder) {
+        guard let values = coder.decodeObject(forKey: "capabilities-dictionary") as? [String: Any] else {
+            return nil
+        }
+        self.values = values
+    }
+
+    func encode(with coder: NSCoder) {
+        coder.encode(values, forKey: "capabilities-dictionary")
     }
 }
 

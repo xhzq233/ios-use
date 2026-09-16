@@ -119,6 +119,7 @@ public struct AttachOptions: Equatable, Sendable {
 }
 
 public struct StartOptions: Equatable, Sendable {
+    public var connectionPath: String?
     public var endpoint: AttachOptions?
     public var udid: String?
     public var verbose = false

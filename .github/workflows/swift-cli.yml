@@ -52,11 +52,18 @@ jobs:
         run: bash scripts/test_swift_cli.sh
 
   linux:
-    name: Linux TCP (x86_64)
+    name: Linux remote (x86_64)
     runs-on: ubuntu-22.04
     container: swift:6.2.4-jammy
     steps:
       - uses: actions/checkout@v4
+      - name: Cache Linux Swift dependencies and build
+        uses: actions/cache@v4
+        with:
+          path: swift-cli/.build
+          key: linux-x86_64-swift-6.2.4-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'shared/IOSUseProtocol/Package.swift') }}
+          restore-keys: |
+            linux-x86_64-swift-6.2.4-
       - run: swift test --package-path swift-cli -j 4
       - run: bash scripts/build_swift_cli.sh
       - uses: actions/upload-artifact@v4

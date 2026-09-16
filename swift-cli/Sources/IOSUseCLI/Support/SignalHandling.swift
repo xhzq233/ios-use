@@ -1,6 +1,11 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Dispatch
 import Foundation
+import CoreFoundation
 
 public struct CLIExitSignal: Error, CustomStringConvertible {
     public let exitCode: Int32

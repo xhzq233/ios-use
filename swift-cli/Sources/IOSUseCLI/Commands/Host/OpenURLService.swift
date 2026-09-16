@@ -189,6 +189,7 @@ enum OpenURLService {
     static func openHostSideIfAvailable(url: String, session: SessionOptions, paths: IOSUsePaths) throws -> OpenResult? {
         let validated = try validatedURL(url)
         let activeDriver = SessionService.read(paths: paths)
+        #if os(macOS)
         if let activeDriver,
            activeDriver.deviceType
             == PlayCoverSessionService.deviceType {
@@ -205,6 +206,7 @@ enum OpenURLService {
                 paths: paths
             )
         }
+        #endif
         let targetUdid = try SessionService.resolveTargetUdid(
             explicitUdid: session.udid,
             paths: paths,
@@ -217,6 +219,7 @@ enum OpenURLService {
             }
             return try openRealDevice(url: validated, udid: targetUdid)
         }
+        #if os(macOS)
         if DeviceService.looksLikeSimulatorUDID(targetUdid) {
             let bootedSimulators = try DeviceService.listDevices(simulatorOnly: true, paths: paths)
             guard bootedSimulators.contains(where: { $0.udid == targetUdid }) else {
@@ -225,6 +228,7 @@ enum OpenURLService {
             try openSimulator(url: validated, udid: targetUdid)
             return OpenResult(message: "Opened URL: \(validated)", url: validated, targetUdid: targetUdid, deviceType: "simulator")
         }
+        #endif
         return try openRealDevice(url: validated, udid: targetUdid)
     }
 
@@ -241,6 +245,7 @@ enum OpenURLService {
         guard activeDriver.udid == targetUdid else {
             throw CLIParseError.invalidValue("open --dom target \(targetUdid) does not match active Driver target \(activeDriver.udid). Run `ios-use stop` and `ios-use start \(targetUdid)`.")
         }
+        #if os(macOS)
         if activeDriver.deviceType
             == PlayCoverSessionService.deviceType {
             let base: OpenResult
@@ -280,6 +285,7 @@ enum OpenURLService {
                 )
             }
         }
+        #endif
         let base = try openHostSideIfAvailable(url: url, session: session, paths: paths)
         guard let base else {
             throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start` first.")
@@ -355,7 +361,11 @@ enum OpenURLService {
     // MARK: - Simulator
 
     private static func openSimulator(url: String, udid: String) throws {
+        #if os(macOS)
         try SimulatorService.openURL(url, udid: udid)
+        #else
+        throw CLIParseError.invalidValue("Simulator URL opening is unavailable on Linux")
+        #endif
     }
 
     // MARK: - Real Device
@@ -404,6 +414,7 @@ enum OpenURLService {
         ])
     }
 
+    #if os(macOS)
     private static func openPlayCover(
         url: String,
         session: SessionService.Info,
@@ -590,6 +601,8 @@ enum OpenURLService {
             stored = result
         }
     }
+    #endif
+
     #endif
 
     private static func openRealDeviceURL(url: String, udid: String) throws {

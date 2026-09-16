@@ -6,9 +6,9 @@ enum CLIHelp {
         return """
         Usage: ios-use [--device <id>] <command>
 
-        Linux TCP client for an externally managed iOS Driver.
-        Start the Driver with your device provider, then connect its TCP endpoint:
-          ios-use start -d phone --host <host> --port <port>
+        Linux remote client for iOS UI and Apple device services.
+        Use a provider's device connection to start XCTest:
+          ios-use start -d phone --connection device-connection.json
           ios-use status
           ios-use dom -d phone
           ios-use tap "<label>" -d phone --dom
@@ -16,12 +16,16 @@ enum CLIHelp {
           ios-use stop -d phone
 
         Commands: start, stop, attach, detach, status, dom, waitFor, screenshot, tap,
-          longpress, input, swipe, activateApp, terminateApp, home, rotate, dismissAlert
+          longpress, input, swipe, apps, install, uninstall, open,
+          activateApp, terminateApp, home, rotate, dismissAlert
         With multiple attachments, select one using -d <id>.
         Inspect current DOM before acting and keep page-dependent actions sequential.
         Use ios-use help <command> for options; --json returns structured results.
         Screenshots save the original JPEG and geometry. OCR requires macOS.
-        Device installation, signing and Driver lifecycle belong to the provider.
+        The provider handles signing, Driver installation and transport setup.
+        ios-use owns XCTest and activateApp --log for --connection sessions.
+        For an already running Driver, use start --host <host> --port <port>.
+        That UI-only attachment leaves the external Driver running on stop.
 
         """
         #else
@@ -177,6 +181,7 @@ enum CLIHelp {
             return """
             Usage: ios-use start [udid] [--verbose]
                    ios-use start -d <id> --host <host> --port <port>
+                   ios-use start [-d <id>] --connection <file> [--verbose]
                    ios-use start --mac --app <source.app> [--log] [--timeout <duration>]
                    ios-use start --mac [--log] [--timeout <duration>]
 
@@ -189,6 +194,12 @@ enum CLIHelp {
             and cannot be mixed with a UDID or local start options.
             The provider owns remote startup and cleanup. stop only unbinds it,
             including while offline. attach remains a compatible entry point.
+            With --connection, load a provider's JSON description containing
+            udid, driverBundleID, usbmux {host, port} and driver {host, port}.
+            The provider must install a signed Driver and establish paired
+            device services. ios-use owns XCTest startup/stop, App management,
+            open and activateApp --log on macOS and Linux. stop leaves the
+            provider's transport and lease in place.
             Multiple Devices can run together. Use --device <device-id> on
             later commands; status prints the stable IDs.
             The Mac backend automatically prepares an unmodified iPhoneOS App
@@ -210,6 +221,7 @@ enum CLIHelp {
             Options:
               --host <host>                External Driver IP address or hostname
               --port <port>                External Driver TCP port (1..65535)
+              --connection <file>          Provider-established Apple device transport
               --verbose                    Enable verbose XCTest output
               --mac                        Select the Mac backend
               --app <source.app>            Install or update, then launch this App
@@ -277,8 +289,9 @@ enum CLIHelp {
             return """
             Usage: ios-use install <ipa|app> [--udid <udid>] [--verbose] [--json]
 
-            Install a signed IPA or .app bundle on a USB real device using devicectl when available,
-            with native AFC and installation_proxy fallback.
+            Install a signed IPA or .app bundle on a real device. Remote device
+            connections use native AFC and installation_proxy; local macOS uses
+            devicectl when available, with native fallback.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
@@ -289,9 +302,9 @@ enum CLIHelp {
             """
         case "uninstall":
             return """
-            Usage: ios-use uninstall <bundleId> [--udid <udid>] [--verbose]
+            Usage: ios-use uninstall <bundleId> [--udid <udid>] [--verbose] [--json]
 
-            Uninstall an app from a USB real device using installation_proxy.
+            Uninstall an app from a local or remote real device using installation_proxy.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:

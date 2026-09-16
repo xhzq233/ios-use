@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 
 enum InstallationProxyError: Error, CustomStringConvertible, Equatable {
@@ -294,7 +295,7 @@ enum RealDevicePackageInstaller {
             try preparedPackageInstallerForTesting(package, udid, responseObserver)
             return
         }
-        if preferDevicectl, try installWithDevicectlIfAvailable(package, udid: udid) {
+        if preferDevicectl, RemoteDeviceConnection.current == nil, try installWithDevicectlIfAvailable(package, udid: udid) {
             return
         }
         if let nativePackageInstallerForTesting {
@@ -338,7 +339,7 @@ enum RealDevicePackageInstaller {
                 installer: .installationProxy
             )
         }
-        if preferDevicectl,
+        if preferDevicectl, RemoteDeviceConnection.current == nil,
            let installed = try installWithDevicectlIfAvailableWithResult(package, udid: udid) {
             return InstallResult(
                 bundleID: package.bundleID,
@@ -597,8 +598,9 @@ enum RealDevicePackageInstaller {
     }
 
     private static func plistString(infoPath: String, key: String) -> String? {
-        let value = try? Shell.run("plutil", arguments: ["-extract", key, "raw", "-o", "-", infoPath])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: infoPath)),
+              let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
+        let value = info[key] as? String
         guard let value, !value.isEmpty else { return nil }
         return value
     }

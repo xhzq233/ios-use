@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 
 enum XCTestSessionHolderService {
@@ -13,10 +18,18 @@ enum XCTestSessionHolderService {
         let bundleId: String
         let controlSocket: String
         let deviceID: String?
+        let connectionPath: String?
     }
 
     static func run(arguments: [String], paths basePaths: IOSUsePaths) throws -> String {
         let options = try parse(arguments)
+        let connection = try options.connectionPath.map { try RemoteDeviceConnection.load(path: $0) }
+        return try RemoteDeviceConnection.$current.withValue(connection) {
+            try run(options: options, paths: basePaths)
+        }
+    }
+
+    private static func run(options: Options, paths basePaths: IOSUsePaths) throws -> String {
         let paths = try options.deviceID.map {
             try basePaths.deviceContext($0)
         } ?? basePaths
@@ -27,7 +40,7 @@ enum XCTestSessionHolderService {
 
         var activeSession: RealDeviceXCTestActiveSession?
         let controlState = XCTestSessionHolderControlState(
-            holderPid: Int(Darwin.getpid()),
+            holderPid: Int(posixGetpid()),
             bundleId: options.bundleId,
             controlSocketPath: options.controlSocket
         )
@@ -111,7 +124,7 @@ enum XCTestSessionHolderService {
 
     static func waitForDriverReadiness(udid: String, log: (String) -> Void) throws {
         let connector = driverReadinessConnectorForTesting ?? { try Usbmux.connect(udid: $0, port: $1) }
-        let sleeper = driverReadinessSleeperForTesting ?? { _ = Darwin.usleep($0) }
+        let sleeper = driverReadinessSleeperForTesting ?? { _ = posixUsleep($0) }
         let timeout = driverReadinessTimeoutSecondsForTesting ?? IOSUseProtocol.realDeviceDriverReadinessTimeoutSeconds
         let initialDelay = useconds_t(IOSUseProtocol.realDeviceDriverReadinessInitialDelayMicroseconds)
         let pollDelay = useconds_t(IOSUseProtocol.realDeviceDriverReadinessPollMicroseconds)
@@ -128,8 +141,8 @@ enum XCTestSessionHolderService {
             attempts += 1
             do {
                 let fd = try connector(udid, Int(IOSUseProtocol.defaultDriverPort))
-                _ = Darwin.shutdown(fd, SHUT_RDWR)
-                Darwin.close(fd)
+                _ = posixShutdown(fd, Int32(SHUT_RDWR))
+                posixClose(fd)
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * IOSUseProtocol.millisecondsPerSecond)
                 log("driver TCP readiness confirmed attempts=\(attempts) elapsed=\(elapsedMs)ms")
                 sleeper(postSuccessDelay)
@@ -153,6 +166,7 @@ enum XCTestSessionHolderService {
         var bundleId: String?
         var controlSocket: String?
         var deviceID: String?
+        var connectionPath: String?
         var index = 0
 
         while index < arguments.count {
@@ -170,6 +184,10 @@ enum XCTestSessionHolderService {
                 index += 1
                 guard index < arguments.count else { throw CLIParseError.missingOptionValue("--control-socket") }
                 controlSocket = arguments[index]
+            case "--connection":
+                index += 1
+                guard index < arguments.count else { throw CLIParseError.missingOptionValue(argument) }
+                connectionPath = arguments[index]
             case "--device":
                 index += 1
                 guard index < arguments.count else { throw CLIParseError.missingOptionValue("--device") }
@@ -192,7 +210,8 @@ enum XCTestSessionHolderService {
             udid: udid,
             bundleId: bundleId,
             controlSocket: controlSocket,
-            deviceID: deviceID
+            deviceID: deviceID,
+            connectionPath: connectionPath
         )
     }
 
@@ -207,7 +226,7 @@ enum XCTestSessionHolderService {
                 info: info,
                 udid: options.udid,
                 bundleId: options.bundleId,
-                holderPid: Int(Darwin.getpid()),
+                holderPid: Int(posixGetpid()),
                 runnerPid: runnerPid,
                 sessionIdentifier: sessionIdentifier,
                 controlSocketPath: options.controlSocket

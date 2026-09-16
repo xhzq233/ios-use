@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 final class XCTestManagerSession {
     private let stream: DeviceStream

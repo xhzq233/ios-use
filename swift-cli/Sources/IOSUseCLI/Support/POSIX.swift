@@ -45,3 +45,35 @@ func posixConnect(
     if socketError != 0 { errno = socketError; return false }
     return true
 }
+
+#if os(Linux)
+let posixAccept = Glibc.accept
+let posixBind = Glibc.bind
+let posixConnect = Glibc.connect
+let posixGetpid = Glibc.getpid
+let posixGetsockname = Glibc.getsockname
+let posixKill = Glibc.kill
+let posixListen = Glibc.listen
+let posixRead = Glibc.read
+let posixSelect = Glibc.select
+let posixSetsockopt = Glibc.setsockopt
+let posixShutdown = Glibc.shutdown
+let posixSocket = Glibc.socket
+let posixUsleep = Glibc.usleep
+#endif
+
+#if os(macOS)
+let posixAccept = Darwin.accept
+let posixBind = Darwin.bind
+let posixConnect = Darwin.connect
+let posixGetpid = Darwin.getpid
+let posixGetsockname = Darwin.getsockname
+let posixKill = Darwin.kill
+let posixListen = Darwin.listen
+let posixRead = Darwin.read
+let posixSelect = Darwin.select
+let posixSetsockopt = Darwin.setsockopt
+let posixShutdown = Darwin.shutdown
+let posixSocket = Darwin.socket
+let posixUsleep = Darwin.usleep
+#endif

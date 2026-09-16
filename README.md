@@ -9,7 +9,7 @@
 `ios-use` drives real iPhones, Simulators, and supported iPhone Apps on Apple
 silicon Macs. It exposes a compact accessibility tree, semantic actions, JSON
 output, screenshots, logs, proxy capture, and multi-device operation. Linux hosts
-can operate externally managed iOS Drivers through TCP attachments.
+can operate iOS Drivers and Apple device services over remote connections.
 
 Application nodes in the DOM provide page context. Element selectors search
 their contents, so an App name does not shadow a button with the same label.
@@ -62,11 +62,11 @@ bash scripts/build_swift_cli.sh
 The Linux release workflow builds an x86_64 binary on Ubuntu 22.04
 with the Swift runtime statically linked. Running the binary needs glibc and
 libstdc++, without a Swift installation. The device provider handles leases,
-signing, IPA installation, port forwarding and XCTest startup. UI actions,
-waits, app activation/termination and JPEG screenshots use the shared protocol.
-OCR, capture sequences, local USB, Simulator, Mac, logging and proxy services require
-a macOS host. `stop` on Linux detaches and leaves the remote Driver running.
-`attach` and `detach` remain compatible entry points for TCP sessions.
+signing and transport setup. The Prepare 210 development build also supports
+`start --connection` for native XCTest lifecycle, App management, URL opening
+and App stdout/stderr on Linux (see below). OCR, capture sequences, local USB,
+Simulator, the Mac App backend, system logs and proxy require macOS.
+`attach` and `detach` remain compatible entry points for UI-only TCP sessions.
 
 ## Quick Start
 
@@ -129,6 +129,46 @@ Screenshots default to JPEG output without OCR on both hosts. On macOS, use
 `screenshot --ocr` to also recognize text and save an OCR sidecar. `--no-ocr`
 remains accepted; Linux has no OCR engine. These defaults apply to local and
 remote targets from Alpha 4; earlier macOS releases default to OCR enabled.
+
+### Remote Apple device services (Prepare 210)
+
+A provider can expose a paired usbmux endpoint and a Driver TCP endpoint.
+Save its connection description as `device-connection.json`:
+
+```json
+{
+  "udid": "DEVICE-UDID",
+  "driverBundleID": "com.iosuse.xcuidriver.xctrunner",
+  "usbmux": { "host": "127.0.0.1", "port": 27015 },
+  "driver": { "host": "127.0.0.1", "port": 18102 }
+}
+```
+
+Use the provider's actual endpoints. It must install the matching, signed
+Driver and prepare paired developer services. This transport is supported on
+macOS and Linux x86_64; iOS 18.5 has been tested on real hardware.
+
+```bash
+ios-use start -d phone --connection device-connection.json
+ios-use apps -d phone
+ios-use install /path/to/signed-App.ipa -d phone --json
+ios-use activateApp com.example.app --terminateExisting --log -d phone --json
+ios-use open 'myapp://page' -d phone --dom
+ios-use tap '<label-from-dom>' -d phone --dom
+ios-use uninstall com.example.app -d phone --json
+ios-use stop -d phone
+```
+
+Here ios-use owns XCTest and reports `lifecycleOwner: ios-use`. `stop` closes
+XCTest and App log capture, while the provider keeps its lease and transport.
+Start again with the same description while that connection remains valid.
+The UI path connects directly to the Driver endpoint. Swift uses usbmux,
+Lockdown and CoreDevice for App services; no Go runtime is required.
+`activateApp --log` returns a background collector PID and log path for
+stdout/stderr from the new App process. It does not read sandbox log files.
+Signing remains the provider's responsibility; `install` accepts packages
+already signed for the device. `status` describes saved ownership; use `dom`
+to check current Driver responsiveness.
 
 ### Mac backend
 

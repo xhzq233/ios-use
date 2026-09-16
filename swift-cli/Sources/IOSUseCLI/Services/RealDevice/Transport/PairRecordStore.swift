@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 
 struct PairRecord {
     let hostID: String
@@ -9,7 +14,7 @@ struct PairRecord {
 
     static func load(udid: String) throws -> PairRecord {
         let fd = try Usbmux.openSocket()
-        defer { Darwin.close(fd) }
+        defer { posixClose(fd) }
         let payload: [String: Any] = [
             "MessageType": "ReadPairRecord",
             "PairRecordID": udid,

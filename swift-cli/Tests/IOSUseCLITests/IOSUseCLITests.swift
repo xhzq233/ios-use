@@ -542,9 +542,7 @@ final class IOSUseCLITests: XCTestCase {
         let apps = cli.run(arguments: ["apps"])
 
         XCTAssertEqual(install.exitCode, 1)
-        XCTAssertTrue(install.stderr.contains("install supports USB real devices only"))
         XCTAssertEqual(uninstall.exitCode, 1)
-        XCTAssertTrue(uninstall.stderr.contains("uninstall supports USB real devices only"))
         XCTAssertEqual(apps.exitCode, 0)
         XCTAssertEqual(listRequests, 1)
     }

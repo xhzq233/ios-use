@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 import NIOCore
 import NIOPosix
@@ -74,7 +79,7 @@ final class PlainDeviceStream: DeviceStream {
     func readAvailable(maxBytes: Int, timeoutSeconds: Double) throws -> Data {
         guard waitForReadable(fd: fd, timeoutSeconds: timeoutSeconds) else { return Data() }
         var buffer = [UInt8](repeating: 0, count: maxBytes)
-        let n = Darwin.read(fd, &buffer, maxBytes)
+        let n = posixRead(fd, &buffer, maxBytes)
         if n > 0 { return Data(buffer.prefix(n)) }
         if n == 0 { throw DeviceStreamError.closed("device stream") }
         if errno == EINTR || errno == EAGAIN { return Data() }
@@ -92,8 +97,8 @@ final class PlainDeviceStream: DeviceStream {
         lock.unlock()
 
         guard shouldClose else { return }
-        Darwin.shutdown(fd, SHUT_RDWR)
-        Darwin.close(fd)
+        posixShutdown(fd, Int32(SHUT_RDWR))
+        posixClose(fd)
     }
 }
 
@@ -117,8 +122,8 @@ final class NIOSSLDeviceStream: DeviceStream {
             try pairRecord.hostCertificate.write(to: URL(fileURLWithPath: certPath), options: .atomic)
         } catch {
             if ownsFD {
-                Darwin.shutdown(fd, SHUT_RDWR)
-                Darwin.close(fd)
+                posixShutdown(fd, Int32(SHUT_RDWR))
+                posixClose(fd)
             }
             try? FileManager.default.removeItem(at: createdTempDir)
             throw error
@@ -131,8 +136,8 @@ final class NIOSSLDeviceStream: DeviceStream {
             createdProxy = try LocalFDProxy(targetFD: fd, closeTargetOnClose: ownsFD)
         } catch {
             if ownsFD {
-                Darwin.shutdown(fd, SHUT_RDWR)
-                Darwin.close(fd)
+                posixShutdown(fd, Int32(SHUT_RDWR))
+                posixClose(fd)
             }
             try? FileManager.default.removeItem(at: createdTempDir)
             throw error
@@ -297,7 +302,7 @@ final class LocalFDProxy {
     init(targetFD: Int32, closeTargetOnClose: Bool = false) throws {
         self.targetFD = targetFD
         self.closeTargetOnClose = closeTargetOnClose
-        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        let fd = posixSocket(AF_INET, posixStreamSocketType, 0)
         guard fd >= 0 else { throw CLIParseError.invalidValue("failed to create TLS proxy socket") }
         setSocketNoSigPipe(fd)
         setSocketNoSigPipe(targetFD)
@@ -306,35 +311,37 @@ final class LocalFDProxy {
         var one: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
         var addr = sockaddr_in()
+        #if os(macOS)
         addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        #endif
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = 0
         addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
         let bindResult = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                posixBind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
         guard bindResult == 0 else {
             let err = errno
-            Darwin.close(fd)
+            posixClose(fd)
             throw CLIParseError.invalidValue("failed to bind TLS proxy socket: errno \(err)")
         }
-        guard Darwin.listen(fd, IOSUseProtocol.XCConstants.localFDProxyListenBacklog) == 0 else {
+        guard posixListen(fd, IOSUseProtocol.XCConstants.localFDProxyListenBacklog) == 0 else {
             let err = errno
-            Darwin.close(fd)
+            posixClose(fd)
             throw CLIParseError.invalidValue("failed to listen on TLS proxy socket: errno \(err)")
         }
         var bound = sockaddr_in()
         var len = socklen_t(MemoryLayout<sockaddr_in>.size)
         let nameResult = withUnsafeMutablePointer(to: &bound) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.getsockname(fd, $0, &len)
+                posixGetsockname(fd, $0, &len)
             }
         }
         guard nameResult == 0 else {
             let err = errno
-            Darwin.close(fd)
+            posixClose(fd)
             throw CLIParseError.invalidValue("failed to inspect TLS proxy socket: errno \(err)")
         }
         self.port = Int(UInt16(bigEndian: bound.sin_port))
@@ -356,14 +363,14 @@ final class LocalFDProxy {
         clientFD = -1
         lock.unlock()
 
-        Darwin.close(listenerFD)
+        posixClose(listenerFD)
         if localClient >= 0 {
-            Darwin.shutdown(localClient, SHUT_RDWR)
-            Darwin.close(localClient)
+            posixShutdown(localClient, Int32(SHUT_RDWR))
+            posixClose(localClient)
         }
         if closeTargetOnClose {
-            Darwin.shutdown(targetFD, SHUT_RDWR)
-            Darwin.close(targetFD)
+            posixShutdown(targetFD, Int32(SHUT_RDWR))
+            posixClose(targetFD)
         }
     }
 
@@ -372,13 +379,13 @@ final class LocalFDProxy {
             guard let self else { return }
             var addr = sockaddr()
             var len = socklen_t(MemoryLayout<sockaddr>.size)
-            let accepted = Darwin.accept(self.listenerFD, &addr, &len)
+            let accepted = posixAccept(self.listenerFD, &addr, &len)
             guard accepted >= 0 else { return }
             setSocketNoSigPipe(accepted)
             self.lock.lock()
             if self.closed {
                 self.lock.unlock()
-                Darwin.close(accepted)
+                posixClose(accepted)
                 return
             }
             self.clientFD = accepted
@@ -392,7 +399,7 @@ final class LocalFDProxy {
         DispatchQueue.global(qos: .userInitiated).async {
             var buffer = [UInt8](repeating: 0, count: IOSUseProtocol.XCConstants.localFDProxyBridgeBufferBytes)
             while true {
-                let n = Darwin.read(source, &buffer, buffer.count)
+                let n = posixRead(source, &buffer, buffer.count)
                 if n > 0 {
                     do {
                         try writeAll(fd: destination, data: Data(buffer.prefix(n)))
@@ -406,7 +413,7 @@ final class LocalFDProxy {
                 }
             }
             if shutdownTargetOnEOF {
-                Darwin.shutdown(destination, SHUT_WR)
+                posixShutdown(destination, Int32(SHUT_WR))
             }
         }
     }

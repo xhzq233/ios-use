@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 
 struct AppLogCaptureTarget: Codable, Equatable, Sendable {
@@ -37,6 +42,16 @@ enum AppLogCaptureService {
     static var processExitWaiterForTesting: ((Int32, Double) -> Bool)?
     static var terminateObservationTimeoutForTesting: Double?
 
+    private static func captureEnvironment(paths: IOSUsePaths) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["IOS_USE_HOME"] = paths.root
+        if let connection = RemoteDeviceConnection.current,
+           let data = try? JSONEncoder().encode(connection) {
+            environment["IOS_USE_DEVICE_CONNECTION"] = String(data: data, encoding: .utf8)
+        } else { environment.removeValue(forKey: "IOS_USE_DEVICE_CONNECTION") }
+        return environment
+    }
+
     static func start(bundleID: String, udid: String, deviceType: String, paths: IOSUsePaths) throws -> AppLifecycleService.Result {
         try stopExistingCaptureIfNeeded(paths: paths)
         try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
@@ -59,7 +74,7 @@ enum AppLogCaptureService {
         let request = HelperLaunchRequest(
             executablePath: try executablePath(),
             arguments: helperArguments,
-            environment: ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new },
+            environment: captureEnvironment(paths: paths),
             stderrPath: CLILogService.logPath(paths: paths)
         )
         let pid = try launchHelper(request)
@@ -76,6 +91,15 @@ enum AppLogCaptureService {
         arguments: [String],
         paths basePaths: IOSUsePaths
     ) throws -> String {
+        let connection = try ProcessInfo.processInfo.environment["IOS_USE_DEVICE_CONNECTION"].map {
+            try JSONDecoder().decode(RemoteDeviceConnection.self, from: Data($0.utf8))
+        }
+        return try RemoteDeviceConnection.$current.withValue(connection) {
+            try runConnectedHelper(arguments: arguments, paths: basePaths)
+        }
+    }
+
+    private static func runConnectedHelper(arguments: [String], paths basePaths: IOSUsePaths) throws -> String {
         let options = try parseHelperOptions(arguments)
         let paths = try options.deviceID.map {
             try basePaths.deviceContext($0)
@@ -430,7 +454,11 @@ enum AppLogCaptureService {
         if let path = Bundle.main.executableURL?.path, FileManager.default.isExecutableFile(atPath: path) {
             return path
         }
+        #if os(macOS)
         return try NSLogService.executablePath()
+        #else
+        return try FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/exe")
+        #endif
     }
 
     private static func safeLogFileStem(_ bundleID: String) -> String {
@@ -458,7 +486,7 @@ enum AppLogCaptureService {
         if let processAliveOverrideForTesting {
             return processAliveOverrideForTesting(pid)
         }
-        return Darwin.kill(pid, 0) == 0
+        return posixKill(pid, 0) == 0
     }
 
     private static func processCommand(pid: Int32) -> String? {
@@ -501,7 +529,7 @@ enum AppLogCaptureService {
         if let signalSenderForTesting {
             return signalSenderForTesting(pid, signal)
         }
-        return Darwin.kill(pid, signal)
+        return posixKill(pid, signal)
     }
 }
 

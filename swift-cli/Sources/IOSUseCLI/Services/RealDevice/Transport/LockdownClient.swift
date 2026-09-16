@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 
 final class LockdownClient {
@@ -71,7 +76,7 @@ final class LockdownClient {
 
     func disconnect() {
         stream.close()
-        Darwin.close(fd)
+        posixClose(fd)
     }
 
     func request(_ body: [String: Any]) throws -> [String: Any] {

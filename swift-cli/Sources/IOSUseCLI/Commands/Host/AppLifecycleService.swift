@@ -96,10 +96,8 @@ enum AppLifecycleService {
                     return Result(message: "App \(options.bundleID) terminated")
                 }
             }
-#if os(macOS)
         case "real":
             result = try runRealDevice(options: options, udid: udid, paths: paths)
-#endif
         default:
             throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType ?? "(missing)").")
         }
@@ -230,6 +228,8 @@ enum AppLifecycleService {
         }
     }
 
+#endif
+
     private static func runRealDevice(options: AppLifecycleOptions, udid: String, paths: IOSUsePaths) throws -> Result {
         if let realDeviceRunnerForTesting {
             return try realDeviceRunnerForTesting(options, udid)
@@ -262,10 +262,8 @@ enum AppLifecycleService {
         }
         return Result(message: message, didTerminateApp: terminated)
     }
-#endif
 }
 
-#if os(macOS)
 protocol CoreDeviceAppLifecycleServicing {
     func launchApplication(
         bundleID: String,
@@ -455,4 +453,3 @@ final class CoreDeviceAppLifecycleRunner {
         return try body(appService)
     }
 }
-#endif

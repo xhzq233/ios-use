@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 
 struct XCTestSessionHolderControlRequest: Codable, Equatable {
@@ -216,14 +221,14 @@ final class XCTestSessionHolderControlServer {
         )
         try? FileManager.default.removeItem(atPath: socketPath)
 
-        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = posixSocket(AF_UNIX, posixStreamSocketType, 0)
         guard fd >= 0 else {
             throw CLIParseError.invalidValue("failed to create holder control socket: errno \(errno)")
         }
         setSocketNoSigPipe(fd)
         do {
             try bindUnixSocket(fd: fd, path: socketPath)
-            guard Darwin.listen(fd, IOSUseProtocol.XCConstants.xctestHolderControlListenBacklog) == 0 else {
+            guard posixListen(fd, IOSUseProtocol.XCConstants.xctestHolderControlListenBacklog) == 0 else {
                 throw CLIParseError.invalidValue("failed to listen on holder control socket: errno \(errno)")
             }
             lock.lock()
@@ -233,7 +238,7 @@ final class XCTestSessionHolderControlServer {
                 self?.acceptLoop()
             }
         } catch {
-            Darwin.close(fd)
+            posixClose(fd)
             throw error
         }
     }
@@ -250,8 +255,8 @@ final class XCTestSessionHolderControlServer {
         lock.unlock()
 
         if fd >= 0 {
-            Darwin.shutdown(fd, SHUT_RDWR)
-            Darwin.close(fd)
+            posixShutdown(fd, Int32(SHUT_RDWR))
+            posixClose(fd)
         }
         try? FileManager.default.removeItem(atPath: socketPath)
     }
@@ -266,7 +271,7 @@ final class XCTestSessionHolderControlServer {
         while !isStopped {
             let fd = listenerFD
             guard fd >= 0 else { return }
-            let client = Darwin.accept(fd, nil, nil)
+            let client = posixAccept(fd, nil, nil)
             if client < 0 {
                 if isStopped { return }
                 if errno == EINTR { continue }
@@ -282,8 +287,8 @@ final class XCTestSessionHolderControlServer {
 
     private func handle(clientFD: Int32) {
         defer {
-            Darwin.shutdown(clientFD, SHUT_RDWR)
-            Darwin.close(clientFD)
+            posixShutdown(clientFD, Int32(SHUT_RDWR))
+            posixClose(clientFD)
         }
         do {
             let request = try XCTestSessionHolderControlSocketCodec.readRequest(
@@ -322,8 +327,8 @@ enum XCTestSessionHolderControlClient {
     static func request(socketPath: String, command: String, timeoutSeconds: Double) throws -> XCTestSessionHolderControlResponse {
         let fd = try connect(path: socketPath)
         defer {
-            Darwin.shutdown(fd, SHUT_RDWR)
-            Darwin.close(fd)
+            posixShutdown(fd, Int32(SHUT_RDWR))
+            posixClose(fd)
         }
         try XCTestSessionHolderControlSocketCodec.writeRequest(
             XCTestSessionHolderControlRequest(command: command),
@@ -333,7 +338,7 @@ enum XCTestSessionHolderControlClient {
     }
 
     private static func connect(path: String) throws -> Int32 {
-        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = posixSocket(AF_UNIX, posixStreamSocketType, 0)
         guard fd >= 0 else {
             throw CLIParseError.invalidValue("failed to create holder control client socket: errno \(errno)")
         }
@@ -342,7 +347,7 @@ enum XCTestSessionHolderControlClient {
             var address = try unixSocketAddress(path: path)
             let result = withUnsafePointer(to: &address) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                    posixConnect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
                 }
             }
             guard result == 0 else {
@@ -350,7 +355,7 @@ enum XCTestSessionHolderControlClient {
             }
             return fd
         } catch {
-            Darwin.close(fd)
+            posixClose(fd)
             throw error
         }
     }
@@ -381,7 +386,7 @@ enum XCTestSessionHolderControlSocketCodec {
                 continue
             }
             var byte: UInt8 = 0
-            let count = Darwin.read(fd, &byte, 1)
+            let count = posixRead(fd, &byte, 1)
             if count == 1 {
                 if byte == UInt8(ascii: "\n") {
                     return data
@@ -411,7 +416,7 @@ private func bindUnixSocket(fd: Int32, path: String) throws {
     var address = try unixSocketAddress(path: path)
     let result = withUnsafePointer(to: &address) {
         $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-            Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            posixBind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
         }
     }
     guard result == 0 else {
@@ -426,7 +431,9 @@ private func unixSocketAddress(path: String) throws -> sockaddr_un {
         throw CLIParseError.invalidValue("holder control socket path too long: \(path)")
     }
     var address = sockaddr_un()
+    #if os(macOS)
     address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+    #endif
     address.sun_family = sa_family_t(AF_UNIX)
     withUnsafeMutablePointer(to: &address.sun_path) { pointer in
         pointer.withMemoryRebound(to: Int8.self, capacity: maxLength + 1) { raw in

@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 
 private enum RemoteXPCTrace {
@@ -807,16 +812,10 @@ enum RemoteServiceDiscoveryClient {
 
 enum TCPConnector {
     static func connect(host: String, port: Int) throws -> Int32 {
-        var hints = addrinfo(
-            ai_flags: 0,
-            ai_family: AF_UNSPEC,
-            ai_socktype: SOCK_STREAM,
-            ai_protocol: IPPROTO_TCP,
-            ai_addrlen: 0,
-            ai_canonname: nil,
-            ai_addr: nil,
-            ai_next: nil
-        )
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = posixStreamSocketType
+        hints.ai_protocol = Int32(IPPROTO_TCP)
         var results: UnsafeMutablePointer<addrinfo>?
         let code = getaddrinfo(host, "\(port)", &hints, &results)
         guard code == 0, let results else {
@@ -827,14 +826,14 @@ enum TCPConnector {
         var cursor: UnsafeMutablePointer<addrinfo>? = results
         var lastErrno: Int32 = 0
         while let info = cursor {
-            let fd = Darwin.socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
+            let fd = posixSocket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
             if fd >= 0 {
                 setSocketNoSigPipe(fd)
-                if Darwin.connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0 {
+                if posixConnect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0 {
                     return fd
                 }
                 lastErrno = errno
-                Darwin.close(fd)
+                posixClose(fd)
             } else {
                 lastErrno = errno
             }
@@ -870,7 +869,7 @@ final class OwnedFDDeviceStream: DeviceStream {
     func readAvailable(maxBytes: Int, timeoutSeconds: Double) throws -> Data {
         guard waitForReadable(fd: fd, timeoutSeconds: timeoutSeconds) else { return Data() }
         var buffer = [UInt8](repeating: 0, count: maxBytes)
-        let n = Darwin.read(fd, &buffer, maxBytes)
+        let n = posixRead(fd, &buffer, maxBytes)
         if n > 0 { return Data(buffer.prefix(n)) }
         if n == 0 { throw DeviceStreamError.closed("RSD TCP stream") }
         if errno == EINTR || errno == EAGAIN { return Data() }
@@ -880,7 +879,7 @@ final class OwnedFDDeviceStream: DeviceStream {
     func close() {
         guard !closed else { return }
         closed = true
-        Darwin.close(fd)
+        posixClose(fd)
     }
 }
 

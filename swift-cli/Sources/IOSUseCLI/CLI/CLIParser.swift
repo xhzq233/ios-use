@@ -94,7 +94,7 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .du, .start, .stop, .attach, .detach, .status, .install, .apps, .open,
+            case .du, .start, .stop, .attach, .detach, .status, .install, .uninstall, .apps, .open,
                     .config, .appLifecycle, .driver, .mediaImport,
                     .debug, .uiTree:
                 break
@@ -116,7 +116,7 @@ public enum CLIParser {
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "--target", "--depth", "--device", "-d", "-i"
+            "--app", "--target", "--depth", "--device", "--connection", "--device-model", "-d", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -150,7 +150,7 @@ public enum CLIParser {
             "--content", "--delete", "--to", "--from", "--dir",
             "--distance", "--match", "--fps", "--index", "--process",
             "--pid", "--output", "--runtime", "--app", "--target",
-            "--depth", "-i",
+            "--depth", "--connection", "--device-model", "-i",
         ]
         var normalized: [String] = []
         var deviceID: String?
@@ -248,6 +248,11 @@ public enum CLIParser {
         var timeoutWasProvided = false
         while let arg = parser.consume() {
             switch arg {
+            case "--connection":
+                guard options.connectionPath == nil else {
+                    throw CLIParseError.invalidValue("--connection may only be provided once")
+                }
+                options.connectionPath = try parser.value(for: arg)
             case "--host", "--port":
                 endpointArguments.append(arg)
                 endpointArguments.append(try parser.valueAllowingLeadingDash(for: arg))
@@ -285,6 +290,13 @@ public enum CLIParser {
                 }
                 options.udid = arg
             }
+        }
+        if options.connectionPath != nil {
+            guard endpointArguments.isEmpty, options.udid == nil, !options.mac,
+                  options.appPath == nil, !options.log, !timeoutWasProvided else {
+                throw CLIParseError.invalidValue("--connection cannot be combined with a UDID, --host/--port, --mac, --app, --log, or --timeout")
+            }
+            return options
         }
         if !endpointArguments.isEmpty {
             guard options.udid == nil, !options.mac, options.appPath == nil,
