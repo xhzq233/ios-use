@@ -620,6 +620,8 @@ final class CLIParserTests: XCTestCase {
         )
         XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id", ""]))
         XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id"]))
+        XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id", "--json", "com.example.fixture"]))
+        XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id", "-d", "phone", "com.example.fixture"]))
 
         XCTAssertEqual(
             try CLIParser.parse(["dismissAlert", "--index", "0"]),

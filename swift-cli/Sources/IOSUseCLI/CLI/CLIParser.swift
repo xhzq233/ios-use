@@ -111,7 +111,7 @@ public enum CLIParser {
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "--target", "--depth", "--device", "--connection", "--device-model", "-d", "-i"
+            "--app", "--target", "--depth", "--device", "--connection", "--device-model", "--bundle-id", "-d", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -145,7 +145,7 @@ public enum CLIParser {
             "--content", "--delete", "--to", "--from", "--dir",
             "--distance", "--match", "--fps", "--index", "--process",
             "--pid", "--output", "--runtime", "--app", "--target",
-            "--depth", "--connection", "--device-model", "-i",
+            "--depth", "--connection", "--device-model", "--bundle-id", "-i",
         ]
         var normalized: [String] = []
         var deviceID: String?
