@@ -18,6 +18,7 @@ extension IOSUseCLI {
                 if options.dom {
                     return try OpenURLService.openWithDom(
                         url: validatedURL,
+                        bundleID: options.bundleID,
                         session: options.session,
                         paths: paths
                     )
@@ -28,12 +29,14 @@ extension IOSUseCLI {
                     resolved = try OpenURLService
                         .openHostSideIfAvailable(
                             url: validatedURL,
+                            bundleID: options.bundleID,
                             udid: options.session.udid,
                             deviceType: hostDeviceTypeHint,
                             paths: paths
                         )
                         ?? OpenURLService.openHostSideIfAvailable(
                             url: validatedURL,
+                            bundleID: options.bundleID,
                             session: options.session,
                             paths: paths
                         )
@@ -41,6 +44,7 @@ extension IOSUseCLI {
                     resolved = try OpenURLService
                         .openHostSideIfAvailable(
                             url: validatedURL,
+                            bundleID: options.bundleID,
                             session: options.session,
                             paths: paths
                         )

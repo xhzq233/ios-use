@@ -127,6 +127,7 @@ ios-use apps -d phone
 ios-use install /path/to/signed-App.ipa -d phone --json
 ios-use activateApp com.example.app --terminateExisting --log -d phone --json
 ios-use open 'myapp://page' -d phone --dom
+ios-use open 'myapp://page' -d phone --bundle-id com.example.app --dom
 ios-use tap '<label-from-dom>' -d phone --dom
 ios-use uninstall com.example.app -d phone --json
 ios-use stop -d phone

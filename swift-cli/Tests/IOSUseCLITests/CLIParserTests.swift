@@ -615,6 +615,13 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["open", "fixture://page", "--bundle-id=com.example.fixture", "--dom"]),
+            .open(OpenURLOptions(url: "fixture://page", bundleID: "com.example.fixture", dom: true))
+        )
+        XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id", ""]))
+        XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id"]))
+
+        XCTAssertEqual(
             try CLIParser.parse(["dismissAlert", "--index", "0"]),
             .driver(.dismissAlert(DismissAlertOptions(selection: .index(0))))
         )

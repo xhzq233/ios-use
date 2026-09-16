@@ -3,7 +3,7 @@ import CoreFoundation
 import IOSUseProtocol
 
 protocol RealDeviceURLLaunching {
-    func open(url: String, udid: String) throws
+    func open(url: String, udid: String, bundleID: String?) throws
 }
 
 protocol CoreDeviceAppManaging {
@@ -50,7 +50,7 @@ final class CoreDeviceURLLauncher: RealDeviceURLLaunching {
         self.init(dependencies: .live(eventSink: eventSink), eventSink: eventSink)
     }
 
-    func open(url: String, udid: String) throws {
+    func open(url: String, udid: String, bundleID: String? = nil) throws {
         let session = try dependencies.startTunnel(udid)
         defer {
             session.close()
@@ -68,7 +68,7 @@ final class CoreDeviceURLLauncher: RealDeviceURLLaunching {
 
         eventSink?("opening URL through CoreDevice appservice payloadURL")
         _ = try appService.launchApplication(
-            bundleID: IOSUseProtocol.springboardBundleId,
+            bundleID: bundleID ?? IOSUseProtocol.springboardBundleId,
             arguments: [],
             terminateExisting: false,
             startSuspended: false,

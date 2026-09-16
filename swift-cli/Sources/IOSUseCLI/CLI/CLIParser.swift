@@ -838,16 +838,23 @@ public enum CLIParser {
 
     private static func parseOpen(_ parser: inout ArgumentParser) throws -> OpenURLOptions {
         let url = try parser.requiredPositional("url")
+        var bundleID: String?
         var session = SessionOptions()
         var dom = false
         while let arg = parser.consume() {
             if arg == "--dom" {
                 dom = true
+            } else if arg == "--bundle-id" {
+                let value = try parser.value(for: arg)
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw CLIParseError.invalidValue("--bundle-id requires a nonempty App bundle ID")
+                }
+                bundleID = value
             } else {
                 try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return OpenURLOptions(url: url, session: session, dom: dom)
+        return OpenURLOptions(url: url, bundleID: bundleID, session: session, dom: dom)
     }
 
     private static func parseAppLifecycle(_ parser: inout ArgumentParser, action: AppLifecycleOptions.Action) throws -> AppLifecycleOptions {

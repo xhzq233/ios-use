@@ -497,16 +497,25 @@ enum CLIHelp {
             )
         case "open":
             return """
-            Usage: ios-use open <url> [--udid <udid>] [--dom] [--verbose] [--json]
+            Usage: ios-use open <url> [--bundle-id <bundleId>] [--udid <udid>] [--dom] [--verbose] [--json]
 
             Open a URL on the device using host-side device services.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
+              --bundle-id <bundleId>  Deliver the URL to this App without terminating its running instance
               --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
               --dom          Return the first fresh DOM available after URL dispatch
               --verbose      Enable verbose output
               --json         Print the common machine-readable envelope
+
+            Explicit App delivery supports local and remote real devices. On the Mac
+            backend, the bundle ID must match the active App. Simulator supports only
+            system URL routing (omit --bundle-id). Without --bundle-id, real devices
+            retain system routing and the Mac backend uses its active App.
+            --dom waits for the specified App when given; it does not prove that the
+            deep-link destination has finished loading. Custom schemes must be
+            registered by the target App; HTTP(S) delivery is decided by the OS.
 
             """
         case "dismissAlert":

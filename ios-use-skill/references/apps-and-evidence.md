@@ -13,6 +13,7 @@ ios-use activateApp com.example.app --terminateExisting --log
 ios-use terminateApp com.example.app
 ios-use open "https://example.com"
 ios-use open "https://example.com" --dom
+ios-use open "myapp://page" --bundle-id com.example.app --dom
 ios-use dismissAlert --only-button
 ios-use dismissAlert --label "Allow Full Access"
 ```
@@ -22,6 +23,9 @@ ios-use dismissAlert --label "Allow Full Access"
   host launch acknowledgement is sufficient.
 - `open` only dispatches the URL by default. Add `--dom` for immediate foreground
   UI evidence, then use `waitFor` for the destination condition that matters.
+  Use `--bundle-id` to select an App on a local or remote real device without
+  restarting it. On Mac it must match the active App; Simulator does not support
+  explicit handler selection. Omit it to keep the backend's normal URL routing.
 - `dismissAlert` requires an explicit or unambiguous button choice. Use
   `--only-button` for a one-button alert, `--label` or `--index` for a known
   multi-button alert, and `--primary` only when the visual trailing/top heuristic

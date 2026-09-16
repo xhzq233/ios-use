@@ -204,11 +204,13 @@ public struct DDIMountOptions: Equatable, Sendable {
 
 public struct OpenURLOptions: Equatable, Sendable {
     public var url: String
+    public var bundleID: String?
     public var session: SessionOptions
     public var dom: Bool
 
-    public init(url: String, session: SessionOptions = SessionOptions(), dom: Bool = false) {
+    public init(url: String, bundleID: String? = nil, session: SessionOptions = SessionOptions(), dom: Bool = false) {
         self.url = url
+        self.bundleID = bundleID
         self.session = session
         self.dom = dom
     }
