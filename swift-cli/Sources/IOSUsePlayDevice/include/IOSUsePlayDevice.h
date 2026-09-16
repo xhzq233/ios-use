@@ -2,6 +2,7 @@
 #ifndef IOS_USE_PLAY_DEVICE_H
 #define IOS_USE_PLAY_DEVICE_H
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 typedef struct {
     const char *name;
@@ -49,8 +50,8 @@ static inline const char *IOSUsePlayDeviceLocalizedModel(void) { return IOSUsePl
 #define IOSUsePlayDeviceLogicalWidth (IOSUsePlayDeviceCurrent()->logicalWidth)
 #define IOSUsePlayDeviceLogicalHeight (IOSUsePlayDeviceCurrent()->logicalHeight)
 #define IOSUsePlayDeviceScale (IOSUsePlayDeviceCurrent()->scale)
-#define IOSUsePlayDeviceNativeWidth (IOSUsePlayDeviceLogicalWidth * IOSUsePlayDeviceScale)
-#define IOSUsePlayDeviceNativeHeight (IOSUsePlayDeviceLogicalHeight * IOSUsePlayDeviceScale)
+#define IOSUsePlayDeviceNativeWidth ((size_t)(IOSUsePlayDeviceLogicalWidth * IOSUsePlayDeviceScale))
+#define IOSUsePlayDeviceNativeHeight ((size_t)(IOSUsePlayDeviceLogicalHeight * IOSUsePlayDeviceScale))
 #define IOSUsePlayDeviceSafeAreaTop (IOSUsePlayDeviceCurrent()->safeAreaTop)
 #define IOSUsePlayDeviceSafeAreaLeft 0
 #define IOSUsePlayDeviceSafeAreaBottom (IOSUsePlayDeviceCurrent()->safeAreaBottom)

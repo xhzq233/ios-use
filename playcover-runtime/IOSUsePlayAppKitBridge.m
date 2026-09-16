@@ -1,4 +1,6 @@
 #import "IOSUsePlayAppKitBridge.h"
+#import "IOSUsePlayDeviceChrome.h"
+#import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayDevice.h"
 #import "IOSUsePlayHookRegistry.h"
 #import "IOSUsePlaySafeAreaCompatibility.h"
@@ -531,7 +533,7 @@ static BOOL IOSUseBridgeWindowPolicyIsHost(id window) {
     const NSInteger resizable = 1 << 3;
     NSInteger styleMask = IOSUseBridgeInteger(window, @"styleMask");
     return (styleMask & titled) != 0 &&
-        (styleMask & resizable) == 0 &&
+        ((styleMask & resizable) != 0) == IOSUsePlayCanvasIsResizable() &&
         IOSUseBridgeBool(window, @"isOpaque") &&
         IOSUseBridgeBool(window, @"isMovable") &&
         !IOSUseBridgeBool(window, @"ignoresMouseEvents");
@@ -623,6 +625,11 @@ IOSUseBridgeSceneInventory(void) {
 }
 
 static BOOL IOSUseBridgeRectIsDeviceScreen(CGRect rect) {
+    if (IOSUsePlayCanvasIsResizable()) {
+        return isfinite(rect.size.width) && isfinite(rect.size.height) &&
+            rect.size.width > 0 && rect.size.height > 0 &&
+            fabs(rect.origin.x) < 0.01 && fabs(rect.origin.y) < 0.01;
+    }
     return IOSUseBridgeApproximatelyEqual(rect.origin.x, 0) &&
         IOSUseBridgeApproximatelyEqual(rect.origin.y, 0) &&
         IOSUseBridgeApproximatelyEqual(
@@ -940,6 +947,13 @@ IOSUseBridgeLockSceneToFixedCanvas(UIWindow *uiWindow) {
             @"UIKit scene size restrictions are unavailable";
         return IOSUsePlaySceneGeometryState;
     }
+    if (IOSUsePlayCanvasIsResizable()) {
+        // Leave the App's constraints intact, including changes after launch.
+        IOSUsePlaySceneGeometryScene = scene;
+        IOSUsePlaySceneGeometryState = IOSUseBridgeSceneGeometryStateReady;
+        IOSUsePlaySceneGeometryFailure = nil;
+        return IOSUsePlaySceneGeometryState;
+    }
     CGSize fixed = IOSUseBridgeFixedSceneCanvasSize();
     // The iPhone model remains fixed in UIKit. Catalyst owns how that logical
     // scene is presented in its native, non-resizable AppKit window.
@@ -975,16 +989,19 @@ IOSUseBridgeLockSceneToFixedCanvas(UIWindow *uiWindow) {
 }
 
 static BOOL IOSUseBridgeApplyWindowPolicy(id window) {
+    // The automatic separator is drawn into the first canvas pixels.
+    IOSUseBridgeSetInteger(window, @"setTitlebarSeparatorStyle:", 1);
     // Preserve UIKitMacHelper's native titled window and disable only public
     // resizing. Catalyst remains the sole owner of content size and scene
     // presentation scale.
     const NSInteger resizable = 1 << 3;
     NSInteger styleMask = IOSUseBridgeInteger(window, @"styleMask");
-    if ((styleMask & resizable) != 0) {
+    NSInteger desiredStyle = IOSUsePlayCanvasIsResizable() ? styleMask | resizable : styleMask & ~resizable;
+    if (styleMask != desiredStyle) {
         IOSUseBridgeSetInteger(
             window,
             @"setStyleMask:",
-            styleMask & ~resizable
+            desiredStyle
         );
     }
     return IOSUseBridgeWindowPolicyIsHost(window);
@@ -2291,6 +2308,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             UISceneWillDeactivateNotification,
             UISceneDidEnterBackgroundNotification,
             UISceneDidDisconnectNotification,
+            @"NSWindowDidResizeNotification",
             @"NSWindowDidChangeBackingPropertiesNotification",
             @"NSWindowDidChangeScreenNotification",
         ]) {
@@ -2308,6 +2326,14 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     // Window reconciliation starts only after UIKit creates a scene.
 }
 
+static CGSize IOSUsePlayObservedCanvas;
++ (CGSize)automationCanvasSize {
+    @synchronized(self) {
+        return IOSUsePlayObservedCanvas.width > 0 ? IOSUsePlayObservedCanvas
+            : CGSizeMake(IOSUsePlayDeviceLogicalWidth, IOSUsePlayDeviceLogicalHeight);
+    }
+}
+
 + (BOOL)configureFixedWindow:(NSError **)error {
     NSParameterAssert(NSThread.isMainThread);
     IOSUsePlayWindowAttemptCount += 1;
@@ -2315,6 +2341,9 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     id window = uiWindow == nil
         ? nil
         : IOSUseBridgeWindowForUIKitWindow(uiWindow, NO);
+    if (uiWindow.bounds.size.width > 0 && uiWindow.bounds.size.height > 0) {
+        @synchronized(self) { IOSUsePlayObservedCanvas = uiWindow.bounds.size; }
+    }
     NSError *safeAreaError = nil;
     BOOL safeAreaReconciled =
         IOSUsePlaySafeAreaCompatibilityReconcile(&safeAreaError);
@@ -2370,6 +2399,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         return NO;
     }
     IOSUseBridgeLayoutIfNeeded(IOSUsePlayHostContentView);
+    IOSUsePlayDeviceChromeUpdate(window);
     id sceneRenderView =
         IOSUseBridgeSceneRenderView(IOSUsePlayHostContentView);
     id inputRenderView =
@@ -2418,7 +2448,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         : nil;
     BOOL geometryExact =
         IOSUseBridgeWindowPolicyIsHost(window) &&
-        sceneFixed &&
+        (sceneFixed || IOSUsePlayCanvasIsResizable()) &&
         sceneGeometryReady &&
         currentContent == IOSUsePlayHostContentView &&
         sceneRenderView != nil &&

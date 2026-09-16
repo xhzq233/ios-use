@@ -121,3 +121,5 @@ and empty environment entries. `PlayedAppleDB.swift` reads only the captured
 values. This contract intentionally does not swizzle `NSProcessInfo`, hide
 loaded images, rewrite the Mach-O platform, or implement generic anti-debug
 behavior.
+
+Resizable scene mode lets the two FBS scene geometry wrappers return their original geometry, while retaining the selected display/device identity. It does not use upstream PlayScreen’s unrestricted min/max override; App scene restrictions are preserved.

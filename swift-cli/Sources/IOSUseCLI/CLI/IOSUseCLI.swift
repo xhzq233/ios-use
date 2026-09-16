@@ -921,14 +921,19 @@ public struct IOSUseCLI: Sendable {
         json: Bool
     ) -> CLIResult {
         do {
-            if let model = options.macDevice {
-                let preset = try PlayCoverDevicePreset.named(model)
-                try preset.save(paths: paths)
+            if options.macDevice != nil || options.macChrome != nil || options.macWindowMode != nil {
+                var selection = try PlayCoverDevicePreset.Selection.load(paths: paths)
+                let preset = try PlayCoverDevicePreset.named(options.macDevice ?? selection.preset)
+                selection.preset = preset.name
+                if let chrome = options.macChrome { selection.chrome = chrome }
+                if let mode = options.macWindowMode { selection.windowMode = mode }
+                try selection.save(paths: paths)
                 return json
                     ? MachineOutput.success(command: "config", data: .object([
-                        "device": preset.machineData, "appliesOn": .string("nextColdStart")
+                        "device": preset.machineData, "deviceChrome": .string(selection.chrome ?? "on"),
+                        "windowMode": .string(selection.windowMode ?? "fixed"), "appliesOn": .string("nextColdStart")
                     ]))
-                    : CLIResult(exitCode: 0, stdout: "Mac device: \(preset.name) (\(Int(preset.logicalSize.width)) × \(Int(preset.logicalSize.height)), \(Int(preset.scale))×. Applies on the next cold start; stop the running App first.\n")
+                    : CLIResult(exitCode: 0, stdout: "Mac device: \(preset.name) (\(Int(preset.logicalSize.width)) × \(Int(preset.logicalSize.height)), \(Int(preset.scale))×, chrome \(selection.chrome ?? "on"), window \(selection.windowMode ?? "fixed"). Applies on the next cold start; stop the running App first.\n")
             }
             let evidence = try playCoverSignerInitializer()
             if json {

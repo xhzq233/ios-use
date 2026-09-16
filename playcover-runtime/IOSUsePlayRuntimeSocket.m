@@ -9,6 +9,7 @@
 #import "IOSUsePlayRuntimeStdio.h"
 #import "IOSUsePlayRuntimeFrida.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayCanvas.h"
 #import "IOSUsePlaySwiftBridge.h"
 
 #import <UIKit/UIKit.h>
@@ -32,10 +33,10 @@
 static const NSUInteger IOSUseMaximumRequestFrameSize = 64 * 1024;
 static const NSUInteger IOSUseMaximumResponseFrameSize = 16 * 1024 * 1024;
 static const NSTimeInterval IOSUseSocketIOTimeoutSeconds = 15;
-#define IOSUseRuntimeDeviceLogicalWidth ((CGFloat)IOSUsePlayDeviceLogicalWidth)
-#define IOSUseRuntimeDeviceLogicalHeight ((CGFloat)IOSUsePlayDeviceLogicalHeight)
-#define IOSUseRuntimeDeviceNativeWidth ((CGFloat)IOSUsePlayDeviceNativeWidth)
-#define IOSUseRuntimeDeviceNativeHeight ((CGFloat)IOSUsePlayDeviceNativeHeight)
+#define IOSUseRuntimeDeviceLogicalWidth ((CGFloat)IOSUsePlayCanvasWidth)
+#define IOSUseRuntimeDeviceLogicalHeight ((CGFloat)IOSUsePlayCanvasHeight)
+#define IOSUseRuntimeDeviceNativeWidth ((CGFloat)IOSUsePlayCanvasNativeWidth)
+#define IOSUseRuntimeDeviceNativeHeight ((CGFloat)IOSUsePlayCanvasNativeHeight)
 #define IOSUseRuntimeDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
 #define IOSUseRuntimeDeviceSafeAreaTop ((CGFloat)IOSUsePlayDeviceSafeAreaTop)
 
@@ -675,7 +676,7 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         [host[@"hostPolicy"] boolValue] &&
         [host[@"publicTitleBar"] boolValue] &&
         [host[@"titleVisible"] boolValue] &&
-        ![host[@"resizable"] boolValue] &&
+        [host[@"resizable"] boolValue] == IOSUsePlayCanvasIsResizable() &&
         title.length > 0 && [title isEqualToString:expectedTitle] &&
         IOSUseSocketRectFromJSON(host[@"frame"], &frame) &&
         IOSUseSocketRectFromJSON(
@@ -937,13 +938,13 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
         };
         BOOL exact =
             fabs(logical.size.width -
-                IOSUseRuntimeDeviceLogicalWidth) <= 0.01 &&
+                IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
             fabs(logical.size.height -
-                IOSUseRuntimeDeviceLogicalHeight) <= 0.01 &&
+                IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
             fabs(native.size.width -
-                IOSUseRuntimeDeviceNativeWidth) <= 0.01 &&
+                IOSUsePlayDeviceNativeWidth) <= 0.01 &&
             fabs(native.size.height -
-                IOSUseRuntimeDeviceNativeHeight) <= 0.01 &&
+                IOSUsePlayDeviceNativeHeight) <= 0.01 &&
             fabs(screenScale - IOSUseRuntimeDeviceScale) <= 0.01 &&
             fabs(nativeScale - IOSUseRuntimeDeviceScale) <= 0.01 &&
             fabs(windowBounds.size.width -
@@ -1010,12 +1011,12 @@ static NSDictionary<NSString *, id> *IOSUseInitialUISnapshot(void) {
         IOSUsePlayRuntimeRequiredHooksReady();
     NSDictionary<NSString *, id> *geometry = @{
         @"logical": @{
-            @"width": @(IOSUsePlayDeviceLogicalWidth),
-            @"height": @(IOSUsePlayDeviceLogicalHeight),
+            @"width": @(IOSUsePlayCanvasWidth),
+            @"height": @(IOSUsePlayCanvasHeight),
         },
         @"native": @{
-            @"width": @(IOSUsePlayDeviceNativeWidth),
-            @"height": @(IOSUsePlayDeviceNativeHeight),
+            @"width": @(IOSUsePlayCanvasNativeWidth),
+            @"height": @(IOSUsePlayCanvasNativeHeight),
         },
         @"scale": @(IOSUsePlayDeviceScale),
         @"nativeScale": @(IOSUsePlayDeviceScale),

@@ -873,6 +873,22 @@ final class PlayCoverDriverClientTests: XCTestCase {
         }
     }
 
+    func testResizableDOMUsesCurrentViewportAndRejectsInvalidSizes() throws {
+        for size in [CGSize(width: 669, height: 845), CGSize(width: 900, height: 600)] {
+            var payload = PlayCoverRuntimeDOMPayload(app: "Demo",
+                windowSize: .init(x: size.width, y: size.height), raw: "", snapshotGeneration: 2,
+                elements: [makeElement(generation: 2)])
+            payload.windowMode = "resizable"
+            let result = try makeClient(response: .dom(payload)).dom(raw: false, fresh: true, waitQuiescence: false)
+            XCTAssertEqual(result.windowSize.x, size.width)
+            XCTAssertEqual(result.windowSize.y, size.height)
+        }
+        var empty = PlayCoverRuntimeDOMPayload(app: "Demo", windowSize: .init(x: 0, y: 845),
+            raw: "", snapshotGeneration: 2, elements: [])
+        empty.windowMode = "resizable"
+        XCTAssertThrowsError(try makeClient(response: .dom(empty)).dom(raw: false, fresh: true, waitQuiescence: false))
+    }
+
     func testActionSucceedsWithoutGenericVisualPostcondition()
         throws
     {

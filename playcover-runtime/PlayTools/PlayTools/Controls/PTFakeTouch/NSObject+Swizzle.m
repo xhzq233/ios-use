@@ -205,6 +205,7 @@ static void IOSUsePlayInstallRequiredIdentityHook(
                 @selector(frame)
             );
     }
+    if (strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0) return original;
     return [PlayScreen frame:original];
 }
 
@@ -221,6 +222,7 @@ static void IOSUsePlayInstallRequiredIdentityHook(
                 @selector(bounds)
             );
     }
+    if (strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0) return original;
     return [PlayScreen bounds:original];
 }
 

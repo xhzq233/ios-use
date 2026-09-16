@@ -19,4 +19,20 @@ final class PlayCoverDevicePresetTests: XCTestCase {
         XCTAssertEqual(try PlayCoverDevicePreset.configured(paths: paths).logicalSize, configured.logicalSize)
         XCTAssertThrowsError(try CLIParser.parse(["config", "--device-model", "ipad-pro-11"]))
     }
+    func testWindowPreferencesSurviveDeviceChangesAndInvalidInput() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let environment = ["IOS_USE_HOME": directory.path]
+        let cli = IOSUseCLI(environment: environment)
+        let paths = IOSUsePaths.resolve(environment: environment)
+        XCTAssertEqual(cli.run(arguments: ["config", "--mac", "--device-chrome", "off", "--window-mode", "resizable"]).exitCode, 0)
+        XCTAssertEqual(cli.run(arguments: ["config", "--mac", "--device-model", "ipad-pro-11"]).exitCode, 0)
+        let selection = try PlayCoverDevicePreset.Selection.load(paths: paths)
+        XCTAssertEqual(selection.chrome, "off")
+        XCTAssertEqual(selection.windowMode, "resizable")
+        XCTAssertNotEqual(cli.run(arguments: ["config", "--mac", "--window-mode", "invalid"]).exitCode, 0)
+        XCTAssertEqual(try PlayCoverDevicePreset.Selection.load(paths: paths).windowMode, selection.windowMode)
+        XCTAssertThrowsError(try CLIParser.parse(["config", "--device-chrome", "off"]))
+    }
+
 }

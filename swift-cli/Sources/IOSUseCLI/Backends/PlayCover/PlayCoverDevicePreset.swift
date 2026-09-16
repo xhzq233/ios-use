@@ -43,7 +43,9 @@ struct PlayCoverDevicePreset: Equatable {
     func save(paths: IOSUsePaths) throws {
         let directory = URL(fileURLWithPath: paths.playcover)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try JSONEncoder().encode(Selection(preset: name)).write(to: directory.appendingPathComponent("device.json"), options: .atomic)
+        var selection = try Selection.load(paths: paths)
+        selection.preset = name
+        try selection.save(paths: paths)
     }
 
     var machineData: MachineValue {
@@ -53,5 +55,22 @@ struct PlayCoverDevicePreset: Equatable {
                  "logicalHeight": .integer(Int(logicalSize.height)), "scale": .integer(Int(scale))])
     }
 
-    private struct Selection: Codable { let preset: String }
+    struct Selection: Codable {
+        var preset: String
+        var chrome: String? = nil
+        var windowMode: String? = nil
+
+        static func load(paths: IOSUsePaths) throws -> Self {
+            let file = URL(fileURLWithPath: paths.playcover).appendingPathComponent("device.json")
+            guard FileManager.default.fileExists(atPath: file.path) else {
+                return Self(preset: PlayCoverDevicePreset.defaultPreset.name)
+            }
+            return try JSONDecoder().decode(Self.self, from: Data(contentsOf: file))
+        }
+        func save(paths: IOSUsePaths) throws {
+            let directory = URL(fileURLWithPath: paths.playcover)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try JSONEncoder().encode(self).write(to: directory.appendingPathComponent("device.json"), options: .atomic)
+        }
+    }
 }

@@ -12,6 +12,7 @@
 #import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlaySafeAreaCompatibility.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayCanvas.h"
 
 #import <Photos/Photos.h>
 #import <UIKit/UIKit.h>
@@ -333,11 +334,11 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeFullFrameEvidence(void) {
         @"logicalRect": @{
             @"x": @0,
             @"y": @0,
-            @"width": @(IOSUsePlayDeviceLogicalWidth),
-            @"height": @(IOSUsePlayDeviceLogicalHeight),
+            @"width": @(IOSUsePlayCanvasWidth),
+            @"height": @(IOSUsePlayCanvasHeight),
         },
-        @"pixelWidth": @(IOSUsePlayDeviceNativeWidth),
-        @"pixelHeight": @(IOSUsePlayDeviceNativeHeight),
+        @"pixelWidth": @(IOSUsePlayCanvasNativeWidth),
+        @"pixelHeight": @(IOSUsePlayCanvasNativeHeight),
         @"scale": @(IOSUsePlayDeviceScale),
         @"uncropped": @YES,
         @"safeAreaCropped": @NO,

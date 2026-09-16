@@ -1,5 +1,6 @@
 #import "IOSUsePlayWindowCompositor.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayCanvas.h"
 
 #import <objc/message.h>
 
@@ -8,8 +9,8 @@
 typedef id (*IOSUseCompositorSendID)(id, SEL);
 
 static const CGFloat IOSUseCompositorGeometryTolerance = 0.01;
-#define IOSUseCompositorDeviceLogicalWidth ((CGFloat)IOSUsePlayDeviceLogicalWidth)
-#define IOSUseCompositorDeviceLogicalHeight ((CGFloat)IOSUsePlayDeviceLogicalHeight)
+#define IOSUseCompositorDeviceLogicalWidth ((CGFloat)IOSUsePlayCanvasWidth)
+#define IOSUseCompositorDeviceLogicalHeight ((CGFloat)IOSUsePlayCanvasHeight)
 #define IOSUseCompositorDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
 static const CGBitmapInfo IOSUseCompositorBitmapInfo = (CGBitmapInfo)(
     (uint32_t)kCGBitmapByteOrder32Little |
@@ -836,6 +837,10 @@ NSArray *IOSUsePlayUnionCaptureWindows(
         }
     }
     for (id window in applicationWindows) {
+        // Only our decoration class is excluded; real App panels stay in capture.
+        if ([window isKindOfClass:NSClassFromString(@"IOSUsePlayChromeWindow")]) {
+            continue;
+        }
         if (!append(window, NO)) {
             if (failure != NULL) {
                 *failure = appendFailure;
@@ -1151,8 +1156,8 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
         if (failure != NULL) {
             *failure = [NSString stringWithFormat:
                 @"logical device frame is not origin-zero %ldx%ld",
-                (long)IOSUsePlayDeviceLogicalWidth,
-                (long)IOSUsePlayDeviceLogicalHeight
+                (long)IOSUsePlayCanvasWidth,
+                (long)IOSUsePlayCanvasHeight
             ];
         }
         return NULL;
@@ -1319,8 +1324,8 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
         return NULL;
     }
 
-    size_t width = IOSUsePlayDeviceNativeWidth;
-    size_t height = IOSUsePlayDeviceNativeHeight;
+    size_t width = IOSUsePlayCanvasNativeWidth;
+    size_t height = IOSUsePlayCanvasNativeHeight;
     size_t rowBytes = width * 4;
     void *pixels = calloc(height, rowBytes);
     if (pixels == NULL) {

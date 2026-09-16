@@ -128,6 +128,8 @@ enum PlayCoverSlotLauncher {
                 runtimeSocketPath: runtimeSocketPath,
                 playChainPath: paths.playcoverPlayChain,
                 devicePreset: try PlayCoverDevicePreset.configured(paths: paths).name,
+                deviceChrome: try PlayCoverDevicePreset.Selection.load(paths: paths).chrome ?? "on",
+                windowMode: try PlayCoverDevicePreset.Selection.load(paths: paths).windowMode ?? "fixed",
                 stdioLog: stdioLog,
                 deadline: deadline,
                 submitted: &submitted
@@ -274,6 +276,8 @@ enum PlayCoverSlotLauncher {
         runtimeSocketPath: String,
         playChainPath: String,
         devicePreset: String = PlayCoverDevicePreset.defaultPreset.name,
+        deviceChrome: String = "on",
+        windowMode: String = "fixed",
         stdioLog: PlayCoverStdioLogIdentity?,
         deadline: TimeInterval,
         submitted: inout Bool
@@ -290,6 +294,8 @@ enum PlayCoverSlotLauncher {
             installRevision: slot.metadata.installRevision,
             playChainPath: playChainPath,
             devicePreset: devicePreset,
+            deviceChrome: deviceChrome,
+            windowMode: windowMode,
             stdioLog: stdioLog
         )
         let existingPIDs = Set(
@@ -565,6 +571,8 @@ enum PlayCoverSlotLauncher {
         installRevision: String,
         playChainPath: String,
         devicePreset: String = PlayCoverDevicePreset.defaultPreset.name,
+        deviceChrome: String = "on",
+        windowMode: String = "fixed",
         stdioLog: PlayCoverStdioLogIdentity?
     ) -> [String: String] {
         var result = source.mapValues { _ in "" }
@@ -578,6 +586,8 @@ enum PlayCoverSlotLauncher {
             }
         }
         allowed["IOS_USE_MAC_DEVICE"] = devicePreset
+        allowed["IOS_USE_MAC_CHROME"] = deviceChrome
+        allowed["IOS_USE_MAC_WINDOW_MODE"] = windowMode
         allowed["IOS_USE_PLAY_SESSION_ID"] = sessionID
         allowed["IOS_USE_PLAY_RUNTIME_SOCKET"] = runtimeSocketPath
         allowed["IOS_USE_PLAY_INSTALL_REVISION"] = installRevision

@@ -1,5 +1,6 @@
 #import "IOSUsePlaySafeAreaCompatibility.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayHookRegistry.h"
 
 #import <TargetConditionals.h>
@@ -73,6 +74,7 @@ static char IOSUsePlaySafeAreaEvidenceAssociationKey;
 static UIEdgeInsets IOSUsePlaySafeAreaDeviceInsets(
     BOOL includeStatusBar
 ) {
+    if (IOSUsePlayCanvasIsResizable()) return UIEdgeInsetsZero;
     return UIEdgeInsetsMake(
         includeStatusBar ? IOSUsePlayDeviceSafeAreaTop : 0,
         IOSUsePlayDeviceSafeAreaLeft,

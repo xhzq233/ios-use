@@ -111,7 +111,7 @@ public enum CLIParser {
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "--target", "--depth", "--device", "--connection", "--device-model", "--bundle-id", "-d", "-i"
+            "--app", "--target", "--depth", "--device", "--connection", "--device-model", "--device-chrome", "--window-mode", "--bundle-id", "-d", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -145,7 +145,7 @@ public enum CLIParser {
             "--content", "--delete", "--to", "--from", "--dir",
             "--distance", "--match", "--fps", "--index", "--process",
             "--pid", "--output", "--runtime", "--app", "--target",
-            "--depth", "--connection", "--device-model", "--bundle-id", "-i",
+            "--depth", "--connection", "--device-model", "--device-chrome", "--window-mode", "--bundle-id", "-i",
         ]
         var normalized: [String] = []
         var deviceID: String?
@@ -198,11 +198,19 @@ public enum CLIParser {
             case "--verbose": options.verbose = true
             case "--mac": options.playCover = true
             case "--device-model": options.macDevice = try parser.value(for: arg)
+            case "--device-chrome": options.macChrome = try parser.value(for: arg)
+            case "--window-mode": options.macWindowMode = try parser.value(for: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        if options.macDevice != nil && !options.playCover {
-            throw CLIParseError.invalidValue("--device-model requires --mac")
+        if let value = options.macChrome, !["on", "off"].contains(value) {
+            throw CLIParseError.invalidValue("--device-chrome must be on or off")
+        }
+        if let value = options.macWindowMode, !["fixed", "resizable"].contains(value) {
+            throw CLIParseError.invalidValue("--window-mode must be fixed or resizable")
+        }
+        if (options.macDevice != nil || options.macChrome != nil || options.macWindowMode != nil) && !options.playCover {
+            throw CLIParseError.invalidValue("Mac device and window options require --mac")
         }
         if options.playCover,
            options.udid != nil

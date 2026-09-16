@@ -322,6 +322,7 @@ struct PlayCoverRuntimeDOMElement: Codable, Equatable, Sendable {
 }
 
 struct PlayCoverRuntimeDOMPayload: Codable, Equatable, Sendable {
+    var windowMode: String? = nil
     let app: String
     let windowSize: PlayCoverRuntimePoint
     let raw: String
@@ -443,6 +444,7 @@ struct PlayCoverRuntimeFullFrame: Codable, Equatable, Sendable {
 }
 
 struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
+    var windowMode: String? = nil
     let jpegBase64: String
     let pixelWidth: Int
     let pixelHeight: Int

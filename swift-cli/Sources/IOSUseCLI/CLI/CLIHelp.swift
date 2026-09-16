@@ -116,7 +116,7 @@ enum CLIHelp {
         case "config":
             return """
             Usage: ios-use config [--udid <udid>] [--simulator] [--list] [--verbose] [--json]
-                   ios-use config --mac [--device-model <preset>] [--verbose] [--json]
+                   ios-use config --mac [--device-model <preset>] [--device-chrome on|off] [--window-mode fixed|resizable] [--verbose] [--json]
 
             Configure a device or Simulator, or explicitly initialize the
             dedicated stable Mac-backend signing identity.
@@ -125,6 +125,12 @@ enum CLIHelp {
             for the next cold start; it does not initialize signing or restart an App.
             Presets: iphone-se, iphone-13, iphone-15-pro, iphone-15-pro-max (default),
             ipad-pro-11, iphone-duo-inner (alias iphone-duo), iphone-duo-outer.
+            Device chrome is on by default and is omitted from screenshots.
+            `--window-mode resizable` preserves App scene size constraints and uses
+            the current window size for DOM, touches and screenshots. Device screen
+            identity stays fixed. This mode hides the device shell; use it to test
+            adaptive iPad layouts, not to emulate the iPadOS window manager.
+            These preferences apply on the next cold start.
             Duo presets are 3x layout previews based on App Store screenshot
             canvases; they retain the existing iPhone identity and do not emulate
             folding or iOS 27 UI. Stop, then start --mac to apply a change.

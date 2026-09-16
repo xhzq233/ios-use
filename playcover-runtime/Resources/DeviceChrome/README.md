@@ -1,0 +1,1 @@
+Original ios-use Duo artwork, reconstructed as a layout preview. No Apple DeviceKit artwork is distributed. Screen and bezel geometry are visual estimates; these images do not implement system safe areas or fold behavior.

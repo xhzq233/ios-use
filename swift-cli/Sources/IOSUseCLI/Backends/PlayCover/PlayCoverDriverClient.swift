@@ -661,7 +661,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
             throw PlayCoverDriverClientError
                 .malformedRuntimePayload("screenshot generation")
         }
-        try Self.validateScreenshotFullFrame(screenshot, preset: devicePreset)
+        try Self.validateScreenshotFullFrame(screenshot, preset: screenshotPreset(screenshot))
         let jpeg = try decodeRuntimeJPEG(screenshot)
         var runtimeEvidence:
             [String: PlayCoverRuntimeJSONValue] = [
@@ -718,14 +718,17 @@ final class PlayCoverDriverClient: DriverCommandClient {
     private func mapDOM(
         _ payload: PlayCoverRuntimeDOMPayload
     ) throws -> ForyDomPayload {
-        guard Self.approximatelyEqual(
+        let resizable = payload.windowMode == "resizable"
+        guard payload.windowSize.x.isFinite, payload.windowSize.y.isFinite,
+              payload.windowSize.x > 0, payload.windowSize.y > 0,
+              resizable || (Self.approximatelyEqual(
                   payload.windowSize.x,
                   devicePreset.logicalSize.width
-              ),
+              ) &&
               Self.approximatelyEqual(
                   payload.windowSize.y,
                   devicePreset.logicalSize.height
-              ) else {
+              )) else {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch("DOM window size")
         }
@@ -1177,8 +1180,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
                   logicalRect.height,
                   preset.logicalSize.height
               ),
-              fullFrame.pixelWidth == Int(preset.nativeSize.width),
-              fullFrame.pixelHeight == Int(preset.nativeSize.height),
+              fullFrame.pixelWidth == Int(preset.nativeSize.width.rounded()),
+              fullFrame.pixelHeight == Int(preset.nativeSize.height.rounded()),
               approximatelyEqual(fullFrame.scale, preset.scale),
               fullFrame.uncropped,
               fullFrame.safeAreaCropped == false,
@@ -1395,13 +1398,26 @@ final class PlayCoverDriverClient: DriverCommandClient {
         ])
     }
 
+    private func screenshotPreset(_ screenshot: PlayCoverRuntimeScreenshotPayload) throws -> PlayCoverDevicePreset {
+        guard screenshot.windowMode == "resizable" else { return devicePreset }
+        guard screenshot.logicalWidth.isFinite, screenshot.logicalHeight.isFinite,
+              screenshot.logicalWidth > 0, screenshot.logicalHeight > 0,
+              screenshot.logicalWidth * devicePreset.scale <= Double(Int32.max),
+              screenshot.logicalHeight * devicePreset.scale <= Double(Int32.max) else {
+            throw PlayCoverDriverClientError.runtimeGeometryMismatch("App window dimensions")
+        }
+        return PlayCoverDevicePreset(name: devicePreset.name, productType: devicePreset.productType,
+            logicalSize: CGSize(width: screenshot.logicalWidth, height: screenshot.logicalHeight), scale: devicePreset.scale)
+    }
+
     private func decodeRuntimeJPEG(
         _ screenshot: PlayCoverRuntimeScreenshotPayload
     ) throws -> Data {
+        let devicePreset = try screenshotPreset(screenshot)
         guard screenshot.pixelWidth
-                == Int(devicePreset.nativeSize.width),
+                == Int(devicePreset.nativeSize.width.rounded()),
               screenshot.pixelHeight
-                == Int(devicePreset.nativeSize.height),
+                == Int(devicePreset.nativeSize.height.rounded()),
               Self.approximatelyEqual(
                   screenshot.logicalWidth,
                   devicePreset.logicalSize.width

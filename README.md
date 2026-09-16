@@ -38,16 +38,15 @@ Install a specific release or build from source:
 
 ```bash
 # Opt in to the 2.1.0 alpha pre-release.
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.4/scripts/install.sh | bash -s -- --version v2.1.0-alpha.4
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.5/scripts/install.sh | bash -s -- --version v2.1.0-alpha.5
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
 ### Linux remote client
 
-The Prepare 210 development build supports native remote XCTest and Apple
-device services on Linux x86_64. Published `v2.1.0-alpha.4` predates this
-connection interface. Build the development branch with Swift 6.2+ and
-standard Linux build tools:
+Version `v2.1.0-alpha.5` supports native remote XCTest and Apple device
+services on Linux x86_64. Install the alpha with the command above, or build
+the development branch with Swift 6.2+ and standard Linux build tools:
 
 ```bash
 git clone --branch codex/prepare-210 https://github.com/xhzq233/ios-use.git
@@ -178,9 +177,26 @@ its current model. Setting a preset does not run signing setup.
 | `iphone-duo-outer` (preview) | 466 × 678 | 3× |
 
 The preset controls device identity, phone/tablet layout, portrait screen size,
-safe areas and screenshot resolution. `status --json` reports the active
+and fixed-window safe areas and screenshot resolution. `status --json` reports the active
 `macDevice` and the pending `configuredMacDevice`. App-specific iPad support
 still depends on the App's layouts; this does not emulate hardware or iPadOS.
+
+Device chrome is enabled by default. It follows the native window, leaves App
+input intact, and is excluded from screenshots. Use
+`ios-use config --mac --device-chrome off` to hide it on the next cold start.
+Supported local Simulator artwork is read from DeviceKit when present; the
+release contains only original fallback bezels and original Duo preview artwork.
+
+For adaptive App layouts, use `ios-use config --mac --device-model ipad-pro-11 --window-mode resizable`.
+The device screen identity stays fixed while DOM coordinates and screenshots
+follow the actual App window. The App's scene minimum/maximum size preferences
+are preserved, with Catalyst applying its own limits. Phone-only or full-screen
+compatibility Apps may still restrict resizing. Resizable mode hides the device
+shell and uses native window safe areas. It previews App layout; it does not
+implement the iPadOS window manager, Stage Manager or Split View. Restore the
+full device canvas with `--window-mode fixed`. These options apply on cold start.
+See Apple's [scene size restrictions](https://developer.apple.com/documentation/uikit/uiscenesizerestrictions)
+and [full-screen compatibility migration](https://developer.apple.com/documentation/technotes/tn3192-migrating-your-app-from-the-deprecated-uirequiresfullscreen-key).
 
 Duo presets are layout previews. They use Apple's [App Store screenshot
 canvases](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications)

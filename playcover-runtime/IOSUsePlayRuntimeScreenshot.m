@@ -1,6 +1,7 @@
 #import "IOSUsePlayRuntimeScreenshot.h"
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayWindowCompositor.h"
 
 #import <UIKit/UIKit.h>
@@ -14,8 +15,8 @@ static const NSUInteger IOSUseScreenshotMaximumJPEGBytes = 11 * 1024 * 1024;
 static const NSUInteger IOSUseScreenshotMaximumBase64Bytes =
     15 * 1024 * 1024;
 static const CGFloat IOSUseScreenshotGeometryTolerance = 0.01;
-#define IOSUseScreenshotDeviceLogicalWidth ((CGFloat)IOSUsePlayDeviceLogicalWidth)
-#define IOSUseScreenshotDeviceLogicalHeight ((CGFloat)IOSUsePlayDeviceLogicalHeight)
+#define IOSUseScreenshotDeviceLogicalWidth ((CGFloat)IOSUsePlayCanvasWidth)
+#define IOSUseScreenshotDeviceLogicalHeight ((CGFloat)IOSUsePlayCanvasHeight)
 #define IOSUseScreenshotDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
 static const CGBitmapInfo IOSUseScreenshotBitmapInfo = (CGBitmapInfo)(
     (uint32_t)kCGBitmapByteOrder32Little |
@@ -106,8 +107,8 @@ static NSDictionary<NSString *, id> *IOSUseScreenshotFullFrameEvidence(void) {
     );
     return @{
         @"logicalRect": IOSUseScreenshotRectJSON(deviceFrame),
-        @"pixelWidth": @(IOSUsePlayDeviceNativeWidth),
-        @"pixelHeight": @(IOSUsePlayDeviceNativeHeight),
+        @"pixelWidth": @(IOSUsePlayCanvasNativeWidth),
+        @"pixelHeight": @(IOSUsePlayCanvasNativeHeight),
         @"scale": @(IOSUsePlayDeviceScale),
         @"uncropped": @YES,
         @"safeAreaCropped": @NO,
@@ -1576,8 +1577,8 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
     }
     free(capturedImages);
     if (image == NULL ||
-        CGImageGetWidth(image) != IOSUsePlayDeviceNativeWidth ||
-        CGImageGetHeight(image) != IOSUsePlayDeviceNativeHeight ||
+        CGImageGetWidth(image) != IOSUsePlayCanvasNativeWidth ||
+        CGImageGetHeight(image) != IOSUsePlayCanvasNativeHeight ||
         !IOSUseScreenshotHasUsablePixels(image)) {
         if (image != NULL) {
             CGImageRelease(image);
@@ -1691,11 +1692,12 @@ IOSUseScreenshotPayloadOnMain(
         }
     }
     return @{
+        @"windowMode": IOSUsePlayCanvasIsResizable() ? @"resizable" : @"fixed",
         @"jpegBase64": base64,
-        @"pixelWidth": @(IOSUsePlayDeviceNativeWidth),
-        @"pixelHeight": @(IOSUsePlayDeviceNativeHeight),
-        @"logicalWidth": @(IOSUsePlayDeviceLogicalWidth),
-        @"logicalHeight": @(IOSUsePlayDeviceLogicalHeight),
+        @"pixelWidth": @(IOSUsePlayCanvasNativeWidth),
+        @"pixelHeight": @(IOSUsePlayCanvasNativeHeight),
+        @"logicalWidth": @(IOSUsePlayCanvasWidth),
+        @"logicalHeight": @(IOSUsePlayCanvasHeight),
         @"scale": @(IOSUsePlayDeviceScale),
         @"source": @"window-compositor",
         @"complete": @YES,
