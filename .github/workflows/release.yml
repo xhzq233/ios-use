@@ -140,7 +140,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.ref }}
-      - run: brew install xcodegen
+      - run: brew install xcodegen ripgrep
       - name: Resolve Xcode cache key
         id: xcode-cache
         run: |
@@ -175,7 +175,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.ref }}
-      - run: brew install xcodegen meson ninja
+      - run: brew install xcodegen ripgrep meson ninja
       - name: Cache pinned PlayCover upstream audit checkouts
         uses: actions/cache@v4
         with:

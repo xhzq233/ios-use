@@ -90,6 +90,12 @@ bash scripts/test_playcover_installed_layout.sh \
   --verify-only
 ```
 
+This check takes the four Mac artifacts and their `SHA256SUMS` entries, before
+Linux assets are added by the publication job. To verify a published release,
+first check all five content hashes against its manifest, then run this check
+with a temporary directory containing the four Mac artifacts and only their
+manifest entries. Keep the original downloaded release unchanged.
+
 This verifies the exact asset set, every checksum, both framework signatures,
 the embedded Frida notices, and an isolated-prefix install. It does not launch
 an App or touch account-global Mac state.
