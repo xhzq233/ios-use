@@ -234,12 +234,7 @@ enum DriverLifecycleService {
         process.arguments = arguments
         process.environment = ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new }
         let holderLogPath = CLILogService.holderLogPath(paths: paths)
-        try FileManager.default.createDirectory(at: URL(fileURLWithPath: holderLogPath).deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: holderLogPath) {
-            FileManager.default.createFile(atPath: holderLogPath, contents: nil)
-        }
-        let holderLogHandle = try FileHandle(forWritingTo: URL(fileURLWithPath: holderLogPath))
-        _ = try? holderLogHandle.seekToEnd()
+        let holderLogHandle = try CLILogService.openAppendHandle(path: holderLogPath)
         defer { try? holderLogHandle.close() }
         process.standardOutput = holderLogHandle
         process.standardError = holderLogHandle

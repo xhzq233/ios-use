@@ -191,9 +191,10 @@ enum AppLogCaptureService {
         interruptMonitor: InterruptMonitor,
         didStart: () throws -> Void
     ) throws {
-        let fileHandle = try openAppendHandle(path: options.logFile)
+        let fileHandle = try CLILogService.openAppendHandle(path: options.logFile)
         defer { try? fileHandle.close() }
 
+        CLILogService.append(paths: paths, ["[app-log] opening CoreDevice tunnel"])
         let session = try CoreDeviceDirectTunnelRuntime(eventSink: nil).start(udid: options.udid)
         defer {
             session.close()
@@ -209,11 +210,14 @@ enum AppLogCaptureService {
             throw CLIParseError.invalidValue("CoreDevice openstdio service not available on this device.")
         }
 
+        CLILogService.append(paths: paths, ["[app-log] opening stdio socket"])
         let stdioSocket = try CoreDeviceOpenStdIOSocket.connect(session: session)
         defer { stdioSocket.close() }
 
+        CLILogService.append(paths: paths, ["[app-log] opening App service"])
         let appService = try CoreDeviceAppService(client: session.connectRemoteXPCService(CoreDeviceAppService.serviceName))
         defer { appService.close() }
+        CLILogService.append(paths: paths, ["[app-log] launching App with stdout/stderr"])
         _ = try appService.launchApplication(
             bundleID: options.bundleID,
             arguments: [],
@@ -227,6 +231,7 @@ enum AppLogCaptureService {
 
         try markRunning(options: options, deviceType: "real", paths: paths)
         try didStart()
+        CLILogService.append(paths: paths, ["[app-log] collecting stdout/stderr"])
         try stdioSocket.drainToFile(fileHandle, interruptMonitor: interruptMonitor)
     }
 
@@ -236,7 +241,7 @@ enum AppLogCaptureService {
         interruptMonitor: InterruptMonitor,
         didStart: () throws -> Void
     ) throws {
-        let fileHandle = try openAppendHandle(path: options.logFile)
+        let fileHandle = try CLILogService.openAppendHandle(path: options.logFile)
         defer { try? fileHandle.close() }
 
         let process = Process()
@@ -284,7 +289,7 @@ enum AppLogCaptureService {
         process.arguments = request.arguments
         process.environment = request.environment
 
-        let stderrHandle = try openAppendHandle(path: request.stderrPath)
+        let stderrHandle = try CLILogService.openAppendHandle(path: request.stderrPath)
         defer { try? stderrHandle.close() }
         process.standardOutput = FileHandle.nullDevice
         process.standardError = stderrHandle
@@ -434,17 +439,6 @@ enum AppLogCaptureService {
     private static func require(_ value: String?, option: String) throws -> String {
         guard let value, !value.isEmpty else { throw CLIParseError.missingRequiredOption(option) }
         return value
-    }
-
-    private static func openAppendHandle(path: String) throws -> FileHandle {
-        let url = URL(fileURLWithPath: path)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: path) {
-            FileManager.default.createFile(atPath: path, contents: nil)
-        }
-        let handle = try FileHandle(forWritingTo: url)
-        _ = try? handle.seekToEnd()
-        return handle
     }
 
     private static func executablePath() throws -> String {

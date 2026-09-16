@@ -78,3 +78,12 @@ release; this alpha must be selected explicitly.
   Use `start --connection` and `stop` for all remote sessions.
 - Linux Foundation decodes XCTest capabilities without host XCTest classes and
   reports unsupported archive types as errors instead of aborting the process.
+
+### Prepare 210: device TLS connection cleanup
+
+- TLS now owns the connected device socket directly through NIO. This removes
+  the localhost relay whose late forwarding shutdown could affect a reused
+  descriptor and interrupt a new connection.
+- Pairing certificates and keys are parsed in memory. App capture and XCTest
+  diagnostic output append safely alongside other CLI writers; App log startup
+  records tunnel, stdio, App service and launch stages.

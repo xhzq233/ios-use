@@ -136,11 +136,14 @@ Here ios-use owns XCTest and reports `lifecycleOwner: ios-use`. `stop` closes
 XCTest and App log capture, while the provider keeps its lease and transport.
 Start again with the same description while that connection remains valid.
 The UI path connects directly to the Driver endpoint. Swift uses usbmux,
-Lockdown and CoreDevice for App services; no Go runtime is required.
+Lockdown and CoreDevice for App services; no Go runtime is required. TLS wraps
+the existing device socket directly, with no additional localhost relay.
 `activateApp --log` captures stdout/stderr from the new App process on the CLI
 host, under `$IOS_USE_HOME/logs/devices/<device-id>/` (default home: `~/.ios-use`).
 `--json` returns `data.logFile` and `data.logCapturePid`; use `tail -f <logFile>`
 to follow output. Stopping capture retains the file. Sandbox log files are not read.
+The adjacent `cli.log` records tunnel, stdio, App service and launch stages for
+capture startup diagnosis.
 Signing remains the provider's responsibility; `install` accepts packages
 already signed for the device. `status` describes saved ownership; use `dom`
 to check current Driver responsiveness.

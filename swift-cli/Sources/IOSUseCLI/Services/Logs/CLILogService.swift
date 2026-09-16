@@ -14,6 +14,15 @@ enum CLILogService {
         "\(paths.logs)/xctest-holder.log"
     }
 
+    static func openAppendHandle(path: String) throws -> FileHandle {
+        try FileManager.default.createDirectory(
+            at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    }
+
     static func append(paths: IOSUsePaths, _ lines: [String]) {
         guard !lines.isEmpty else { return }
         append(logPath: logPath(paths: paths), lines)
