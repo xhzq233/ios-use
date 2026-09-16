@@ -73,6 +73,8 @@ release; this alpha must be selected explicitly.
 - Remote App listing, signed package installation, uninstall, URL opening and
   `activateApp --terminateExisting --log` reuse native Apple device protocols.
 - `stop` ends owned XCTest and App log capture while retaining provider transport;
-  UI-only TCP attachments retain their existing detach behavior.
+  The development build removes the former UI-only attachment mode;
+  `start --host/--port`, `attach` and `detach` are no longer accepted.
+  Use `start --connection` and `stop` for all remote sessions.
 - Linux Foundation decodes XCTest capabilities without host XCTest classes and
   reports unsupported archive types as errors instead of aborting the process.

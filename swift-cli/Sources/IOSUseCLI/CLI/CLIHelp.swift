@@ -15,17 +15,15 @@ enum CLIHelp {
           ios-use screenshot -d phone
           ios-use stop -d phone
 
-        Commands: start, stop, attach, detach, status, dom, waitFor, screenshot, tap,
+        Commands: start, stop, status, dom, waitFor, screenshot, tap,
           longpress, input, swipe, apps, install, uninstall, open,
           activateApp, terminateApp, home, rotate, dismissAlert
-        With multiple attachments, select one using -d <id>.
+        With multiple Devices, select one using -d <id>.
         Inspect current DOM before acting and keep page-dependent actions sequential.
         Use ios-use help <command> for options; --json returns structured results.
         Screenshots save the original JPEG and geometry. OCR requires macOS.
         The provider handles signing, Driver installation and transport setup.
         ios-use owns XCTest and activateApp --log for --connection sessions.
-        For an already running Driver, use start --host <host> --port <port>.
-        That UI-only attachment leaves the external Driver running on stop.
 
         """
         #else
@@ -35,7 +33,7 @@ enum CLIHelp {
         Control iOS apps on real devices, Simulators and Mac.
 
         Commands:
-          Devices    status, config, start, stop, attach, detach
+          Devices    status, config, start, stop
           Inspect    dom, screenshot, capture, ui-tree
           Interact   tap, longpress, input, swipe, waitFor, dismissAlert
           Apps       apps, activateApp, terminateApp, home, rotate, open
@@ -107,9 +105,8 @@ enum CLIHelp {
 
             Show connected devices, capture processes, proxy state, config state,
             and read-only Mac backend resource/signer/session readiness.
-            Session lifecycleOwner is ios-use for local runtimes and external
-            for TCP attachments. Attached status records the saved binding;
-            run dom to check remote responsiveness.
+            Session lifecycleOwner is ios-use for local and remote runtimes.
+            Run dom to check remote responsiveness.
 
             Options:
               --verbose    Enable verbose device output
@@ -151,39 +148,9 @@ enum CLIHelp {
               --json                 Print the common machine-readable envelope
 
             """
-        case "attach":
-            return """
-            Usage: ios-use attach --device <id> --host <host> --port <port> [--json]
-
-            Attach to an already-running ios-use driver over TCP. The caller
-            starts the driver and provides a reachable, trusted endpoint.
-            Host accepts an IP address or hostname; port is 1..65535.
-            A DOM protocol check must succeed before the attachment is saved.
-            Device ID is a local alias; mac is reserved. No USB or config needed.
-            This is the compatibility form of start -d <id> --host ... --port ... .
-            Use --device <id> on later commands when multiple Devices are active.
-
-            Supports DOM, screenshot, gestures, input, waits, alerts,
-            activateApp, terminateApp, home, and rotate. Device installation,
-            URL opening, media import, logs, and proxy require the external provider.
-            Screenshot sequences (capture) are available on macOS hosts.
-            TCP has no built-in authentication or encryption; use a trusted
-            network or a secure tunnel. Use the matching driver release.
-
-            """
-        case "detach":
-            return """
-            Usage: ios-use detach [--device <id>] [--json]
-
-            Forget a TCP attachment, even when its endpoint is offline.
-            The external driver and forwarding processes remain running.
-            stop also detaches a TCP target. Locally managed targets use stop.
-
-            """
         case "start":
             return """
             Usage: ios-use start [udid] [--verbose]
-                   ios-use start -d <id> --host <host> --port <port>
                    ios-use start [-d <id>] --connection <file> [--verbose]
                    ios-use start --mac --app <source.app> [--log] [--timeout <duration>]
                    ios-use start --mac [--log] [--timeout <duration>]
@@ -191,12 +158,6 @@ enum CLIHelp {
             Start a configured XCTest driver or an iOS App on this Mac and
             record it in that Device's context under IOS_USE_HOME.
             Defaults to the first connected USB real device when udid is omitted.
-            With --host and --port, connect an already running external Driver
-            on macOS or Linux. A DOM protocol check must pass before saving the
-            binding; -d supplies a local alias. Both endpoint options are required
-            and cannot be mixed with a UDID or local start options.
-            The provider owns remote startup and cleanup. stop only unbinds it,
-            including while offline. attach remains a compatible entry point.
             With --connection, load a provider's JSON description containing
             udid, driverBundleID, usbmux {host, port} and driver {host, port}.
             The provider must install a signed Driver and establish paired
@@ -222,8 +183,6 @@ enum CLIHelp {
             crash, or launch failure.
 
             Options:
-              --host <host>                External Driver IP address or hostname
-              --port <port>                External Driver TCP port (1..65535)
               --connection <file>          Provider-established Apple device transport
               --verbose                    Enable verbose XCTest output
               --mac                        Select the Mac backend
@@ -489,7 +448,9 @@ enum CLIHelp {
 
             Activate an app by bundle ID using host-side device services.
             By default, waits for the app to reach foreground and for one fresh UI snapshot.
-            With --log, starts a background app stdio capture and returns a log file path.
+            With --log, starts background App stdout/stderr capture on the CLI host.
+            Files are retained under IOS_USE_HOME/logs/devices/<device-id>/;
+            --json returns data.logFile and data.logCapturePid.
             The Mac backend supports lifecycle through start/status/stop only;
             restart it with stop, then start --mac.
 

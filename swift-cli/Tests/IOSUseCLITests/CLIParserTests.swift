@@ -377,22 +377,20 @@ final class CLIParserTests: XCTestCase {
         }
     }
 
-    func testTCPStartUsesAttachValidationAndRejectsLocalSelectors() throws {
-        let endpoint = ["--host", "127.0.0.1", "--port", "8102"]
-        XCTAssertEqual(
-            try CLIParser.parse(["start"] + endpoint),
-            .start(StartOptions(endpoint: AttachOptions(host: "127.0.0.1", port: 8102)))
-        )
+    func testRemoteStartRejectsLegacyAndLocalSelectors() throws {
+        let invocation = try CLIParser.parseInvocation([
+            "start", "--connection", "device-connection.json", "-d", "phone", "--verbose", "--json"
+        ])
+        var options = StartOptions(verbose: true)
+        options.connectionPath = "device-connection.json"
+        XCTAssertEqual(invocation, ParsedInvocation(command: .start(options), json: true, deviceID: "phone"))
         for local in [["test-udid"], ["--mac"], ["--app", "Example.app"],
-                      ["--log"], ["--verbose"], ["--timeout", "1s"]] {
-            XCTAssertThrowsError(try CLIParser.parse(["start"] + endpoint + local))
+                      ["--log"], ["--timeout", "1s"], ["--connection", "another.json"]] {
+            XCTAssertThrowsError(try CLIParser.parse(["start", "--connection", "device-connection.json"] + local))
         }
-        for invalid in [["--host", "localhost"], ["--port", "8102"],
-                        ["--host", "localhost", "--port", "-1"],
-                        endpoint + ["--host", "localhost"], endpoint + ["--port", "8103"]] {
-            for command in ["start", "attach"] {
-                XCTAssertThrowsError(try CLIParser.parse([command] + invalid))
-            }
+        for arguments in [["attach"], ["detach"], ["start", "--host", "localhost"],
+                          ["start", "--port", "8102"]] {
+            XCTAssertThrowsError(try CLIParser.parse(arguments))
         }
     }
 

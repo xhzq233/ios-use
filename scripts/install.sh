@@ -519,8 +519,8 @@ fi
 echo "Installed ios-use to $TARGET_PATH"
 
 if [[ "$HOST_OS" == "Linux" ]]; then
-  echo "Next: start the Driver with your device provider, then attach:"
-  echo "  ios-use attach -d phone --host <host> --port <port>"
+  echo "Next: obtain a device connection from your provider, then start:"
+  echo "  ios-use start -d phone --connection device-connection.json"
   echo "  ios-use dom -d phone"
   echo "Binary: $TARGET_PATH (add $TARGET_DIR to PATH if needed)"
   exit 0

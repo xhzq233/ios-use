@@ -31,7 +31,6 @@ enum DriverSessionStore {
         }
         guard deviceType == "real"
                 || deviceType == "simulator"
-                || deviceType == TCPAttachService.deviceType
                 || deviceType == DeviceContextStore.macDeviceID else {
             throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType).")
         }
@@ -64,12 +63,6 @@ enum DriverSessionStore {
                 raw["macLogPath"] as? String,
             macDevicePreset: raw["macDevicePreset"] as? String
         )
-        if info.isAttached {
-            guard let host = info.driverHost, let port = info.driverPort else {
-                throw CLIParseError.invalidValue("Invalid driver.lock: missing TCP endpoint.")
-            }
-            try TCPAttachService.validateEndpoint(host: host, port: port)
-        }
 #if os(macOS)
         if deviceType == DeviceContextStore.macDeviceID {
             guard let appPath = info.macAppPath, !appPath.isEmpty,

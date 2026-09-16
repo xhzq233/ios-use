@@ -7,7 +7,7 @@ import Foundation
 
 // Linux shares the remote Driver and Apple device services with macOS.
 // Local USB discovery, Simulator and the Mac App runtime remain macOS-only.
-let tcpSources = [
+let linuxSources = [
     "CLI/CLIHelp.swift",
     "CLI/CLIParser.swift",
     "CLI/CLIResult.swift",
@@ -20,7 +20,6 @@ let tcpSources = [
     "Commands/Driver/DriverOutput.swift",
     "Commands/Driver/ScreenshotArtifactService.swift",
     "Commands/Host/SessionService.swift",
-    "Commands/Host/TCPAttachService.swift",
     "Commands/Host/AppLifecycleService.swift",
     "Services/DriverRuntime/DriverClient.swift",
     "Services/DriverRuntime/DriverSessionStore.swift",
@@ -70,12 +69,12 @@ let tcpSources = [
 let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("Sources/IOSUseCLI")
 let excludedSources = (FileManager.default.enumerator(atPath: sourceRoot.path)?.allObjects as? [String] ?? [])
-    .filter { $0.hasSuffix(".swift") && !tcpSources.contains($0) }
-let tcpTests = ["TCPAttachTests.swift", "FakeDriverServer.swift", "CLIParserTests.swift", "LinuxScreenshotTests.swift", "DeviceArchiveDecodingTests.swift"]
+    .filter { $0.hasSuffix(".swift") && !linuxSources.contains($0) }
+let linuxTests = ["RemoteDriverConnectionTests.swift", "FakeDriverServer.swift", "CLIParserTests.swift", "LinuxScreenshotTests.swift", "DeviceArchiveDecodingTests.swift"]
 let testRoot = sourceRoot.deletingLastPathComponent().deletingLastPathComponent()
     .appendingPathComponent("Tests/IOSUseCLITests")
 let excludedTests = (FileManager.default.enumerator(atPath: testRoot.path)?.allObjects as? [String] ?? [])
-    .filter { $0.hasSuffix(".swift") && !tcpTests.contains($0) }
+    .filter { $0.hasSuffix(".swift") && !linuxTests.contains($0) }
 let package = Package(
     name: "IOSUseSwiftCLI",
     products: [.library(name: "IOSUseCLI", targets: ["IOSUseCLI"]),
@@ -85,10 +84,10 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.28.0")],
     targets: [
         .target(name: "IOSUseCLI", dependencies: [.product(name: "IOSUseProtocol", package: "IOSUseProtocol"), .product(name: "NIOCore", package: "swift-nio"), .product(name: "NIOPosix", package: "swift-nio"), .product(name: "NIOSSL", package: "swift-nio-ssl")],
-                exclude: excludedSources, sources: tcpSources),
+                exclude: excludedSources, sources: linuxSources),
         .executableTarget(name: "IOSUseSwiftCLI", dependencies: ["IOSUseCLI"]),
         .testTarget(name: "IOSUseCLITests", dependencies: ["IOSUseCLI", "IOSUseProtocol"],
-                    exclude: excludedTests, sources: tcpTests)
+                    exclude: excludedTests, sources: linuxTests)
     ]
 )
 #else

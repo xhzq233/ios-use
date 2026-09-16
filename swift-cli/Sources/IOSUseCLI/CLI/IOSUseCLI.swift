@@ -295,27 +295,17 @@ public struct IOSUseCLI: Sendable {
         explicitDeviceID: String?
     ) throws -> InvocationTarget {
         switch command {
-        case .attach:
-            guard let explicitDeviceID else {
-                throw CLIParseError.missingRequiredOption("--device")
-            }
-            let id = try DeviceContextStore.normalizeExplicitDeviceID(explicitDeviceID, paths: paths)
-            guard id != DeviceContextStore.macDeviceID else {
-                throw CLIParseError.invalidValue("Device ID mac is reserved for the Mac backend.")
-            }
-            try DeviceContextStore.requireInactive(deviceID: id, paths: paths)
-            return InvocationTarget(paths: try paths.deviceContext(id), startUDID: nil)
-
         case .start(let options):
             if let path = options.connectionPath {
                 let connection = try RemoteDeviceConnection.load(path: path)
-                return try resolveInvocationTarget(
-                    for: .attach(AttachOptions(host: connection.driver.host, port: connection.driver.port)),
-                    explicitDeviceID: explicitDeviceID ?? connection.udid
+                let id = try DeviceContextStore.normalizeExplicitDeviceID(
+                    explicitDeviceID ?? connection.udid, paths: paths
                 )
-            }
-            if let endpoint = options.endpoint {
-                return try resolveInvocationTarget(for: .attach(endpoint), explicitDeviceID: explicitDeviceID)
+                guard id != DeviceContextStore.macDeviceID else {
+                    throw CLIParseError.invalidValue("Device ID mac is reserved for the Mac backend.")
+                }
+                try DeviceContextStore.requireInactive(deviceID: id, paths: paths)
+                return InvocationTarget(paths: try paths.deviceContext(id), startUDID: nil)
             }
             if options.mac {
                 if let explicitDeviceID {
@@ -414,7 +404,7 @@ public struct IOSUseCLI: Sendable {
                 startUDID: requestedUDID
             )
 
-        case .stop, .detach, .driver, .debug, .uiTree, .capture,
+        case .stop, .driver, .debug, .uiTree, .capture,
                 .mediaImport:
             let context = try DeviceContextStore.activeContext(
                 explicitDeviceID: explicitDeviceID,
@@ -621,34 +611,7 @@ public struct IOSUseCLI: Sendable {
         ) {
             return routedFailure
         }
-        if let session = SessionService.read(paths: commandPaths), session.isAttached {
-            switch parsed {
-            case .install, .uninstall, .apps, .ddiMount, .open, .oslog, .nslog,
-                    .proxy, .mediaImport, .debug, .uiTree:
-                return commandFailure(
-                    command: parsed.commandName,
-                    error: CLIParseError.invalidValue("\(parsed.commandName) is unavailable through a TCP attachment; use the external device provider for host services."),
-                    json: json
-                )
-            default: break
-            }
-        }
         switch parsed {
-        case .attach(let options):
-            return executeAttachment(options, paths: commandPaths, command: parsed.commandName, json: json)
-        case .detach:
-            do {
-                let output = try TCPAttachService.detach(paths: commandPaths)
-                if json {
-                    return MachineOutput.success(command: "detach", data: .object([
-                        "deviceId": .string(commandPaths.deviceID ?? deviceID ?? ""),
-                        "status": .string("detached"),
-                    ]))
-                }
-                return CLIResult(exitCode: 0, stdout: output)
-            } catch {
-                return commandFailure(command: parsed.commandName, error: error, json: json)
-            }
         case .du:
             let snapshot = DiskUsageService.snapshot(paths: paths)
             if json {
@@ -723,9 +686,6 @@ public struct IOSUseCLI: Sendable {
                 )
             }
         case .start(let options):
-            if let endpoint = options.endpoint {
-                return executeAttachment(endpoint, paths: commandPaths, command: parsed.commandName, json: json)
-            }
             do {
                 let output: String
                 if options.mac {
@@ -1027,7 +987,7 @@ public struct IOSUseCLI: Sendable {
             )
         } catch {
             switch command {
-            case .du, .status, .config, .start, .stop, .attach, .detach:
+            case .du, .status, .config, .start, .stop:
                 return nil
             case .open:
                 return commandFailure(
@@ -1050,7 +1010,7 @@ public struct IOSUseCLI: Sendable {
             return nil
         }
         switch command {
-        case .du, .status, .config, .start, .stop, .attach, .detach, .capture, .open, .oslog, .debug, .uiTree:
+        case .du, .status, .config, .start, .stop, .capture, .open, .oslog, .debug, .uiTree:
             return nil
         case .mediaImport:
             return nil

@@ -31,11 +31,6 @@ public enum CLIParser {
             parsed = .config(try parseConfig(&parser))
         case "start":
             parsed = .start(try parseStart(&parser))
-        case "attach":
-            parsed = .attach(try parseAttach(&parser))
-        case "detach":
-            try parser.requireEnd()
-            parsed = .detach
         case "stop":
             try parser.requireEnd()
             parsed = .stop
@@ -94,7 +89,7 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .du, .start, .stop, .attach, .detach, .status, .install, .uninstall, .apps, .open,
+            case .du, .start, .stop, .status, .install, .uninstall, .apps, .open,
                     .config, .appLifecycle, .driver, .mediaImport,
                     .debug, .uiTree:
                 break
@@ -111,7 +106,7 @@ public enum CLIParser {
 
     static func extractGlobalJSONFlag(_ arguments: [String]) -> ([String], Bool) {
         let valueOptions: Set<String> = [
-            "--host", "--port", "--udid", "--path", "--name", "--pattern",
+            "--udid", "--path", "--name", "--pattern",
             "--flags", "--timeout", "--last", "--capture-mode", "--filter", "--interface",
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
@@ -143,7 +138,7 @@ public enum CLIParser {
         _ arguments: [String]
     ) throws -> ([String], String?) {
         let valueOptions: Set<String> = [
-            "--host", "--port", "--udid", "--path", "--name", "--pattern",
+            "--udid", "--path", "--name", "--pattern",
             "--flags", "--timeout", "--last", "--capture-mode",
             "--filter", "--interface", "--offset", "--offset-ratio",
             "--traits", "--cindex", "--duration", "--tap", "--label",
@@ -221,30 +216,8 @@ public enum CLIParser {
         return options
     }
 
-    private static func parseAttach(_ parser: inout ArgumentParser) throws -> AttachOptions {
-        var host: String?
-        var port: Int?
-        while let arg = parser.consume() {
-            switch arg {
-            case "--host":
-                guard host == nil else { throw CLIParseError.invalidValue("--host may only be provided once") }
-                host = try parser.value(for: arg)
-            case "--port":
-                guard port == nil else { throw CLIParseError.invalidValue("--port may only be provided once") }
-                port = try parsePositiveIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            default: throw CLIParseError.unknownOption(arg)
-            }
-        }
-        let resolvedHost = try require(host, option: "--host")
-        guard let port else { throw CLIParseError.missingRequiredOption("--port") }
-        let options = AttachOptions(host: resolvedHost, port: port)
-        try TCPAttachService.validateEndpoint(host: options.host, port: options.port)
-        return options
-    }
-
     private static func parseStart(_ parser: inout ArgumentParser) throws -> StartOptions {
         var options = StartOptions()
-        var endpointArguments: [String] = []
         var timeoutWasProvided = false
         while let arg = parser.consume() {
             switch arg {
@@ -253,9 +226,6 @@ public enum CLIParser {
                     throw CLIParseError.invalidValue("--connection may only be provided once")
                 }
                 options.connectionPath = try parser.value(for: arg)
-            case "--host", "--port":
-                endpointArguments.append(arg)
-                endpointArguments.append(try parser.valueAllowingLeadingDash(for: arg))
             case "--verbose": options.verbose = true
             case "--mac":
                 guard !options.mac else {
@@ -292,22 +262,13 @@ public enum CLIParser {
             }
         }
         if options.connectionPath != nil {
-            guard endpointArguments.isEmpty, options.udid == nil, !options.mac,
+            guard options.udid == nil, !options.mac,
                   options.appPath == nil, !options.log, !timeoutWasProvided else {
-                throw CLIParseError.invalidValue("--connection cannot be combined with a UDID, --host/--port, --mac, --app, --log, or --timeout")
+                throw CLIParseError.invalidValue("--connection cannot be combined with a UDID, --mac, --app, --log, or --timeout")
             }
             return options
         }
-        if !endpointArguments.isEmpty {
-            guard options.udid == nil, !options.mac, options.appPath == nil,
-                  !options.log, !options.verbose, !timeoutWasProvided else {
-                throw CLIParseError.invalidValue(
-                    "--host/--port cannot be combined with a UDID, --mac, --app, --log, --verbose, or --timeout"
-                )
-            }
-            var endpointParser = ArgumentParser(endpointArguments)
-            options.endpoint = try parseAttach(&endpointParser)
-        } else if options.mac {
+        if options.mac {
             guard options.udid == nil else {
                 throw CLIParseError.invalidValue("a device UDID cannot be used with --mac")
             }

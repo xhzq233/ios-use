@@ -72,27 +72,6 @@ extension IOSUseCLI {
     }
 
 
-    func executeAttachment(
-        _ options: AttachOptions,
-        paths: IOSUsePaths,
-        command: String,
-        json: Bool
-    ) -> CLIResult {
-        CLIInvocationContext.current?.suppressAlertRefresh()
-        do {
-            let output = try TCPAttachService.attach(options: options, paths: paths)
-            return json ? MachineOutput.success(command: command, data: .object([
-                "deviceId": .string(paths.deviceID!),
-                "host": .string(options.host),
-                "port": .integer(options.port),
-                "status": .string("attached"),
-                "lifecycleOwner": .string("external"),
-            ])) : CLIResult(exitCode: 0, stdout: output)
-        } catch {
-            return commandFailure(command: command, error: error, json: json)
-        }
-    }
-
     func executeDriver(
         _ action: DriverAction,
         paths: IOSUsePaths,

@@ -64,8 +64,8 @@ public enum StatusService {
             ) {
                 let config = configured[info.udid]
                 var fields: [String: MachineValue] = [
-                    "status": .string(info.isAttached ? "attached" : "running"),
-                    "lifecycleOwner": .string(info.isAttached ? "external" : "ios-use"),
+                    "status": .string("running"),
+                    "lifecycleOwner": .string("ios-use"),
                     "driverHost": info.driverHost.map(MachineValue.string) ?? .null,
                     "driverPort": info.driverPort.map(MachineValue.integer) ?? .null,
                     "udid": .string(info.udid),
@@ -85,7 +85,7 @@ public enum StatusService {
                     "macLogPath": info.macLogPath.map(MachineValue.string) ?? .null,
                     "macDevice": macDeviceValue(info: info),
                     "driverVersion": config.flatMap(\.driverVersion).map(MachineValue.string) ?? .null,
-                    "versionMatchesCli": info.isAttached || info.deviceType == PlayCoverSessionService.deviceType
+                    "versionMatchesCli": info.deviceType == PlayCoverSessionService.deviceType
                         ? .null
                         : .boolean(config?.driverVersion == IOSUseCLI.version),
                 ]
@@ -372,8 +372,8 @@ public enum StatusService {
     ) -> MachineValue {
         let info = context.info
         var fields: [String: MachineValue] = [
-            "status": .string(info.isAttached ? "attached" : "running"),
-            "lifecycleOwner": .string(info.isAttached ? "external" : "ios-use"),
+            "status": .string("running"),
+            "lifecycleOwner": .string("ios-use"),
             "driverHost": info.driverHost.map(MachineValue.string) ?? .null,
             "driverPort": info.driverPort.map(MachineValue.integer) ?? .null,
             "deviceType": .string(info.deviceType),
@@ -633,8 +633,8 @@ public enum StatusService {
                     ]
                 }
             }
-            var parts = [info.isAttached ? "attached" : "running"]
-            parts.append("owner: \(info.isAttached ? "external" : "ios-use")")
+            var parts = ["running"]
+            parts.append("owner: ios-use")
             if let host = info.driverHost, let port = info.driverPort {
                 parts.append("endpoint: \(host):\(port)")
             }

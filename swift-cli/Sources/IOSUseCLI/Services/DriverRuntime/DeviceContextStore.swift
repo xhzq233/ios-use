@@ -11,7 +11,7 @@ enum DeviceContextStore {
     static let macDeviceID = "mac"
     static var startHint: String {
         #if os(Linux)
-        return "Run `ios-use start -d <id> --host <host> --port <port>` first."
+        return "Run `ios-use start --connection <file>` first."
         #else
         return "Run `ios-use start` first."
         #endif

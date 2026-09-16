@@ -42,31 +42,30 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.4/scri
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
-### Linux TCP client
+### Linux remote client
 
-Linux x86_64 is available in `v2.1.0-alpha.4`; use the versioned
-installer command above. For a source build, Swift 6.2+ and standard Linux
-build tools are required:
+The Prepare 210 development build supports native remote XCTest and Apple
+device services on Linux x86_64. Published `v2.1.0-alpha.4` predates this
+connection interface. Build the development branch with Swift 6.2+ and
+standard Linux build tools:
 
 ```bash
-git clone --branch v2.1.0-alpha.4 https://github.com/xhzq233/ios-use.git
+git clone --branch codex/prepare-210 https://github.com/xhzq233/ios-use.git
 cd ios-use
 bash scripts/build_swift_cli.sh
-./ios-use start -d phone --host <driver-host> --port <forwarded-port>
+./ios-use start -d phone --connection device-connection.json
 ./ios-use dom -d phone
 ./ios-use tap "<label>" -d phone --dom
 ./ios-use screenshot -d phone
 ./ios-use stop -d phone
 ```
 
-The Linux release workflow builds an x86_64 binary on Ubuntu 22.04
-with the Swift runtime statically linked. Running the binary needs glibc and
-libstdc++, without a Swift installation. The device provider handles leases,
-signing and transport setup. The Prepare 210 development build also supports
-`start --connection` for native XCTest lifecycle, App management, URL opening
-and App stdout/stderr on Linux (see below). OCR, capture sequences, local USB,
-Simulator, the Mac App backend, system logs and proxy require macOS.
-`attach` and `detach` remain compatible entry points for UI-only TCP sessions.
+The Linux release workflow builds an x86_64 binary on Ubuntu 22.04 with the
+Swift runtime statically linked. Running it needs glibc and libstdc++, without
+a Swift installation. The provider handles leases, signing and transport.
+ios-use owns XCTest, App management, URL opening and App stdout/stderr.
+OCR, capture sequences, local USB, Simulator, the Mac App backend, system
+logs and proxy require macOS.
 
 ## Quick Start
 
@@ -98,32 +97,6 @@ xcrun simctl list devices booted
 ios-use config --simulator --udid <simulator-udid>
 ios-use start <simulator-udid>
 ```
-
-### External TCP driver
-
-When another host or device provider starts the matching ios-use driver and
-forwards its TCP port, connect without local USB or signing configuration:
-
-```bash
-ios-use start --device remote-phone --host 127.0.0.1 --port 18102
-ios-use dom -d remote-phone
-ios-use activateApp com.apple.Preferences -d remote-phone --dom
-ios-use stop -d remote-phone
-```
-
-`start --host/--port` is available from Alpha 4. `attach` remains supported
-with the same endpoint options. Both endpoint options
-are required and cannot be mixed with a UDID or local start flags.
-The host can be an IP address or hostname. Start checks the Fory protocol before
-saving the session. UI commands use this endpoint; installation, URL opening,
-media import, logs and proxy remain the provider's responsibility.
-`detach` (or `stop` on this target) only removes the local attachment. It also
-works offline and never stops the externally managed driver. Restore a lost
-endpoint through its provider, then retry; ios-use does not launch a local driver
-for a TCP attachment. Use a trusted network or secure tunnel for this plain TCP
-connection. `status` reports `attached` and `lifecycleOwner: external`;
-local sessions report `lifecycleOwner: ios-use`. This records the binding rather
-than continuously probing remote health.
 
 Screenshots default to JPEG output without OCR on both hosts. On macOS, use
 `screenshot --ocr` to also recognize text and save an OCR sidecar. `--no-ocr`
@@ -164,8 +137,10 @@ XCTest and App log capture, while the provider keeps its lease and transport.
 Start again with the same description while that connection remains valid.
 The UI path connects directly to the Driver endpoint. Swift uses usbmux,
 Lockdown and CoreDevice for App services; no Go runtime is required.
-`activateApp --log` returns a background collector PID and log path for
-stdout/stderr from the new App process. It does not read sandbox log files.
+`activateApp --log` captures stdout/stderr from the new App process on the CLI
+host, under `$IOS_USE_HOME/logs/devices/<device-id>/` (default home: `~/.ios-use`).
+`--json` returns `data.logFile` and `data.logCapturePid`; use `tail -f <logFile>`
+to follow output. Stopping capture retains the file. Sandbox log files are not read.
 Signing remains the provider's responsibility; `install` accepts packages
 already signed for the device. `status` describes saved ownership; use `dom`
 to check current Driver responsiveness.
@@ -282,7 +257,7 @@ Most automation commands support `--json`.
 
 ## Requirements
 
-- Linux x86_64 for TCP attachments; Apple silicon macOS for local device backends.
+- Linux x86_64 for remote device connections; Apple silicon macOS for local device backends.
 - Real devices: iOS 17.4 or newer, USB, and a free or paid Apple Developer
   account for driver signing.
 - Simulator and Driver builds: full Xcode, Swift and `xcodegen`. Linux CLI

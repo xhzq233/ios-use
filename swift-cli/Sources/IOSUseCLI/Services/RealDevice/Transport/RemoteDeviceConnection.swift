@@ -7,6 +7,16 @@ public struct RemoteDeviceConnection: Codable, Equatable, Sendable {
     public struct Endpoint: Codable, Equatable, Sendable {
         public let host: String
         public let port: Int
+
+        func validate() throws {
+            guard !host.isEmpty, !host.contains(where: { $0.isWhitespace }),
+                  !host.contains("/"), !host.contains("\0") else {
+                throw CLIParseError.invalidValue("Connection host must be an IP address or hostname, without a URL scheme.")
+            }
+            guard (1...65535).contains(port) else {
+                throw CLIParseError.invalidValue("Connection port must be between 1 and 65535.")
+            }
+        }
     }
     public let udid: String
     public let driverBundleID: String
@@ -25,8 +35,8 @@ public struct RemoteDeviceConnection: Codable, Equatable, Sendable {
         guard !udid.isEmpty, !driverBundleID.isEmpty else {
             throw CLIParseError.invalidValue("Device connection requires udid and driverBundleID")
         }
-        try TCPAttachService.validateEndpoint(host: usbmux.host, port: usbmux.port)
-        try TCPAttachService.validateEndpoint(host: driver.host, port: driver.port)
+        try usbmux.validate()
+        try driver.validate()
     }
 
     static func decode(_ value: Any?) throws -> Self? {

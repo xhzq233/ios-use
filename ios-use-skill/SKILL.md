@@ -12,7 +12,7 @@ from using that session.
 ## Native CLI
 
 When using the CLI, discover the target with `ios-use status`. With multiple
-running Devices, pass `-d <id>` on UI commands; IDs are bare UDIDs, `mac`, or aliases chosen during TCP attachment.
+running Devices, pass `-d <id>` on UI commands; IDs are bare UDIDs, `mac`, or aliases chosen with remote start.
 Use `ios-use --help` for the workflow and `ios-use help <command>` for command
 options and examples. The CLI help is usable without loading this Skill.
 
@@ -79,17 +79,19 @@ Redact device identifiers and signed URLs before sharing artifacts.
 
 ## Linux hosts
 
-Linux supports externally managed TCP Drivers. Obtain a running Driver endpoint
-from the device provider, then use `ios-use start -d <alias> --host <host> --port
-<port>`. Reuse the attachment with DOM, actions, waits, App lifecycle and
-screenshots. Linux screenshots omit OCR. Use `stop` when finished; it does not
-stop the provider's runtime. Device installation, signing and Driver startup
-remain provider operations. Use v2.1.0-alpha.4 for the unified TCP start entry.
-For this pre-release, use its versioned installer:
+Linux x86_64 supports remote devices through a provider connection. Use a
+Prepare 210 build with matching Driver; published Alpha 4 lacks this interface.
+The provider signs/installs the Driver and keeps the device connection alive:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.4/scripts/install.sh | bash -s -- --version v2.1.0-alpha.4
+ios-use start -d phone --connection device-connection.json
+ios-use apps -d phone
+ios-use activateApp com.example.app --terminateExisting --log -d phone --json
+ios-use dom -d phone
+ios-use screenshot -d phone
+ios-use stop -d phone
 ```
 
-Older builds use `attach` with the same host/port options. `attach` and `detach`
-remain compatible in Alpha 4.
+ios-use owns XCTest, App management, URL opening and App stdout/stderr. `stop`
+stops XCTest and log capture; release the provider lease separately. Linux
+screenshots omit OCR. See [setup](references/setup.md) for connection details.

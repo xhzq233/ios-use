@@ -10,25 +10,9 @@ ios-use config --udid <udid>
 ios-use start <udid>
 ```
 
-For an externally started driver, obtain its forwarded endpoint from the device
-provider and connect using a local alias:
-
-```bash
-ios-use start --device remote-phone --host <host> --port <port>
-ios-use dom -d remote-phone
-ios-use stop -d remote-phone
-```
-
-Use a driver from the same release over a trusted network or secure tunnel.
-No local `config` is needed. Do not mix host/port with a UDID or local start flags.
-`attach` accepts the same endpoint options for compatibility (use it on Alpha 3).
-`detach` and `stop` only forget this
-attachment; the provider owns installation, driver startup, and cleanup.
-If disconnected, restore the endpoint through the provider and retry. If the
-endpoint changed, stop and start with the new endpoint. `status` reports the saved binding and its lifecycle owner;
-run `dom` to check whether the endpoint is currently responsive.
-Host operations such as install, open, media import, logs and proxy require the
-provider; `activateApp --log` is unavailable over TCP.
+For remote devices on macOS or Linux, obtain the provider's device connection
+file and use `ios-use start -d phone --connection device-connection.json`.
+See [Remote device services](#remote-device-services-prepare-210) below.
 
 For the Mac backend, complete its one-time setup and start an App:
 
@@ -51,7 +35,7 @@ real device, or a Simulator for reliable automation.
 rerun the same command. This setup is shared across `IOS_USE_HOME` values.
 
 One `IOS_USE_HOME` can hold multiple independent Device Contexts. `status`
-prints their stable IDs: the bare UDID for a real device or Simulator, `mac`, or the TCP attachment alias. When more
+prints their stable IDs: the bare UDID for a real device or Simulator, `mac`, or the remote device alias. When more
 than one Device runs, pass `-d <device-id>` (or `--device`) to every Device command;
 with exactly one running Device, it remains optional.
 
@@ -175,8 +159,8 @@ The provider installs/signs the Driver and maintains the transport. ios-use
 owns XCTest, App management, URL opening and `activateApp --terminateExisting
 --log` on macOS and Linux x86_64. `stop` stops XCTest and log capture; release
 the provider lease separately. Signed App packages use `ios-use install`;
-provider re-signing stays outside ios-use. A UI-only `start --host/--port`
-attachment continues to leave its externally owned Driver running on stop.
+provider re-signing stays outside ios-use. Use a trusted network or secure
+tunnel for provider endpoints. Run `dom` to check remote responsiveness.
 
 Duo size previews: `config --mac --device-model iphone-duo-inner` (alias
 `iphone-duo`) or `iphone-duo-outer`, then stop/start. They use App Store

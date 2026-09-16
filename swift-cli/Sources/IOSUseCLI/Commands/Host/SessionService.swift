@@ -9,7 +9,6 @@ public enum SessionService {
         public let driverHost: String?
         public let driverPort: Int?
         public let remoteConnection: RemoteDeviceConnection?
-        public var isAttached: Bool { deviceType == TCPAttachService.deviceType }
         public let startedAt: Int
         public let holderPid: Int?
         public let runnerPid: Int?
@@ -414,9 +413,6 @@ public enum SessionService {
                 "requireDriverLock must throw when driver.lock is absent"
             )
         }
-        if current.isAttached {
-            return try TCPAttachService.detachLocked(info: current, paths: paths)
-        }
         if current.deviceType == PlayCoverSessionService.deviceType {
             let pid = try PlayCoverSessionService.terminate(
                 session: current,
@@ -451,7 +447,7 @@ public enum SessionService {
 #endif
     #if os(Linux)
     public static func stop(paths: IOSUsePaths) throws -> String {
-        try TCPAttachService.detach(paths: paths)
+        try RemoteDeviceService.stop(info: requireDriverLock(paths: paths), paths: paths)
     }
     #endif
 

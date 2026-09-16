@@ -217,7 +217,7 @@ final class LockedDriverClientSession {
             return try body(currentClient(for: lock))
         } catch {
 #if os(macOS)
-            guard !lock.isAttached,
+            guard lock.remoteConnection == nil,
                   lock.deviceType != PlayCoverSessionService.deviceType,
                   (error as? DriverClientError)?.isRecoverableConnectFailure == true,
                   !didRecoverConnectFailure else {
@@ -384,6 +384,7 @@ final class DriverClient: DriverCommandClient {
             host: session.driverHost ?? "127.0.0.1",
             port: UInt16(session.driverPort ?? Int(IOSUseProtocol.defaultDriverPort)),
             udid: session.udid,
+            // Remote UI uses the provider endpoint directly, without local usbmux.
             deviceType: session.remoteConnection == nil ? session.deviceType : "tcp",
             cliLogPath: paths.map { CLILogService.logPath(paths: $0) },
             socketTimeoutSeconds: socketTimeoutSeconds

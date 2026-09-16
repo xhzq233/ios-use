@@ -7,8 +7,6 @@ public enum ParsedCommand: Equatable, Sendable {
     case config(ConfigOptions)
     case start(StartOptions)
     case stop
-    case attach(AttachOptions)
-    case detach
     case install(AppInstallOptions)
     case uninstall(AppUninstallOptions)
     case apps(AppsOptions)
@@ -31,8 +29,6 @@ public enum ParsedCommand: Equatable, Sendable {
         case .config: return "config"
         case .start: return "start"
         case .stop: return "stop"
-        case .attach: return "attach"
-        case .detach: return "detach"
         case .install: return "install"
         case .uninstall: return "uninstall"
         case .apps: return "apps"
@@ -108,19 +104,8 @@ public struct SessionOptions: Equatable, Sendable {
     }
 }
 
-public struct AttachOptions: Equatable, Sendable {
-    public var host: String
-    public var port: Int
-
-    public init(host: String, port: Int) {
-        self.host = host
-        self.port = port
-    }
-}
-
 public struct StartOptions: Equatable, Sendable {
     public var connectionPath: String?
-    public var endpoint: AttachOptions?
     public var udid: String?
     public var verbose = false
     public var mac = false
@@ -134,10 +119,8 @@ public struct StartOptions: Equatable, Sendable {
         mac: Bool = false,
         appPath: String? = nil,
         log: Bool = false,
-        timeout: Double = 60,
-        endpoint: AttachOptions? = nil
+        timeout: Double = 60
     ) {
-        self.endpoint = endpoint
         self.udid = udid
         self.verbose = verbose
         self.mac = mac
