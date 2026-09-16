@@ -195,11 +195,22 @@ its current model. Setting a preset does not run signing setup.
 | `iphone-15-pro` | 393 × 852 | 3× |
 | `iphone-15-pro-max` (default) | 430 × 932 | 3× |
 | `ipad-pro-11` | 834 × 1194 | 2× |
+| `iphone-duo-inner` / `iphone-duo` (preview) | 669 × 951 | 3× |
+| `iphone-duo-outer` (preview) | 466 × 678 | 3× |
 
 The preset controls device identity, phone/tablet layout, portrait screen size,
 safe areas and screenshot resolution. `status --json` reports the active
 `macDevice` and the pending `configuredMacDevice`. App-specific iPad support
 still depends on the App's layouts; this does not emulate hardware or iPadOS.
+
+Duo presets are layout previews. They use Apple's [App Store screenshot
+canvases](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications)
+(inner 2007 × 2853, outer 1398 × 2034) with an assumed 3× logical scale.
+These differ from the inner panel's physical pixel dimensions. Until the Duo
+SDK/runtime is available for validation, the previews retain the existing
+iPhone runtime identity and use zero synthetic safe-area insets. They do not
+emulate folding, the iOS 27 side controls, or claim exact Duo hardware metrics.
+
 
 Background scenes, minimized windows, and windows on another Space do not
 automatically block UI commands. Apps can still pause work or rendering in the

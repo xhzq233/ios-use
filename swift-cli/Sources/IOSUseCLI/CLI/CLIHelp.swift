@@ -127,7 +127,10 @@ enum CLIHelp {
             `config --mac --device-model <preset>` only saves the device selection
             for the next cold start; it does not initialize signing or restart an App.
             Presets: iphone-se, iphone-13, iphone-15-pro, iphone-15-pro-max (default),
-            ipad-pro-11. Stop the running App, then start --mac to apply a change.
+            ipad-pro-11, iphone-duo-inner (alias iphone-duo), iphone-duo-outer.
+            Duo presets are 3x layout previews based on App Store screenshot
+            canvases; they retain the existing iPhone identity and do not emulate
+            folding or iOS 27 UI. Stop, then start --mac to apply a change.
             macOS will show user authentication dialogs while the identity is
             created and trusted. If you cancel, safely retry the same command;
             the retry resumes the same signing identity instead of replacing it.

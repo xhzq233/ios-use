@@ -177,3 +177,8 @@ owns XCTest, App management, URL opening and `activateApp --terminateExisting
 the provider lease separately. Signed App packages use `ios-use install`;
 provider re-signing stays outside ios-use. A UI-only `start --host/--port`
 attachment continues to leave its externally owned Driver running on stop.
+
+Duo size previews: `config --mac --device-model iphone-duo-inner` (alias
+`iphone-duo`) or `iphone-duo-outer`, then stop/start. They use App Store
+screenshot canvases at an assumed 3× scale (669×951 / 466×678 points), retain
+the existing iPhone runtime identity, and do not emulate folding or iOS 27 UI.

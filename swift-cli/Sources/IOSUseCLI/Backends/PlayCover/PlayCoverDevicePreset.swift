@@ -26,7 +26,8 @@ struct PlayCoverDevicePreset: Equatable {
     static let defaultPreset = presets[0]
 
     static func named(_ name: String) throws -> Self {
-        guard let preset = presets.first(where: { $0.name == name }) else {
+        let resolvedName = name == "iphone-duo" ? "iphone-duo-inner" : name
+        guard let preset = presets.first(where: { $0.name == resolvedName }) else {
             throw CLIParseError.invalidValue("Unknown Mac device preset \(name). Available: \(presets.map(\.name).joined(separator: ", "))")
         }
         return preset
@@ -47,6 +48,7 @@ struct PlayCoverDevicePreset: Equatable {
 
     var machineData: MachineValue {
         .object(["preset": .string(name), "productType": .string(productType),
+                 "layoutPreview": .boolean(name.hasPrefix("iphone-duo-")),
                  "logicalWidth": .integer(Int(logicalSize.width)),
                  "logicalHeight": .integer(Int(logicalSize.height)), "scale": .integer(Int(scale))])
     }

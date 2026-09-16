@@ -18,6 +18,10 @@ static inline const IOSUsePlayDevicePreset *IOSUsePlayDevicePresetAt(int index) 
         {"iphone-13", "iPhone14,5", "A2482", 0, 390, 844, 3, 47, 34},
         {"iphone-15-pro", "iPhone16,1", "A2848", 0, 393, 852, 3, 59, 34},
         {"ipad-pro-11", "iPad14,3", "A2759", 1, 834, 1194, 2, 24, 20},
+        // Duo layout previews: App Store screenshot canvases at 3x.
+        // Keep the supported iPhone runtime identity; these do not emulate iOS 27.
+        {"iphone-duo-inner", "iPhone16,2", "A2849", 0, 669, 951, 3, 0, 0},
+        {"iphone-duo-outer", "iPhone16,2", "A2849", 0, 466, 678, 3, 0, 0},
     };
     return index >= 0 && index < (int)(sizeof(presets) / sizeof(presets[0]))
         ? &presets[index] : NULL;

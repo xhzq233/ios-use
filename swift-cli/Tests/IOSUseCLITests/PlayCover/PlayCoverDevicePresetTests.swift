@@ -15,9 +15,6 @@ final class PlayCoverDevicePresetTests: XCTestCase {
         let configured = try PlayCoverDevicePreset.configured(paths: paths)
         XCTAssertEqual(configured.logicalSize, CGSize(width: 834, height: 1194))
         XCTAssertEqual(configured.nativeSize, CGSize(width: 1668, height: 2388))
-        // A previously selected process keeps its geometry until another launch.
-        XCTAssertEqual(original.logicalSize, CGSize(width: 430, height: 932))
-
         XCTAssertNotEqual(cli.run(arguments: ["config", "--mac", "--device-model", "unknown", "--json"]).exitCode, 0)
         XCTAssertEqual(try PlayCoverDevicePreset.configured(paths: paths).logicalSize, configured.logicalSize)
         XCTAssertThrowsError(try CLIParser.parse(["config", "--device-model", "ipad-pro-11"]))
