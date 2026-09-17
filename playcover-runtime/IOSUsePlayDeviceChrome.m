@@ -117,9 +117,6 @@ static void loadFrame(void) {
     CGRect screen = CGRectMake(frameInsets.left, frameInsets.top, w, h);
     UIGraphicsBeginImageContextWithOptions(size, NO, 2);
     CGContextRef context = UIGraphicsGetCurrentContext();
-    // Hide the rectangular canvas corners without clipping the real App layer.
-    [[UIColor colorWithWhite:0.12 alpha:1] setFill];
-    UIRectFill(screen);
     if (outer || inner) {
         NSString *variant = outer ? @"outer" : @"inner";
         [png([NSString stringWithFormat:@"duo-%@-Frame",variant]) drawInRect:(CGRect){CGPointZero,size}];
@@ -131,6 +128,8 @@ static void loadFrame(void) {
         CGContextSetBlendMode(context, kCGBlendModeNormal);
         [png([NSString stringWithFormat:@"duo-%@-Overlay",variant]) drawInRect:(CGRect){CGPointZero,size}];
     } else {
+        [[UIColor colorWithWhite:0.12 alpha:1] setFill];
+        UIRectFill(screen);
         CGRect body = CGRectMake([padding[@"left"] doubleValue], [padding[@"top"] doubleValue],
             w+[sizing[@"leftWidth"] doubleValue]+[sizing[@"rightWidth"] doubleValue],
             h+[sizing[@"topHeight"] doubleValue]+[sizing[@"bottomHeight"] doubleValue]);
@@ -215,6 +214,30 @@ static id toolbarView(id parent, NSUInteger depth) {
     for (id child in get(parent,@"subviews")) { id found=toolbarView(child,depth-1);if(found)return found; }
     return nil;
 }
+BOOL IOSUsePlayDeviceChromeClipsCanvas(void) {
+    return shapedRoot != nil && IOSUsePlayDeviceIsDuo();
+}
+static CGPathRef duoCanvasPath(CGRect canvas) CF_RETURNS_RETAINED {
+    CGFloat radii[4]={58,58,58,58}; // top-left, top-right, bottom-right, bottom-left
+    if (!IOSUsePlayDeviceIsDuoInner()) { radii[0]=7;radii[1]=64;radii[2]=64;radii[3]=7; }
+    for (int q=0;q<IOSUsePlayDeviceQuarterTurns();q++) {
+        CGFloat last=radii[3];for(int i=3;i>0;i--)radii[i]=radii[i-1];radii[0]=last;
+    }
+    CGFloat w=IOSUsePlayDeviceLogicalWidth,h=IOSUsePlayDeviceLogicalHeight;
+    UIBezierPath *p=[UIBezierPath bezierPath];
+    [p moveToPoint:CGPointMake(radii[0],0)];
+    [p addLineToPoint:CGPointMake(w-radii[1],0)];
+    [p addArcWithCenter:CGPointMake(w-radii[1],radii[1]) radius:radii[1] startAngle:-M_PI_2 endAngle:0 clockwise:YES];
+    [p addLineToPoint:CGPointMake(w,h-radii[2])];
+    [p addArcWithCenter:CGPointMake(w-radii[2],h-radii[2]) radius:radii[2] startAngle:0 endAngle:M_PI_2 clockwise:YES];
+    [p addLineToPoint:CGPointMake(radii[3],h)];
+    [p addArcWithCenter:CGPointMake(radii[3],h-radii[3]) radius:radii[3] startAngle:M_PI_2 endAngle:M_PI clockwise:YES];
+    [p addLineToPoint:CGPointMake(0,radii[0])];
+    [p addArcWithCenter:CGPointMake(radii[0],radii[0]) radius:radii[0] startAngle:M_PI endAngle:3*M_PI_2 clockwise:YES];
+    [p closePath];
+    CGAffineTransform transform=CGAffineTransformMake(canvas.size.width/w,0,0,-canvas.size.height/h,canvas.origin.x,CGRectGetMaxY(canvas));
+    return CGPathCreateCopyByTransformingPath(p.CGPath,&transform);
+}
 static void shapeHost(void) {
     id content=get(host,@"contentView"),root=get(content,@"superview");
     id bar=toolbarView(root,4);
@@ -228,11 +251,14 @@ static void shapeHost(void) {
         object(host,@"setBackgroundColor:",get(NSClassFromString(@"NSColor"),@"clearColor"));
     }
     CGRect barRect=((CGRect (*)(id,SEL,CGRect,id))objc_msgSend)(root,NSSelectorFromString(@"convertRect:fromView:"),rect(bar,@"bounds"),bar);
-    // Separate the rounded toolbar from the device, retaining every canvas
-    // pixel. Only the titlebar's decorative spacer becomes transparent.
+    // Clip desktop presentation separately from the unmasked scene used by
+    // CLI capture. A rectangular backing plate leaks outside the Duo bezel.
     barRect.origin.y+=0.5;barRect.size.height-=0.5;
     CGMutablePathRef path=CGPathCreateMutable();
-    CGPathAddRect(path,NULL,rect(content,@"frame"));
+    if (IOSUsePlayDeviceIsDuo()) {
+        CGPathRef screen=duoCanvasPath(rect(content,@"frame"));
+        CGPathAddPath(path,NULL,screen);CGPathRelease(screen);
+    } else CGPathAddRect(path,NULL,rect(content,@"frame"));
     CGPathAddRoundedRect(path,NULL,barRect,7,7);
     hostShape.frame=rect(root,@"bounds");hostShape.path=path;
     CGPathRelease(path);
@@ -271,7 +297,10 @@ static void scheduleChromeUpdate(void) {
 }
 static id symbol(NSString *name, NSString *label) {
     id image=((id (*)(id,SEL,id,id))objc_msgSend)(NSClassFromString(@"NSImage"),NSSelectorFromString(@"imageWithSystemSymbolName:accessibilityDescription:"),name,label);
-    id configuration=((id (*)(id,SEL,CGFloat,CGFloat,NSInteger))objc_msgSend)(NSClassFromString(@"NSImageSymbolConfiguration"),NSSelectorFromString(@"configurationWithPointSize:weight:scale:"),18.0,0.0,2);
+    // The wide eye symbol looks oversized at the square Rotate icon's size.
+    // Keep the 32pt hit target, but give visibility its own optical size.
+    BOOL visibility=[name isEqual:@"eye"] || [name isEqual:@"eye.slash"];
+    id configuration=((id (*)(id,SEL,CGFloat,CGFloat,NSInteger))objc_msgSend)(NSClassFromString(@"NSImageSymbolConfiguration"),NSSelectorFromString(@"configurationWithPointSize:weight:scale:"),visibility ? 14.0 : 18.0,0.0,visibility ? 1 : 2);
     return ((id (*)(id,SEL,id))objc_msgSend)(image,NSSelectorFromString(@"imageWithSymbolConfiguration:"),configuration);
 }
 static id button(NSString *imageName, NSString *label, SEL action) {

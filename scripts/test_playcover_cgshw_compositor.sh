@@ -96,6 +96,7 @@ xcrun --sdk macosx clang \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlaySafeAreaCompatibility.m" \
   -framework QuartzCore \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayDeviceChrome.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayStatusBar.m" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayDeviceConfiguration.m" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayAppKitBridge.m" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/tests/AppKitBridgeSnapshotTests.m" \
