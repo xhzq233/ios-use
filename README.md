@@ -15,6 +15,33 @@ Application nodes in the DOM provide page context. Element selectors search
 their contents, so an App name does not shadow a button with the same label.
 On XCTest targets, `dom --fresh` also redetects the foreground App after an external App switch.
 
+For repeated observations, use `dom --diff`, or append `-D [duration]` to a UI
+mutation (`tap`, `longpress`, `input`, `swipe`, `rotate`, `home`, `dismissAlert`,
+`open`, `activateApp`, `terminateApp`). For example:
+
+```bash
+export IOS_USE_DOM_CLIENT=agent_a  # use a distinct name for each agent sharing a Device
+ios-use dom --diff
+ios-use tap "Continue" -D
+ios-use input --tap "Search" --content "photos" -D 300ms
+```
+
+The first observation is full; subsequent output shows added, removed and changed
+positions with parent context, or `DOM unchanged`. Plain `dom` and `--dom` always
+return full output and also update this client's previous observation. Session,
+App or window-size changes reset to full; broad changes may also return full when
+that is shorter. `--raw` clears the previous structured observation. Client names
+are case-insensitive; the default is `default`, scoped to the Device and
+`IOS_USE_HOME`. Use letters, digits, `_` and `-` (up to 80 characters).
+
+Bare `-D` waits for DOM quiescence; `-D 300ms` uses a fixed delay (ms by default,
+minimum 100ms). Neither proves that rendering or asynchronous loading has
+finished. Diff always reads a fresh full tree and leaves element lookup intact;
+it saves output/context, not tree capture work. Paths in a diff are tree positions,
+not persistent element IDs: use the latest labels/values and `--cindex` for actions.
+With `--json`, observations use `mode: full` with `nodes`, or `mode: diff` with
+`added`, `removed`, `changed` (`before`/`after`) and `context`.
+
 ## Install
 
 ```bash
@@ -145,8 +172,8 @@ to follow output. Stopping capture retains the file. Sandbox log files are not r
 The adjacent `cli.log` records tunnel, stdio, App service and launch stages for
 capture startup diagnosis.
 Signing remains the provider's responsibility; `install` accepts packages
-already signed for the device. `status` describes saved ownership; use `dom`
-to check current Driver responsiveness.
+already signed for the device. `status` checks the holder process/control connection and Driver TCP reachability
+(`healthy`, `unhealthy`, or `stale`); use `dom` to verify UI responsiveness.
 
 ### Mac backend
 

@@ -4,6 +4,9 @@
 
 ## Highlights
 
+- Add `dom --diff` and `-D [duration]` on UI mutations. Observations are scoped
+  by Device and client, keep full element lookup, and reset to full after context
+  changes. `IOS_USE_DOM_CLIENT` separates agents sharing a Device.
 - Switch the running Mac App's device preset with `config --mac --device-model`:
   iPhone SE, iPhone 13, iPhone 15 Pro/Pro Max, iPad Pro 11-inch and iPhone Duo.
   The native toolbar also selects models, rotates the viewport, and folds or
@@ -21,11 +24,15 @@
 
 ## Fixes
 
+- Reject duplicate Remote sessions for one physical device and mismatched
+  explicit UDIDs. Report Remote holder/endpoint health instead of assuming a
+  saved session is running; reuse health checks within each status command.
+- Compute CoreDevice TCP checksums without repeatedly copying packet buffers.
 - Clip each DeviceKit PDF tile to its drawing bounds, fixing repeated iPad bezel
   segments. Keep iPad safe areas at the top and bottom when rotating.
 - Preserve Duo's physical hinge orientation when opening or closing, and update
-  the inner/outer display's size classes. Duo system safe areas remain unmodeled
-  and are identified as such in status.
+  the inner/outer display's size classes and preview safe-area profile. The
+  Duo profile is a layout preview running on the host's UIKit runtime.
 - Keep Catalyst's native scene orientation in resizable mode so a landscape
   device preset does not transpose a non-square App window's UIKit bounds.
 - Release old snapshot trees after repeated observations while retaining the

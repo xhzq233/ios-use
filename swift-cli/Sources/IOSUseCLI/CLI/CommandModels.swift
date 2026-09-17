@@ -209,6 +209,7 @@ public struct OpenURLOptions: Equatable, Sendable {
     public var bundleID: String?
     public var session: SessionOptions
     public var dom: Bool
+    public var postDom: PostDomMode? = nil
 
     public init(url: String, bundleID: String? = nil, session: SessionOptions = SessionOptions(), dom: Bool = false) {
         self.url = url
@@ -237,6 +238,7 @@ public struct AppLifecycleOptions: Equatable, Sendable {
     public var terminateExisting: Bool
     public var log: Bool
     public var dom: Bool
+    public var postDom: PostDomMode? = nil
     public var noWait: Bool
 
     public init(
@@ -323,6 +325,7 @@ public struct DismissAlertOptions: Equatable, Sendable {
     public var selection: AlertSelectionOption
     public var scope: AlertScopeOption
     public var wait: Double
+    public var postDom: PostDomMode? = nil
 
     public init(
         selection: AlertSelectionOption = .onlyButton,
@@ -338,6 +341,22 @@ public struct DismissAlertOptions: Equatable, Sendable {
 public enum PostDomMode: Equatable, Sendable {
     case afterQuiescence
     case afterMilliseconds(Int)
+    case diffAfterQuiescence
+    case diffAfterMilliseconds(Int)
+
+    var diff: Bool {
+        switch self {
+        case .diffAfterQuiescence, .diffAfterMilliseconds: return true
+        default: return false
+        }
+    }
+
+    var milliseconds: Int? {
+        switch self {
+        case .afterMilliseconds(let value), .diffAfterMilliseconds(let value): return value
+        default: return nil
+        }
+    }
 }
 
 public enum DriverAction: Equatable, Sendable {
@@ -345,14 +364,25 @@ public enum DriverAction: Equatable, Sendable {
     case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case input(tap: String?, content: String, delete: Int, enter: Bool, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
-    case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool)
+    case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool, diff: Bool = false)
     case screenshot(name: String?, ocr: Bool)
     case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode)
     case activateApp(bundleId: String)
     case terminateApp(bundleId: String)
-    case home
+    case home(postDom: PostDomMode? = nil)
     case rotate(orientation: IOSUseDeviceOrientation, postDom: PostDomMode?)
     case dismissAlert(DismissAlertOptions)
+
+    var observesDom: Bool {
+        switch self {
+        case .dom: return true
+        case .tap(_, _, _, _, _, let mode), .longPress(_, _, _, _, let mode),
+             .input(_, _, _, _, _, _, let mode), .swipe(_, _, _, _, _, _, let mode),
+             .rotate(_, let mode), .home(let mode): return mode != nil
+        case .dismissAlert(let options): return options.postDom != nil
+        default: return false
+        }
+    }
 
     public var name: String {
         switch self {

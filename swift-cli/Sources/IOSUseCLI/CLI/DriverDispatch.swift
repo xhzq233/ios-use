@@ -12,16 +12,25 @@ extension IOSUseCLI {
             let validatedURL = try OpenURLService.validatedURL(
                 options.url
             )
+            var observation: DomObservation.Output?
+            if options.dom || options.postDom != nil { _ = try DomObservation.clientID() }
             let result = try DeviceCommandLock.withExclusiveLock(
                 paths: paths
             ) { () throws -> OpenURLService.OpenResult in
-                if options.dom {
-                    return try OpenURLService.openWithDom(
+                if options.dom || options.postDom != nil {
+                    let observer = try DomObservation(paths: paths)
+                    let result = try OpenURLService.openWithDom(
                         url: validatedURL,
                         bundleID: options.bundleID,
                         session: options.session,
-                        paths: paths
+                        paths: paths,
+                        postDom: options.postDom
                     )
+                    if let dom = result.dom {
+                        do { observation = try observer.observe(dom, diff: options.postDom?.diff == true) }
+                        catch { throw OpenURLService.ReadinessError(hostResult: result, underlying: error) }
+                    }
+                    return result
                 }
                 let resolved: OpenURLService.OpenResult?
                 if options.session.udid != nil
@@ -55,11 +64,9 @@ extension IOSUseCLI {
                 return resolved
             }
             var stdout = "\(result.message)\n"
-            if let dom = result.dom {
-                stdout += "\n" + DriverOutput.formatDom(dom) + "\n"
-            }
+            if let observation { stdout += "\n" + observation.text }
             if json {
-                return MachineOutput.success(command: "open", data: OpenURLService.machineData(result))
+                return MachineOutput.success(command: "open", data: OpenURLService.machineData(result, observation: observation))
             }
             return CLIResult(exitCode: 0, stdout: stdout)
         } catch {
@@ -120,24 +127,30 @@ extension IOSUseCLI {
         json: Bool
     ) -> CLIResult {
         do {
+            var observation: DomObservation.Output?
+            if options.dom || options.postDom != nil { _ = try DomObservation.clientID() }
             let result = try DeviceCommandLock.withExclusiveLock(
                 paths: paths
             ) {
-                return try AppLifecycleService.runWithReadiness(
+                let observer = options.dom || options.postDom != nil ? try DomObservation(paths: paths) : nil
+                let result = try AppLifecycleService.runWithReadiness(
                     options: options,
                     paths: paths
                 )
+                if let dom = result.dom {
+                    do { observation = try observer!.observe(dom, diff: options.postDom?.diff == true) }
+                    catch { throw AppLifecycleService.ReadinessError(hostResult: result, underlying: error) }
+                }
+                return result
             }
             if json {
                 return MachineOutput.success(
                     command: options.action.commandName,
-                    data: AppLifecycleService.machineData(options: options, result: result)
+                    data: AppLifecycleService.machineData(options: options, result: result, observation: observation)
                 )
             }
             var stdout = "\(result.message)\n"
-            if let dom = result.dom {
-                stdout += "\n" + DriverOutput.formatDom(dom) + "\n"
-            }
+            if let observation { stdout += "\n" + observation.text }
             return CLIResult(exitCode: 0, stdout: stdout)
         } catch {
             if json, let readinessError = error as? AppLifecycleService.ReadinessError {

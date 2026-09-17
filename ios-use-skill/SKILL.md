@@ -30,6 +30,12 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   `--traits` / `--cindex` for observed duplicates. Prefer an offscreen semantic
   target with a visible anchor in the same scroll container; use label-relative
   offsets before absolute coordinates when possible.
+- Use `dom --diff` for changes since the last DOM shown to this client, or use
+  `-D [duration]` instead of `--dom [duration]` after a UI mutation. First use,
+  changed App/session/size, or broad changes returns full; plain `dom` always
+  returns full. Set `IOS_USE_DOM_CLIENT` to a distinct name per agent sharing a
+  Device (letters/digits/`_`/`-`, case-insensitive; default `default`). Diff paths
+  are positions, not tap IDs; use the latest labels/values for actions.
 - Verify the result using the action's `--dom` output. Native idle does not
   guarantee App readiness; wait on an observed page/loading condition when needed.
   An explicit `--dom <duration>` is a fixed delay, not a readiness check.

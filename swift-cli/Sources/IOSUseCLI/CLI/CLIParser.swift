@@ -598,7 +598,7 @@ public enum CLIParser {
             case "--offset-ratio": offsetRatio = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
+            case "--dom", "-D": postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             default:
                 if arg.hasPrefix("-") {
                     throw CLIParseError.unknownOption(arg)
@@ -620,7 +620,7 @@ public enum CLIParser {
             case "--duration": duration = try parseNonNegativeDurationMillisecondsStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
+            case "--dom", "-D": postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
@@ -653,7 +653,7 @@ public enum CLIParser {
             case "--enter": enter = true
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
+            case "--dom", "-D": postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
@@ -680,7 +680,7 @@ public enum CLIParser {
             case "--distance": distance = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
+            case "--dom", "-D": postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
@@ -691,31 +691,36 @@ public enum CLIParser {
         var raw = false
         var fresh = false
         var waitQuiescence = false
+        var diff = false
         while let arg = parser.consume() {
             switch arg {
+            case "--diff": diff = true
             case "--raw": raw = true
             case "--fresh": fresh = true
             case "--wait-quiescence": waitQuiescence = true
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        if raw && (fresh || waitQuiescence) {
+        if raw && (fresh || waitQuiescence || diff) {
             throw CLIParseError.invalidValue(
-                "dom --raw cannot be combined with --fresh or --wait-quiescence"
+                "dom --raw cannot be combined with --fresh, --wait-quiescence or --diff"
             )
         }
-        return .dom(raw: raw, fresh: fresh || waitQuiescence, waitQuiescence: waitQuiescence)
+        return .dom(raw: raw, fresh: fresh || waitQuiescence || diff, waitQuiescence: waitQuiescence, diff: diff)
     }
 
-    private static func parsePostDomMode(_ parser: inout ArgumentParser, option: String) throws -> PostDomMode {
+    private static func parsePostDomMode(_ parser: inout ArgumentParser, option: String, existing: PostDomMode? = nil) throws -> PostDomMode {
+        guard existing == nil else {
+            throw CLIParseError.invalidValue("Use only one of --dom or -D")
+        }
         guard let value = parser.optionalValueAllowingLeadingDash() else {
-            return .afterQuiescence
+            return option == "-D" ? .diffAfterQuiescence : .afterQuiescence
         }
         let milliseconds = try parseNonNegativeDurationMillisecondsStrict(value, label: option)
         guard milliseconds >= IOSUseProtocol.minimumPostDomMilliseconds else {
             throw CLIParseError.invalidValue("\(option) must be at least \(IOSUseProtocol.minimumPostDomMilliseconds)ms")
         }
-        return .afterMilliseconds(milliseconds)
+        return option == "-D" ? .diffAfterMilliseconds(milliseconds) : .afterMilliseconds(milliseconds)
     }
 
     private static func parseScreenshot(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -816,8 +821,12 @@ public enum CLIParser {
     }
 
     private static func parseHome(_ parser: inout ArgumentParser) throws -> DriverAction {
-        try parser.requireEnd()
-        return .home
+        var postDom: PostDomMode?
+        while let arg = parser.consume() {
+            guard arg == "-D" else { throw CLIParseError.unknownOption(arg) }
+            postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
+        }
+        return .home(postDom: postDom)
     }
 
     private static func parseRotate(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -832,8 +841,8 @@ public enum CLIParser {
                     throw CLIParseError.invalidValue("--to must be one of: \(values)")
                 }
                 orientation = parsed
-            case "--dom":
-                postDom = try parsePostDomMode(&parser, option: arg)
+            case "--dom", "-D":
+                postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             default:
                 throw CLIParseError.unknownOption(arg)
             }
@@ -849,9 +858,12 @@ public enum CLIParser {
         var bundleID: String?
         var session = SessionOptions()
         var dom = false
+        var postDom: PostDomMode?
         while let arg = parser.consume() {
             if arg == "--dom" {
                 dom = true
+            } else if arg == "-D" {
+                postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             } else if arg == "--bundle-id" {
                 let value = try parser.value(for: arg)
                 guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -862,7 +874,10 @@ public enum CLIParser {
                 try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return OpenURLOptions(url: url, bundleID: bundleID, session: session, dom: dom)
+        guard !dom || postDom == nil else { throw CLIParseError.invalidValue("Use only one of --dom or -D") }
+        var options = OpenURLOptions(url: url, bundleID: bundleID, session: session, dom: dom)
+        options.postDom = postDom
+        return options
     }
 
     private static func parseAppLifecycle(_ parser: inout ArgumentParser, action: AppLifecycleOptions.Action) throws -> AppLifecycleOptions {
@@ -871,6 +886,7 @@ public enum CLIParser {
         var terminateExisting = false
         var log = false
         var dom = false
+        var postDom: PostDomMode?
         var noWait = false
         while let arg = parser.consume() {
             switch arg {
@@ -883,6 +899,8 @@ public enum CLIParser {
             case "--dom":
                 guard action == .activate else { throw CLIParseError.unknownOption(arg) }
                 dom = true
+            case "-D":
+                postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             case "--no-wait":
                 guard action == .activate else { throw CLIParseError.unknownOption(arg) }
                 noWait = true
@@ -893,10 +911,11 @@ public enum CLIParser {
         if log && !terminateExisting {
             throw CLIParseError.invalidValue("activateApp --log requires --terminateExisting so the app starts with a fresh stdio pipe")
         }
-        if dom && noWait {
-            throw CLIParseError.invalidValue("activateApp --dom cannot be combined with --no-wait")
+        if (dom || postDom != nil) && noWait {
+            throw CLIParseError.invalidValue("activateApp --dom/-D cannot be combined with --no-wait")
         }
-        return AppLifecycleOptions(
+        guard !dom || postDom == nil else { throw CLIParseError.invalidValue("Use only one of --dom or -D") }
+        var options = AppLifecycleOptions(
             action: action,
             bundleID: bundleID,
             session: session,
@@ -905,12 +924,15 @@ public enum CLIParser {
             dom: dom,
             noWait: noWait
         )
+        options.postDom = postDom
+        return options
     }
 
     private static func parseDismissAlert(_ parser: inout ArgumentParser) throws -> DriverAction {
         var selection: AlertSelectionOption?
         var scope: AlertScopeOption?
         var wait: Double?
+        var postDom: PostDomMode?
 
         func select(_ value: AlertSelectionOption) throws {
             guard selection == nil else {
@@ -938,6 +960,8 @@ public enum CLIParser {
                 try select(.visualPrimary)
             case "--only-button":
                 try select(.onlyButton)
+            case "-D":
+                postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             case "--scope":
                 guard scope == nil else {
                     throw CLIParseError.invalidValue("--scope can only be provided once")
@@ -966,11 +990,13 @@ public enum CLIParser {
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .dismissAlert(DismissAlertOptions(
+        var options = DismissAlertOptions(
             selection: selection ?? .onlyButton,
             scope: scope ?? .any,
             wait: wait ?? 0
-        ))
+        )
+        options.postDom = postDom
+        return .dismissAlert(options)
     }
 
     private static func parseOSLog(_ parser: inout ArgumentParser) throws -> OSLogOptions {
