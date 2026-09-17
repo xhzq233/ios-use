@@ -13,7 +13,6 @@ extension IOSUseCLI {
                 options.url
             )
             var observation: DomObservation.Output?
-            if options.dom || options.postDom != nil { _ = try DomObservation.clientID() }
             let result = try DeviceCommandLock.withExclusiveLock(
                 paths: paths
             ) { () throws -> OpenURLService.OpenResult in
@@ -128,7 +127,6 @@ extension IOSUseCLI {
     ) -> CLIResult {
         do {
             var observation: DomObservation.Output?
-            if options.dom || options.postDom != nil { _ = try DomObservation.clientID() }
             let result = try DeviceCommandLock.withExclusiveLock(
                 paths: paths
             ) {

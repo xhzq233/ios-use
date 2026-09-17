@@ -1275,12 +1275,18 @@ final class IOSUseCLITests: XCTestCase {
         }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
-            "open", "https://example.com", "--dom"
+            "open", "https://example.com", "--dom", "--json"
         ])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(events, ["open", "readiness:com.apple.mobilesafari"])
-        XCTAssertTrue(result.stdout.contains("App: com.apple.mobilesafari"))
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        let dom = try XCTUnwrap(data["dom"] as? [String: Any])
+        XCTAssertEqual(dom["app"] as? String, "com.apple.mobilesafari")
+        let readiness = try XCTUnwrap(data["readiness"] as? [String: Any])
+        XCTAssertEqual(readiness["snapshotReady"] as? Bool, true)
+        XCTAssertNil(readiness["dom"])
     }
 
     func testTargetedOpenUsesOnlyRequestedHandlerAndRejectsUnregisteredTargetBeforeDispatch() throws {

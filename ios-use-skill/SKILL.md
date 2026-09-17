@@ -30,11 +30,10 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   `--traits` / `--cindex` for observed duplicates. Prefer an offscreen semantic
   target with a visible anchor in the same scroll container; use label-relative
   offsets before absolute coordinates when possible.
-- Use `dom --diff` for changes since the last DOM shown to this client, or use
+- Use `dom --diff` for changes since the Device's last observed DOM, or use
   `-D [duration]` instead of `--dom [duration]` after a UI mutation. First use,
   changed App/session/size, or broad changes returns full; plain `dom` always
-  returns full. Set `IOS_USE_DOM_CLIENT` to a distinct name per agent sharing a
-  Device (letters/digits/`_`/`-`, case-insensitive; default `default`). Diff paths
+  returns full. Each Device session keeps one history automatically. Diff paths
   are positions, not tap IDs; use the latest labels/values for actions.
 - Verify the result using the action's `--dom` output. Native idle does not
   guarantee App readiness; wait on an observed page/loading condition when needed.
@@ -57,7 +56,6 @@ Read only the reference needed for the task:
 - Simulator: [Simulator](references/simulator.md).
 - App lifecycle, rotation, screenshots or animation evidence: [App actions and evidence](references/apps-and-evidence.md).
 - HTTP/HTTPS capture: [Proxy](references/proxy.md).
-- App integrates NSLogger: [NSLogger](references/nslog.md).
 - Frida or native dylib patches: [Frida debug](references/frida-debug.md).
 - Create/update a GitHub issue: [Report](references/report.md).
 

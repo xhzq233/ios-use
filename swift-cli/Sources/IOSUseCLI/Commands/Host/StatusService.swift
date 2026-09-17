@@ -443,9 +443,11 @@ public enum StatusService {
         lines.append(contentsOf: appLogLines(paths: paths))
         lines.append("")
 
-        lines.append("NSLog:")
-        lines.append(contentsOf: nslogLines(paths: paths))
-        lines.append("")
+        if verbose || NSLogService.readState(paths: paths)?.lastCapture != nil {
+            lines.append("NSLogger (deprecated):")
+            lines.append(contentsOf: nslogLines(paths: paths))
+            lines.append("")
+        }
 
         lines.append("Proxy:")
         lines.append(contentsOf: proxyLines(paths: paths))

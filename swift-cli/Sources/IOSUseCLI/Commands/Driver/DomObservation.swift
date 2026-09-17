@@ -1,16 +1,14 @@
 import Foundation
 import IOSUseProtocol
 
-/// The last DOM shown to one CLI client, separate from the Driver's lookup cache.
+/// The last DOM shown for a Device session, separate from the Driver's lookup cache.
 /// Paths identify positions in an observation, not persistent node identities or tap IDs.
 struct DomObservation {
     private let paths: IOSUsePaths
-    private let id: String
     private let session: String
 
     init(paths: IOSUsePaths) throws {
         self.paths = paths
-        id = try Self.clientID()
         session = try Self.sessionIdentity(paths: paths)
     }
 
@@ -127,80 +125,73 @@ struct DomObservation {
         let value: MachineValue
     }
 
-    static func clientID(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> String {
-        let id = environment["IOS_USE_DOM_CLIENT"] ?? "default"
-        guard !id.isEmpty, id.utf8.count <= 80,
-              id.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }) else {
-            throw CLIParseError.invalidValue("IOS_USE_DOM_CLIENT must be 1–80 letters, digits, '-' or '_'")
-        }
-        return id.lowercased()
-    }
-
     /// Called under DeviceCommandLock, together with the action and its observation.
     func observe(_ payload: ForyDomPayload, diff: Bool) throws -> Output {
         let file = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent()
-            .appendingPathComponent("dom-observations").appendingPathComponent(id + ".plist")
+            .appendingPathComponent("dom-observation.plist")
         if !payload.raw.isEmpty {
             if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
             return Output(text: DriverOutput.formatDom(payload), value: machineDom(payload))
         }
-        let current = Snapshot(payload: payload, session: session)
         let sameSession = (try Self.sessionIdentity(paths: paths)) == session
         let fory = ForyRegistry.create()
-        var previous: Snapshot?
-        if diff, sameSession,
-           let data = try? Data(contentsOf: file),
-           let saved = try? PropertyListDecoder().decode(Saved.self, from: data),
-           let dom = try? fory.deserialize(saved.dom, as: ForyDomPayload.self) {
-            previous = Snapshot(payload: dom, session: saved.session)
-        }
-        let reason: String?
-        if !sameSession { reason = "session changed during observation" }
-        else if let previous {
-            if previous.session != current.session { reason = "session changed" }
-            else if previous.app != current.app { reason = "app changed" }
-            else if previous.width != current.width || previous.height != current.height { reason = "window size changed" }
-            else { reason = nil }
-        } else { reason = "no previous observation" }
-
-        func full(_ reason: String) -> Output {
-            Output(text: "DOM full (\(reason))\n" + DriverOutput.formatDom(payload), value: .object([
-                "mode": .string("full"), "reason": .string(reason),
-                "app": .string(payload.app),
-                "windowSize": .array([.double(current.width), .double(current.height)]),
-                "snapshotGeneration": .integer(Int(payload.snapshotGeneration)),
-                "nodes": .array(current.nodes.map(\.machineValue)),
-            ]))
-        }
         var output: Output
         if !diff {
             output = Output(text: DriverOutput.formatDom(payload), value: machineDom(payload))
-        } else if let previous, reason == nil {
-            let delta = Delta(before: previous, after: current)
-            var lines = ["App: \(payload.app)", delta.unchanged ? "DOM unchanged" : "DOM changes (+ added, - removed, ~ changed; paths are positions):"]
-            lines += delta.context.map { "  [\($0.path)] \($0.text)" }
-            lines += delta.removed.map { "- [\($0.path)] \($0.text)" }
-            lines += delta.added.map { "+ [\($0.path)] \($0.text)" }
-            lines += delta.changed.map(\.text)
-            output = Output(text: lines.joined(separator: "\n") + "\n", value: .object([
-                "mode": .string("diff"), "app": .string(payload.app),
-                "windowSize": .array([.double(current.width), .double(current.height)]),
-                "snapshotGeneration": .integer(Int(payload.snapshotGeneration)),
-                "unchanged": .boolean(delta.unchanged),
-                "added": .array(delta.added.map(\.machineValue)),
-                "removed": .array(delta.removed.map(\.machineValue)),
-                "changed": .array(delta.changed.map { .object([
-                    "path": .string($0.after.path), "before": $0.before.element, "after": $0.after.element
-                ]) }),
-                "context": .array(delta.context.map(\.machineValue)),
-            ]))
-            // Large replacements/reordered lists are clearer and cheaper as a full tree.
-            if !delta.unchanged {
-                let complete = full("broad changes")
-                if output.text.utf8.count >= complete.text.utf8.count { output = complete }
-            }
         } else {
-            output = full(reason ?? "reset")
+            let current = Snapshot(payload: payload, session: session)
+            var previous: Snapshot?
+            if sameSession,
+               let data = try? Data(contentsOf: file),
+               let saved = try? PropertyListDecoder().decode(Saved.self, from: data),
+               let dom = try? fory.deserialize(saved.dom, as: ForyDomPayload.self) {
+                previous = Snapshot(payload: dom, session: saved.session)
+            }
+            let reason: String?
+            if !sameSession { reason = "session changed during observation" }
+            else if let previous {
+                if previous.session != current.session { reason = "session changed" }
+                else if previous.app != current.app { reason = "app changed" }
+                else if previous.width != current.width || previous.height != current.height { reason = "window size changed" }
+                else { reason = nil }
+            } else { reason = "no previous observation" }
+
+            func full(_ reason: String) -> Output {
+                Output(text: "DOM full (\(reason))\n" + DriverOutput.formatDom(payload), value: .object([
+                    "mode": .string("full"), "reason": .string(reason),
+                    "app": .string(payload.app),
+                    "windowSize": .array([.double(current.width), .double(current.height)]),
+                    "snapshotGeneration": .integer(Int(payload.snapshotGeneration)),
+                    "nodes": .array(current.nodes.map(\.machineValue)),
+                ]))
+            }
+            if let previous, reason == nil {
+                let delta = Delta(before: previous, after: current)
+                var lines = ["App: \(payload.app)", delta.unchanged ? "DOM unchanged" : "DOM changes (+ added, - removed, ~ changed; paths are positions):"]
+                lines += delta.context.map { "  [\($0.path)] \($0.text)" }
+                lines += delta.removed.map { "- [\($0.path)] \($0.text)" }
+                lines += delta.added.map { "+ [\($0.path)] \($0.text)" }
+                lines += delta.changed.map(\.text)
+                output = Output(text: lines.joined(separator: "\n") + "\n", value: .object([
+                    "mode": .string("diff"), "app": .string(payload.app),
+                    "windowSize": .array([.double(current.width), .double(current.height)]),
+                    "snapshotGeneration": .integer(Int(payload.snapshotGeneration)),
+                    "unchanged": .boolean(delta.unchanged),
+                    "added": .array(delta.added.map(\.machineValue)),
+                    "removed": .array(delta.removed.map(\.machineValue)),
+                    "changed": .array(delta.changed.map { .object([
+                        "path": .string($0.after.path), "before": $0.before.element, "after": $0.after.element
+                    ]) }),
+                    "context": .array(delta.context.map(\.machineValue)),
+                ]))
+                // Large replacements/reordered lists are clearer and cheaper as a full tree.
+                if !delta.unchanged {
+                    let complete = full("broad changes")
+                    if output.text.utf8.count >= complete.text.utf8.count { output = complete }
+                }
+            } else {
+                output = full(reason ?? "reset")
+            }
         }
         if !sameSession {
             if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }

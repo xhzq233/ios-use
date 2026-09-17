@@ -20,7 +20,6 @@ mutation (`tap`, `longpress`, `input`, `swipe`, `rotate`, `home`, `dismissAlert`
 `open`, `activateApp`, `terminateApp`). For example:
 
 ```bash
-export IOS_USE_DOM_CLIENT=agent_a  # use a distinct name for each agent sharing a Device
 ios-use dom --diff
 ios-use tap "Continue" -D
 ios-use input --tap "Search" --content "photos" -D 300ms
@@ -28,11 +27,11 @@ ios-use input --tap "Search" --content "photos" -D 300ms
 
 The first observation is full; subsequent output shows added, removed and changed
 positions with parent context, or `DOM unchanged`. Plain `dom` and `--dom` always
-return full output and also update this client's previous observation. Session,
+return full output and also update the Device's previous observation. Session,
 App or window-size changes reset to full; broad changes may also return full when
-that is shorter. `--raw` clears the previous structured observation. Client names
-are case-insensitive; the default is `default`, scoped to the Device and
-`IOS_USE_HOME`. Use letters, digits, `_` and `-` (up to 80 characters).
+that is shorter. `--raw` clears the previous structured observation. Each Device
+session keeps one observation history under `IOS_USE_HOME`; no extra configuration
+is needed.
 
 Bare `-D` waits for DOM quiescence; `-D 300ms` uses a fixed delay (ms by default,
 minimum 100ms). Neither proves that rendering or asynchronous loading has
@@ -40,7 +39,8 @@ finished. Diff always reads a fresh full tree and leaves element lookup intact;
 it saves output/context, not tree capture work. Paths in a diff are tree positions,
 not persistent element IDs: use the latest labels/values and `--cindex` for actions.
 With `--json`, observations use `mode: full` with `nodes`, or `mode: diff` with
-`added`, `removed`, `changed` (`before`/`after`) and `context`.
+`added`, `removed`, `changed` (`before`/`after`) and `context`. `open` returns its
+observation once at `data.dom`; `data.readiness` contains readiness metadata.
 
 ## Install
 
@@ -174,6 +174,21 @@ capture startup diagnosis.
 Signing remains the provider's responsibility; `install` accepts packages
 already signed for the device. `status` checks the holder process/control connection and Driver TCP reachability
 (`healthy`, `unhealthy`, or `stale`); use `dom` to verify UI responsiveness.
+
+After `start` exits, a background holder maintains the XCTest/TestManager session
+and its CoreDevice connections. Session metadata lives at
+`$IOS_USE_HOME/state/devices/<device-id>/driver.lock` (default home: `~/.ios-use`),
+including endpoints, holder/runner PIDs and the holder's local control socket.
+Subsequent compatible CLI processes on the same host, user and `IOS_USE_HOME`
+reuse that session; another terminal or working directory needs no new `start`.
+Use `-d <device-id>` when multiple Devices run. UI commands connect directly to
+the Driver endpoint, reuse that TCP connection within the command, then close it.
+App management and launch commands open their own device-service connections as needed.
+Copying state files to another host does not transfer the holder or its connections.
+
+`nslog` / NSLogger is deprecated and retained for compatibility. Prefer
+`activateApp <bundleId> --terminateExisting --log` for App launch stdout/stderr,
+`start --mac --log` on Mac, or `oslog` for unified logging.
 
 ### Mac backend
 
@@ -358,7 +373,7 @@ and have not been rerun for the current development version. See the
 | `dom`, `waitFor` | Observe and query UI state |
 | `tap`, `longpress`, `swipe`, `input`, `rotate` | Interact with the UI |
 | `screenshot`, `capture`, `media import` | Capture or import media |
-| `oslog`, `nslog`, `proxy` | Capture logs and network traffic |
+| `oslog`, `proxy` | Capture logs and network traffic |
 | `open` | Open a URL or custom scheme |
 | `debug`, `ui-tree` | Mac backend diagnostics |
 

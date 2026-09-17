@@ -4,9 +4,9 @@
 
 ## Highlights
 
-- Add `dom --diff` and `-D [duration]` on UI mutations. Observations are scoped
-  by Device and client, keep full element lookup, and reset to full after context
-  changes. `IOS_USE_DOM_CLIENT` separates agents sharing a Device.
+- Add `dom --diff` and `-D [duration]` on UI mutations. Each Device session keeps
+  one observation history, preserves full element lookup, and resets to full
+  after context changes.
 - Switch the running Mac App's device preset with `config --mac --device-model`:
   iPhone SE, iPhone 13, iPhone 15 Pro/Pro Max, iPad Pro 11-inch and iPhone Duo.
   The native toolbar also selects models, rotates the viewport, and folds or
@@ -48,6 +48,10 @@
 
 ## Compatibility and Upgrade Notes
 
+- `nslog` (NSLogger) is deprecated. Legacy commands still work and print a
+  deprecation notice; use App stdout/stderr capture or `oslog` for new workflows.
+- `open --json` returns the observed DOM once at `data.dom`; `data.readiness`
+  contains readiness metadata without a duplicate DOM.
 - Native quiescence can return during iOS navigation animations. Check the
   expected page/container before collecting results; it is not a universal
   readiness guarantee.

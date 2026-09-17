@@ -38,7 +38,7 @@ enum CLIHelp {
           Interact   tap, longpress, input, swipe, waitFor, dismissAlert
           Apps       apps, activateApp, terminateApp, home, rotate, open
           Manage     install, uninstall, media, ddi-mount, du
-          Diagnose   proxy, oslog, nslog, debug
+          Diagnose   proxy, oslog, debug
 
         Options:
           -h, --help         Show help
@@ -313,13 +313,12 @@ enum CLIHelp {
                 options: [
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
                     "--fresh             Ignore cached snapshot and rebuild",
-                    "--diff              Fresh observation: show changes since this client's last DOM; first call returns full",
+                    "--diff              Fresh observation: show changes since the Device's last DOM; first call returns full",
                     "--wait-quiescence   Request UI-idle waiting, then refresh the tree",
                 ],
                 footer: """
                 Use labels/values as action targets, not entire DOM lines. --dom on an action already returns an updated tree.
                 Use plain dom for a full tree. App/session/size changes reset diff; unchanged is explicit.
-                Set IOS_USE_DOM_CLIENT to a distinct name for each agent sharing a Device (case-insensitive).
                 Diff paths are tree positions, not tap IDs. Use current labels/values for actions.
                 Example: ios-use dom --diff
                 """
@@ -581,7 +580,8 @@ enum CLIHelp {
               ios-use nslog read [--pattern <regex>] [--flags <flags>] [--timeout <duration>] [--clearAfterRead] [--last N]
               ios-use nslog stop
 
-            Stream or capture NSLogger logs.
+            \(nslogDeprecationNotice)
+            Legacy NSLogger commands remain available for compatibility.
 
             Options:
               --name <name>       Bonjour service name
@@ -621,6 +621,8 @@ enum CLIHelp {
         }
         return CLIResult(exitCode: 0, stdout: help)
     }
+
+    static let nslogDeprecationNotice = "nslog (NSLogger) is deprecated. Use activateApp <bundleId> --terminateExisting --log for App launch stdout/stderr, start --mac --log on Mac, or oslog for unified logging."
 
     private static let diffDOMOption = "-D [duration]        Like --dom, but show only changes; first observation or changed context returns full"
     private static let postDOMOption = "--dom [duration]      Return updated UI; bare flag waits for idle, value sets a fixed delay (ms/s; default ms; min 100ms)"

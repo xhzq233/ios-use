@@ -429,7 +429,7 @@ enum OpenURLService {
             "mutationDispatched": .boolean(true),
             "schemeLookupVerified": result.schemeLookupVerified.map(MachineValue.boolean) ?? .null,
             "registeredHandlers": .array(result.registeredHandlers.map(MachineValue.string)),
-            "readiness": result.readiness.map { AppLifecycleService.machineReadiness($0, observation: observation) } ?? .null,
+            "readiness": result.readiness.map { .object(AppLifecycleService.readinessFields($0)) } ?? .null,
             "dom": observation?.value ?? result.dom.map(machineDom) ?? .null,
         ])
     }

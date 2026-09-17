@@ -804,6 +804,9 @@ public struct IOSUseCLI: Sendable {
         case .oslog(let options):
             return executeOSLog(options, paths: commandPaths)
         case .nslog(let options):
+            if options.captureMode != "daemon" {
+                FileHandle.standardError.write(Data("warning: \(CLIHelp.nslogDeprecationNotice)\n".utf8))
+            }
             do {
                 switch options.command {
                 case .stream:

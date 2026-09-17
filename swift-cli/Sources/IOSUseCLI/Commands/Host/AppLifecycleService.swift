@@ -172,7 +172,9 @@ enum AppLifecycleService {
             "logCapturePid": result.logCapturePid.map { .integer(Int($0)) } ?? .null,
         ]
         if let readiness = result.readiness {
-            data["readiness"] = machineReadiness(readiness, observation: observation)
+            var fields = readinessFields(readiness)
+            fields["dom"] = observation?.value ?? readiness.dom.map(machineDom) ?? .null
+            data["readiness"] = .object(fields)
         } else {
             data["readiness"] = .null
             if let observation { data["postDom"] = observation.value }
@@ -180,16 +182,15 @@ enum AppLifecycleService {
         return .object(data)
     }
 
-    static func machineReadiness(_ readiness: ForyWaitAppForegroundPayload, observation: DomObservation.Output? = nil) -> MachineValue {
-        .object([
+    static func readinessFields(_ readiness: ForyWaitAppForegroundPayload) -> [String: MachineValue] {
+        [
             "expectedBundleId": .string(readiness.expectedBundleId),
             "activeBundleId": .string(readiness.activeBundleId),
             "appState": .string(appStateName(readiness.appState)),
             "appStateCode": .integer(Int(readiness.appState)),
             "snapshotReady": .boolean(readiness.snapshotReady),
             "elapsed": .double(readiness.elapsed),
-            "dom": observation?.value ?? readiness.dom.map(machineDom) ?? .null,
-        ])
+        ]
     }
 
     private static func appStateName(_ rawValue: Int32) -> String {
