@@ -417,7 +417,7 @@ public struct IOSUseCLI: Sendable {
                 remoteConnection: context.info.remoteConnection
             )
 
-        case .nslog, .proxy(.read):
+        case .proxy(.read):
             if let explicitDeviceID {
                 let normalized = try DeviceContextStore
                     .normalizeExplicitDeviceID(
@@ -803,26 +803,6 @@ public struct IOSUseCLI: Sendable {
             )
         case .oslog(let options):
             return executeOSLog(options, paths: commandPaths)
-        case .nslog(let options):
-            if options.captureMode != "daemon" {
-                FileHandle.standardError.write(Data("warning: \(CLIHelp.nslogDeprecationNotice)\n".utf8))
-            }
-            do {
-                switch options.command {
-                case .stream:
-                    return CLIResult(exitCode: 0, stdout: try NSLogService.stream(options: options, paths: commandPaths))
-                case .start:
-                    return CLIResult(exitCode: 0, stdout: try NSLogService.start(options: options, paths: commandPaths))
-                case .read:
-                    return CLIResult(exitCode: 0, stdout: try NSLogService.read(options: options, paths: commandPaths))
-                case .stop:
-                    return CLIResult(exitCode: 0, stdout: try NSLogService.stop(paths: commandPaths))
-                }
-            } catch let signal as CLIExitSignal {
-                return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
-            } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
-            }
         case .stop:
             if let info = SessionService.read(paths: commandPaths), info.remoteConnection != nil {
                 do {

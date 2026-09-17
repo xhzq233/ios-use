@@ -71,7 +71,7 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | --- | --- |
 | `scripts/ci_test.sh [--skip-builds] [--skip-driver-sim-build]` | Main local unit/build gate: script syntax checks, Swift CLI tests, Driver tests, Swift CLI Release build, and Simulator Driver build. Release validation additionally owns fresh production Runtime, Frida Engine and both Driver artifacts. |
 | `scripts/ci_full_simulator.sh --driver-ipa <path> [--case CASES]` | Main full Simulator regression entry. Builds the Swift CLI, uses the caller-selected Simulator driver IPA, and runs the Node Simulator command matrix. |
-| `scripts/test_swift_cli.sh` | Run Swift CLI unit tests plus installed-style CLI/nslog smoke checks and static driver log/version-stamp guards. |
+| `scripts/test_swift_cli.sh` | Run Swift CLI unit tests plus installed-style CLI smoke checks and static driver log/version-stamp guards. |
 | `scripts/test_driver_unit.sh` | Run Swift driver unit tests with an isolated default `IOS_USE_HOME` under `~/.ios-use/test-homes/driver-unit`. |
 | `scripts/audit_playcover_upstreams.sh [--cache-dir <path>] [--metadata-only]` | Re-clone or reuse pinned PlayCover/PlayTools/inject checkouts; require script pins, provenance pins, licenses, expected vendored file sets, and local-patch sets to agree exactly. `--metadata-only` runs the hermetic closure without cloning. |
 | `scripts/test_playcover_packaging_contract.sh` | Hermetic packaging audit tests, including negative cases for a deleted expected source, a one-sided provenance pin change, a mismatched license declaration, and a Frida pin change. |

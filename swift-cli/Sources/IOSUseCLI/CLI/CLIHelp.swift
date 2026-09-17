@@ -570,28 +570,6 @@ enum CLIHelp {
               --verbose              Enable verbose output
 
             """
-        case "nslog":
-            return """
-            Usage: ios-use nslog [--name <name>]
-
-            Forms:
-              ios-use nslog [--name <name>]
-              ios-use nslog start [--name <name>]
-              ios-use nslog read [--pattern <regex>] [--flags <flags>] [--timeout <duration>] [--clearAfterRead] [--last N]
-              ios-use nslog stop
-
-            \(nslogDeprecationNotice)
-            Legacy NSLogger commands remain available for compatibility.
-
-            Options:
-              --name <name>       Bonjour service name
-              --pattern <regex>   Regex filter for nslog read
-              --flags <flags>     Regex flags for nslog read: i, m, s
-              --timeout <duration> Wait for a matching line; accepts s/ms suffixes and defaults to seconds
-              --clearAfterRead    Truncate the capture log after reading
-              --last N            Print only the last N matching lines (N > 0)
-
-            """
         case "proxy":
             return proxyHelp(arguments: rest)
         default:
@@ -621,8 +599,6 @@ enum CLIHelp {
         }
         return CLIResult(exitCode: 0, stdout: help)
     }
-
-    static let nslogDeprecationNotice = "nslog (NSLogger) is deprecated. Use activateApp <bundleId> --terminateExisting --log for App launch stdout/stderr, start --mac --log on Mac, or oslog for unified logging."
 
     private static let diffDOMOption = "-D [duration]        Like --dom, but show only changes; first observation or changed context returns full"
     private static let postDOMOption = "--dom [duration]      Return updated UI; bare flag waits for idle, value sets a fixed delay (ms/s; default ms; min 100ms)"

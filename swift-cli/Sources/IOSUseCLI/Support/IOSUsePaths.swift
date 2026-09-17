@@ -13,8 +13,6 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let config: String
     public let session: String
     public let driverLock: String
-    public let nslogLock: String
-    public let nslogState: String
     public let appLogState: String
     public let logs: String
     public let artifacts: String
@@ -162,8 +160,6 @@ public struct IOSUsePaths: Equatable, Sendable {
             config: "\(configured.root)/config.json",
             session: "\(configured.root)/state/session.json",
             driverLock: "\(configured.root)/state/driver.lock",
-            nslogLock: "\(configured.root)/state/nslog.lock",
-            nslogState: "\(configured.root)/state/nslog-state.json",
             appLogState: "\(configured.root)/state/app-log.json",
             logs: "\(configured.root)/logs",
             artifacts: "\(configured.root)/artifacts",
@@ -208,8 +204,6 @@ public struct IOSUsePaths: Equatable, Sendable {
             config: config,
             session: "\(stateRoot)/session.json",
             driverLock: "\(stateRoot)/driver.lock",
-            nslogLock: "\(stateRoot)/nslog.lock",
-            nslogState: "\(stateRoot)/nslog-state.json",
             appLogState: "\(stateRoot)/app-log.json",
             logs: logRoot,
             artifacts: artifactRoot,

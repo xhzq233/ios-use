@@ -449,7 +449,19 @@ enum AppLogCaptureService {
             return path
         }
         #if os(macOS)
-        return try NSLogService.executablePath()
+        let arg0 = CommandLine.arguments[0]
+        let candidates: [String]
+        if arg0.contains("/") {
+            candidates = [URL(fileURLWithPath: arg0).standardized.path]
+        } else {
+            candidates = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+                .split(separator: ":")
+                .map { URL(fileURLWithPath: String($0)).appendingPathComponent(arg0).path }
+        }
+        guard let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            throw CLIParseError.invalidValue("Unable to resolve current ios-use executable path from \(arg0) or PATH")
+        }
+        return path
         #else
         return try FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/exe")
         #endif

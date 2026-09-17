@@ -443,12 +443,6 @@ public enum StatusService {
         lines.append(contentsOf: appLogLines(paths: paths))
         lines.append("")
 
-        if verbose || NSLogService.readState(paths: paths)?.lastCapture != nil {
-            lines.append("NSLogger (deprecated):")
-            lines.append(contentsOf: nslogLines(paths: paths))
-            lines.append("")
-        }
-
         lines.append("Proxy:")
         lines.append(contentsOf: proxyLines(paths: paths))
         lines.append("")
@@ -1050,25 +1044,6 @@ public enum StatusService {
         if let lastError = capture.lastError, !lastError.isEmpty {
             parts.append("last error: \(lastError)")
         }
-        return ["  - \(parts.joined(separator: " | "))"]
-    }
-
-    private static func nslogLines(paths: IOSUsePaths) -> [String] {
-        guard let capture = NSLogService.readState(paths: paths)?.lastCapture else {
-            return ["  not running (no NSLog state)"]
-        }
-        let status = capture.status == "running" ? "running" : "not running (\(capture.status))"
-        var parts = [status]
-        if let name = capture.name, !name.isEmpty {
-            parts.append("name: \(name)")
-        }
-        if let pid = capture.pid {
-            parts.append("pid: \(pid)")
-        }
-        if let port = capture.port {
-            parts.append("port: \(port)")
-        }
-        parts.append("log: \(capture.logFile)")
         return ["  - \(parts.joined(separator: " | "))"]
     }
 

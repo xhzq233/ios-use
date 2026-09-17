@@ -682,27 +682,7 @@ final class CLIParserTests: XCTestCase {
 
     }
 
-    func testParsesNSLogAndProxyCommands() throws {
-        XCTAssertEqual(
-            try CLIParser.parse(["nslog", "--name=ios-use"]),
-            .nslog(NSLogOptions(name: "ios-use"))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["nslog", "start", "--name=ios-use"]),
-            .nslog(NSLogOptions(command: .start, name: "ios-use"))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["nslog", "read", "--pattern=ready", "--flags=i", "--timeout", "1.5", "--clearAfterRead", "--last", "5"]),
-            .nslog(NSLogOptions(command: .read, pattern: "ready", flags: "i", timeout: 1.5, clearAfterRead: true, last: 5))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["nslog", "stop"]),
-            .nslog(NSLogOptions(command: .stop))
-        )
-
+    func testParsesProxyCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["proxy", "start", "--interface=en0"]),
             .proxy(.start(interfaceName: "en0", serverOnly: false))
@@ -949,9 +929,7 @@ final class CLIParserTests: XCTestCase {
         XCTAssertThrowsError(try CLIParser.parse(["proxy", "read", "--last", "0"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--last must be greater than 0"))
         }
-        XCTAssertThrowsError(try CLIParser.parse(["nslog", "--grep", "ready"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("--grep moved to `ios-use nslog read`. Use `ios-use nslog read --pattern <regex> --flags <flags>`."))
-        }
+
         XCTAssertThrowsError(try CLIParser.parse(["activateApp", "com.example", "--log"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("activateApp --log requires --terminateExisting so the app starts with a fresh stdio pipe"))
         }

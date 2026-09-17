@@ -48,8 +48,9 @@
 
 ## Compatibility and Upgrade Notes
 
-- `nslog` (NSLogger) is deprecated. Legacy commands still work and print a
-  deprecation notice; use App stdout/stderr capture or `oslog` for new workflows.
+- Remove `nslog` and its NSLogger receiver, daemon, state and bundled TLS
+  credentials. Use `activateApp <bundleId> --terminateExisting --log` for App
+  stdout/stderr, `start --mac --log` on Mac, or `oslog` for unified logging.
 - `open --json` returns the observed DOM once at `data.dom`; `data.readiness`
   contains readiness metadata without a duplicate DOM.
 - Native quiescence can return during iOS navigation animations. Check the

@@ -186,7 +186,7 @@ the Driver endpoint, reuse that TCP connection within the command, then close it
 App management and launch commands open their own device-service connections as needed.
 Copying state files to another host does not transfer the holder or its connections.
 
-`nslog` / NSLogger is deprecated and retained for compatibility. Prefer
+Capture logs with
 `activateApp <bundleId> --terminateExisting --log` for App launch stdout/stderr,
 `start --mac --log` on Mac, or `oslog` for unified logging.
 

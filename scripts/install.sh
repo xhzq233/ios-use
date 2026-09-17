@@ -293,7 +293,6 @@ cleanup_legacy_flow_artifacts() {
     subflow_wait_and_find.yaml
     subflow_wait_and_match.yaml
     test_flow.yaml
-    tmp_nslog_perf.yaml
   )
   local removed=()
   local name path

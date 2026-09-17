@@ -17,7 +17,6 @@ public enum ParsedCommand: Equatable, Sendable {
     case driver(DriverAction)
     case capture(CaptureOptions)
     case mediaImport(MediaImportOptions)
-    case nslog(NSLogOptions)
     case proxy(ProxyCommand)
     case debug(DebugOptions)
     case uiTree(UITreeOptions)
@@ -39,7 +38,6 @@ public enum ParsedCommand: Equatable, Sendable {
         case .driver(let action): return action.name
         case .capture: return "capture"
         case .mediaImport: return "media import"
-        case .nslog: return "nslog"
         case .proxy(let command): return "proxy \(command.subcommand)"
         case .debug: return "debug"
         case .uiTree: return "ui-tree"
@@ -415,35 +413,6 @@ public extension DriverAction {
     /// Source-compatible convenience for callers that use the default accurate OCR.
     static func screenshot(name: String?) -> DriverAction {
         .screenshot(name: name, ocr: true)
-    }
-}
-
-public struct NSLogOptions: Equatable, Sendable {
-    public enum Command: Equatable, Sendable {
-        case stream
-        case start
-        case read
-        case stop
-    }
-
-    public var command: Command
-    public var name: String?
-    public var pattern: String?
-    public var flags = ""
-    public var timeout: Double?
-    public var clearAfterRead = false
-    public var last: Int?
-    public var captureMode: String?
-
-    public init(command: Command = .stream, name: String? = nil, pattern: String? = nil, flags: String = "", timeout: Double? = nil, clearAfterRead: Bool = false, last: Int? = nil, captureMode: String? = nil) {
-        self.command = command
-        self.name = name
-        self.pattern = pattern
-        self.flags = flags
-        self.timeout = timeout
-        self.clearAfterRead = clearAfterRead
-        self.last = last
-        self.captureMode = captureMode
     }
 }
 

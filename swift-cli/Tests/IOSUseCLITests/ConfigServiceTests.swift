@@ -383,7 +383,7 @@ final class ConfigServiceTests: XCTestCase {
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
         try "{}".write(toFile: paths.session, atomically: true, encoding: .utf8)
-        try "nslog".write(toFile: "\(root)/state/nslog.lock", atomically: true, encoding: .utf8)
+        try "{}".write(toFile: paths.appLogState, atomically: true, encoding: .utf8)
         DeviceService.listDevicesOverrideForTesting = { _, _ in
             XCTFail("stop without driver.lock must not discover devices")
             return []
@@ -402,7 +402,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(result.stderr.contains("No active driver. Run `ios-use start` first."))
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.session))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/state/nslog.lock"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.appLogState))
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))
     }
 
@@ -412,7 +412,7 @@ final class ConfigServiceTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
         try writeDriverLock(udid: "REAL-1", deviceType: "real", paths: paths)
         try "{}".write(toFile: paths.session, atomically: true, encoding: .utf8)
-        try "nslog".write(toFile: "\(root)/state/nslog.lock", atomically: true, encoding: .utf8)
+        try "{}".write(toFile: paths.appLogState, atomically: true, encoding: .utf8)
         var terminated: [String] = []
         SessionService.realDriverTerminatorForTesting = { udid in
             terminated.append(udid)
@@ -426,7 +426,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(terminated, ["REAL-1"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.session))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/state/nslog.lock"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.appLogState))
     }
 
     func testStopReportsFailureWhenDriverLockCannotBeRemoved() throws {

@@ -44,8 +44,6 @@ public enum CLIParser {
             parsed = .apps(options)
         case "ddi-mount":
             parsed = .ddiMount(try parseDDIMount(&parser))
-        case "nslog":
-            parsed = .nslog(try parseNSLog(&parser))
         case "proxy":
             parsed = .proxy(try parseProxy(&parser))
         case "media":
@@ -107,7 +105,7 @@ public enum CLIParser {
     static func extractGlobalJSONFlag(_ arguments: [String]) -> ([String], Bool) {
         let valueOptions: Set<String> = [
             "--udid", "--path", "--name", "--pattern",
-            "--flags", "--timeout", "--last", "--capture-mode", "--filter", "--interface",
+            "--flags", "--timeout", "--last", "--filter", "--interface",
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
@@ -139,7 +137,7 @@ public enum CLIParser {
     ) throws -> ([String], String?) {
         let valueOptions: Set<String> = [
             "--udid", "--path", "--name", "--pattern",
-            "--flags", "--timeout", "--last", "--capture-mode",
+            "--flags", "--timeout", "--last",
             "--filter", "--interface", "--offset", "--offset-ratio",
             "--traits", "--cindex", "--duration", "--tap", "--label",
             "--content", "--delete", "--to", "--from", "--dir",
@@ -468,52 +466,6 @@ public enum CLIParser {
         }
         return options
     }
-
-    private static func parseNSLog(_ parser: inout ArgumentParser) throws -> NSLogOptions {
-        var options = NSLogOptions(command: .stream)
-        while let arg = parser.consume() {
-            switch arg {
-            case "start":
-                guard options.command == .stream, options.name == nil, options.pattern == nil, options.flags.isEmpty else {
-                    throw CLIParseError.unexpectedArgument(arg)
-                }
-                options.command = .start
-                while let startArg = parser.consume() {
-                    switch startArg {
-                    case "--name": options.name = try parser.value(for: startArg)
-                    default: throw CLIParseError.unknownOption(startArg)
-                    }
-                }
-            case "read":
-                guard options.command == .stream, options.name == nil, options.pattern == nil, options.flags.isEmpty else {
-                    throw CLIParseError.unexpectedArgument(arg)
-                }
-                options.command = .read
-                while let readArg = parser.consume() {
-                    switch readArg {
-                    case "--pattern": options.pattern = try parser.valueAllowingLeadingDash(for: readArg)
-                    case "--flags": options.flags = try parser.value(for: readArg)
-                    case "--timeout": options.timeout = try parseNonNegativeDurationSecondsStrict(parser.valueAllowingLeadingDash(for: readArg), label: readArg)
-                    case "--clearAfterRead": options.clearAfterRead = true
-                    case "--last": options.last = try parsePositiveIntStrict(parser.value(for: readArg), label: readArg)
-                    default: throw CLIParseError.unknownOption(readArg)
-                    }
-                }
-            case "stop":
-                guard options.command == .stream, options.name == nil, options.pattern == nil, options.flags.isEmpty else {
-                    throw CLIParseError.unexpectedArgument(arg)
-                }
-                options.command = .stop
-            case "--name": options.name = try parser.value(for: arg)
-            case "--grep", "--flags":
-                throw CLIParseError.invalidValue("\(arg) moved to `ios-use nslog read`. Use `ios-use nslog read --pattern <regex> --flags <flags>`.")
-            case "--capture-mode": options.captureMode = try parser.value(for: arg)
-            default: throw CLIParseError.unknownOption(arg)
-            }
-        }
-        return options
-    }
-
 
     private static func parseProxy(_ parser: inout ArgumentParser) throws -> ProxyCommand {
         let subcommand = try parser.requiredPositional("subcommand")

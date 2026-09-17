@@ -247,24 +247,8 @@ public enum IOSUseProtocol {
     public static let oslogDefaultCollectTimeoutSeconds = 5.0
     /// Simulator oslog default `log show --last` window.
     public static let oslogDefaultSimulatorLastSeconds = 10.0
-    /// Legacy NSLogger TLS receiver port. Current host server binds an internal random port and publishes it via Bonjour.
-    public static let nsloggerDefaultPort = 50_000
-    /// Default NSLogger ring buffer capacity.
-    public static let nsloggerDefaultBufferSize = 50_000
-    /// Maximum unparsed NSLogger receive buffer before dropping old bytes.
-    public static let nsloggerMaxReceiveBufferBytes = 1024 * 1024
-    /// Legacy stale-lock age retained for compatibility with older lock files.
-    public static let nslogLockStaleMilliseconds = 60 * 60 * 1000
-    /// Foreground nslog command event-loop tick while streaming logs.
-    public static let nslogForegroundRunLoopIntervalSeconds = 0.1
-    /// Timeout while the nslog daemon child writes its capture lock.
-    public static let nslogCaptureStartTimeoutSeconds = 3.0
-    /// Poll interval while waiting for the nslog daemon child to write its capture lock.
-    public static let nslogCaptureStartPollMicroseconds = 50_000
-    /// Poll interval while waiting for nslog child process exit.
-    public static let nslogProcessExitPollMicroseconds = 50_000
-    /// App-side NSLogger connection polling interval.
-    public static let nslogConnectPollMilliseconds = 200
+    /// Poll interval while collecting real-device OS logs.
+    public static let oslogPollMilliseconds = 200
     /// Default mitmdump listen port used by `proxy start`.
     public static let proxyMitmdumpPort = 9080
     /// Grace period before killing mitmdump with SIGKILL.
