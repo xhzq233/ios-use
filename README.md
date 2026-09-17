@@ -203,6 +203,7 @@ previews omit the status bar when the preset has no top status region.
 CLI screenshots capture the current App window directly, including its Web and
 Metal content; no extra capture window is created. Output dimensions remain
 rectangular, but Duo's display mask clips the screen corners while chrome is on.
+Those transparent corners are filled black in the JPEG output.
 Use `ios-use config --mac --device-chrome off` to capture all rectangular canvas
 pixels without that display mask. The model, App canvas and safe areas remain.
 

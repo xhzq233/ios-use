@@ -1360,6 +1360,9 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
         }
         return NULL;
     }
+    // JPEG cannot preserve alpha; composite transparent screen corners on black.
+    CGContextSetRGBFillColor(context, 0, 0, 0, 1);
+    CGContextFillRect(context, CGRectMake(0, 0, width, height));
     CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
     // Inputs are front-to-back. Quartz uses an AppKit-style bottom-left
     // coordinate system, so draw from the native back to the native front.
