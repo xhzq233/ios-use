@@ -1,15 +1,20 @@
 #import "IOSUsePlayDeviceChrome.h"
 #import "IOSUsePlayDevice.h"
 #import "IOSUsePlayDeviceConfiguration.h"
+#import "IOSUsePlayStatusBar.h"
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 
-static id host, decoration, nativeToolbar, bezelAccessory;
+static id host, decoration, nativeToolbar, bezelAccessory, bezelHeight;
 static id modelSubtitle;
-static id modelPicker, rotateButton, expandButton;
-static CALayer *artwork;
+static id modelPicker, rotateButton, expandButton, hideButton;
+static CALayer *artwork, *statusArtwork;
+static BOOL statusBarHidden;
+static NSString *statusImageKey;
+static UIImage *statusImage;
+static __weak UIView *observedStatusView;
 static CAShapeLayer *modelChevron, *hostShape;
 static id shapedRoot, originalHostBackground;
 static CALayer *originalHostMask;
@@ -19,6 +24,7 @@ static UIImage *frameImage;
 static UIEdgeInsets frameInsets;
 static NSString *imageKey;
 static BOOL updating;
+static BOOL updateScheduled;
 static id get(id value, NSString *name) { return ((id (*)(id, SEL))objc_msgSend)(value, NSSelectorFromString(name)); }
 static CGRect rect(id value, NSString *name) { return ((CGRect (*)(id, SEL))objc_msgSend)(value, NSSelectorFromString(name)); }
 static void boolean(id value, NSString *name, BOOL flag) { ((void (*)(id, SEL, BOOL))objc_msgSend)(value, NSSelectorFromString(name), flag); }
@@ -32,6 +38,8 @@ static id view(NSString *className, CGRect frame) {
 - (void)selectModel:(id)sender;
 - (void)rotate:(id)sender;
 - (void)expand:(id)sender;
+- (void)toggleStatusBar:(id)sender;
+- (void)statusAppearanceChanged:(id<UITraitEnvironment>)environment previousTraitCollection:(UITraitCollection *)previous;
 @end
 static IOSUsePlayDeviceChromeController *controller;
 
@@ -163,6 +171,14 @@ static void loadFrame(void) {
         if (pdfSize(directory,@"FramebufferMask").width > 0) drawPDF(directory,@"FramebufferMask",screen);
         else { [[UIColor blackColor] setFill]; UIRectFillUsingBlendMode(screen,kCGBlendModeDestinationOut); }
         CGContextSetBlendMode(context,kCGBlendModeNormal);
+        // DeviceKit's framebuffer mask leaves the Dynamic Island to the
+        // Simulator compositor. Keep this hardware cutout with the shell so
+        // hiding the decorative status items never removes it.
+        if ([preset isEqual:@"iphone-15-pro"] || [preset isEqual:@"iphone-15-pro-max"]) {
+            [UIColor.blackColor setFill];
+            [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(screen.origin.x+(w-125)/2,
+                screen.origin.y+11.333,125,36.667) cornerRadius:18.333] fill];
+        }
     }
     UIImage *portrait=UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
@@ -229,7 +245,7 @@ static void removeFrame(void) {
         ((void (*)(id,SEL))objc_msgSend)(decoration,NSSelectorFromString(@"close"));
     }
     if (bezelAccessory) removeAccessory(bezelAccessory);
-    decoration=nil; bezelAccessory=nil; artwork=nil;
+    decoration=nil; bezelAccessory=nil;bezelHeight=nil; artwork=nil;statusArtwork=nil;
     updating=wasUpdating;
 }
 static void resetHost(void) {
@@ -237,11 +253,21 @@ static void resetHost(void) {
     removeFrame();
     if (nativeToolbar) object(host,@"setToolbar:",nil);
     for (id observer in observers) [NSNotificationCenter.defaultCenter removeObserver:observer];
-    observers=nil; nativeToolbar=nil; modelPicker=nil; modelSubtitle=nil; rotateButton=nil; expandButton=nil;host=nil;
+    observers=nil; nativeToolbar=nil; modelPicker=nil; modelSubtitle=nil; rotateButton=nil; expandButton=nil;hideButton=nil;host=nil;
 }
 void IOSUsePlayDeviceChromeReset(void) {
     imageKey=nil;frameImage=nil;
-    removeFrame();
+    // Preserve the child-window identity during model/rotation changes. A new
+    // window created halfway through Mission Control isn't part of the host's
+    // existing window animation and can leave its shell detached on screen.
+}
+static void scheduleChromeUpdate(void) {
+    if (updateScheduled) return;
+    updateScheduled=YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        updateScheduled=NO;
+        IOSUsePlayDeviceChromeUpdate(host);
+    });
 }
 static id symbol(NSString *name, NSString *label) {
     id image=((id (*)(id,SEL,id,id))objc_msgSend)(NSClassFromString(@"NSImage"),NSSelectorFromString(@"imageWithSystemSymbolName:accessibilityDescription:"),name,label);
@@ -274,6 +300,20 @@ static void installToolbar(void) {
     integer(host,@"setTitleVisibility:",1);
 }
 
+void IOSUsePlayDeviceChromeRefreshAppearance(void) {
+    NSCParameterAssert(NSThread.isMainThread);
+    if (!statusArtwork) return;
+    BOOL lightContent=IOSUsePlayStatusBarUsesLightContent();
+    NSString *key=[NSString stringWithFormat:@"%@-%d-%d",@(IOSUsePlayDeviceCurrent()->name),IOSUsePlayDeviceQuarterTurns(),lightContent];
+    if (![statusImageKey isEqual:key]) {
+        statusImageKey=key;statusImage=IOSUsePlayStatusBarImage(lightContent);
+    }
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    statusArtwork.contents=(__bridge id)statusImage.CGImage;
+    statusArtwork.hidden=statusBarHidden;
+    [CATransaction commit];
+}
+
 void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     NSCParameterAssert(NSThread.isMainThread);
     if (updating || !hostWindow) return;
@@ -283,26 +323,47 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
         installToolbar();
         observers=[NSMutableArray array];
         for (NSString *name in @[@"NSWindowDidMoveNotification",@"NSWindowDidResizeNotification",@"NSWindowDidChangeBackingPropertiesNotification"]) {
-            [observers addObject:[NSNotificationCenter.defaultCenter addObserverForName:name object:host queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note){IOSUsePlayDeviceChromeUpdate(host);}]];
+            [observers addObject:[NSNotificationCenter.defaultCenter addObserverForName:name object:host queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note){scheduleChromeUpdate();}]];
         }
         [observers addObject:[NSNotificationCenter.defaultCenter addObserverForName:@"NSWindowWillCloseNotification" object:host queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note){resetHost();}]];
     }
     NSDictionary *state=IOSUsePlayDeviceState();
+    if (@available(iOS 17.0, *)) {
+        for (UIWindow *window in get(host,@"uiWindows")) {
+            UIView *root=window.rootViewController.view;
+            if (!root || window.windowLevel != UIWindowLevelNormal) continue;
+            if (root != observedStatusView) {
+                observedStatusView=root;
+                [root registerForTraitChanges:@[UITraitUserInterfaceStyle.class] withTarget:controller
+                    action:@selector(statusAppearanceChanged:previousTraitCollection:)];
+            }
+            break;
+        }
+    }
     for (id item in get(modelPicker,@"itemArray")) {
         if ([get(item,@"representedObject") isEqual:state[@"preset"]]) { object(modelPicker,@"selectItem:",item);break; }
     }
     NSString *modelTitle=get(modelPicker,@"title");
-    CGFloat titleWidth=[modelTitle sizeWithAttributes:@{NSFontAttributeName:[UIFont boldSystemFontOfSize:13]}].width;
-    modelChevron.position=CGPointMake(MIN(titleWidth+9,rect(modelPicker,@"bounds").size.width-9),8);
+    CGFloat titleWidth=[modelTitle sizeWithAttributes:@{NSFontAttributeName:get(modelPicker,@"font")}].width;
     BOOL duo=[state[@"preset"] isEqual:@"iphone-duo"];
     NSArray *items=get(nativeToolbar,@"items");
     NSUInteger expandIndex=NSNotFound;
     for (NSUInteger i=0;i<items.count;i++) if ([get(items[i],@"itemIdentifier") isEqual:@"expand"]) expandIndex=i;
     if (duo && expandIndex==NSNotFound) ((void (*)(id,SEL,id,NSUInteger))objc_msgSend)(nativeToolbar,NSSelectorFromString(@"insertItemWithItemIdentifier:atIndex:"),@"expand",items.count);
     if (!duo && expandIndex!=NSNotFound) integer(nativeToolbar,@"removeItemAtIndex:",expandIndex);
+    for (id item in get(nativeToolbar,@"items")) {
+        if ([get(item,@"itemIdentifier") isEqual:@"device"])
+            ((void (*)(id,SEL,CGSize))objc_msgSend)(item,NSSelectorFromString(@"setMinSize:"),CGSizeMake(MAX(95,titleWidth+22),36));
+    }
+    modelChevron.position=CGPointMake(titleWidth+9,8);
     NSString *expandLabel=[state[@"expanded"] boolValue] ? @"Collapse" : @"Expand";
     object(expandButton,@"setToolTip:",expandLabel);object(expandButton,@"setAccessibilityLabel:",expandLabel);
     object(expandButton,@"setImage:",symbol([state[@"expanded"] boolValue] ? @"arrow.down.right.and.arrow.up.left" : @"arrow.up.left.and.arrow.down.right",expandLabel));
+    integer(hideButton,@"setState:",statusBarHidden ? 1 : 0);
+    object(hideButton,@"setToolTip:",statusBarHidden ? @"Show status bar" : @"Hide status bar");
+    object(hideButton,@"setAccessibilityLabel:",statusBarHidden ? @"Show status bar" : @"Hide status bar");
+    object(hideButton,@"setImage:",symbol(statusBarHidden ? @"eye.slash" : @"eye",@"Hide status bar"));
+    object(hideButton,@"setContentTintColor:",get(NSClassFromString(@"NSColor"),statusBarHidden ? @"controlAccentColor" : @"secondaryLabelColor"));
     NSString *detail=[NSString stringWithFormat:@"%d × %d%@",IOSUsePlayDeviceLogicalWidth,IOSUsePlayDeviceLogicalHeight,
         duo ? ([state[@"expanded"] boolValue] ? @" · Expanded" : @" · Folded") : @""];
     object(modelSubtitle,@"setStringValue:",detail);
@@ -325,6 +386,7 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
         object(decoration,@"setBackgroundColor:",get(NSClassFromString(@"NSColor"),@"clearColor"));
         id decorationContent=get(decoration,@"contentView");boolean(decorationContent,@"setWantsLayer:",YES);
         artwork=[CALayer layer];object(get(decorationContent,@"layer"),@"addSublayer:",artwork);
+        statusArtwork=[CALayer layer];object(get(decorationContent,@"layer"),@"addSublayer:",statusArtwork);
         ((void (*)(id,SEL,id,NSInteger))objc_msgSend)(host,NSSelectorFromString(@"addChildWindow:ordered:"),decoration,1);
         bezelAccessory=[NSClassFromString(@"NSTitlebarAccessoryViewController") new];
         CGFloat clearance=ceil(frameInsets.top*scaleY)+12;
@@ -334,11 +396,14 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
         // AppKit re-enables autoresizing when attaching the accessory. Enable
         // its height constraint afterwards so tall bezels cannot cover the bar.
         boolean(spacer,@"setTranslatesAutoresizingMaskIntoConstraints:",NO);
-        id height=((id (*)(id,SEL,CGFloat))objc_msgSend)(get(spacer,@"heightAnchor"),NSSelectorFromString(@"constraintEqualToConstant:"),clearance);
-        boolean(height,@"setActive:",YES);
-        ((void (*)(id,SEL))objc_msgSend)(get(content,@"superview"),NSSelectorFromString(@"layoutSubtreeIfNeeded"));
-        canvas=((CGRect (*)(id,SEL,CGRect))objc_msgSend)(host,NSSelectorFromString(@"convertRectToScreen:"),rect(content,@"bounds"));
+        bezelHeight=((id (*)(id,SEL,CGFloat))objc_msgSend)(get(spacer,@"heightAnchor"),NSSelectorFromString(@"constraintEqualToConstant:"),clearance);
+        boolean(bezelHeight,@"setActive:",YES);
     }
+    ((void (*)(id,SEL,CGFloat))objc_msgSend)(bezelHeight,NSSelectorFromString(@"setConstant:"),ceil(frameInsets.top*scaleY)+12);
+    ((void (*)(id,SEL))objc_msgSend)(get(content,@"superview"),NSSelectorFromString(@"layoutSubtreeIfNeeded"));
+    canvas=((CGRect (*)(id,SEL,CGRect))objc_msgSend)(host,NSSelectorFromString(@"convertRectToScreen:"),rect(content,@"bounds"));
+    scale=canvas.size.width/IOSUsePlayDeviceLogicalWidth;
+    scaleY=canvas.size.height/IOSUsePlayDeviceLogicalHeight;
     CGRect frame=CGRectMake(canvas.origin.x-frameInsets.left*scale,canvas.origin.y-frameInsets.bottom*scaleY,
         canvas.size.width+(frameInsets.left+frameInsets.right)*scale,canvas.size.height+(frameInsets.top+frameInsets.bottom)*scaleY);
     ((void (*)(id,SEL,CGRect,BOOL))objc_msgSend)(decoration,NSSelectorFromString(@"setFrame:display:"),frame,YES);
@@ -346,19 +411,24 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     CGRect actualFrame=rect(decoration,@"frame");
     artwork.frame=CGRectMake(frame.origin.x-actualFrame.origin.x,frame.origin.y-actualFrame.origin.y,frame.size.width,frame.size.height);
     artwork.contents=(__bridge id)frameImage.CGImage;
+    IOSUsePlayDeviceRect status=IOSUsePlayDeviceStatusBarRect();
+    statusArtwork.frame=CGRectMake(artwork.frame.origin.x+(frameInsets.left+status.x)*scale,
+        artwork.frame.origin.y+(frameInsets.bottom+IOSUsePlayDeviceLogicalHeight-status.y-status.height)*scaleY,
+        status.width*scale,status.height*scaleY);
+    IOSUsePlayDeviceChromeRefreshAppearance();
     shapeHost();
     [CATransaction commit];
-    if (((BOOL (*)(id,SEL))objc_msgSend)(host,NSSelectorFromString(@"isVisible")) && !((BOOL (*)(id,SEL))objc_msgSend)(host,NSSelectorFromString(@"isMiniaturized"))) object(decoration,@"orderFront:",nil);
+    if (createdFrame && ((BOOL (*)(id,SEL))objc_msgSend)(host,NSSelectorFromString(@"isVisible")) && !((BOOL (*)(id,SEL))objc_msgSend)(host,NSSelectorFromString(@"isMiniaturized"))) object(decoration,@"orderFront:",nil);
     updating=NO;
-    if (createdFrame) dispatch_async(dispatch_get_main_queue(), ^{ IOSUsePlayDeviceChromeUpdate(host); });
+    if (createdFrame) scheduleChromeUpdate();
 }
 
 @implementation IOSUsePlayDeviceChromeController
 - (NSArray *)toolbarDefaultItemIdentifiers:(__unused id)toolbar {
-    return @[@"device",@"NSToolbarFlexibleSpaceItem",@"rotate"];
+    return @[@"device",@"NSToolbarFlexibleSpaceItem",@"rotate",@"hide"];
 }
 - (NSArray *)toolbarAllowedItemIdentifiers:(__unused id)toolbar {
-    return @[@"device",@"NSToolbarFlexibleSpaceItem",@"rotate",@"expand"];
+    return @[@"device",@"NSToolbarFlexibleSpaceItem",@"rotate",@"hide",@"expand"];
 }
 - (id)toolbar:(__unused id)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(__unused BOOL)inserted {
     id item=((id (*)(id,SEL,id))objc_msgSend)([NSClassFromString(@"NSToolbarItem") alloc],NSSelectorFromString(@"initWithItemIdentifier:"),identifier);
@@ -406,6 +476,10 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     } else if ([identifier isEqual:@"rotate"]) {
         rotateButton=button(@"rotate.right",@"Rotate",@selector(rotate:));content=rotateButton;
         object(item,@"setLabel:",@"Rotate");
+    } else if ([identifier isEqual:@"hide"]) {
+        hideButton=button(@"eye",@"Hide status bar",@selector(toggleStatusBar:));content=hideButton;
+        integer(hideButton,@"setButtonType:",1);
+        object(item,@"setLabel:",@"Hide");
     } else if ([identifier isEqual:@"expand"]) {
         expandButton=button(@"arrow.up.left.and.arrow.down.right",@"Expand",@selector(expand:));content=expandButton;
         object(item,@"setLabel:",@"Expand / Collapse");
@@ -420,4 +494,8 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
 - (void)selectModel:(id)sender { [self apply:@{@"preset":get(get(sender,@"selectedItem"),@"representedObject")}]; }
 - (void)rotate:(__unused id)sender { [self apply:@{@"physicalOrientation":@(IOSUsePlayDevicePhysicalName((IOSUsePlayDevicePhysicalQuarterTurns()+1)%4))}]; }
 - (void)expand:(__unused id)sender { [self apply:@{@"expanded":([IOSUsePlayDeviceState()[@"expanded"] boolValue] ? @NO : @YES)}]; }
+- (void)toggleStatusBar:(__unused id)sender { statusBarHidden=!statusBarHidden;IOSUsePlayDeviceChromeUpdate(host); }
+- (void)statusAppearanceChanged:(__unused id<UITraitEnvironment>)environment previousTraitCollection:(__unused UITraitCollection *)previous {
+    dispatch_async(dispatch_get_main_queue(), ^{ IOSUsePlayDeviceChromeRefreshAppearance(); });
+}
 @end

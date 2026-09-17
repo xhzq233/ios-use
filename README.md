@@ -188,6 +188,13 @@ Folding preserves the physical hinge direction: a portrait outer display opens
 into a landscape inner display; a landscape outer display opens into portrait.
 Rotate changes how the device is held.
 
+The shell also shows a decorative status bar (9:41, full signal/Wi-Fi and battery).
+Its Hide button, next to Rotate, is off by default. Hide changes only that overlay;
+the device shell and App safe areas remain. The status bar is drawn in the separate
+chrome window and is excluded from CLI screenshots, captures, DOM and App input.
+It uses UIKit status glyphs and the App's light/dark status style. Standard phone
+landscape previews omit the status bar when the preset has no top status region.
+
 `ios-use rotate --to landscape-right --dom` also works with a running Mac App
 in fixed canvas mode. All four CLI orientations are supported; the toolbar
 cycles through them in quarter turns. They describe the physical device pose,
@@ -211,9 +218,14 @@ cache device-dependent layouts in their own startup code may still need a restar
 The full-screen iPad preset uses iPadOS 26 Simulator safe-area metrics (top 32,
 bottom 25, left/right 0 in both orientations). Duo applies the documented size
 classes: compact/regular outside in portrait, compact/compact outside in landscape,
-and regular/regular inside. Its iOS 27.1 safe areas, vertical system bars and
-reserved regions are not emulated; `status --json` reports
-`safeAreaProfile: "unmodeled"` for Duo. Zero insets there are not calibrated Duo values.
+and regular/regular inside. Duo's safe-area preview reserves an 84pt side region
+on the outer display and landscape inner display; it follows the hardware side
+when rotated. Portrait inner displays use top32/bottom25. The status-bar frame
+also moves to the side, and the shell shows the circular status design from
+Apple's demonstration. These are visual estimates, reported as
+`safeAreaProfile: "duo-preview"`, not calibrated iOS 27.1 metrics. Native vertical
+navigation bars, camera activation and partially folded reserved regions still
+require the actual Duo runtime. Reference: [Design for iPhone Duo](https://developer.apple.com/videos/play/tech-talks/111466/).
 
 For adaptive App layouts, use `ios-use config --mac --device-model ipad-pro-11 --window-mode resizable`.
 The device screen identity stays fixed while DOM coordinates and screenshots
@@ -233,7 +245,7 @@ canvases](https://developer.apple.com/help/app-store-connect/reference/app-infor
 (inner 2007 × 2853, outer 1398 × 2034) with an assumed 3× logical scale.
 These differ from the inner panel's physical pixel dimensions. Until the Duo
 SDK/runtime is available for validation, the previews retain the existing
-iPhone runtime identity and use zero synthetic safe-area insets. They do not
+iPhone runtime identity and use the estimated safe-area profile above. They do not
 emulate partially folded poses, the iOS 27 side controls, or claim exact Duo hardware metrics.
 
 The Mac backend runs the host macOS UIKit implementation through Catalyst.

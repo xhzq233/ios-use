@@ -85,8 +85,24 @@ static inline int IOSUsePlayDevicePhysicalOrientation(void) {
     return orientations[IOSUsePlayDevicePhysicalQuarterTurns()];
 }
 typedef struct { int top, left, bottom, right; } IOSUsePlayDeviceInsets;
+static inline int IOSUsePlayDeviceHasSideStatusBar(void) {
+    return IOSUsePlayDeviceIsDuo() && (!IOSUsePlayDeviceIsDuoInner() || IOSUsePlayDeviceIsLandscape());
+}
+static inline int IOSUsePlayDeviceStatusBarOnLeft(void) {
+    return IOSUsePlayDeviceQuarterTurns() >= 2;
+}
 static inline IOSUsePlayDeviceInsets IOSUsePlayDeviceSafeInsets(void) {
     const IOSUsePlayDevicePreset *p = IOSUsePlayDeviceCurrent();
+    if (IOSUsePlayDeviceIsDuo()) {
+        // Layout preview measured against Apple's Tech Talk 111466, 7:00.
+        // The side band is ~18% of the 466pt outer canvas (84pt). These
+        // estimates require calibration against the future Duo Simulator.
+        if (IOSUsePlayDeviceHasSideStatusBar())
+            return IOSUsePlayDeviceStatusBarOnLeft()
+                ? (IOSUsePlayDeviceInsets){0, 84, 0, 0}
+                : (IOSUsePlayDeviceInsets){0, 0, 0, 84};
+        return (IOSUsePlayDeviceInsets){32, 0, 25, 0};
+    }
     if (p->idiom == 0 && IOSUsePlayDeviceQuarterTurns() == 2)
         return (IOSUsePlayDeviceInsets){p->safeAreaBottom, 0, p->safeAreaTop, 0};
     if (p->idiom == 1 || !IOSUsePlayDeviceIsLandscape())
@@ -100,6 +116,13 @@ static inline int IOSUsePlayDeviceWidth(void) {
 }
 static inline int IOSUsePlayDeviceHeight(void) {
     return IOSUsePlayDeviceIsLandscape() ? IOSUsePlayDeviceCurrent()->logicalWidth : IOSUsePlayDeviceCurrent()->logicalHeight;
+}
+typedef struct { int x, y, width, height; } IOSUsePlayDeviceRect;
+static inline IOSUsePlayDeviceRect IOSUsePlayDeviceStatusBarRect(void) {
+    int w = IOSUsePlayDeviceWidth(), h = IOSUsePlayDeviceHeight();
+    if (IOSUsePlayDeviceHasSideStatusBar())
+        return (IOSUsePlayDeviceRect){IOSUsePlayDeviceStatusBarOnLeft() ? 0 : w-84, 0, 84, h};
+    return (IOSUsePlayDeviceRect){0, 0, w, IOSUsePlayDeviceSafeInsets().top};
 }
 static inline const char *IOSUsePlayDeviceProductType(void) { return IOSUsePlayDeviceCurrent()->productType; }
 static inline const char *IOSUsePlayDeviceHardwareTarget(void) { return IOSUsePlayDeviceCurrent()->hardwareTarget; }

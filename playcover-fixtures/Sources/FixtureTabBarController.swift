@@ -107,12 +107,16 @@ final class FixtureTabBarController: UITabBarController {
             .first
         let window = delegateWindow ?? sceneDelegateWindow ?? view.window
         let safeAreaTop = window?.safeAreaInsets.top ?? 0
-        let statusBarHeight =
-            window?.windowScene?.statusBarManager?.statusBarFrame.height
-                ?? 0
+        let statusBarFrame =
+            window?.windowScene?.statusBarManager?.statusBarFrame ?? .zero
+        let statusBarHeight = statusBarFrame.height
+        // A side status region is not a top inset. Keep recording its actual
+        // height, but don't use it to size a horizontal startup probe.
+        let horizontalStatusHeight = statusBarFrame.width > statusBarFrame.height
+            ? statusBarHeight : 0
         let fixedTop = safeAreaTop > 0
             ? safeAreaTop
-            : statusBarHeight
+            : horizontalStatusHeight
         return (
             height: fixedTop + 70,
             safeAreaTop: safeAreaTop,

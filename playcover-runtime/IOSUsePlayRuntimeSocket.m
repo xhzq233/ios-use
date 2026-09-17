@@ -1,4 +1,5 @@
 #import "IOSUsePlayDeviceConfiguration.h"
+#import "IOSUsePlayDeviceChrome.h"
 #import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlayRuntime.h"
 #import "IOSUsePlayRuntimeAutomation.h"
@@ -803,13 +804,15 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                     applicationStatusBarFrameSelector
                 )
                 : CGRectZero;
+        IOSUsePlayDeviceRect expectedStatus = IOSUsePlayDeviceStatusBarRect();
+        CGRect expectedStatusFrame = CGRectMake(expectedStatus.x, expectedStatus.y, expectedStatus.width, expectedStatus.height);
         BOOL statusBarReady =
             statusBarManager != nil &&
             isfinite(statusBarFrame.size.height) &&
             isfinite(applicationStatusBarFrame.size.height) &&
             (IOSUsePlayCanvasIsResizable() ||
-                (statusBarFrame.size.height == IOSUseRuntimeDeviceSafeAreaTop &&
-                 applicationStatusBarFrame.size.height == IOSUseRuntimeDeviceSafeAreaTop));
+                (CGRectEqualToRect(statusBarFrame, expectedStatusFrame) &&
+                 CGRectEqualToRect(applicationStatusBarFrame, expectedStatusFrame)));
         NSString *deviceModel = device.model ?: @"";
         NSString *localizedDeviceModel = device.localizedModel ?: @"";
         BOOL deviceIdentityReady =
@@ -1619,6 +1622,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeUICommandError(void) {
         NSThread.isMainThread,
         @"UI command readiness validation is main-only"
     );
+    IOSUsePlayDeviceChromeRefreshAppearance();
     NSDictionary<NSString *, id> *context =
         [IOSUsePlayAppKitBridge uiAutomationContext];
     os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);

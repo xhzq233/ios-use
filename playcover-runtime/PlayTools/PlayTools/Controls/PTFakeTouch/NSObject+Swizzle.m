@@ -318,12 +318,8 @@ static void IOSUsePlayInstallRequiredIdentityHook(
     );
     if (strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0)
         return [self iosUsePlayStatusBarFrame];
-    return CGRectMake(
-        0,
-        0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceSafeAreaTop
-    );
+    IOSUsePlayDeviceRect frame = IOSUsePlayDeviceStatusBarRect();
+    return CGRectMake(frame.x, frame.y, frame.width, frame.height);
 }
 
 - (double) hook_nativeScale {
