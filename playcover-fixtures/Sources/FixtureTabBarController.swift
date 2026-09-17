@@ -8,7 +8,6 @@ final class FixtureTabBarController: UITabBarController {
     private var lastGeometryDescription: String?
     private let sceneGeneration: Int
     private var fullScreenBottomProbes: [UIButton] = []
-    private let firstReadHeaderLabel = UILabel()
 
     init(sceneGeneration: Int = 0) {
         self.sceneGeneration = sceneGeneration
@@ -31,6 +30,10 @@ final class FixtureTabBarController: UITabBarController {
         )
         let uikitViewController = UIKitFixtureViewController(
             sceneGeneration: sceneGeneration
+        )
+        configureFirstReadHeader(
+            uikitViewController.firstReadHeaderLabel,
+            evidence: firstReadEvidence
         )
         uikitViewController.navigationItem.title = "UIKit Fixture"
         let uikitNavigationController = UINavigationController(
@@ -78,7 +81,6 @@ final class FixtureTabBarController: UITabBarController {
             identifier: "fixture.full.bottom-right",
             trailing: true
         )
-        installFirstReadHeader(firstReadEvidence)
     }
 
     override func viewDidLayoutSubviews() {
@@ -86,7 +88,6 @@ final class FixtureTabBarController: UITabBarController {
         for probe in fullScreenBottomProbes {
             view.bringSubviewToFront(probe)
         }
-        view.bringSubviewToFront(firstReadHeaderLabel)
         recordGeometryIfNeeded()
     }
 
@@ -122,8 +123,9 @@ final class FixtureTabBarController: UITabBarController {
         )
     }
 
-    private func installFirstReadHeader(
-        _ evidence: (
+    private func configureFirstReadHeader(
+        _ firstReadHeaderLabel: UILabel,
+        evidence: (
             height: CGFloat,
             safeAreaTop: CGFloat,
             statusBarHeight: CGFloat,
@@ -132,7 +134,7 @@ final class FixtureTabBarController: UITabBarController {
     ) {
         firstReadHeaderLabel.text = String(
             format:
-                "First Read Header %.0f (safe %.0f, status %.0f)",
+                "Startup snapshot (unchanged)\nHeader %.0f · safe top %.0f · status %.0f",
             evidence.height,
             evidence.safeAreaTop,
             evidence.statusBarHeight
@@ -140,6 +142,7 @@ final class FixtureTabBarController: UITabBarController {
         firstReadHeaderLabel.font =
             .monospacedSystemFont(ofSize: 11, weight: .semibold)
         firstReadHeaderLabel.textAlignment = .center
+        firstReadHeaderLabel.numberOfLines = 0
         firstReadHeaderLabel.backgroundColor =
             UIColor.systemYellow.withAlphaComponent(0.28)
         firstReadHeaderLabel.isUserInteractionEnabled = false
@@ -158,23 +161,12 @@ final class FixtureTabBarController: UITabBarController {
         )
         firstReadHeaderLabel.translatesAutoresizingMaskIntoConstraints =
             false
-        view.addSubview(firstReadHeaderLabel)
         // This height is intentionally immutable. A late Runtime invalidation
-        // cannot repair an incorrect first read of this header.
-        NSLayoutConstraint.activate([
-            firstReadHeaderLabel.leadingAnchor.constraint(
-                equalTo: view.leadingAnchor
-            ),
-            firstReadHeaderLabel.trailingAnchor.constraint(
-                equalTo: view.trailingAnchor
-            ),
-            firstReadHeaderLabel.topAnchor.constraint(
-                equalTo: view.topAnchor
-            ),
-            firstReadHeaderLabel.heightAnchor.constraint(
-                equalToConstant: evidence.height
-            ),
-        ])
+        // cannot repair an incorrect first read. Keep the probe in the scroll
+        // content so it does not cover system bars after a model change.
+        firstReadHeaderLabel.heightAnchor.constraint(
+            equalToConstant: evidence.height
+        ).isActive = true
     }
 
     @objc private func fullScreenBottomProbeTapped(_ sender: UIButton) {
@@ -333,6 +325,7 @@ final class UIKitFixtureViewController:
     UIViewController,
     UIScrollViewDelegate
 {
+    let firstReadHeaderLabel = UILabel()
     private let countLabel = UILabel()
     private let incrementButton = UIButton(type: .system)
     private let geometryLabel = UILabel()
@@ -376,7 +369,8 @@ final class UIKitFixtureViewController:
         countLabel.font = .monospacedDigitSystemFont(ofSize: 20, weight: .medium)
         countLabel.accessibilityIdentifier = "fixture.uikit.count"
 
-        geometryLabel.text = "Geometry pending"
+        // The parent can publish geometry before this child loads its view.
+        geometryLabel.text = geometryLabel.text ?? "Geometry pending"
         geometryLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
         geometryLabel.numberOfLines = 0
         geometryLabel.accessibilityIdentifier = "fixture.uikit.geometry"
@@ -567,6 +561,7 @@ final class UIKitFixtureViewController:
             arrangedSubviews: [
                 heading,
                 geometryLabel,
+                firstReadHeaderLabel,
                 probeStatusLabel,
                 urlStatusLabel,
                 scrollStatusLabel,
@@ -614,10 +609,10 @@ final class UIKitFixtureViewController:
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(
-                equalTo: view.leadingAnchor
+                equalTo: view.safeAreaLayoutGuide.leadingAnchor
             ),
             scrollView.trailingAnchor.constraint(
-                equalTo: view.trailingAnchor
+                equalTo: view.safeAreaLayoutGuide.trailingAnchor
             ),
             scrollView.topAnchor.constraint(
                 equalTo: view.topAnchor
@@ -627,7 +622,7 @@ final class UIKitFixtureViewController:
             ),
             stack.topAnchor.constraint(
                 equalTo: scrollView.contentLayoutGuide.topAnchor,
-                constant: 90
+                constant: 18
             ),
             stack.bottomAnchor.constraint(
                 equalTo: scrollView.contentLayoutGuide.bottomAnchor,

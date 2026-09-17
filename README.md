@@ -225,7 +225,16 @@ canvases](https://developer.apple.com/help/app-store-connect/reference/app-infor
 These differ from the inner panel's physical pixel dimensions. Until the Duo
 SDK/runtime is available for validation, the previews retain the existing
 iPhone runtime identity and use zero synthetic safe-area insets. They do not
-emulate folding, the iOS 27 side controls, or claim exact Duo hardware metrics.
+emulate partially folded poses, the iOS 27 side controls, or claim exact Duo hardware metrics.
+
+The Mac backend runs the host macOS UIKit implementation through Catalyst.
+Installing a newer iOS SDK changes what can be compiled; it does not replace
+that runtime. Device presets also do not change the runtime's API availability
+or system control implementation. Testing a newer iOS system's actual behavior
+requires its Simulator runtime and a Simulator build of the App, or a device
+running that OS. A newer macOS supplies newer host frameworks, but still needs
+Mac backend compatibility validation and does not reproduce iPhone-only system
+behavior. See Apple's [Xcode system requirements](https://developer.apple.com/xcode/system-requirements).
 
 
 Background scenes, minimized windows, and windows on another Space do not
