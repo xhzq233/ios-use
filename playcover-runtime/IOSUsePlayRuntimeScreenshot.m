@@ -4,8 +4,6 @@
 #import "IOSUsePlayDevice.h"
 #import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayWindowCompositor.h"
-#import "IOSUsePlayDeviceChrome.h"
-#import "IOSUsePlayCanvasCapture.h"
 
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
@@ -55,7 +53,6 @@ enum {
 @interface IOSUseScreenshotNativeWindow : NSObject
 @property(nonatomic, strong) id appKitWindow;
 @property(nonatomic) uint32_t windowNumber;
-@property(nonatomic) uint32_t captureWindowNumber;
 @property(nonatomic) CGRect frame;
 @property(nonatomic) CGRect cgWindowBounds;
 @property(nonatomic) CGRect deviceLogicalRect;
@@ -1146,8 +1143,6 @@ IOSUseScreenshotCompositorEvidence(
             : @{};
         [windowEvidence addObject:@{
             @"windowNumber": @(window.windowNumber),
-            @"captureWindowNumber": @(window.captureWindowNumber),
-            @"unclippedSceneCapture": @(window.captureWindowNumber != window.windowNumber),
             @"class": NSStringFromClass(
                 [window.appKitWindow class]
             ),
@@ -1369,28 +1364,14 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
     NSUInteger capturedCount = 0;
     for (NSUInteger index = 0; index < windows.count; index += 1) {
         uint32_t windowID = windows[index].windowNumber;
-        id canvasCaptureWindow = nil;
-        BOOL unclipped = windowID == baseWindowNumber && IOSUsePlayDeviceChromeClipsCanvas();
-        if (unclipped) canvasCaptureWindow = IOSUsePlayCreateCanvasCaptureWindow(windows[index].appKitWindow);
-        uint32_t captureID = canvasCaptureWindow
-            ? (uint32_t)((NSInteger (*)(id,SEL))objc_msgSend)(canvasCaptureWindow,NSSelectorFromString(@"windowNumber"))
-            : windowID;
-        windows[index].captureWindowNumber = captureID;
-        CFArrayRef response = NULL;
-        @try {
-            if (!unclipped || canvasCaptureWindow) {
-                response = captureWindows(
-                    mainConnection(),
-                    &captureID,
-                    1,
-                    IOSUseCGSHWIgnoreGlobalClipShape |
-                        IOSUseCGSHWBestResolution |
-                        IOSUseCGSHWFullSize
-                );
-            }
-        } @finally {
-            if (canvasCaptureWindow) ((void (*)(id,SEL))objc_msgSend)(canvasCaptureWindow,NSSelectorFromString(@"close"));
-        }
+        CFArrayRef response = captureWindows(
+            mainConnection(),
+            &windowID,
+            1,
+            IOSUseCGSHWIgnoreGlobalClipShape |
+                IOSUseCGSHWBestResolution |
+                IOSUseCGSHWFullSize
+        );
         NSString *captureFailure = nil;
         BOOL countMatches =
             IOSUsePlayValidateCapturedWindowCount(
@@ -1398,9 +1379,6 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
                 response,
                 &captureFailure
             );
-        if (unclipped && !canvasCaptureWindow) {
-            captureFailure = @"could not host the App scene without the desktop mask";
-        }
         CGImageRef source = countMatches
             ? (CGImageRef)CFArrayGetValueAtIndex(response, 0)
             : NULL;

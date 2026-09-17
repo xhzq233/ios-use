@@ -837,9 +837,8 @@ NSArray *IOSUsePlayUnionCaptureWindows(
         }
     }
     for (id window in applicationWindows) {
-        // Exclude only our decoration/capture helpers; real App panels remain.
-        if ([window isKindOfClass:NSClassFromString(@"IOSUsePlayChromeWindow")] ||
-            [window isKindOfClass:NSClassFromString(@"IOSUsePlayCanvasCaptureWindow")]) {
+        // Only our decoration class is excluded; real App panels stay in capture.
+        if ([window isKindOfClass:NSClassFromString(@"IOSUsePlayChromeWindow")]) {
             continue;
         }
         if (!append(window, NO)) {

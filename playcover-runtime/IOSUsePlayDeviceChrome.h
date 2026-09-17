@@ -4,4 +4,3 @@
 void IOSUsePlayDeviceChromeUpdate(id hostWindow);
 void IOSUsePlayDeviceChromeReset(void);
 void IOSUsePlayDeviceChromeRefreshAppearance(void);
-BOOL IOSUsePlayDeviceChromeClipsCanvas(void);

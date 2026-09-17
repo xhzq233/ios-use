@@ -214,9 +214,6 @@ static id toolbarView(id parent, NSUInteger depth) {
     for (id child in get(parent,@"subviews")) { id found=toolbarView(child,depth-1);if(found)return found; }
     return nil;
 }
-BOOL IOSUsePlayDeviceChromeClipsCanvas(void) {
-    return shapedRoot != nil && IOSUsePlayDeviceIsDuo();
-}
 static CGPathRef duoCanvasPath(CGRect canvas) CF_RETURNS_RETAINED {
     CGFloat radii[4]={58,58,58,58}; // top-left, top-right, bottom-right, bottom-left
     if (!IOSUsePlayDeviceIsDuoInner()) { radii[0]=7;radii[1]=64;radii[2]=64;radii[3]=7; }
@@ -251,8 +248,8 @@ static void shapeHost(void) {
         object(host,@"setBackgroundColor:",get(NSClassFromString(@"NSColor"),@"clearColor"));
     }
     CGRect barRect=((CGRect (*)(id,SEL,CGRect,id))objc_msgSend)(root,NSSelectorFromString(@"convertRect:fromView:"),rect(bar,@"bounds"),bar);
-    // Clip desktop presentation separately from the unmasked scene used by
-    // CLI capture. A rectangular backing plate leaks outside the Duo bezel.
+    // Match the screen contour; direct window capture includes this mask.
+    // A rectangular backing plate leaks outside the Duo bezel.
     barRect.origin.y+=0.5;barRect.size.height-=0.5;
     CGMutablePathRef path=CGPathCreateMutable();
     if (IOSUsePlayDeviceIsDuo()) {
@@ -385,10 +382,8 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     for (NSUInteger i=0;i<items.count;i++) if ([get(items[i],@"itemIdentifier") isEqual:@"expand"]) expandIndex=i;
     if (duo && expandIndex==NSNotFound) ((void (*)(id,SEL,id,NSUInteger))objc_msgSend)(nativeToolbar,NSSelectorFromString(@"insertItemWithItemIdentifier:atIndex:"),@"expand",items.count);
     if (!duo && expandIndex!=NSNotFound) integer(nativeToolbar,@"removeItemAtIndex:",expandIndex);
-    for (id item in get(nativeToolbar,@"items")) {
-        if ([get(item,@"itemIdentifier") isEqual:@"device"])
-            ((void (*)(id,SEL,CGSize))objc_msgSend)(item,NSSelectorFromString(@"setMinSize:"),CGSizeMake(MAX(95,titleWidth+22),36));
-    }
+    CGFloat pickerWidth=ceil(titleWidth+22);
+    ((void (*)(id,SEL,CGSize))objc_msgSend)(modelPicker,NSSelectorFromString(@"setFrameSize:"),CGSizeMake(pickerWidth,21));
     modelChevron.position=CGPointMake(titleWidth+9,8);
     NSString *expandLabel=[state[@"expanded"] boolValue] ? @"Collapse" : @"Expand";
     object(expandButton,@"setToolTip:",expandLabel);object(expandButton,@"setAccessibilityLabel:",expandLabel);
@@ -401,6 +396,13 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     NSString *detail=[NSString stringWithFormat:@"%d × %d%@",IOSUsePlayDeviceLogicalWidth,IOSUsePlayDeviceLogicalHeight,
         duo ? ([state[@"expanded"] boolValue] ? @" · Expanded" : @" · Folded") : @""];
     object(modelSubtitle,@"setStringValue:",detail);
+    CGFloat detailWidth=[detail sizeWithAttributes:@{NSFontAttributeName:get(modelSubtitle,@"font")}].width;
+    CGFloat itemWidth=ceil(MAX(pickerWidth,detailWidth+4));
+    for (id item in get(nativeToolbar,@"items")) {
+        if (![get(item,@"itemIdentifier") isEqual:@"device"]) continue;
+        ((void (*)(id,SEL,CGSize))objc_msgSend)(item,NSSelectorFromString(@"setMinSize:"),CGSizeMake(itemWidth,36));
+        ((void (*)(id,SEL,CGSize))objc_msgSend)(item,NSSelectorFromString(@"setMaxSize:"),CGSizeMake(itemWidth,36));
+    }
     if ([state[@"chrome"] isEqual:@"off"] || [state[@"windowMode"] isEqual:@"resizable"]) {
         restoreHostShape();removeFrame();updating=NO;return;
     }
@@ -483,7 +485,9 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
         integer(get(modelPicker,@"cell"),@"setArrowPosition:",0);
         integer(get(modelPicker,@"cell"),@"setLineBreakMode:",4);
         integer(modelPicker,@"setFocusRingType:",1);
-        integer(modelPicker,@"setAutoresizingMask:",2);
+        // Keep the hit rectangle fitted to the title and chevron even when
+        // the subtitle or toolbar item is wider.
+        integer(modelPicker,@"setAutoresizingMask:",0);
         id font=((id (*)(id,SEL,CGFloat))objc_msgSend)(NSClassFromString(@"NSFont"),NSSelectorFromString(@"boldSystemFontOfSize:"),13.0);
         object(modelPicker,@"setFont:",font);
         integer(modelPicker,@"setAlignment:",0);
