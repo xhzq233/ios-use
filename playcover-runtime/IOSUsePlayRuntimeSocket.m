@@ -806,11 +806,10 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
         BOOL statusBarReady =
             statusBarManager != nil &&
             isfinite(statusBarFrame.size.height) &&
-            statusBarFrame.size.height ==
-                IOSUseRuntimeDeviceSafeAreaTop &&
             isfinite(applicationStatusBarFrame.size.height) &&
-            applicationStatusBarFrame.size.height ==
-                IOSUseRuntimeDeviceSafeAreaTop;
+            (IOSUsePlayCanvasIsResizable() ||
+                (statusBarFrame.size.height == IOSUseRuntimeDeviceSafeAreaTop &&
+                 applicationStatusBarFrame.size.height == IOSUseRuntimeDeviceSafeAreaTop));
         NSString *deviceModel = device.model ?: @"";
         NSString *localizedDeviceModel = device.localizedModel ?: @"";
         BOOL deviceIdentityReady =
@@ -828,7 +827,8 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                     IOSUsePlayDeviceUserInterfaceIdiom &&
             deviceOrientation ==
                 (UIDeviceOrientation)IOSUsePlayDeviceOrientation &&
-            sceneOrientation == (IOSUsePlayDeviceIsLandscape() ? UIInterfaceOrientationLandscapeRight : UIInterfaceOrientationPortrait) &&
+            (IOSUsePlayCanvasIsResizable() ||
+                sceneOrientation == (IOSUsePlayDeviceIsLandscape() ? UIInterfaceOrientationLandscapeRight : UIInterfaceOrientationPortrait)) &&
             nativeScale == IOSUseRuntimeDeviceScale &&
             statusBarReady;
         hooks = IOSUsePlayRuntimeHookDiagnostics(

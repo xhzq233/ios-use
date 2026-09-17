@@ -184,6 +184,9 @@ Xcode is not needed to load the bundled device artwork. The shell follows the
 native window, leaves App input intact, and is excluded from screenshots.
 The native title bar provides a device selector and Rotate; iPhone Duo also
 has an Expand/Collapse button. These controls change the current App in place.
+Folding preserves the physical hinge direction: a portrait outer display opens
+into a landscape inner display; a landscape outer display opens into portrait.
+Rotate changes how the device is held.
 
 `ios-use config --mac --device-model iphone-duo` switches a running Mac App
 immediately and saves the selection for future starts. The same applies to
@@ -196,12 +199,21 @@ A live switch updates the Runtime's screen identity, viewport, traits, safe area
 and capture scale while preserving the App process and navigation. Apps that
 cache device-dependent layouts in their own startup code may still need a restart.
 
+The full-screen iPad preset uses iPadOS 26 Simulator safe-area metrics (top 32,
+bottom 25, left/right 0 in both orientations). Duo applies the documented size
+classes: compact/regular outside in portrait, compact/compact outside in landscape,
+and regular/regular inside. Its iOS 27.1 safe areas, vertical system bars and
+reserved regions are not emulated; `status --json` reports
+`safeAreaProfile: "unmodeled"` for Duo. Zero insets there are not calibrated Duo values.
+
 For adaptive App layouts, use `ios-use config --mac --device-model ipad-pro-11 --window-mode resizable`.
 The device screen identity stays fixed while DOM coordinates and screenshots
 follow the actual App window. The App's scene minimum/maximum size preferences
 are preserved, with Catalyst applying its own limits. Phone-only or full-screen
 compatibility Apps may still restrict resizing. Resizable mode hides the device
-shell and uses native window safe areas. It previews App layout; it does not
+shell and uses native window safe areas, scene orientation and size classes.
+The virtual device screen identity stays separate from this free window.
+It previews App layout; it does not
 implement the iPadOS window manager, Stage Manager or Split View. Restore the
 full device canvas with `--window-mode fixed`. These options also apply to the current Mac session.
 See Apple's [scene size restrictions](https://developer.apple.com/documentation/uikit/uiscenesizerestrictions)

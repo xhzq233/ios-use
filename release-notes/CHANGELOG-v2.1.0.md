@@ -21,6 +21,13 @@
 
 ## Fixes
 
+- Clip each DeviceKit PDF tile to its drawing bounds, fixing repeated iPad bezel
+  segments. Keep iPad safe areas at the top and bottom when rotating.
+- Preserve Duo's physical hinge orientation when opening or closing, and update
+  the inner/outer display's size classes. Duo system safe areas remain unmodeled
+  and are identified as such in status.
+- Keep Catalyst's native scene orientation in resizable mode so a landscape
+  device preset does not transpose a non-square App window's UIKit bounds.
 - Release old snapshot trees after repeated observations while retaining the
   ancestor context needed by scrolling and interaction results.
 - Read only the selected Device's session for explicit Device operations.

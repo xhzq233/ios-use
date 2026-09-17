@@ -265,6 +265,10 @@ static void IOSUsePlayInstallRequiredIdentityHook(
 }
 
 - (UIInterfaceOrientation)iosUsePlayInterfaceOrientation {
+    // A free Mac window uses Catalyst's own scene coordinates. Reporting the
+    // virtual display's landscape orientation here swaps its resized bounds.
+    if (strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0)
+        return [self iosUsePlayInterfaceOrientation];
     return IOSUsePlayDeviceIsLandscape() ? UIInterfaceOrientationLandscapeRight : UIInterfaceOrientationPortrait;
 }
 
@@ -312,6 +316,8 @@ static void IOSUsePlayInstallRequiredIdentityHook(
         identifier,
         self.class
     );
+    if (strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0)
+        return [self iosUsePlayStatusBarFrame];
     return CGRectMake(
         0,
         0,

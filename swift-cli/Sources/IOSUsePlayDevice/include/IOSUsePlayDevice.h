@@ -18,7 +18,8 @@ static inline const IOSUsePlayDevicePreset *IOSUsePlayDevicePresetAt(int index) 
         {"iphone-se", "iPhone14,6", "A2595", 0, 375, 667, 2, 20, 0},
         {"iphone-13", "iPhone14,5", "A2482", 0, 390, 844, 3, 47, 34},
         {"iphone-15-pro", "iPhone16,1", "A2848", 0, 393, 852, 3, 59, 34},
-        {"ipad-pro-11", "iPad14,3", "A2759", 1, 834, 1194, 2, 24, 20},
+        // Full-screen UIKit window, iPadOS 26 Simulator (both orientations).
+        {"ipad-pro-11", "iPad14,3", "A2759", 1, 834, 1194, 2, 32, 25},
         // Duo layout previews: App Store screenshot canvases at 3x.
         // Keep the supported iPhone runtime identity; these do not emulate iOS 27.
         {"iphone-duo-inner", "iPhone16,2", "A2849", 0, 669, 951, 3, 0, 0},
@@ -48,6 +49,27 @@ static inline int IOSUsePlayDeviceIsLandscape(void) {
     const char *value = getenv("IOS_USE_MAC_ORIENTATION");
     return value && strcmp(value, "landscape-right") == 0;
 }
+static inline int IOSUsePlayDeviceIsDuoInner(void) {
+    return strcmp(IOSUsePlayDeviceCurrent()->name, "iphone-duo-inner") == 0;
+}
+static inline int IOSUsePlayDeviceIsDuo(void) {
+    return strncmp(IOSUsePlayDeviceCurrent()->name, "iphone-duo-", 11) == 0;
+}
+static inline int IOSUsePlayDevicePhysicalOrientation(void) {
+    // The open screen's long axis is perpendicular to the outer screen's.
+    // Opening the hinge changes interface aspect, not how the device is held.
+    int landscape = IOSUsePlayDeviceIsLandscape() != IOSUsePlayDeviceIsDuoInner();
+    return landscape ? 3 : 1;
+}
+typedef struct { int top, left, bottom, right; } IOSUsePlayDeviceInsets;
+static inline IOSUsePlayDeviceInsets IOSUsePlayDeviceSafeInsets(void) {
+    const IOSUsePlayDevicePreset *p = IOSUsePlayDeviceCurrent();
+    if (p->idiom == 1 || !IOSUsePlayDeviceIsLandscape())
+        return (IOSUsePlayDeviceInsets){p->safeAreaTop, 0, p->safeAreaBottom, 0};
+    // Home-button iPhones have no landscape status bar or sensor housing.
+    if (!p->safeAreaBottom) return (IOSUsePlayDeviceInsets){0, 0, 0, 0};
+    return (IOSUsePlayDeviceInsets){0, p->safeAreaTop, 21, p->safeAreaTop};
+}
 static inline int IOSUsePlayDeviceWidth(void) {
     return IOSUsePlayDeviceIsLandscape() ? IOSUsePlayDeviceCurrent()->logicalHeight : IOSUsePlayDeviceCurrent()->logicalWidth;
 }
@@ -61,14 +83,14 @@ static inline const char *IOSUsePlayDeviceLocalizedModel(void) { return IOSUsePl
 #define IOS_USE_PLAY_DEVICE_PRODUCT_TYPE IOSUsePlayDeviceProductType()
 #define IOS_USE_PLAY_DEVICE_HARDWARE_TARGET IOSUsePlayDeviceHardwareTarget()
 #define IOSUsePlayDeviceUserInterfaceIdiom (IOSUsePlayDeviceCurrent()->idiom)
-#define IOSUsePlayDeviceOrientation (IOSUsePlayDeviceIsLandscape() ? 3 : 1)
+#define IOSUsePlayDeviceOrientation IOSUsePlayDevicePhysicalOrientation()
 #define IOSUsePlayDeviceLogicalWidth IOSUsePlayDeviceWidth()
 #define IOSUsePlayDeviceLogicalHeight IOSUsePlayDeviceHeight()
 #define IOSUsePlayDeviceScale (IOSUsePlayDeviceCurrent()->scale)
 #define IOSUsePlayDeviceNativeWidth ((size_t)(IOSUsePlayDeviceLogicalWidth * IOSUsePlayDeviceScale))
 #define IOSUsePlayDeviceNativeHeight ((size_t)(IOSUsePlayDeviceLogicalHeight * IOSUsePlayDeviceScale))
-#define IOSUsePlayDeviceSafeAreaTop (IOSUsePlayDeviceIsLandscape() ? 0 : IOSUsePlayDeviceCurrent()->safeAreaTop)
-#define IOSUsePlayDeviceSafeAreaLeft (IOSUsePlayDeviceIsLandscape() ? IOSUsePlayDeviceCurrent()->safeAreaTop : 0)
-#define IOSUsePlayDeviceSafeAreaBottom (IOSUsePlayDeviceIsLandscape() ? (IOSUsePlayDeviceCurrent()->safeAreaBottom ? 21 : 0) : IOSUsePlayDeviceCurrent()->safeAreaBottom)
-#define IOSUsePlayDeviceSafeAreaRight IOSUsePlayDeviceSafeAreaLeft
+#define IOSUsePlayDeviceSafeAreaTop (IOSUsePlayDeviceSafeInsets().top)
+#define IOSUsePlayDeviceSafeAreaLeft (IOSUsePlayDeviceSafeInsets().left)
+#define IOSUsePlayDeviceSafeAreaBottom (IOSUsePlayDeviceSafeInsets().bottom)
+#define IOSUsePlayDeviceSafeAreaRight (IOSUsePlayDeviceSafeInsets().right)
 #endif

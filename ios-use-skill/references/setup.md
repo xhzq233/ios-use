@@ -28,6 +28,9 @@ and is saved for future starts. It does not restart the App or initialize signin
 The native title bar also has a model selector, Rotate, and Duo Expand/Collapse.
 Toolbar controls affect the current session; use config to save the selection.
 `status --json` shows the active `macDevice` and saved `configuredMacDevice`.
+Duo folds along the same physical hinge: the portrait outer display opens into
+the landscape inner display, and the landscape outer display opens into portrait.
+Its exact iOS 27.1 safe areas and side-mounted system bars are not emulated.
 
 On macOS 26 or newer, `start --mac` warns and continues, but Mac UI interaction
 is not fully supported and may crash. Prefer a validated older macOS host, a

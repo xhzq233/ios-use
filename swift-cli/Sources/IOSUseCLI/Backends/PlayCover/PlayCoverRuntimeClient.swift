@@ -23,6 +23,8 @@ struct PlayCoverRuntimeDeviceState: Codable, Equatable, Sendable {
     let preset: String
     let expanded: Bool
     let orientation: String
+    var physicalOrientation: String? = nil
+    var safeAreaProfile: String? = nil
     let chrome: String
     let windowMode: String
     let logicalWidth: Double
@@ -37,6 +39,9 @@ struct PlayCoverRuntimeDeviceState: Codable, Equatable, Sendable {
     }
     var machineData: MachineValue {
         .object(["preset": .string(preset), "expanded": .boolean(expanded),
+            "layoutPreview": .boolean(preset.hasPrefix("iphone-duo")),
+            "physicalOrientation": physicalOrientation.map(MachineValue.string) ?? .null,
+            "safeAreaProfile": safeAreaProfile.map(MachineValue.string) ?? .null,
             "orientation": .string(orientation), "deviceChrome": .string(chrome),
             "windowMode": .string(windowMode), "logicalWidth": .double(logicalWidth),
             "logicalHeight": .double(logicalHeight), "scale": .double(scale), "idiom": .integer(idiom)])

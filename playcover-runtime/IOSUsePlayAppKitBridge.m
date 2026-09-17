@@ -1,5 +1,6 @@
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayDeviceChrome.h"
+#import "IOSUsePlayDeviceConfiguration.h"
 #import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayDevice.h"
 #import "IOSUsePlayHookRegistry.h"
@@ -2417,6 +2418,7 @@ static CGSize IOSUsePlayObservedCanvas;
         return NO;
     }
     IOSUseBridgeLayoutIfNeeded(IOSUsePlayHostContentView);
+    IOSUsePlayRefreshDeviceTraits(uiWindow);
     // Catalyst can create its full-scene text overlay with portrait dimensions
     // on a landscape launch. Keep it aligned with the actual App canvas, just
     // as the main native window is reconciled after a model/orientation change.

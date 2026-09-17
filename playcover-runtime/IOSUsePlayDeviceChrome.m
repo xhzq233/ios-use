@@ -61,9 +61,16 @@ static void drawPDF(NSString *directory, NSString *name, CGRect target) {
     if (page) {
         CGContextRef context = UIGraphicsGetCurrentContext();
         CGContextSaveGState(context);
+        // DeviceKit slices can contain artwork outside their PDF media box.
+        // Match NSImage's slice clipping before stretching the edge tiles.
+        CGContextClipToRect(context, target);
         CGContextTranslateCTM(context, target.origin.x, CGRectGetMaxY(target));
         CGContextScaleCTM(context, 1, -1);
-        CGContextConcatCTM(context, CGPDFPageGetDrawingTransform(page, kCGPDFMediaBox, (CGRect){CGPointZero, target.size}, 0, false));
+        CGRect source = CGPDFPageGetBoxRect(page, kCGPDFMediaBox);
+        // Edge PDFs are one pixel wide/tall. Fit each axis explicitly: the PDF
+        // convenience transform can leave these slices centered at native size.
+        CGContextScaleCTM(context, target.size.width/source.size.width, target.size.height/source.size.height);
+        CGContextTranslateCTM(context, -source.origin.x, -source.origin.y);
         CGContextDrawPDFPage(context, page);
         CGContextRestoreGState(context);
     }
