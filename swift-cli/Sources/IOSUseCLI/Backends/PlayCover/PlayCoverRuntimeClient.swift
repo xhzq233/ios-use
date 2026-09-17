@@ -52,6 +52,7 @@ struct PlayCoverRuntimeDeviceChanges: Codable, Equatable, Sendable {
     var preset: String? = nil
     var chrome: String? = nil
     var windowMode: String? = nil
+    var physicalOrientation: String? = nil
 }
 
 struct PlayCoverRuntimeRect: Codable, Equatable, Sendable {

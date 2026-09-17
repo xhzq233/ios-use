@@ -45,9 +45,29 @@ static inline const IOSUsePlayDevicePreset *IOSUsePlayDeviceCurrent(void) {
     const IOSUsePlayDevicePreset *preset = IOSUsePlayDevicePresetNamed(name);
     return preset ? preset : IOSUsePlayDevicePresetAt(0);
 }
-static inline int IOSUsePlayDeviceIsLandscape(void) {
+// Clockwise turns of the device artwork from its portrait source.
+static inline int IOSUsePlayDeviceQuarterTurns(void) {
     const char *value = getenv("IOS_USE_MAC_ORIENTATION");
-    return value && strcmp(value, "landscape-right") == 0;
+    if (!value) return 0;
+    if (strcmp(value, "landscape-right") == 0) return 1;
+    if (strcmp(value, "portrait-upside-down") == 0) return 2;
+    if (strcmp(value, "landscape-left") == 0) return 3;
+    return 0;
+}
+static inline const char *IOSUsePlayDeviceInterfaceName(int turns) {
+    static const char *names[] = {"portrait", "landscape-right", "portrait-upside-down", "landscape-left"};
+    return names[turns % 4];
+}
+static inline const char *IOSUsePlayDevicePhysicalName(int turns) {
+    static const char *names[] = {"portrait", "landscape-left", "portrait-upside-down", "landscape-right"};
+    return names[turns % 4];
+}
+static inline int IOSUsePlayDeviceIsLandscape(void) {
+    return IOSUsePlayDeviceQuarterTurns() % 2;
+}
+static inline int IOSUsePlayDeviceInterfaceOrientation(void) {
+    static const int orientations[] = {1, 3, 2, 4};
+    return orientations[IOSUsePlayDeviceQuarterTurns()];
 }
 static inline int IOSUsePlayDeviceIsDuoInner(void) {
     return strcmp(IOSUsePlayDeviceCurrent()->name, "iphone-duo-inner") == 0;
@@ -55,15 +75,20 @@ static inline int IOSUsePlayDeviceIsDuoInner(void) {
 static inline int IOSUsePlayDeviceIsDuo(void) {
     return strncmp(IOSUsePlayDeviceCurrent()->name, "iphone-duo-", 11) == 0;
 }
-static inline int IOSUsePlayDevicePhysicalOrientation(void) {
+static inline int IOSUsePlayDevicePhysicalQuarterTurns(void) {
     // The open screen's long axis is perpendicular to the outer screen's.
     // Opening the hinge changes interface aspect, not how the device is held.
-    int landscape = IOSUsePlayDeviceIsLandscape() != IOSUsePlayDeviceIsDuoInner();
-    return landscape ? 3 : 1;
+    return (IOSUsePlayDeviceQuarterTurns() + (IOSUsePlayDeviceIsDuoInner() ? 3 : 0)) % 4;
+}
+static inline int IOSUsePlayDevicePhysicalOrientation(void) {
+    static const int orientations[] = {1, 3, 2, 4};
+    return orientations[IOSUsePlayDevicePhysicalQuarterTurns()];
 }
 typedef struct { int top, left, bottom, right; } IOSUsePlayDeviceInsets;
 static inline IOSUsePlayDeviceInsets IOSUsePlayDeviceSafeInsets(void) {
     const IOSUsePlayDevicePreset *p = IOSUsePlayDeviceCurrent();
+    if (p->idiom == 0 && IOSUsePlayDeviceQuarterTurns() == 2)
+        return (IOSUsePlayDeviceInsets){p->safeAreaBottom, 0, p->safeAreaTop, 0};
     if (p->idiom == 1 || !IOSUsePlayDeviceIsLandscape())
         return (IOSUsePlayDeviceInsets){p->safeAreaTop, 0, p->safeAreaBottom, 0};
     // Home-button iPhones have no landscape status bar or sensor housing.

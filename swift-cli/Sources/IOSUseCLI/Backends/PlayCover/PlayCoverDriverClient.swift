@@ -503,6 +503,25 @@ final class PlayCoverDriverClient: DriverCommandClient {
         )
     }
 
+    func rotate(orientation: IOSUseDeviceOrientation) throws -> ForyRotatePayload {
+        guard case .configureDevice(let state) = try request(
+            .configureDevice,
+            arguments: .configureDevice(.init(physicalOrientation: orientation.rawValue)),
+            timeout: 8
+        ) else {
+            throw PlayCoverDriverClientError.malformedRuntimePayload("rotate configuration response")
+        }
+        guard state.physicalOrientation == orientation.rawValue else {
+            throw DriverClientError.driverError(
+                message: "rotate: requested \(orientation.rawValue), actual \(state.physicalOrientation ?? "unknown")",
+                payload: ForyErrorPayload(category: IOSUseErrorCategory.postcondition,
+                    code: IOSUseErrorCode.postconditionFailed, phase: IOSUseErrorPhase.postcondition,
+                    retryable: true, fatal: false)
+            )
+        }
+        return ForyRotatePayload(requestedOrientation: orientation.rawValue, actualOrientation: orientation.rawValue)
+    }
+
     func home() throws {
         throw PlayCoverDriverClientError
             .lifecycleCommandUnsupported("home")

@@ -828,7 +828,7 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
             deviceOrientation ==
                 (UIDeviceOrientation)IOSUsePlayDeviceOrientation &&
             (IOSUsePlayCanvasIsResizable() ||
-                sceneOrientation == (IOSUsePlayDeviceIsLandscape() ? UIInterfaceOrientationLandscapeRight : UIInterfaceOrientationPortrait)) &&
+                sceneOrientation == (UIInterfaceOrientation)IOSUsePlayDeviceInterfaceOrientation()) &&
             nativeScale == IOSUseRuntimeDeviceScale &&
             statusBarReady;
         hooks = IOSUsePlayRuntimeHookDiagnostics(
@@ -2065,6 +2065,10 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             void (^check)(void) = ^{
                 ready = [IOSUsePlayAppKitBridge configureFixedWindow:NULL];
                 IOSUsePlayRuntimePublishUIReadiness();
+                // UIWindow bounds can settle before the host view and safe-area
+                // layout used by the next DOM request. Check the same readiness
+                // that UI commands require before reporting configuration done.
+                ready = ready && [IOSUseCurrentUIReadiness()[@"state"] isEqualToString:@"ready"];
             };
             if (NSThread.isMainThread) { check(); break; }
             dispatch_sync(dispatch_get_main_queue(), check);

@@ -82,7 +82,8 @@ static UIImage *png(NSString *name) {
 
 static void loadFrame(void) {
     NSString *preset = @(IOSUsePlayDeviceCurrent()->name);
-    NSString *key = [NSString stringWithFormat:@"%@-%d", preset, IOSUsePlayDeviceIsLandscape()];
+    int turns = IOSUsePlayDeviceQuarterTurns();
+    NSString *key = [NSString stringWithFormat:@"%@-%d", preset, turns];
     if ([imageKey isEqual:key]) return;
     imageKey = key;
     frameImage = nil;
@@ -165,15 +166,18 @@ static void loadFrame(void) {
     }
     UIImage *portrait=UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    if (IOSUsePlayDeviceIsLandscape()) {
-        UIGraphicsBeginImageContextWithOptions(CGSizeMake(size.height,size.width),NO,2);
+    if (turns) {
+        CGSize target = turns % 2 ? CGSizeMake(size.height,size.width) : size;
+        UIGraphicsBeginImageContextWithOptions(target,NO,2);
         CGContextRef rotated=UIGraphicsGetCurrentContext();
-        CGContextTranslateCTM(rotated,size.height,0);
-        CGContextRotateCTM(rotated,M_PI_2);
+        CGContextTranslateCTM(rotated,target.width/2,target.height/2);
+        CGContextRotateCTM(rotated,turns*M_PI_2);
+        CGContextTranslateCTM(rotated,-size.width/2,-size.height/2);
         [portrait drawAtPoint:CGPointZero];
         frameImage=UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
-        frameInsets=UIEdgeInsetsMake(frameInsets.left,frameInsets.bottom,frameInsets.right,frameInsets.top);
+        for (int i=0;i<turns;i++)
+            frameInsets=UIEdgeInsetsMake(frameInsets.left,frameInsets.bottom,frameInsets.right,frameInsets.top);
     } else frameImage=portrait;
 }
 
@@ -414,6 +418,6 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     if (!IOSUsePlayConfigureDevice(changes,&error)) NSLog(@"[ios-use] Device configuration failed: %@",error.localizedDescription);
 }
 - (void)selectModel:(id)sender { [self apply:@{@"preset":get(get(sender,@"selectedItem"),@"representedObject")}]; }
-- (void)rotate:(__unused id)sender { [self apply:@{@"orientation":IOSUsePlayDeviceIsLandscape() ? @"portrait" : @"landscape-right"}]; }
+- (void)rotate:(__unused id)sender { [self apply:@{@"physicalOrientation":@(IOSUsePlayDevicePhysicalName((IOSUsePlayDevicePhysicalQuarterTurns()+1)%4))}]; }
 - (void)expand:(__unused id)sender { [self apply:@{@"expanded":([IOSUsePlayDeviceState()[@"expanded"] boolValue] ? @NO : @YES)}]; }
 @end

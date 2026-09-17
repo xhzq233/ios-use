@@ -1044,7 +1044,7 @@ public struct IOSUseCLI: Sendable {
             )
         case .driver(let action):
             switch action {
-            case .dom, .screenshot, .waitFor,
+            case .dom, .screenshot, .waitFor, .rotate,
                     .tap, .longPress, .swipe, .input,
                     .dismissAlert:
                 return nil
@@ -1067,12 +1067,6 @@ public struct IOSUseCLI: Sendable {
                     command: action.name,
                     error: PlayCoverDriverClientError
                         .lifecycleCommandUnsupported("home"),
-                    json: json
-                )
-            case .rotate:
-                return commandFailure(
-                    command: action.name,
-                    error: PlayCoverBackendError.capabilityUnavailable("rotate"),
                     json: json
                 )
             }

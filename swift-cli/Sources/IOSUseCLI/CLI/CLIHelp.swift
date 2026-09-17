@@ -500,7 +500,7 @@ enum CLIHelp {
                     "--to <orientation>  portrait, portrait-upside-down, landscape-left, or landscape-right",
                     postDOMOption,
                 ],
-                footer: "An orientation-locked App may keep its layout. Not supported on the Mac backend."
+                footer: "An orientation-locked App may keep its layout. On Mac, rotates the fixed device preview in the current App; use config --mac --window-mode fixed first if resizable. Rotation is session-only. Duo keeps physical orientation separate from the inner display's aspect."
             )
         case "open":
             return """

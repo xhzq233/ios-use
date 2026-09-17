@@ -30,8 +30,9 @@ ios-use dismissAlert --label "Allow Full Access"
   `--only-button` for a one-button alert, `--label` or `--index` for a known
   multi-button alert, and `--primary` only when the visual trailing/top heuristic
   is intentional.
-- Rotate with `ios-use rotate --to landscape-right --dom`; real devices and
-  Simulators only. See `ios-use help rotate` for orientations and limitations.
+- Rotate with `ios-use rotate --to landscape-right --dom`. On Mac, use a fixed
+  device canvas (`config --mac --window-mode fixed`); rotation affects the current
+  session. See `ios-use help rotate` for orientations and limitations.
 
 When `activateApp --terminateExisting --log` prints a log path, query the file with
 standard shell tools:

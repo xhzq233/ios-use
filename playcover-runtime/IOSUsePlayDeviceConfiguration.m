@@ -12,8 +12,8 @@ NSDictionary *IOSUsePlayDeviceState(void) {
     return @{
         @"preset": duo ? @"iphone-duo" : variant,
         @"expanded": ([variant isEqual:@"iphone-duo-outer"] ? @NO : @YES),
-        @"orientation": IOSUsePlayDeviceIsLandscape() ? @"landscape-right" : @"portrait",
-        @"physicalOrientation": IOSUsePlayDeviceOrientation == UIDeviceOrientationLandscapeLeft ? @"landscape-left" : @"portrait",
+        @"orientation": @(IOSUsePlayDeviceInterfaceName(IOSUsePlayDeviceQuarterTurns())),
+        @"physicalOrientation": @(IOSUsePlayDevicePhysicalName(IOSUsePlayDevicePhysicalQuarterTurns())),
         @"safeAreaProfile": IOSUsePlayCanvasIsResizable() ? @"native-window" :
             (duo ? @"unmodeled" : (IOSUsePlayDeviceUserInterfaceIdiom == 1 ? @"ipados-26" : @"device-preset")),
         @"chrome": @(getenv("IOS_USE_MAC_CHROME") ?: "on"),
@@ -61,14 +61,16 @@ static NSDictionary *invalidConfiguration(NSError **error) {
 NSDictionary *IOSUsePlayConfigureDevice(NSDictionary *changes, NSError **error) {
     NSCParameterAssert(NSThread.isMainThread);
     NSMutableDictionary *selection = [IOSUsePlayDeviceState() mutableCopy];
-    NSSet *keys = [NSSet setWithArray:@[@"preset", @"expanded", @"orientation", @"chrome", @"windowMode"]];
+    NSSet *keys = [NSSet setWithArray:@[@"preset", @"expanded", @"orientation", @"physicalOrientation", @"chrome", @"windowMode"]];
     for (NSString *key in changes) {
         if (![keys containsObject:key]) return invalidConfiguration(error);
         selection[key] = changes[key];
     }
     if (![selection[@"preset"] isKindOfClass:NSString.class] ||
         (![selection[@"preset"] isEqual:@"iphone-duo"] && !IOSUsePlayDevicePresetNamed([selection[@"preset"] UTF8String])) ||
-        ![@[@"portrait", @"landscape-right"] containsObject:selection[@"orientation"]] ||
+        ![@[@"portrait", @"portrait-upside-down", @"landscape-left", @"landscape-right"] containsObject:selection[@"orientation"]] ||
+        ![@[@"portrait", @"portrait-upside-down", @"landscape-left", @"landscape-right"] containsObject:selection[@"physicalOrientation"]] ||
+        (changes[@"orientation"] && changes[@"physicalOrientation"]) ||
         ![@[@"on", @"off"] containsObject:selection[@"chrome"]] ||
         ![@[@"fixed", @"resizable"] containsObject:selection[@"windowMode"]] ||
         ![selection[@"expanded"] isKindOfClass:NSNumber.class]) return invalidConfiguration(error);
@@ -76,9 +78,21 @@ NSDictionary *IOSUsePlayConfigureDevice(NSDictionary *changes, NSError **error) 
         selection[@"expanded"] = ([selection[@"preset"] isEqual:@"iphone-duo-outer"] ? @NO : @YES);
         selection[@"preset"] = @"iphone-duo";
     }
-    if ([selection[@"preset"] isEqual:@"iphone-duo"] && changes[@"expanded"] && !changes[@"orientation"] &&
-        [selection[@"expanded"] boolValue] != [IOSUsePlayDeviceState()[@"expanded"] boolValue]) {
-        selection[@"orientation"] = IOSUsePlayDeviceIsLandscape() ? @"portrait" : @"landscape-right";
+    if (changes[@"physicalOrientation"] && [selection[@"windowMode"] isEqual:@"resizable"]) {
+        if (error) *error = [NSError errorWithDomain:@"io.ios-use.device" code:2 userInfo:@{NSLocalizedDescriptionKey:
+            @"Rotate requires a fixed device canvas. Use config --mac --window-mode fixed first."}];
+        return nil;
+    }
+    BOOL foldChanged = [selection[@"preset"] isEqual:@"iphone-duo"] && changes[@"expanded"] &&
+        [selection[@"expanded"] boolValue] != [IOSUsePlayDeviceState()[@"expanded"] boolValue];
+    if (changes[@"physicalOrientation"] || (foldChanged && !changes[@"orientation"])) {
+        int physicalTurns = IOSUsePlayDevicePhysicalQuarterTurns();
+        if (changes[@"physicalOrientation"]) {
+            for (int i = 0; i < 4; i++)
+                if ([changes[@"physicalOrientation"] isEqual:@(IOSUsePlayDevicePhysicalName(i))]) physicalTurns = i;
+        }
+        BOOL inner = [selection[@"preset"] isEqual:@"iphone-duo"] && [selection[@"expanded"] boolValue];
+        selection[@"orientation"] = @(IOSUsePlayDeviceInterfaceName((physicalTurns + (inner ? 1 : 0)) % 4));
     }
     [IOSUsePlayAppKitBridge prepareDeviceConfiguration];
     setenv("IOS_USE_MAC_DEVICE", [selection[@"preset"] UTF8String], 1);

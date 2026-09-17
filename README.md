@@ -188,6 +188,15 @@ Folding preserves the physical hinge direction: a portrait outer display opens
 into a landscape inner display; a landscape outer display opens into portrait.
 Rotate changes how the device is held.
 
+`ios-use rotate --to landscape-right --dom` also works with a running Mac App
+in fixed canvas mode. All four CLI orientations are supported; the toolbar
+cycles through them in quarter turns. They describe the physical device pose,
+so an expanded Duo can have a landscape interface while held in portrait.
+Rotation changes only the current session; a later `config --mac` device change
+saves the resulting selection. Use `--window-mode fixed` before rotating a
+resizable Mac window. These are preview poses, not the App's full iOS rotation
+policy or a replacement for device/Simulator validation.
+
 `ios-use config --mac --device-model iphone-duo` switches a running Mac App
 immediately and saves the selection for future starts. The same applies to
 `--device-chrome on|off` and `--window-mode fixed|resizable`. With no running Mac

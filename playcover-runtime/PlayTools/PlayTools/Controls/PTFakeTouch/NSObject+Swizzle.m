@@ -269,7 +269,7 @@ static void IOSUsePlayInstallRequiredIdentityHook(
     // virtual display's landscape orientation here swaps its resized bounds.
     if (strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0)
         return [self iosUsePlayInterfaceOrientation];
-    return IOSUsePlayDeviceIsLandscape() ? UIInterfaceOrientationLandscapeRight : UIInterfaceOrientationPortrait;
+    return (UIInterfaceOrientation)IOSUsePlayDeviceInterfaceOrientation();
 }
 
 - (UIDeviceOrientation)iosUsePlayDeviceOrientation {
