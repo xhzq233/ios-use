@@ -162,9 +162,8 @@ The Mac backend requires an unencrypted arm64 iPhone App. It is not fully
 supported on macOS 26 or newer.
 
 Choose a device preset with `ios-use config --mac --device-model ipad-pro-11`.
-This saves the selection in the current `IOS_USE_HOME` and applies on the next
-cold launch: stop the App, then run `ios-use start --mac`. A running App keeps
-its current model. Setting a preset does not run signing setup.
+This changes the running Mac App and saves the selection in the current
+`IOS_USE_HOME` for future starts. Setting a preset does not run signing setup.
 
 | Preset | Logical size | Scale |
 | --- | --- | --- |
@@ -173,19 +172,29 @@ its current model. Setting a preset does not run signing setup.
 | `iphone-15-pro` | 393 × 852 | 3× |
 | `iphone-15-pro-max` (default) | 430 × 932 | 3× |
 | `ipad-pro-11` | 834 × 1194 | 2× |
-| `iphone-duo-inner` / `iphone-duo` (preview) | 669 × 951 | 3× |
-| `iphone-duo-outer` (preview) | 466 × 678 | 3× |
+| `iphone-duo` (preview) | 669 × 951 expanded; 466 × 678 collapsed | 3× |
 
 The preset controls device identity, phone/tablet layout, portrait screen size,
 and fixed-window safe areas and screenshot resolution. `status --json` reports the active
-`macDevice` and the pending `configuredMacDevice`. App-specific iPad support
+`macDevice` and the saved `configuredMacDevice`. App-specific iPad support
 still depends on the App's layouts; this does not emulate hardware or iPadOS.
 
-Device chrome is enabled by default. It follows the native window, leaves App
-input intact, and is excluded from screenshots. Use
-`ios-use config --mac --device-chrome off` to hide it on the next cold start.
-Supported local Simulator artwork is read from DeviceKit when present; the
-release contains only original fallback bezels and original Duo preview artwork.
+Device chrome is enabled by default and ships inside the Runtime framework;
+Xcode is not needed to load the bundled device artwork. The shell follows the
+native window, leaves App input intact, and is excluded from screenshots.
+The native title bar provides a device selector and Rotate; iPhone Duo also
+has an Expand/Collapse button. These controls change the current App in place.
+
+`ios-use config --mac --device-model iphone-duo` switches a running Mac App
+immediately and saves the selection for future starts. The same applies to
+`--device-chrome on|off` and `--window-mode fixed|resizable`. With no running Mac
+session, config saves the choice for the next start. Toolbar changes affect the
+current session; use config to save it. The legacy Duo inner/outer names remain
+accepted, but selecting `iphone-duo` and using Expand/Collapse is sufficient.
+
+A live switch updates the Runtime's screen identity, viewport, traits, safe areas,
+and capture scale while preserving the App process and navigation. Apps that
+cache device-dependent layouts in their own startup code may still need a restart.
 
 For adaptive App layouts, use `ios-use config --mac --device-model ipad-pro-11 --window-mode resizable`.
 The device screen identity stays fixed while DOM coordinates and screenshots
@@ -194,7 +203,7 @@ are preserved, with Catalyst applying its own limits. Phone-only or full-screen
 compatibility Apps may still restrict resizing. Resizable mode hides the device
 shell and uses native window safe areas. It previews App layout; it does not
 implement the iPadOS window manager, Stage Manager or Split View. Restore the
-full device canvas with `--window-mode fixed`. These options apply on cold start.
+full device canvas with `--window-mode fixed`. These options also apply to the current Mac session.
 See Apple's [scene size restrictions](https://developer.apple.com/documentation/uikit/uiscenesizerestrictions)
 and [full-screen compatibility migration](https://developer.apple.com/documentation/technotes/tn3192-migrating-your-app-from-the-deprecated-uirequiresfullscreen-key).
 

@@ -1,4 +1,4 @@
-/* Shared Mac device presets, selected for each cold App launch. */
+/* Shared Mac device geometry. Runtime changes are applied on the main queue. */
 #ifndef IOS_USE_PLAY_DEVICE_H
 #define IOS_USE_PLAY_DEVICE_H
 #include <stdlib.h>
@@ -36,8 +36,23 @@ static inline const IOSUsePlayDevicePreset *IOSUsePlayDevicePresetNamed(const ch
     return NULL;
 }
 static inline const IOSUsePlayDevicePreset *IOSUsePlayDeviceCurrent(void) {
-    const IOSUsePlayDevicePreset *preset = IOSUsePlayDevicePresetNamed(getenv("IOS_USE_MAC_DEVICE"));
+    const char *name = getenv("IOS_USE_MAC_DEVICE");
+    if (name && strcmp(name, "iphone-duo") == 0) {
+        const char *expanded = getenv("IOS_USE_MAC_EXPANDED");
+        name = expanded && strcmp(expanded, "0") == 0 ? "iphone-duo-outer" : "iphone-duo-inner";
+    }
+    const IOSUsePlayDevicePreset *preset = IOSUsePlayDevicePresetNamed(name);
     return preset ? preset : IOSUsePlayDevicePresetAt(0);
+}
+static inline int IOSUsePlayDeviceIsLandscape(void) {
+    const char *value = getenv("IOS_USE_MAC_ORIENTATION");
+    return value && strcmp(value, "landscape-right") == 0;
+}
+static inline int IOSUsePlayDeviceWidth(void) {
+    return IOSUsePlayDeviceIsLandscape() ? IOSUsePlayDeviceCurrent()->logicalHeight : IOSUsePlayDeviceCurrent()->logicalWidth;
+}
+static inline int IOSUsePlayDeviceHeight(void) {
+    return IOSUsePlayDeviceIsLandscape() ? IOSUsePlayDeviceCurrent()->logicalWidth : IOSUsePlayDeviceCurrent()->logicalHeight;
 }
 static inline const char *IOSUsePlayDeviceProductType(void) { return IOSUsePlayDeviceCurrent()->productType; }
 static inline const char *IOSUsePlayDeviceHardwareTarget(void) { return IOSUsePlayDeviceCurrent()->hardwareTarget; }
@@ -46,14 +61,14 @@ static inline const char *IOSUsePlayDeviceLocalizedModel(void) { return IOSUsePl
 #define IOS_USE_PLAY_DEVICE_PRODUCT_TYPE IOSUsePlayDeviceProductType()
 #define IOS_USE_PLAY_DEVICE_HARDWARE_TARGET IOSUsePlayDeviceHardwareTarget()
 #define IOSUsePlayDeviceUserInterfaceIdiom (IOSUsePlayDeviceCurrent()->idiom)
-#define IOSUsePlayDeviceOrientation 1
-#define IOSUsePlayDeviceLogicalWidth (IOSUsePlayDeviceCurrent()->logicalWidth)
-#define IOSUsePlayDeviceLogicalHeight (IOSUsePlayDeviceCurrent()->logicalHeight)
+#define IOSUsePlayDeviceOrientation (IOSUsePlayDeviceIsLandscape() ? 3 : 1)
+#define IOSUsePlayDeviceLogicalWidth IOSUsePlayDeviceWidth()
+#define IOSUsePlayDeviceLogicalHeight IOSUsePlayDeviceHeight()
 #define IOSUsePlayDeviceScale (IOSUsePlayDeviceCurrent()->scale)
 #define IOSUsePlayDeviceNativeWidth ((size_t)(IOSUsePlayDeviceLogicalWidth * IOSUsePlayDeviceScale))
 #define IOSUsePlayDeviceNativeHeight ((size_t)(IOSUsePlayDeviceLogicalHeight * IOSUsePlayDeviceScale))
-#define IOSUsePlayDeviceSafeAreaTop (IOSUsePlayDeviceCurrent()->safeAreaTop)
-#define IOSUsePlayDeviceSafeAreaLeft 0
-#define IOSUsePlayDeviceSafeAreaBottom (IOSUsePlayDeviceCurrent()->safeAreaBottom)
-#define IOSUsePlayDeviceSafeAreaRight 0
+#define IOSUsePlayDeviceSafeAreaTop (IOSUsePlayDeviceIsLandscape() ? 0 : IOSUsePlayDeviceCurrent()->safeAreaTop)
+#define IOSUsePlayDeviceSafeAreaLeft (IOSUsePlayDeviceIsLandscape() ? IOSUsePlayDeviceCurrent()->safeAreaTop : 0)
+#define IOSUsePlayDeviceSafeAreaBottom (IOSUsePlayDeviceIsLandscape() ? (IOSUsePlayDeviceCurrent()->safeAreaBottom ? 21 : 0) : IOSUsePlayDeviceCurrent()->safeAreaBottom)
+#define IOSUsePlayDeviceSafeAreaRight IOSUsePlayDeviceSafeAreaLeft
 #endif

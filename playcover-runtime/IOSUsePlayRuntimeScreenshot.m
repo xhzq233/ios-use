@@ -1,3 +1,4 @@
+#import "IOSUsePlayDeviceConfiguration.h"
 #import "IOSUsePlayRuntimeScreenshot.h"
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayDevice.h"
@@ -1692,6 +1693,7 @@ IOSUseScreenshotPayloadOnMain(
         }
     }
     return @{
+        @"deviceState": IOSUsePlayDeviceState(),
         @"windowMode": IOSUsePlayCanvasIsResizable() ? @"resizable" : @"fixed",
         @"jpegBase64": base64,
         @"pixelWidth": @(IOSUsePlayCanvasNativeWidth),

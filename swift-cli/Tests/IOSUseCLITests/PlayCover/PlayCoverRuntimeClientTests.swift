@@ -1175,6 +1175,10 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         for command: PlayCoverRuntimeCommand
     ) -> [String: Any] {
         switch command {
+        case .configureDevice:
+            return ["preset": "iphone-duo", "expanded": true, "orientation": "portrait",
+                "chrome": "on", "windowMode": "fixed", "logicalWidth": 669,
+                "logicalHeight": 951, "scale": 3, "idiom": 0]
         case .hello:
             return helloPayload()
         case .ping:

@@ -719,6 +719,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
         _ payload: PlayCoverRuntimeDOMPayload
     ) throws -> ForyDomPayload {
         let resizable = payload.windowMode == "resizable"
+        let devicePreset = payload.deviceState?.device ?? self.devicePreset
         guard payload.windowSize.x.isFinite, payload.windowSize.y.isFinite,
               payload.windowSize.x > 0, payload.windowSize.y > 0,
               resizable || (Self.approximatelyEqual(
@@ -1039,8 +1040,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
                 "native Catalyst host policy"
             ),
             (
-                host.opaque && host.publicTitleBar &&
-                    host.titleVisible && !host.resizable,
+                host.publicTitleBar &&
+                    !host.resizable,
                 "native Catalyst host presentation"
             ),
             (
@@ -1399,6 +1400,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
     }
 
     private func screenshotPreset(_ screenshot: PlayCoverRuntimeScreenshotPayload) throws -> PlayCoverDevicePreset {
+        let devicePreset = screenshot.deviceState?.device ?? self.devicePreset
         guard screenshot.windowMode == "resizable" else { return devicePreset }
         guard screenshot.logicalWidth.isFinite, screenshot.logicalHeight.isFinite,
               screenshot.logicalWidth > 0, screenshot.logicalHeight > 0,

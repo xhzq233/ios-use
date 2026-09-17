@@ -94,6 +94,7 @@ public enum StatusService {
                     case .healthy(let payload):
                         fields["status"] = .string("healthy")
                         fields["runtime"] = playCoverRuntimeMachineValue(payload)
+                        if let state = payload.deviceState { fields["macDevice"] = state.machineData }
                     case .unhealthy(
                         let error,
                         let identityVerified,
@@ -117,6 +118,7 @@ public enum StatusService {
                                 playCoverRuntimeStdioMachineValue(
                                     payload.stdio
                                 )
+                            if let state = payload.deviceState { runtime["device"] = state.machineData }
                             if let host = payload.geometry.host {
                                 runtime["host"] =
                                     playCoverRuntimeHostMachineValue(host)
@@ -390,8 +392,9 @@ public enum StatusService {
         if info.deviceType == PlayCoverSessionService.deviceType {
             fields["macDevice"] = macDeviceValue(info: info)
             switch playCoverRuntimeHealth(info: info) {
-            case .healthy:
+            case .healthy(let payload):
                 fields["status"] = .string("healthy")
+                if let state = payload.deviceState { fields["macDevice"] = state.machineData }
             case .unhealthy(let error, _, _):
                 fields["status"] = .string("unhealthy")
                 fields["error"] = .string(error)
@@ -662,7 +665,6 @@ public enum StatusService {
             if let sessionIdentifier = info.sessionIdentifier, !sessionIdentifier.isEmpty {
                 parts.append("session: \(sessionIdentifier)")
             }
-            if let model = info.macDevicePreset { parts.append("device preset: \(model)") }
             if let appPath = info.macAppPath, !appPath.isEmpty {
                 parts.append("app: \(appPath)")
             }
@@ -679,6 +681,10 @@ public enum StatusService {
                 case .healthy(let payload):
                     parts[0] = "healthy"
                     parts.append("runtime control: healthy")
+                    if let state = payload.deviceState {
+                        parts.append("device preset: \(state.preset), \(state.orientation)")
+                        if state.preset == "iphone-duo" { parts.append(state.expanded ? "expanded" : "collapsed") }
+                    } else if let model = info.macDevicePreset { parts.append("device preset: \(model)") }
                     if let socketPath = info.macRuntimeSocketPath {
                         parts.append("socket: \(socketPath)")
                     }
@@ -924,6 +930,7 @@ public enum StatusService {
                 payload.stdio
             ),
         ]
+        if let state = payload.deviceState { fields["device"] = state.machineData }
         if let host = payload.geometry.host {
             fields["host"] = playCoverRuntimeHostMachineValue(host)
         }

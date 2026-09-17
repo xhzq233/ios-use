@@ -12,9 +12,9 @@ import UIKit
 public final class PlaySettings: NSObject {
     public static let shared = PlaySettings()
 
-    public let deviceModel = String(cString: IOSUsePlayDeviceProductType())
-    public let oemID = String(cString: IOSUsePlayDeviceHardwareTarget())
-    public let customScaler = Double(IOSUsePlayDeviceCurrent().pointee.scale)
+    public var deviceModel: String { String(cString: IOSUsePlayDeviceProductType()) }
+    public var oemID: String { String(cString: IOSUsePlayDeviceHardwareTarget()) }
+    public var customScaler: Double { Double(IOSUsePlayDeviceCurrent().pointee.scale) }
     public let adaptiveDisplay = true
     public let inverseScreenValues = false
     public let resizableWindow = false
@@ -28,8 +28,8 @@ public final class PlaySettings: NSObject {
     public let limitMotionUpdateFrequency = false
     public let disableBuiltinMouse = false
     public let ignoreUnityKeyboardInitializationError = false
-    public var windowSizeWidth = CGFloat(IOSUsePlayDeviceCurrent().pointee.logicalWidth)
-    public var windowSizeHeight = CGFloat(IOSUsePlayDeviceCurrent().pointee.logicalHeight)
+    public var windowSizeWidth: CGFloat { CGFloat(IOSUsePlayDeviceWidth()) }
+    public var windowSizeHeight: CGFloat { CGFloat(IOSUsePlayDeviceHeight()) }
 
     private override init() {
         super.init()

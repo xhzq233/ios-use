@@ -28,9 +28,11 @@ struct PlayCoverDevicePreset: Equatable {
     static func named(_ name: String) throws -> Self {
         let resolvedName = name == "iphone-duo" ? "iphone-duo-inner" : name
         guard let preset = presets.first(where: { $0.name == resolvedName }) else {
-            throw CLIParseError.invalidValue("Unknown Mac device preset \(name). Available: \(presets.map(\.name).joined(separator: ", "))")
+            let names = presets.filter { $0.name != "iphone-duo-outer" }
+                .map { $0.name == "iphone-duo-inner" ? "iphone-duo" : $0.name }
+            throw CLIParseError.invalidValue("Unknown Mac device preset \(name). Available: \(names.joined(separator: ", "))")
         }
-        return preset
+        return name == "iphone-duo" ? Self(name: "iphone-duo", productType: preset.productType, logicalSize: preset.logicalSize, scale: preset.scale) : preset
     }
 
     static func configured(paths: IOSUsePaths) throws -> Self {
@@ -50,7 +52,7 @@ struct PlayCoverDevicePreset: Equatable {
 
     var machineData: MachineValue {
         .object(["preset": .string(name), "productType": .string(productType),
-                 "layoutPreview": .boolean(name.hasPrefix("iphone-duo-")),
+                 "layoutPreview": .boolean(name.hasPrefix("iphone-duo")),
                  "logicalWidth": .integer(Int(logicalSize.width)),
                  "logicalHeight": .integer(Int(logicalSize.height)), "scale": .integer(Int(scale))])
     }
@@ -59,6 +61,8 @@ struct PlayCoverDevicePreset: Equatable {
         var preset: String
         var chrome: String? = nil
         var windowMode: String? = nil
+        var orientation: String? = nil
+        var expanded: Bool? = nil
 
         static func load(paths: IOSUsePaths) throws -> Self {
             let file = URL(fileURLWithPath: paths.playcover).appendingPathComponent("device.json")

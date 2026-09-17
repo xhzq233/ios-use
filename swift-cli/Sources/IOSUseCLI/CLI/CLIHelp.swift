@@ -121,19 +121,20 @@ enum CLIHelp {
             Configure a device or Simulator, or explicitly initialize the
             dedicated stable Mac-backend signing identity.
             Run `config --mac` once before the first Mac backend start.
-            `config --mac --device-model <preset>` only saves the device selection
-            for the next cold start; it does not initialize signing or restart an App.
+            `config --mac --device-model <preset>` changes the running Mac App immediately
+            and saves the selection for future launches. Without a running App it only saves.
             Presets: iphone-se, iphone-13, iphone-15-pro, iphone-15-pro-max (default),
-            ipad-pro-11, iphone-duo-inner (alias iphone-duo), iphone-duo-outer.
+            ipad-pro-11, iphone-duo. The native title bar also provides a model selector,
+            Rotate, and a Duo Expand/Collapse button.
             Device chrome is on by default and is omitted from screenshots.
             `--window-mode resizable` preserves App scene size constraints and uses
             the current window size for DOM, touches and screenshots. Device screen
             identity stays fixed. This mode hides the device shell; use it to test
             adaptive iPad layouts, not to emulate the iPadOS window manager.
-            These preferences apply on the next cold start.
+            Device/chrome/window preferences apply to the current Mac session.
             Duo presets are 3x layout previews based on App Store screenshot
             canvases; they retain the existing iPhone identity and do not emulate
-            folding or iOS 27 UI. Stop, then start --mac to apply a change.
+            the iOS fold lifecycle or iOS 27 system UI.
             macOS will show user authentication dialogs while the identity is
             created and trusted. If you cancel, safely retry the same command;
             the retry resumes the same signing identity instead of replacing it.

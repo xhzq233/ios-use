@@ -260,6 +260,14 @@ static void IOSUsePlayInstallRequiredIdentityHook(
 
 
 
+- (CGRect)iosUsePlayScreenBounds {
+    return CGRectMake(0, 0, IOSUsePlayDeviceLogicalWidth, IOSUsePlayDeviceLogicalHeight);
+}
+
+- (UIInterfaceOrientation)iosUsePlayInterfaceOrientation {
+    return IOSUsePlayDeviceIsLandscape() ? UIInterfaceOrientationLandscapeRight : UIInterfaceOrientationPortrait;
+}
+
 - (UIDeviceOrientation)iosUsePlayDeviceOrientation {
     IOSUsePlayHookRegistryRecordFirstUse(
         @"playtools.device.orientation",
@@ -439,6 +447,8 @@ bool menuWasCreated = false;
 
 @implementation PTSwizzleLoader
 + (void)load {
+    [UIWindowScene swizzleInstanceMethod:@selector(interfaceOrientation) withMethod:@selector(iosUsePlayInterfaceOrientation)];
+    [UIScreen swizzleInstanceMethod:@selector(bounds) withMethod:@selector(iosUsePlayScreenBounds)];
     Class sceneSettingsClass;
     if (@available(iOS 17.1, *)) {
         sceneSettingsClass =

@@ -1,3 +1,4 @@
+#import "IOSUsePlayDeviceConfiguration.h"
 #import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlayRuntime.h"
 #import "IOSUsePlayRuntimeAutomation.h"
@@ -373,6 +374,7 @@ static NSArray<NSString *> *IOSUseCapabilities(BOOL requiredHooksReady) {
         @"hello",
         @"ping",
         @"diagnostics",
+        @"configureDevice",
         @"screenshot",
         @"dom",
         @"uiTree",
@@ -675,7 +677,6 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         [host[@"status"] isEqualToString:@"configured"] &&
         [host[@"hostPolicy"] boolValue] &&
         [host[@"publicTitleBar"] boolValue] &&
-        [host[@"titleVisible"] boolValue] &&
         [host[@"resizable"] boolValue] == IOSUsePlayCanvasIsResizable() &&
         title.length > 0 && [title isEqualToString:expectedTitle] &&
         IOSUseSocketRectFromJSON(host[@"frame"], &frame) &&
@@ -706,8 +707,7 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         isfinite(backingScaleFactor) && backingScaleFactor > 0
             ? 0.5 / backingScaleFactor
             : 0.01;
-    return [host[@"opaque"] boolValue] &&
-        isfinite(backingScaleFactor) &&
+    return isfinite(backingScaleFactor) &&
         backingScaleFactor > 0 && backingScaleFactor <= 4 &&
         isfinite(sceneRasterizationScale) &&
         sceneRasterizationScale > 0 &&
@@ -828,7 +828,7 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                     IOSUsePlayDeviceUserInterfaceIdiom &&
             deviceOrientation ==
                 (UIDeviceOrientation)IOSUsePlayDeviceOrientation &&
-            sceneOrientation == UIInterfaceOrientationPortrait &&
+            sceneOrientation == (IOSUsePlayDeviceIsLandscape() ? UIInterfaceOrientationLandscapeRight : UIInterfaceOrientationPortrait) &&
             nativeScale == IOSUseRuntimeDeviceScale &&
             statusBarReady;
         hooks = IOSUsePlayRuntimeHookDiagnostics(
@@ -2041,6 +2041,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
         NSDictionary<NSString *, id> *snapshot =
             IOSUseCachedUISnapshot();
         payload = [snapshot[@"identity"] mutableCopy];
+        payload[@"deviceState"] = IOSUsePlayDeviceState();
         payload[@"uiState"] = IOSUseCurrentUIReadiness();
         payload[@"stdio"] = IOSUseRuntimeStdioEvidence();
         payload[@"diagnostics"] = @{
@@ -2049,6 +2050,29 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             @"observed": snapshot[@"observed"],
             @"playChain": snapshot[@"playChain"],
         };
+    } else if ([command isEqualToString:@"configureDevice"]) {
+        __block NSDictionary *state;
+        __block NSError *configurationError;
+        void (^apply)(void) = ^{ state = IOSUsePlayConfigureDevice(arguments, &configurationError); };
+        if (NSThread.isMainThread) apply(); else dispatch_sync(dispatch_get_main_queue(), apply);
+        if (!state) return IOSUseBasicErrorEnvelope(requestID, @"device_configuration_failed",
+            configurationError.localizedDescription ?: @"Could not change the Mac device", @"configuration", @"device", NO);
+        // Allow Catalyst to deliver its native resize/layout events, checking
+        // actual canvas readiness rather than treating a fixed delay as proof.
+        __block BOOL ready = NO;
+        NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 5;
+        do {
+            void (^check)(void) = ^{
+                ready = [IOSUsePlayAppKitBridge configureFixedWindow:NULL];
+                IOSUsePlayRuntimePublishUIReadiness();
+            };
+            if (NSThread.isMainThread) { check(); break; }
+            dispatch_sync(dispatch_get_main_queue(), check);
+            if (!ready) [NSThread sleepForTimeInterval:0.02];
+        } while (!ready && NSProcessInfo.processInfo.systemUptime < deadline);
+        if (!ready) return IOSUseBasicErrorEnvelope(requestID, @"device_configuration_pending",
+            @"Device selection changed, but the App window has not settled to the requested geometry", @"configuration", @"layout", YES);
+        payload = [state mutableCopy];
     } else if ([command isEqualToString:@"debug"]) {
         NSDictionary<NSString *, id> *commandError = nil;
         NSDictionary<NSString *, id> *debug =

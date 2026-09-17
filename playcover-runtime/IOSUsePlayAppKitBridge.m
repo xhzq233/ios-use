@@ -110,9 +110,11 @@ typedef NS_ENUM(NSUInteger, IOSUseBridgeSceneGeometryState) {
     IOSUseBridgeSceneGeometryStateFailed,
 };
 static UIWindowScene *IOSUsePlaySceneGeometryScene;
+static __weak UIWindow *IOSUsePlayDeviceSwitchWindow;
 static IOSUseBridgeSceneGeometryState IOSUsePlaySceneGeometryState =
     IOSUseBridgeSceneGeometryStateNotRequested;
 static NSString *IOSUsePlaySceneGeometryFailure;
+static NSMapTable<UIWindowScene *, NSArray<NSValue *> *> *IOSUsePlayAppSizeRestrictions;
 
 static UIWindow *IOSUseBridgeAutomationUIKitWindow(void);
 
@@ -534,7 +536,6 @@ static BOOL IOSUseBridgeWindowPolicyIsHost(id window) {
     NSInteger styleMask = IOSUseBridgeInteger(window, @"styleMask");
     return (styleMask & titled) != 0 &&
         ((styleMask & resizable) != 0) == IOSUsePlayCanvasIsResizable() &&
-        IOSUseBridgeBool(window, @"isOpaque") &&
         IOSUseBridgeBool(window, @"isMovable") &&
         !IOSUseBridgeBool(window, @"ignoresMouseEvents");
 }
@@ -947,12 +948,25 @@ IOSUseBridgeLockSceneToFixedCanvas(UIWindow *uiWindow) {
             @"UIKit scene size restrictions are unavailable";
         return IOSUsePlaySceneGeometryState;
     }
+    if (!IOSUsePlayAppSizeRestrictions) IOSUsePlayAppSizeRestrictions = [NSMapTable weakToStrongObjectsMapTable];
     if (IOSUsePlayCanvasIsResizable()) {
+        NSArray<NSValue *> *original = [IOSUsePlayAppSizeRestrictions objectForKey:scene];
+        if (original) {
+            scene.sizeRestrictions.minimumSize = original[0].CGSizeValue;
+            scene.sizeRestrictions.maximumSize = original[1].CGSizeValue;
+            [IOSUsePlayAppSizeRestrictions removeObjectForKey:scene];
+        }
         // Leave the App's constraints intact, including changes after launch.
         IOSUsePlaySceneGeometryScene = scene;
         IOSUsePlaySceneGeometryState = IOSUseBridgeSceneGeometryStateReady;
         IOSUsePlaySceneGeometryFailure = nil;
         return IOSUsePlaySceneGeometryState;
+    }
+    if (![IOSUsePlayAppSizeRestrictions objectForKey:scene]) {
+        [IOSUsePlayAppSizeRestrictions setObject:@[
+            [NSValue valueWithCGSize:scene.sizeRestrictions.minimumSize],
+            [NSValue valueWithCGSize:scene.sizeRestrictions.maximumSize]
+        ] forKey:scene];
     }
     CGSize fixed = IOSUseBridgeFixedSceneCanvasSize();
     // The iPhone model remains fixed in UIKit. Catalyst owns how that logical
@@ -1135,7 +1149,7 @@ static BOOL IOSUseBridgeReconcileSceneBacking(
         ((void (*)(id, SEL, CGFloat))objc_msgSend)(
             sceneView,
             NSSelectorFromString(fixedSetterName),
-            3.0
+            (CGFloat)IOSUsePlayDeviceScale
         );
         IOSUseBridgeLayoutIfNeeded(sceneView);
     }
@@ -1161,10 +1175,10 @@ static BOOL IOSUseBridgeReconcileSceneBacking(
     if (IOSUsePlayRequest3XBacking) {
         ready = ready && IOSUseBridgeApproximatelyEqual(
             IOSUsePlayObservedFixedBackingScale,
-            3.0
+            (CGFloat)IOSUsePlayDeviceScale
         ) && IOSUseBridgeApproximatelyEqual(
             IOSUsePlayObservedRasterizationScale,
-            3.0
+            (CGFloat)IOSUsePlayDeviceScale
         );
     }
     IOSUsePlaySceneBackingStatus = ready
@@ -2334,10 +2348,14 @@ static CGSize IOSUsePlayObservedCanvas;
     }
 }
 
++ (void)prepareDeviceConfiguration {
+    IOSUsePlayDeviceSwitchWindow = IOSUseBridgeAutomationUIKitWindow() ?: IOSUseBridgeKeyUIKitWindow();
+}
+
 + (BOOL)configureFixedWindow:(NSError **)error {
     NSParameterAssert(NSThread.isMainThread);
     IOSUsePlayWindowAttemptCount += 1;
-    UIWindow *uiWindow = IOSUseBridgeAutomationUIKitWindow();
+    UIWindow *uiWindow = IOSUsePlayDeviceSwitchWindow ?: IOSUseBridgeAutomationUIKitWindow();
     id window = uiWindow == nil
         ? nil
         : IOSUseBridgeWindowForUIKitWindow(uiWindow, NO);
@@ -2399,6 +2417,16 @@ static CGSize IOSUsePlayObservedCanvas;
         return NO;
     }
     IOSUseBridgeLayoutIfNeeded(IOSUsePlayHostContentView);
+    // Catalyst can create its full-scene text overlay with portrait dimensions
+    // on a landscape launch. Keep it aligned with the actual App canvas, just
+    // as the main native window is reconciled after a model/orientation change.
+    Class textEffectsClass = NSClassFromString(@"UITextEffectsWindow");
+    for (UIWindow *overlay in uiWindow.windowScene.windows) {
+        if ([overlay isKindOfClass:textEffectsClass] &&
+            !CGRectEqualToRect(overlay.frame, uiWindow.bounds)) {
+            overlay.frame = uiWindow.bounds;
+        }
+    }
     IOSUsePlayDeviceChromeUpdate(window);
     id sceneRenderView =
         IOSUseBridgeSceneRenderView(IOSUsePlayHostContentView);
@@ -2504,6 +2532,7 @@ static CGSize IOSUsePlayObservedCanvas;
             NSLocalizedDescriptionKey: IOSUsePlayWindowFailure,
         }];
     }
+    if (exact) IOSUsePlayDeviceSwitchWindow = nil;
     return exact;
 }
 

@@ -927,13 +927,27 @@ public struct IOSUseCLI: Sendable {
                 selection.preset = preset.name
                 if let chrome = options.macChrome { selection.chrome = chrome }
                 if let mode = options.macWindowMode { selection.windowMode = mode }
+                if let context = DeviceContextStore.sessions(paths: paths).first(where: { $0.deviceID == "mac" }) {
+                    let client = try PlayCoverDriverClient.runtimeClient(for: context.info, timeoutSeconds: 8)
+                    let changes = PlayCoverRuntimeDeviceChanges(preset: options.macDevice == nil ? nil : preset.name,
+                        chrome: options.macChrome, windowMode: options.macWindowMode)
+                    guard case .configureDevice(let state) = try client.request(.configureDevice, arguments: .configureDevice(changes)) else {
+                        throw CLIParseError.invalidValue("Mac Runtime did not return its active device configuration.")
+                    }
+                    selection = PlayCoverDevicePreset.Selection(preset: state.preset, chrome: state.chrome,
+                        windowMode: state.windowMode, orientation: state.orientation, expanded: state.expanded)
+                    try selection.save(paths: paths)
+                    return json
+                        ? MachineOutput.success(command: "config", data: .object(["device": state.machineData, "appliesOn": .string("currentSession")]))
+                        : CLIResult(exitCode: 0, stdout: "Mac device: \(state.preset) (\(Int(state.logicalWidth)) × \(Int(state.logicalHeight))), \(Int(state.scale))×, \(state.orientation). Applied to the running App.\n")
+                }
                 try selection.save(paths: paths)
                 return json
                     ? MachineOutput.success(command: "config", data: .object([
                         "device": preset.machineData, "deviceChrome": .string(selection.chrome ?? "on"),
                         "windowMode": .string(selection.windowMode ?? "fixed"), "appliesOn": .string("nextColdStart")
                     ]))
-                    : CLIResult(exitCode: 0, stdout: "Mac device: \(preset.name) (\(Int(preset.logicalSize.width)) × \(Int(preset.logicalSize.height)), \(Int(preset.scale))×, chrome \(selection.chrome ?? "on"), window \(selection.windowMode ?? "fixed"). Applies on the next cold start; stop the running App first.\n")
+                    : CLIResult(exitCode: 0, stdout: "Mac device: \(preset.name) (\(Int(preset.logicalSize.width)) × \(Int(preset.logicalSize.height)), \(Int(preset.scale))×, chrome \(selection.chrome ?? "on"), window \(selection.windowMode ?? "fixed"). Saved for the next Mac App start.\n")
             }
             let evidence = try playCoverSignerInitializer()
             if json {

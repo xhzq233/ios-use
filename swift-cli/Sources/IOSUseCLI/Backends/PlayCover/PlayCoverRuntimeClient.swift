@@ -5,6 +5,7 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case hello
     case ping
     case diagnostics
+    case configureDevice
     case screenshot
     case dom
     case uiTree
@@ -16,6 +17,36 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case dismissAlert
     case dismissAlertByLabel
     case debug
+}
+
+struct PlayCoverRuntimeDeviceState: Codable, Equatable, Sendable {
+    let preset: String
+    let expanded: Bool
+    let orientation: String
+    let chrome: String
+    let windowMode: String
+    let logicalWidth: Double
+    let logicalHeight: Double
+    let scale: Double
+    let idiom: Int
+
+    var device: PlayCoverDevicePreset {
+        PlayCoverDevicePreset(name: preset,
+            productType: (try? PlayCoverDevicePreset.named(preset))?.productType ?? "",
+            logicalSize: CGSize(width: logicalWidth, height: logicalHeight), scale: scale)
+    }
+    var machineData: MachineValue {
+        .object(["preset": .string(preset), "expanded": .boolean(expanded),
+            "orientation": .string(orientation), "deviceChrome": .string(chrome),
+            "windowMode": .string(windowMode), "logicalWidth": .double(logicalWidth),
+            "logicalHeight": .double(logicalHeight), "scale": .double(scale), "idiom": .integer(idiom)])
+    }
+}
+
+struct PlayCoverRuntimeDeviceChanges: Codable, Equatable, Sendable {
+    var preset: String? = nil
+    var chrome: String? = nil
+    var windowMode: String? = nil
 }
 
 struct PlayCoverRuntimeRect: Codable, Equatable, Sendable {
@@ -253,6 +284,7 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
         PlayCoverRuntimeDismissAlertByLabelArguments
     )
     case debug(PlayCoverRuntimeDebugArguments)
+    case configureDevice(PlayCoverRuntimeDeviceChanges)
 
     func encode(to encoder: Encoder) throws {
         switch self {
@@ -275,6 +307,8 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
         case .dismissAlert(let arguments):
             try arguments.encode(to: encoder)
         case .dismissAlertByLabel(let arguments):
+            try arguments.encode(to: encoder)
+        case .configureDevice(let arguments):
             try arguments.encode(to: encoder)
         case .debug(let arguments):
             try arguments.encode(to: encoder)
@@ -323,6 +357,7 @@ struct PlayCoverRuntimeDOMElement: Codable, Equatable, Sendable {
 
 struct PlayCoverRuntimeDOMPayload: Codable, Equatable, Sendable {
     var windowMode: String? = nil
+    var deviceState: PlayCoverRuntimeDeviceState? = nil
     let app: String
     let windowSize: PlayCoverRuntimePoint
     let raw: String
@@ -445,6 +480,7 @@ struct PlayCoverRuntimeFullFrame: Codable, Equatable, Sendable {
 
 struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
     var windowMode: String? = nil
+    var deviceState: PlayCoverRuntimeDeviceState? = nil
     let jpegBase64: String
     let pixelWidth: Int
     let pixelHeight: Int
@@ -558,6 +594,7 @@ struct PlayCoverRuntimeDiagnosticsPayload:
     let bundleIdentifier: String
     let executablePath: String
     let capabilities: [String]
+    var deviceState: PlayCoverRuntimeDeviceState? = nil
     let geometry: PlayCoverRuntimeGeometry
     let stage: String
     let uiState: PlayCoverRuntimeUIReadiness
@@ -632,6 +669,7 @@ enum PlayCoverRuntimeResponsePayload: Equatable, Sendable {
     case hello(PlayCoverRuntimeHelloPayload)
     case ping(PlayCoverRuntimePingPayload)
     case diagnostics(PlayCoverRuntimeDiagnosticsPayload)
+    case configureDevice(PlayCoverRuntimeDeviceState)
     case screenshot(PlayCoverRuntimeScreenshotResult)
     case dom(PlayCoverRuntimeDOMPayload)
     case uiTree(PlayCoverRuntimeUITreePayload)
@@ -1267,6 +1305,9 @@ final class PlayCoverRuntimeClient {
                 executablePath: executablePath
             )
             return .ping(payload)
+        case .configureDevice:
+            let payload: PlayCoverRuntimeDeviceState = try performRequest(command, arguments: arguments)
+            return .configureDevice(payload)
         case .diagnostics:
             let payload: PlayCoverRuntimeDiagnosticsPayload =
                 try performRequest(command, arguments: arguments)

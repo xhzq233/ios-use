@@ -23,9 +23,11 @@ ios-use start --mac --app <App.app>
 
 Select a Mac device preset with `ios-use config --mac --device-model <preset>`:
 `iphone-se`, `iphone-13`, `iphone-15-pro`, `iphone-15-pro-max` (default), or
-`ipad-pro-11`. Stop the App and cold-start it again to apply the selection.
-Changing the preset does not restart an App or initialize signing. The active
-`macDevice` and pending `configuredMacDevice` are shown by `status --json`.
+`ipad-pro-11`, or `iphone-duo`. The selection applies to the running Mac App
+and is saved for future starts. It does not restart the App or initialize signing.
+The native title bar also has a model selector, Rotate, and Duo Expand/Collapse.
+Toolbar controls affect the current session; use config to save the selection.
+`status --json` shows the active `macDevice` and saved `configuredMacDevice`.
 
 On macOS 26 or newer, `start --mac` warns and continues, but Mac UI interaction
 is not fully supported and may crash. Prefer a validated older macOS host, a
@@ -162,7 +164,7 @@ the provider lease separately. Signed App packages use `ios-use install`;
 provider re-signing stays outside ios-use. Use a trusted network or secure
 tunnel for provider endpoints. Run `dom` to check remote responsiveness.
 
-Duo size previews: `config --mac --device-model iphone-duo-inner` (alias
-`iphone-duo`) or `iphone-duo-outer`, then stop/start. They use App Store
-screenshot canvases at an assumed 3× scale (669×951 / 466×678 points), retain
-the existing iPhone runtime identity, and do not emulate folding or iOS 27 UI.
+Duo size preview: `config --mac --device-model iphone-duo`, then use the
+title-bar Expand/Collapse button without restarting the App. It uses App Store
+screenshot canvases at an assumed 3× scale (669×951 / 466×678 points), retains
+the existing iPhone runtime identity, and does not emulate the iOS fold lifecycle or iOS 27 UI.

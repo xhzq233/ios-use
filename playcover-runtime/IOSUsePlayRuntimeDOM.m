@@ -1,3 +1,4 @@
+#import "IOSUsePlayDeviceConfiguration.h"
 #import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayRuntimeDOM.h"
 #import "IOSUsePlayRuntimeSocket.h"
@@ -4155,6 +4156,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
     }
     return @{
         @"app": snapshot.application,
+        @"deviceState": IOSUsePlayDeviceState(),
         @"windowMode": IOSUsePlayCanvasIsResizable() ? @"resizable" : @"fixed",
         @"windowSize": @{
             @"x": @(snapshot.windowSize.width),

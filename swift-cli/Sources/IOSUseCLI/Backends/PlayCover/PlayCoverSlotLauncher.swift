@@ -130,6 +130,7 @@ enum PlayCoverSlotLauncher {
                 devicePreset: try PlayCoverDevicePreset.configured(paths: paths).name,
                 deviceChrome: try PlayCoverDevicePreset.Selection.load(paths: paths).chrome ?? "on",
                 windowMode: try PlayCoverDevicePreset.Selection.load(paths: paths).windowMode ?? "fixed",
+                deviceConfigurationPath: paths.playcover + "/device.json",
                 stdioLog: stdioLog,
                 deadline: deadline,
                 submitted: &submitted
@@ -278,6 +279,7 @@ enum PlayCoverSlotLauncher {
         devicePreset: String = PlayCoverDevicePreset.defaultPreset.name,
         deviceChrome: String = "on",
         windowMode: String = "fixed",
+        deviceConfigurationPath: String? = nil,
         stdioLog: PlayCoverStdioLogIdentity?,
         deadline: TimeInterval,
         submitted: inout Bool
@@ -296,6 +298,7 @@ enum PlayCoverSlotLauncher {
             devicePreset: devicePreset,
             deviceChrome: deviceChrome,
             windowMode: windowMode,
+            deviceConfigurationPath: deviceConfigurationPath,
             stdioLog: stdioLog
         )
         let existingPIDs = Set(
@@ -529,7 +532,7 @@ enum PlayCoverSlotLauncher {
             "waitFor", "tap", "longPress", "swipe", "input",
             "dismissAlert", "dismissAlertByLabel", "debug",
         ])
-        guard Set(payload.capabilities) == expectedCapabilities else {
+        guard expectedCapabilities.isSubset(of: Set(payload.capabilities)) else {
             throw PlayCoverBackendError.verificationFailed(
                 "authenticated Runtime capabilities are incomplete"
             )
@@ -573,6 +576,7 @@ enum PlayCoverSlotLauncher {
         devicePreset: String = PlayCoverDevicePreset.defaultPreset.name,
         deviceChrome: String = "on",
         windowMode: String = "fixed",
+        deviceConfigurationPath: String? = nil,
         stdioLog: PlayCoverStdioLogIdentity?
     ) -> [String: String] {
         var result = source.mapValues { _ in "" }
@@ -588,6 +592,13 @@ enum PlayCoverSlotLauncher {
         allowed["IOS_USE_MAC_DEVICE"] = devicePreset
         allowed["IOS_USE_MAC_CHROME"] = deviceChrome
         allowed["IOS_USE_MAC_WINDOW_MODE"] = windowMode
+        if let deviceConfigurationPath {
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: deviceConfigurationPath)),
+               let selection = try? JSONDecoder().decode(PlayCoverDevicePreset.Selection.self, from: data) {
+                allowed["IOS_USE_MAC_EXPANDED"] = selection.expanded == false ? "0" : "1"
+                allowed["IOS_USE_MAC_ORIENTATION"] = selection.orientation ?? "portrait"
+            }
+        }
         allowed["IOS_USE_PLAY_SESSION_ID"] = sessionID
         allowed["IOS_USE_PLAY_RUNTIME_SOCKET"] = runtimeSocketPath
         allowed["IOS_USE_PLAY_INSTALL_REVISION"] = installRevision

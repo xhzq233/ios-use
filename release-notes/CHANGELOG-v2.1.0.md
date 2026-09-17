@@ -4,10 +4,15 @@
 
 ## Highlights
 
-- Choose a Mac device preset with `config --mac --device-model`: iPhone SE,
-  iPhone 13, iPhone 15 Pro/Pro Max and iPad Pro 11-inch. The next cold App launch
-  applies the model, screen geometry and safe areas; active sessions keep their
-  existing geometry. Status exposes the active and configured selections.
+- Switch the running Mac App's device preset with `config --mac --device-model`:
+  iPhone SE, iPhone 13, iPhone 15 Pro/Pro Max, iPad Pro 11-inch and iPhone Duo.
+  The native toolbar also selects models, rotates the viewport, and folds or
+  expands Duo. CLI configuration persists for future starts; toolbar changes
+  affect the current session. Apps that cache device traits at startup may
+  still need a restart.
+- Bundle the original Simulator device chrome assets in the Runtime framework,
+  alongside the Duo preview artwork. A spaced native toolbar keeps controls
+  clear of the device frame, including tall iPhone SE bezels.
 - Run multiple Devices in one `IOS_USE_HOME`, with separate Driver sessions,
   logs, and artifacts. Use the stable Device IDs shown by `status` with
   `--device` / `-d` when more than one Device is running.

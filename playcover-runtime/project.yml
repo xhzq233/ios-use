@@ -48,6 +48,7 @@ targets:
           - IOSUsePlayRuntime.h
           - IOSUsePlayAppKitBridge.h
           - tests
+          - Resources/DeviceChrome
           - PlayTools/PlayTools/Controls/PTFakeTouch/PTFakeMetaTouch.h
           - PlayTools/LICENSE
         headerVisibility: private
@@ -59,6 +60,9 @@ targets:
         headerVisibility: public
       - path: "${IOS_USE_RUNTIME_SOURCE_ROOT}/../swift-cli/Sources/IOSUsePlayDevice/include/IOSUsePlayDevice.h"
         headerVisibility: public
+      - path: "${IOS_USE_RUNTIME_SOURCE_ROOT}/Resources/DeviceChrome"
+        type: folder
+        buildPhase: resources
     info:
       path: "${IOS_USE_RUNTIME_SOURCE_ROOT}/Info.plist"
     settings:

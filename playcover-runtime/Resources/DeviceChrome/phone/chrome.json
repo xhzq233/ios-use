@@ -1,0 +1,167 @@
+{
+  "identifier": "com.apple.dt.devicekit.chrome.phone",
+  "images": {
+    "topLeft": "Phone TL",
+    "top": "PhoneTop",
+    "topRight": "Phone TR",
+    "right": "PhoneRight",
+    "bottomRight": "Phone BR",
+    "bottom": "PhoneBase",
+    "bottomLeft": "Phone BL",
+    "left": "PhoneLeft",
+    "screen": "Screen",
+    "sizing": {
+      "leftWidth": 28,
+      "rightWidth": 28,
+      "topHeight": 111,
+      "bottomHeight": 111
+    },
+    "padding": {
+      "width": 9,
+      "height": 0
+    },
+    "devicePadding": {
+      "top": 0,
+      "left": 9,
+      "bottom": 0,
+      "right": 9
+    }
+  },
+  "paths": {
+    "simpleOutsideBorder": {
+      "insets": {
+        "top": 0,
+        "left": 0,
+        "bottom": 0,
+        "right": 0
+      },
+      "cornerRadiusX": 61,
+      "cornerRadiusY": 61
+    }
+  },
+  "inputs": [
+    {
+      "name": "mute",
+      "accessibilityTitle": "Mute",
+      "type": "switch",
+      "usagePage": 11,
+      "usage": 46,
+      "image": "Mute BTN",
+      "imageDown": "Mute BTN Dn",
+      "imageDownDrawMode": "replace",
+      "onTop": false,
+      "anchor": "left",
+      "align": "leading",
+      "offsets": {
+        "normal": { "x": 8, "y": 114 },
+        "rollover": { "x": 3, "y": 114 }
+      }
+    },
+    {
+      "name": "volume-up",
+      "accessibilityTitle": "Volume Up",
+      "type": "button",
+      "usagePage": 12,
+      "usage": 233,
+      "image": "Vol BTN",
+      "imageDown": "Vol BTN Dn",
+      "imageDownDrawMode": "replace",
+      "onTop": false,
+      "anchor": "left",
+      "align": "leading",
+      "offsets": {
+        "normal": { "x": 8, "y": 188 },
+        "rollover": { "x": 3, "y": 188 }
+      }
+    },
+    {
+      "name": "volume-down",
+      "accessibilityTitle": "Volume Down",
+      "type": "button",
+      "usagePage": 12,
+      "usage": 234,
+      "image": "Vol BTN",
+      "imageDown": "Vol BTN Dn",
+      "imageDownDrawMode": "replace",
+      "onTop": false,
+      "anchor": "left",
+      "align": "leading",
+      "offsets": {
+        "normal": { "x": 8, "y": 269 },
+        "rollover": { "x": 3, "y": 269 }
+      }
+    },
+    {
+      "name": "power",
+      "accessibilityTitle": "Sleep/Wake",
+      "type": "button",
+      "usagePage": 12,
+      "usage": 48,
+      "image": "Power BTN",
+      "imageDown": "Power BTN Dn",
+      "imageDownDrawMode": "replace",
+      "onTop": false,
+      "anchor": "right",
+      "align": "leading",
+      "offsets": {
+        "normal": { "x": -8, "y": 188 },
+        "rollover": { "x": -3, "y": 188 }
+      }
+    },
+    {
+      "name": "home",
+      "accessibilityTitle": "Home",
+      "type": "button",
+      "usagePage": 12,
+      "usage": 64,
+      "image": "Home BTN",
+      "imageDown": "Home BTN Dn",
+      "imageDownDrawMode": "compositeUnder",
+      "onTop": true,
+      "anchor": "bottom",
+      "align": "center",
+      "offsets": {
+        "normal": { "x": 0, "y": -90 },
+        "rollover": { "x": 0, "y": -90 }
+      }
+    }
+  ],
+  "resizeRects": [
+    {
+      "type": "lowerLeft",
+      "scales": false,
+      "centerPoint": { "x": 19, "y": 19 },
+      "size": {
+        "width": 18,
+        "height": 18
+      }
+    },
+    {
+      "type": "lowerRight",
+      "scales": false,
+      "centerPoint": { "x": -19, "y": 19 },
+      "size": {
+        "width": 18,
+        "height": 18
+      }
+    },
+    {
+      "type": "upperRight",
+      "scales": false,
+      "centerPoint": { "x": -19, "y": -19 },
+      "size": {
+        "width": 18,
+        "height": 18
+      }
+    },
+    {
+      "type": "upperLeft",
+      "scales": false,
+      "centerPoint": { "x": 19, "y": -19 },
+      "size": {
+        "width": 18,
+        "height": 18
+      }
+    }
+  ]
+}

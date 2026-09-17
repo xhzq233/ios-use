@@ -1239,6 +1239,11 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertEqual(base.host?.contentBounds.width, 331)
         XCTAssertEqual(base.host?.contentBounds.height, 718)
         XCTAssertEqual(base.host?.resizable, false)
+        // A shaped host leaves a transparent gap above the complete canvas.
+        let shaped = PlayCoverRuntimeGeometry(logical: base.logical, native: base.native,
+            scale: base.scale, window: base.window, safeArea: base.safeArea,
+            host: makeNativeCatalystHostGeometry(opaque: false))
+        XCTAssertNoThrow(try PlayCoverDriverClient.validateFixedDevice(shaped, stage: "ready"))
     }
 
     func testFixedDeviceRejectsInvalidNativeCatalystHost() throws {
@@ -1253,7 +1258,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
             ),
             makeNativeCatalystHostGeometry(canvasCGX: 41),
             makeNativeCatalystHostGeometry(hostFrameWidth: 320),
-            makeNativeCatalystHostGeometry(opaque: false),
         ]
         for host in invalidHosts {
             let geometry = PlayCoverRuntimeGeometry(
@@ -1287,6 +1291,9 @@ final class PlayCoverDriverClientTests: XCTestCase {
             PlayCoverRuntimeAlertPayload? = nil
     ) -> PlayCoverRuntimeResponsePayload {
         switch capability {
+        case .configureDevice:
+            return .configureDevice(.init(preset: "iphone-duo", expanded: true, orientation: "portrait",
+                chrome: "on", windowMode: "fixed", logicalWidth: 669, logicalHeight: 951, scale: 3, idiom: 0))
         case .hello:
             return .hello(
                 .init(

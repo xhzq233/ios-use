@@ -1,255 +1,412 @@
 #import "IOSUsePlayDeviceChrome.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayDeviceConfiguration.h"
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 
-static id host, decoration;
-static CALayer *artwork, *overlay;
-static CAShapeLayer *bezel, *corners;
+static id host, decoration, nativeToolbar, bezelAccessory;
+static id modelSubtitle;
+static id modelPicker, rotateButton, expandButton;
+static CALayer *artwork;
+static CAShapeLayer *modelChevron, *hostShape;
+static id shapedRoot, originalHostBackground;
+static CALayer *originalHostMask;
+static BOOL originalHostOpaque;
 static NSMutableArray *observers;
-static UIImage *localFrame;
-static NSDictionary *localSizing;
-static id titlebarAccessory;
+static UIImage *frameImage;
+static UIEdgeInsets frameInsets;
+static NSString *imageKey;
 static BOOL updating;
-static id get(id object, NSString *name) {
-    return ((id (*)(id, SEL))objc_msgSend)(object, NSSelectorFromString(name));
-}
-static CGRect rect(id object, NSString *name) {
-    return ((CGRect (*)(id, SEL))objc_msgSend)(object, NSSelectorFromString(name));
-}
-static void boolean(id object, NSString *name, BOOL value) {
-    ((void (*)(id, SEL, BOOL))objc_msgSend)(object, NSSelectorFromString(name), value);
-}
-static void object(id target, NSString *name, id value) {
-    ((void (*)(id, SEL, id))objc_msgSend)(target, NSSelectorFromString(name), value);
+static id get(id value, NSString *name) { return ((id (*)(id, SEL))objc_msgSend)(value, NSSelectorFromString(name)); }
+static CGRect rect(id value, NSString *name) { return ((CGRect (*)(id, SEL))objc_msgSend)(value, NSSelectorFromString(name)); }
+static void boolean(id value, NSString *name, BOOL flag) { ((void (*)(id, SEL, BOOL))objc_msgSend)(value, NSSelectorFromString(name), flag); }
+static void object(id value, NSString *name, id argument) { ((void (*)(id, SEL, id))objc_msgSend)(value, NSSelectorFromString(name), argument); }
+static void integer(id value, NSString *name, NSInteger argument) { ((void (*)(id, SEL, NSInteger))objc_msgSend)(value, NSSelectorFromString(name), argument); }
+static id view(NSString *className, CGRect frame) {
+    return ((id (*)(id, SEL, CGRect))objc_msgSend)([NSClassFromString(className) alloc], NSSelectorFromString(@"initWithFrame:"), frame);
 }
 
-@interface IOSUsePlayDeviceChromeResources : NSObject
+@interface IOSUsePlayDeviceChromeController : NSObject
+- (void)selectModel:(id)sender;
+- (void)rotate:(id)sender;
+- (void)expand:(id)sender;
 @end
-@implementation IOSUsePlayDeviceChromeResources
-@end
+static IOSUsePlayDeviceChromeController *controller;
 
-static UIImage *image(NSString *name) {
-    NSBundle *bundle = [NSBundle bundleForClass:IOSUsePlayDeviceChromeResources.class];
-    return [UIImage imageWithContentsOfFile:[bundle pathForResource:name ofType:@"png"]];
+static NSString *resources(void) {
+    NSBundle *bundle = [NSBundle bundleForClass:IOSUsePlayDeviceChromeController.class];
+    return [bundle.resourcePath stringByAppendingPathComponent:@"DeviceChrome"];
 }
-
-static void drawPDF(NSString *directory, NSString *name, CGRect target, CGContextRef context) {
-    if (!name) return;
+static CGPDFDocumentRef pdf(NSString *directory, NSString *name) {
+    if (!name) return NULL;
     NSURL *url = [NSURL fileURLWithPath:[directory stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"pdf"]]];
-    CGPDFDocumentRef document = CGPDFDocumentCreateWithURL((__bridge CFURLRef)url);
+    return CGPDFDocumentCreateWithURL((__bridge CFURLRef)url);
+}
+static CGSize pdfSize(NSString *directory, NSString *name) {
+    CGPDFDocumentRef document = pdf(directory, name);
+    if (!document) return CGSizeZero;
+    CGPDFPageRef page = CGPDFDocumentGetPage(document, 1);
+    CGSize size = page ? CGPDFPageGetBoxRect(page, kCGPDFMediaBox).size : CGSizeZero;
+    CGPDFDocumentRelease(document);
+    return size;
+}
+// Coordinates here are UIKit top-left coordinates; retain PDF aspect by using
+// its original tile size, stretching only the one-pixel edge tiles.
+static void drawPDF(NSString *directory, NSString *name, CGRect target) {
+    CGPDFDocumentRef document = pdf(directory, name);
     if (!document) return;
     CGPDFPageRef page = CGPDFDocumentGetPage(document, 1);
     if (page) {
+        CGContextRef context = UIGraphicsGetCurrentContext();
         CGContextSaveGState(context);
-        CGContextConcatCTM(context, CGPDFPageGetDrawingTransform(page, kCGPDFMediaBox, target, 0, false));
+        CGContextTranslateCTM(context, target.origin.x, CGRectGetMaxY(target));
+        CGContextScaleCTM(context, 1, -1);
+        CGContextConcatCTM(context, CGPDFPageGetDrawingTransform(page, kCGPDFMediaBox, (CGRect){CGPointZero, target.size}, 0, false));
         CGContextDrawPDFPage(context, page);
         CGContextRestoreGState(context);
     }
     CGPDFDocumentRelease(document);
 }
-
-static void loadLocalFrame(void) {
-    // Read artwork from the user's DeviceKit installation. Never bundle it.
-    NSString *preset = @(IOSUsePlayDeviceCurrent()->name);
-    NSString *model = [preset isEqual:@"ipad-pro-11"] ? @"tablet2" :
-        [preset isEqual:@"iphone-15-pro-max"] ? @"phone10" :
-        [preset isEqual:@"iphone-15-pro"] ? @"phone9" : nil;
-    if (!model) return;
-    NSString *directory = [NSString stringWithFormat:@"/Library/Developer/DeviceKit/Chrome/%@.devicechrome/Contents/Resources", model];
-    NSData *data = [NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:@"chrome.json"]];
-    NSDictionary *profile = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
-    NSDictionary *images = profile[@"images"];
-    NSDictionary *sizing = images[@"sizing"];
-    if (![sizing isKindOfClass:NSDictionary.class]) return;
-    CGFloat width = IOSUsePlayDeviceLogicalWidth + [sizing[@"leftWidth"] doubleValue] + [sizing[@"rightWidth"] doubleValue];
-    CGFloat height = IOSUsePlayDeviceLogicalHeight + [sizing[@"topHeight"] doubleValue] + [sizing[@"bottomHeight"] doubleValue];
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(width, height), NO, 2);
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGContextTranslateCTM(context, 0, height);
-    CGContextScaleCTM(context, 1, -1);
-    if (images[@"composite"]) {
-        drawPDF(directory, images[@"composite"], CGRectMake(0, 0, width, height), context);
-    } else {
-        CGFloat c = 80;
-        NSArray *names = @[@"bottomLeft", @"bottom", @"bottomRight", @"left", @"right", @"topLeft", @"top", @"topRight"];
-        CGRect tiles[] = {
-            { {0, 0}, {c, c} }, { {c, 0}, {width-2*c, c} }, { {width-c, 0}, {c, c} },
-            { {0, c}, {c, height-2*c} }, { {width-c, c}, {c, height-2*c} },
-            { {0, height-c}, {c, c} }, { {c, height-c}, {width-2*c, c} }, { {width-c, height-c}, {c, c} }
-        };
-        for (NSUInteger i = 0; i < names.count; ++i) drawPDF(directory, images[names[i]], tiles[i], context);
-    }
-    localFrame = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    localSizing = sizing;
+static UIImage *png(NSString *name) {
+    return [UIImage imageWithContentsOfFile:[resources() stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"png"]]];
 }
 
-static void removeDecoration(void) {
-    for (id observer in observers) [NSNotificationCenter.defaultCenter removeObserver:observer];
-    observers = nil;
-    if (decoration) {
-        object(host, @"removeChildWindow:", decoration);
-        ((void (*)(id, SEL))objc_msgSend)(decoration, NSSelectorFromString(@"close"));
+static void loadFrame(void) {
+    NSString *preset = @(IOSUsePlayDeviceCurrent()->name);
+    NSString *key = [NSString stringWithFormat:@"%@-%d", preset, IOSUsePlayDeviceIsLandscape()];
+    if ([imageKey isEqual:key]) return;
+    imageKey = key;
+    frameImage = nil;
+    CGFloat w = IOSUsePlayDeviceCurrent()->logicalWidth, h = IOSUsePlayDeviceCurrent()->logicalHeight;
+    BOOL outer = [preset isEqual:@"iphone-duo-outer"], inner = [preset isEqual:@"iphone-duo-inner"];
+    NSDictionary *models = @{@"iphone-se":@"phone", @"iphone-13":@"phone4", @"iphone-15-pro":@"phone9", @"iphone-15-pro-max":@"phone10", @"ipad-pro-11":@"tablet2"};
+    NSString *directory = models[preset] ? [resources() stringByAppendingPathComponent:models[preset]] : nil;
+    NSData *data = directory ? [NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:@"chrome.json"]] : nil;
+    NSDictionary *profile = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+    NSDictionary *images = profile[@"images"], *sizing = images[@"sizing"], *padding = images[@"devicePadding"];
+    if (outer || inner) {
+        frameInsets = outer ? UIEdgeInsetsMake(16,20,16,16) : UIEdgeInsetsMake(22,16,16,16);
+    } else if (sizing) {
+        frameInsets = UIEdgeInsetsMake([sizing[@"topHeight"] doubleValue]+[padding[@"top"] doubleValue],
+            [sizing[@"leftWidth"] doubleValue]+[padding[@"left"] doubleValue],
+            [sizing[@"bottomHeight"] doubleValue]+[padding[@"bottom"] doubleValue],
+            [sizing[@"rightWidth"] doubleValue]+[padding[@"right"] doubleValue]);
+    } else {
+        NSLog(@"[ios-use] Missing bundled device chrome for %@", preset);
+        return;
     }
-    if (titlebarAccessory) {
-        NSArray *accessories = get(host, @"titlebarAccessoryViewControllers");
-        NSUInteger index = [accessories indexOfObjectIdenticalTo:titlebarAccessory];
-        if (index != NSNotFound) {
-            ((void (*)(id, SEL, NSInteger))objc_msgSend)(host, NSSelectorFromString(@"removeTitlebarAccessoryViewControllerAtIndex:"), (NSInteger)index);
+    CGSize size = CGSizeMake(w + frameInsets.left + frameInsets.right, h + frameInsets.top + frameInsets.bottom);
+    CGRect screen = CGRectMake(frameInsets.left, frameInsets.top, w, h);
+    UIGraphicsBeginImageContextWithOptions(size, NO, 2);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    // Hide the rectangular canvas corners without clipping the real App layer.
+    [[UIColor colorWithWhite:0.12 alpha:1] setFill];
+    UIRectFill(screen);
+    if (outer || inner) {
+        NSString *variant = outer ? @"outer" : @"inner";
+        [png([NSString stringWithFormat:@"duo-%@-Frame",variant]) drawInRect:(CGRect){CGPointZero,size}];
+        CGContextSetBlendMode(context, kCGBlendModeClear);
+        UIBezierPath *hole = outer
+            ? [UIBezierPath bezierPathWithRoundedRect:screen byRoundingCorners:UIRectCornerTopRight|UIRectCornerBottomRight cornerRadii:CGSizeMake(64,64)]
+            : [UIBezierPath bezierPathWithRoundedRect:screen cornerRadius:58];
+        [hole fill];
+        CGContextSetBlendMode(context, kCGBlendModeNormal);
+        [png([NSString stringWithFormat:@"duo-%@-Overlay",variant]) drawInRect:(CGRect){CGPointZero,size}];
+    } else {
+        CGRect body = CGRectMake([padding[@"left"] doubleValue], [padding[@"top"] doubleValue],
+            w+[sizing[@"leftWidth"] doubleValue]+[sizing[@"rightWidth"] doubleValue],
+            h+[sizing[@"topHeight"] doubleValue]+[sizing[@"bottomHeight"] doubleValue]);
+        if (images[@"composite"]) drawPDF(directory,images[@"composite"],body);
+        else {
+            CGSize tl=pdfSize(directory,images[@"topLeft"]), tr=pdfSize(directory,images[@"topRight"]);
+            CGSize bl=pdfSize(directory,images[@"bottomLeft"]), br=pdfSize(directory,images[@"bottomRight"]);
+            CGFloat x=body.origin.x,y=body.origin.y,bw=body.size.width,bh=body.size.height;
+            drawPDF(directory,images[@"topLeft"],CGRectMake(x,y,tl.width,tl.height));
+            drawPDF(directory,images[@"topRight"],CGRectMake(x+bw-tr.width,y,tr.width,tr.height));
+            drawPDF(directory,images[@"bottomLeft"],CGRectMake(x,y+bh-bl.height,bl.width,bl.height));
+            drawPDF(directory,images[@"bottomRight"],CGRectMake(x+bw-br.width,y+bh-br.height,br.width,br.height));
+            drawPDF(directory,images[@"top"],CGRectMake(x+tl.width,y,bw-tl.width-tr.width,tl.height));
+            drawPDF(directory,images[@"bottom"],CGRectMake(x+bl.width,y+bh-bl.height,bw-bl.width-br.width,bl.height));
+            drawPDF(directory,images[@"left"],CGRectMake(x,y+tl.height,tl.width,bh-tl.height-bl.height));
+            drawPDF(directory,images[@"right"],CGRectMake(x+bw-tr.width,y+tr.height,tr.width,bh-tr.height-br.height));
         }
-        titlebarAccessory = nil;
+        for (NSDictionary *input in profile[@"inputs"]) {
+            CGSize s=pdfSize(directory,input[@"image"]);
+            NSDictionary *offset=input[@"offsets"][@"normal"];
+            NSString *anchor=input[@"anchor"], *align=input[@"align"];
+            CGFloat x=[offset[@"x"] doubleValue],y=[offset[@"y"] doubleValue];
+            if ([anchor isEqual:@"left"]) { x+=body.origin.x-s.width; y+=body.origin.y; }
+            else if ([anchor isEqual:@"right"]) { x+=CGRectGetMaxX(body); y+=body.origin.y; }
+            else if ([anchor isEqual:@"top"]) { x+=body.origin.x; y+=body.origin.y-s.height; }
+            else if ([anchor isEqual:@"bottom"]) { x+=body.origin.x; y+=CGRectGetMaxY(body); }
+            if ([align isEqual:@"center"]) {
+                if ([anchor isEqual:@"left"] || [anchor isEqual:@"right"]) y+=(body.size.height-s.height)/2;
+                else x+=(body.size.width-s.width)/2;
+            } else if ([align isEqual:@"trailing"]) {
+                if ([anchor isEqual:@"left"] || [anchor isEqual:@"right"]) y+=body.size.height-s.height;
+                else x+=body.size.width-s.width;
+            }
+            drawPDF(directory,input[@"image"],CGRectMake(x,y,s.width,s.height));
+        }
+        // Simulator's framebuffer mask defines the precise screen cutout.
+        CGContextSetBlendMode(context,kCGBlendModeDestinationOut);
+        if (pdfSize(directory,@"FramebufferMask").width > 0) drawPDF(directory,@"FramebufferMask",screen);
+        else { [[UIColor blackColor] setFill]; UIRectFillUsingBlendMode(screen,kCGBlendModeDestinationOut); }
+        CGContextSetBlendMode(context,kCGBlendModeNormal);
     }
-    decoration = nil;
-    host = nil;
-    artwork = nil;
-    overlay = nil;
-    bezel = nil;
-    corners = nil;
-    localFrame = nil;
-    localSizing = nil;
+    UIImage *portrait=UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (IOSUsePlayDeviceIsLandscape()) {
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(size.height,size.width),NO,2);
+        CGContextRef rotated=UIGraphicsGetCurrentContext();
+        CGContextTranslateCTM(rotated,size.height,0);
+        CGContextRotateCTM(rotated,M_PI_2);
+        [portrait drawAtPoint:CGPointZero];
+        frameImage=UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        frameInsets=UIEdgeInsetsMake(frameInsets.left,frameInsets.bottom,frameInsets.right,frameInsets.top);
+    } else frameImage=portrait;
+}
+
+static void removeAccessory(id accessory) {
+    NSArray *accessories=get(host,@"titlebarAccessoryViewControllers");
+    NSUInteger index=[accessories indexOfObjectIdenticalTo:accessory];
+    if (index!=NSNotFound) integer(host,@"removeTitlebarAccessoryViewControllerAtIndex:",index);
+}
+static void restoreHostShape(void) {
+    if (!shapedRoot) return;
+    object(get(shapedRoot,@"layer"),@"setMask:",originalHostMask);
+    object(host,@"setBackgroundColor:",originalHostBackground);
+    boolean(host,@"setOpaque:",originalHostOpaque);
+    shapedRoot=nil;hostShape=nil;originalHostMask=nil;originalHostBackground=nil;
+}
+static id toolbarView(id parent, NSUInteger depth) {
+    if ([NSStringFromClass([parent class]) isEqual:@"NSToolbarView"]) return parent;
+    if (!depth) return nil;
+    for (id child in get(parent,@"subviews")) { id found=toolbarView(child,depth-1);if(found)return found; }
+    return nil;
+}
+static void shapeHost(void) {
+    id content=get(host,@"contentView"),root=get(content,@"superview");
+    id bar=toolbarView(root,4);
+    if (!bar) return;
+    if (!shapedRoot) {
+        shapedRoot=root;originalHostBackground=get(host,@"backgroundColor");
+        originalHostOpaque=((BOOL (*)(id,SEL))objc_msgSend)(host,NSSelectorFromString(@"isOpaque"));
+        boolean(root,@"setWantsLayer:",YES);originalHostMask=get(get(root,@"layer"),@"mask");
+        hostShape=[CAShapeLayer layer];object(get(root,@"layer"),@"setMask:",hostShape);
+        boolean(host,@"setOpaque:",NO);
+        object(host,@"setBackgroundColor:",get(NSClassFromString(@"NSColor"),@"clearColor"));
+    }
+    CGRect barRect=((CGRect (*)(id,SEL,CGRect,id))objc_msgSend)(root,NSSelectorFromString(@"convertRect:fromView:"),rect(bar,@"bounds"),bar);
+    // Separate the rounded toolbar from the device, retaining every canvas
+    // pixel. Only the titlebar's decorative spacer becomes transparent.
+    barRect.origin.y+=0.5;barRect.size.height-=0.5;
+    CGMutablePathRef path=CGPathCreateMutable();
+    CGPathAddRect(path,NULL,rect(content,@"frame"));
+    CGPathAddRoundedRect(path,NULL,barRect,7,7);
+    hostShape.frame=rect(root,@"bounds");hostShape.path=path;
+    CGPathRelease(path);
+    ((void (*)(id,SEL))objc_msgSend)(host,NSSelectorFromString(@"invalidateShadow"));
+}
+static void removeFrame(void) {
+    BOOL wasUpdating=updating;updating=YES;
+    if (decoration) {
+        object(host,@"removeChildWindow:",decoration);
+        ((void (*)(id,SEL))objc_msgSend)(decoration,NSSelectorFromString(@"close"));
+    }
+    if (bezelAccessory) removeAccessory(bezelAccessory);
+    decoration=nil; bezelAccessory=nil; artwork=nil;
+    updating=wasUpdating;
+}
+static void resetHost(void) {
+    restoreHostShape();
+    removeFrame();
+    if (nativeToolbar) object(host,@"setToolbar:",nil);
+    for (id observer in observers) [NSNotificationCenter.defaultCenter removeObserver:observer];
+    observers=nil; nativeToolbar=nil; modelPicker=nil; modelSubtitle=nil; rotateButton=nil; expandButton=nil;host=nil;
+}
+void IOSUsePlayDeviceChromeReset(void) {
+    imageKey=nil;frameImage=nil;
+    removeFrame();
+}
+static id symbol(NSString *name, NSString *label) {
+    id image=((id (*)(id,SEL,id,id))objc_msgSend)(NSClassFromString(@"NSImage"),NSSelectorFromString(@"imageWithSystemSymbolName:accessibilityDescription:"),name,label);
+    id configuration=((id (*)(id,SEL,CGFloat,CGFloat,NSInteger))objc_msgSend)(NSClassFromString(@"NSImageSymbolConfiguration"),NSSelectorFromString(@"configurationWithPointSize:weight:scale:"),18.0,0.0,2);
+    return ((id (*)(id,SEL,id))objc_msgSend)(image,NSSelectorFromString(@"imageWithSymbolConfiguration:"),configuration);
+}
+static id button(NSString *imageName, NSString *label, SEL action) {
+    id control=view(@"NSButton",CGRectMake(0,0,32,32));
+    boolean(control,@"setBordered:",NO);
+    object(control,@"setTitle:",@"");
+    integer(control,@"setImagePosition:",1);
+    object(control,@"setImage:",symbol(imageName,label));
+    object(control,@"setContentTintColor:",get(NSClassFromString(@"NSColor"),@"secondaryLabelColor"));
+    object(control,@"setToolTip:",label);
+    object(control,@"setAccessibilityLabel:",label);
+    object(control,@"setTarget:",controller);
+    ((void (*)(id,SEL,SEL))objc_msgSend)(control,NSSelectorFromString(@"setAction:"),action);
+    return control;
+}
+static void installToolbar(void) {
+    controller=controller ?: [IOSUsePlayDeviceChromeController new];
+    nativeToolbar=((id (*)(id,SEL,id))objc_msgSend)([NSClassFromString(@"NSToolbar") alloc],NSSelectorFromString(@"initWithIdentifier:"),@"io.ios-use.device-toolbar");
+    object(nativeToolbar,@"setDelegate:",controller);
+    boolean(nativeToolbar,@"setAllowsUserCustomization:",NO);
+    boolean(nativeToolbar,@"setAutosavesConfiguration:",NO);
+    boolean(nativeToolbar,@"setShowsBaselineSeparator:",NO);
+    integer(nativeToolbar,@"setDisplayMode:",2);
+    object(host,@"setToolbar:",nativeToolbar);
+    integer(host,@"setToolbarStyle:",3);
+    integer(host,@"setTitleVisibility:",1);
 }
 
 void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     NSCParameterAssert(NSThread.isMainThread);
-    if (updating) return;
-    if (strcmp(getenv("IOS_USE_MAC_CHROME") ?: "on", "off") == 0 ||
-        strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0) {
-        // A resizable App scene is not the entire device screen.
-        removeDecoration();
-        return;
+    if (updating || !hostWindow) return;
+    updating=YES;
+    if (host!=hostWindow) {
+        resetHost();host=hostWindow;
+        installToolbar();
+        observers=[NSMutableArray array];
+        for (NSString *name in @[@"NSWindowDidMoveNotification",@"NSWindowDidResizeNotification",@"NSWindowDidChangeBackingPropertiesNotification"]) {
+            [observers addObject:[NSNotificationCenter.defaultCenter addObserverForName:name object:host queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note){IOSUsePlayDeviceChromeUpdate(host);}]];
+        }
+        [observers addObject:[NSNotificationCenter.defaultCenter addObserverForName:@"NSWindowWillCloseNotification" object:host queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note){resetHost();}]];
     }
-    if (host != hostWindow) removeDecoration();
-    if (!hostWindow) return;
+    NSDictionary *state=IOSUsePlayDeviceState();
+    for (id item in get(modelPicker,@"itemArray")) {
+        if ([get(item,@"representedObject") isEqual:state[@"preset"]]) { object(modelPicker,@"selectItem:",item);break; }
+    }
+    NSString *modelTitle=get(modelPicker,@"title");
+    CGFloat titleWidth=[modelTitle sizeWithAttributes:@{NSFontAttributeName:[UIFont boldSystemFontOfSize:13]}].width;
+    modelChevron.position=CGPointMake(MIN(titleWidth+9,rect(modelPicker,@"bounds").size.width-9),8);
+    BOOL duo=[state[@"preset"] isEqual:@"iphone-duo"];
+    NSArray *items=get(nativeToolbar,@"items");
+    NSUInteger expandIndex=NSNotFound;
+    for (NSUInteger i=0;i<items.count;i++) if ([get(items[i],@"itemIdentifier") isEqual:@"expand"]) expandIndex=i;
+    if (duo && expandIndex==NSNotFound) ((void (*)(id,SEL,id,NSUInteger))objc_msgSend)(nativeToolbar,NSSelectorFromString(@"insertItemWithItemIdentifier:atIndex:"),@"expand",items.count);
+    if (!duo && expandIndex!=NSNotFound) integer(nativeToolbar,@"removeItemAtIndex:",expandIndex);
+    NSString *expandLabel=[state[@"expanded"] boolValue] ? @"Collapse" : @"Expand";
+    object(expandButton,@"setToolTip:",expandLabel);object(expandButton,@"setAccessibilityLabel:",expandLabel);
+    object(expandButton,@"setImage:",symbol([state[@"expanded"] boolValue] ? @"arrow.down.right.and.arrow.up.left" : @"arrow.up.left.and.arrow.down.right",expandLabel));
+    NSString *detail=[NSString stringWithFormat:@"%d × %d%@",IOSUsePlayDeviceLogicalWidth,IOSUsePlayDeviceLogicalHeight,
+        duo ? ([state[@"expanded"] boolValue] ? @" · Expanded" : @" · Folded") : @""];
+    object(modelSubtitle,@"setStringValue:",detail);
+    if ([state[@"chrome"] isEqual:@"off"] || [state[@"windowMode"] isEqual:@"resizable"]) {
+        restoreHostShape();removeFrame();updating=NO;return;
+    }
+    loadFrame();
+    if (!frameImage) { updating=NO;return; }
+    id content=get(host,@"contentView");
+    CGRect canvas=((CGRect (*)(id,SEL,CGRect))objc_msgSend)(host,NSSelectorFromString(@"convertRectToScreen:"),rect(content,@"bounds"));
+    CGFloat scale=canvas.size.width/IOSUsePlayDeviceLogicalWidth;
+    CGFloat scaleY=canvas.size.height/IOSUsePlayDeviceLogicalHeight;
+    BOOL createdFrame = !decoration;
     if (!decoration) {
-        host = hostWindow;
-        loadLocalFrame();
-        Class cls = NSClassFromString(@"IOSUsePlayChromeWindow");
-        if (!cls) {
-            cls = objc_allocateClassPair(NSClassFromString(@"NSWindow"), "IOSUsePlayChromeWindow", 0);
-            objc_registerClassPair(cls);
-        }
-        decoration = ((id (*)(id, SEL, CGRect, NSUInteger, NSUInteger, BOOL))objc_msgSend)(
-            [cls alloc], NSSelectorFromString(@"initWithContentRect:styleMask:backing:defer:"),
-            CGRectMake(0, 0, 100, 100), 0, 2, NO);
-        boolean(decoration, @"setReleasedWhenClosed:", NO);
-        boolean(decoration, @"setOpaque:", NO);
-        boolean(decoration, @"setHasShadow:", NO);
-        boolean(decoration, @"setIgnoresMouseEvents:", YES);
-        object(decoration, @"setBackgroundColor:", get(NSClassFromString(@"NSColor"), @"clearColor"));
-        id content = get(decoration, @"contentView");
-        boolean(content, @"setWantsLayer:", YES);
-        CALayer *root = get(content, @"layer");
-        artwork = [CALayer layer];
-        bezel = [CAShapeLayer layer];
-        corners = [CAShapeLayer layer];
-        overlay = [CALayer layer];
-        [root addSublayer:corners];
-        [root addSublayer:artwork];
-        [root addSublayer:bezel];
-        [root addSublayer:overlay];
-        ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(host, NSSelectorFromString(@"addChildWindow:ordered:"), decoration, 1);
-        observers = [NSMutableArray array];
-        for (NSString *name in @[@"NSWindowDidMoveNotification", @"NSWindowDidResizeNotification",
-                                @"NSWindowDidChangeBackingPropertiesNotification"]) {
-            [observers addObject:[NSNotificationCenter.defaultCenter addObserverForName:name object:host
-                queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-                    IOSUsePlayDeviceChromeUpdate(host);
-                }]];
-        }
-        [observers addObject:[NSNotificationCenter.defaultCenter addObserverForName:@"NSWindowWillCloseNotification"
-            object:host queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-                removeDecoration();
-            }]];
+        Class cls=NSClassFromString(@"IOSUsePlayChromeWindow");
+        if (!cls) { cls=objc_allocateClassPair(NSClassFromString(@"NSWindow"),"IOSUsePlayChromeWindow",0);objc_registerClassPair(cls); }
+        decoration=((id (*)(id,SEL,CGRect,NSUInteger,NSUInteger,BOOL))objc_msgSend)([cls alloc],NSSelectorFromString(@"initWithContentRect:styleMask:backing:defer:"),CGRectMake(0,0,100,100),0,2,NO);
+        boolean(decoration,@"setReleasedWhenClosed:",NO);boolean(decoration,@"setOpaque:",NO);
+        boolean(decoration,@"setHasShadow:",NO);boolean(decoration,@"setIgnoresMouseEvents:",YES);
+        object(decoration,@"setBackgroundColor:",get(NSClassFromString(@"NSColor"),@"clearColor"));
+        id decorationContent=get(decoration,@"contentView");boolean(decorationContent,@"setWantsLayer:",YES);
+        artwork=[CALayer layer];object(get(decorationContent,@"layer"),@"addSublayer:",artwork);
+        ((void (*)(id,SEL,id,NSInteger))objc_msgSend)(host,NSSelectorFromString(@"addChildWindow:ordered:"),decoration,1);
+        bezelAccessory=[NSClassFromString(@"NSTitlebarAccessoryViewController") new];
+        CGFloat clearance=ceil(frameInsets.top*scaleY)+12;
+        id spacer=view(@"NSView",CGRectMake(0,0,1,clearance));
+        object(bezelAccessory,@"setView:",spacer);
+        integer(bezelAccessory,@"setLayoutAttribute:",4);object(host,@"addTitlebarAccessoryViewController:",bezelAccessory);
+        // AppKit re-enables autoresizing when attaching the accessory. Enable
+        // its height constraint afterwards so tall bezels cannot cover the bar.
+        boolean(spacer,@"setTranslatesAutoresizingMaskIntoConstraints:",NO);
+        id height=((id (*)(id,SEL,CGFloat))objc_msgSend)(get(spacer,@"heightAnchor"),NSSelectorFromString(@"constraintEqualToConstant:"),clearance);
+        boolean(height,@"setActive:",YES);
+        ((void (*)(id,SEL))objc_msgSend)(get(content,@"superview"),NSSelectorFromString(@"layoutSubtreeIfNeeded"));
+        canvas=((CGRect (*)(id,SEL,CGRect))objc_msgSend)(host,NSSelectorFromString(@"convertRectToScreen:"),rect(content,@"bounds"));
     }
-    id content = get(host, @"contentView");
-    CGRect canvas = ((CGRect (*)(id, SEL, CGRect))objc_msgSend)(host,
-        NSSelectorFromString(@"convertRectToScreen:"), rect(content, @"bounds"));
-    CGFloat w = IOSUsePlayDeviceLogicalWidth, h = IOSUsePlayDeviceLogicalHeight;
-    CGFloat scale = canvas.size.width / w;
-    NSString *preset = @(IOSUsePlayDeviceCurrent()->name);
-    BOOL outer = [preset isEqual:@"iphone-duo-outer"];
-    BOOL inner = [preset isEqual:@"iphone-duo-inner"];
-    BOOL tablet = IOSUsePlayDeviceUserInterfaceIdiom == 1;
-    BOOL se = [preset isEqual:@"iphone-se"];
-    CGFloat left = outer ? 20 : inner ? 16 : tablet ? 28 : 14;
-    CGFloat right = outer || inner ? 16 : left;
-    CGFloat top = outer ? 16 : inner ? 22 : se ? 76 : left;
-    CGFloat bottom = outer || inner ? 16 : top;
-    if (localFrame) {
-        left = [localSizing[@"leftWidth"] doubleValue];
-        right = [localSizing[@"rightWidth"] doubleValue];
-        top = [localSizing[@"topHeight"] doubleValue];
-        bottom = [localSizing[@"bottomHeight"] doubleValue];
-    }
-    // Reserve titlebar space above the bezel. Keep native traffic-light controls
-    // outside the simulated screen rather than painting over their hit targets.
-    updating = YES;
-    if (!titlebarAccessory) {
-        titlebarAccessory = [NSClassFromString(@"NSTitlebarAccessoryViewController") new];
-        id view = ((id (*)(id, SEL, CGRect))objc_msgSend)([NSClassFromString(@"NSView") alloc],
-            NSSelectorFromString(@"initWithFrame:"), CGRectMake(0, 0, 1, ceil(top * scale) + 4));
-        object(titlebarAccessory, @"setView:", view);
-        ((void (*)(id, SEL, NSInteger))objc_msgSend)(titlebarAccessory, NSSelectorFromString(@"setLayoutAttribute:"), 4);
-        object(host, @"addTitlebarAccessoryViewController:", titlebarAccessory);
-    }
-    updating = NO;
-    CGRect frame = CGRectMake(canvas.origin.x - left * scale, canvas.origin.y - bottom * scale,
-                             canvas.size.width + (left + right) * scale, canvas.size.height + (top + bottom) * scale);
-    ((void (*)(id, SEL, CGRect, BOOL))objc_msgSend)(decoration, NSSelectorFromString(@"setFrame:display:"), frame, YES);
-    CGRect bounds = CGRectMake(0, 0, w + left + right, h + top + bottom);
-    CGRect screen = CGRectMake(left, bottom, w, h);
-    CGFloat radius = outer ? 64 : inner ? 58 : tablet ? 18 : se ? 0 : 55;
-    UIBezierPath *hole = [UIBezierPath bezierPathWithRoundedRect:screen cornerRadius:radius];
-    if (outer) {
-        // Hinge edge is nearly square; the outside edge stays rounded.
-        hole = [UIBezierPath bezierPathWithRoundedRect:screen byRoundingCorners:UIRectCornerTopRight | UIRectCornerBottomRight
-                                         cornerRadii:CGSizeMake(radius, radius)];
-    }
-    UIBezierPath *mask = [UIBezierPath bezierPathWithRect:bounds];
-    [mask appendPath:hole];
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    for (CALayer *layer in @[corners, artwork, bezel, overlay]) {
-        layer.bounds = bounds;
-        layer.anchorPoint = CGPointZero;
-        layer.position = CGPointZero;
-        layer.transform = CATransform3DMakeScale(scale, scale, 1);
-    }
-    // Cover the square App corners in the decoration only. Clipping the host
-    // layer itself would also clip the full rectangular automation screenshot.
-    UIBezierPath *cornerCover = [UIBezierPath bezierPathWithRect:screen];
-    [cornerCover appendPath:hole];
-    corners.path = cornerCover.CGPath;
-    corners.fillRule = kCAFillRuleEvenOdd;
-    id background = get(NSClassFromString(@"NSColor"), @"windowBackgroundColor");
-    corners.fillColor = ((CGColorRef (*)(id, SEL))objc_msgSend)(background, NSSelectorFromString(@"CGColor"));
-    if (outer || inner || localFrame) {
-        NSString *variant = outer ? @"outer" : @"inner";
-        artwork.contents = (__bridge id)(localFrame ?: image([NSString stringWithFormat:@"duo-%@-Frame", variant])).CGImage;
-        overlay.contents = localFrame ? nil : (__bridge id)image([NSString stringWithFormat:@"duo-%@-Overlay", variant]).CGImage;
-        CAShapeLayer *cutout = [CAShapeLayer layer];
-        cutout.frame = bounds;
-        cutout.path = mask.CGPath;
-        cutout.fillRule = kCAFillRuleEvenOdd;
-        artwork.mask = cutout;
-        bezel.path = nil;
-    } else {
-        UIBezierPath *body = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(bounds, 2, 2)
-                                                     cornerRadius:se ? 48 : radius + left - 2];
-        [body appendPath:hole];
-        bezel.path = body.CGPath;
-        bezel.fillRule = kCAFillRuleEvenOdd;
-        bezel.fillColor = [UIColor colorWithWhite:0.035 alpha:1].CGColor;
-        bezel.strokeColor = [UIColor colorWithWhite:0.42 alpha:1].CGColor;
-        bezel.lineWidth = 1.5;
-        // These are original simple bezels; no Xcode artwork is required.
-    }
+    CGRect frame=CGRectMake(canvas.origin.x-frameInsets.left*scale,canvas.origin.y-frameInsets.bottom*scaleY,
+        canvas.size.width+(frameInsets.left+frameInsets.right)*scale,canvas.size.height+(frameInsets.top+frameInsets.bottom)*scaleY);
+    ((void (*)(id,SEL,CGRect,BOOL))objc_msgSend)(decoration,NSSelectorFromString(@"setFrame:display:"),frame,YES);
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    CGRect actualFrame=rect(decoration,@"frame");
+    artwork.frame=CGRectMake(frame.origin.x-actualFrame.origin.x,frame.origin.y-actualFrame.origin.y,frame.size.width,frame.size.height);
+    artwork.contents=(__bridge id)frameImage.CGImage;
+    shapeHost();
     [CATransaction commit];
-    BOOL visible = ((BOOL (*)(id, SEL))objc_msgSend)(host, NSSelectorFromString(@"isVisible"));
-    BOOL minimized = ((BOOL (*)(id, SEL))objc_msgSend)(host, NSSelectorFromString(@"isMiniaturized"));
-    BOOL decorationVisible = ((BOOL (*)(id, SEL))objc_msgSend)(decoration, NSSelectorFromString(@"isVisible"));
-    if (visible && !minimized && !decorationVisible) object(decoration, @"orderFront:", nil);
+    if (((BOOL (*)(id,SEL))objc_msgSend)(host,NSSelectorFromString(@"isVisible")) && !((BOOL (*)(id,SEL))objc_msgSend)(host,NSSelectorFromString(@"isMiniaturized"))) object(decoration,@"orderFront:",nil);
+    updating=NO;
+    if (createdFrame) dispatch_async(dispatch_get_main_queue(), ^{ IOSUsePlayDeviceChromeUpdate(host); });
 }
+
+@implementation IOSUsePlayDeviceChromeController
+- (NSArray *)toolbarDefaultItemIdentifiers:(__unused id)toolbar {
+    return @[@"device",@"NSToolbarFlexibleSpaceItem",@"rotate"];
+}
+- (NSArray *)toolbarAllowedItemIdentifiers:(__unused id)toolbar {
+    return @[@"device",@"NSToolbarFlexibleSpaceItem",@"rotate",@"expand"];
+}
+- (id)toolbar:(__unused id)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(__unused BOOL)inserted {
+    id item=((id (*)(id,SEL,id))objc_msgSend)([NSClassFromString(@"NSToolbarItem") alloc],NSSelectorFromString(@"initWithItemIdentifier:"),identifier);
+    id content;
+    if ([identifier isEqual:@"device"]) {
+        content=view(@"NSView",CGRectMake(0,0,168,36));
+        modelPicker=((id (*)(id,SEL,CGRect,BOOL))objc_msgSend)([NSClassFromString(@"NSPopUpButton") alloc],NSSelectorFromString(@"initWithFrame:pullsDown:"),CGRectMake(-3,15,165,21),NO);
+        NSArray *names=@[@"iPhone SE",@"iPhone 13",@"iPhone 15 Pro",@"iPhone 15 Pro Max",@"iPad Pro 11",@"iPhone Duo"];
+        NSArray *models=@[@"iphone-se",@"iphone-13",@"iphone-15-pro",@"iphone-15-pro-max",@"ipad-pro-11",@"iphone-duo"];
+        for (NSUInteger i=0;i<names.count;i++) {
+            object(modelPicker,@"addItemWithTitle:",names[i]);
+            object(get(modelPicker,@"lastItem"),@"setRepresentedObject:",models[i]);
+        }
+        boolean(modelPicker,@"setBordered:",NO);
+        integer(get(modelPicker,@"cell"),@"setArrowPosition:",0);
+        integer(get(modelPicker,@"cell"),@"setLineBreakMode:",4);
+        integer(modelPicker,@"setFocusRingType:",1);
+        integer(modelPicker,@"setAutoresizingMask:",2);
+        id font=((id (*)(id,SEL,CGFloat))objc_msgSend)(NSClassFromString(@"NSFont"),NSSelectorFromString(@"boldSystemFontOfSize:"),13.0);
+        object(modelPicker,@"setFont:",font);
+        integer(modelPicker,@"setAlignment:",0);
+        boolean(modelPicker,@"setWantsLayer:",YES);
+        modelChevron=[CAShapeLayer layer];modelChevron.fillColor=UIColor.clearColor.CGColor;
+        modelChevron.strokeColor=[UIColor colorWithWhite:0.75 alpha:1].CGColor;modelChevron.lineWidth=1.2;
+        CGMutablePathRef chevron=CGPathCreateMutable();CGPathMoveToPoint(chevron,NULL,0,0);
+        CGPathAddLineToPoint(chevron,NULL,3.5,4);CGPathAddLineToPoint(chevron,NULL,7,0);
+        modelChevron.path=chevron;CGPathRelease(chevron);
+        object(get(modelPicker,@"layer"),@"addSublayer:",modelChevron);
+        object(modelPicker,@"setAccessibilityLabel:",@"Device model");
+        object(modelPicker,@"setToolTip:",@"Change device model");
+        object(modelPicker,@"setTarget:",self);
+        ((void (*)(id,SEL,SEL))objc_msgSend)(modelPicker,NSSelectorFromString(@"setAction:"),@selector(selectModel:));
+        object(content,@"addSubview:",modelPicker);
+        modelSubtitle=((id (*)(id,SEL,id))objc_msgSend)(NSClassFromString(@"NSTextField"),NSSelectorFromString(@"labelWithString:"),@"");
+        ((void (*)(id,SEL,CGRect))objc_msgSend)(modelSubtitle,NSSelectorFromString(@"setFrame:"),CGRectMake(0,0,166,15));
+        id smallFont=((id (*)(id,SEL,CGFloat))objc_msgSend)(NSClassFromString(@"NSFont"),NSSelectorFromString(@"systemFontOfSize:"),10.0);
+        object(modelSubtitle,@"setFont:",smallFont);
+        object(modelSubtitle,@"setTextColor:",get(NSClassFromString(@"NSColor"),@"secondaryLabelColor"));
+        integer(modelSubtitle,@"setAutoresizingMask:",2);
+        integer(get(modelSubtitle,@"cell"),@"setLineBreakMode:",4);
+        object(content,@"addSubview:",modelSubtitle);
+        object(item,@"setLabel:",@"Device");
+        ((void (*)(id,SEL,CGSize))objc_msgSend)(item,NSSelectorFromString(@"setMinSize:"),CGSizeMake(95,36));
+        ((void (*)(id,SEL,CGSize))objc_msgSend)(item,NSSelectorFromString(@"setMaxSize:"),CGSizeMake(168,36));
+    } else if ([identifier isEqual:@"rotate"]) {
+        rotateButton=button(@"rotate.right",@"Rotate",@selector(rotate:));content=rotateButton;
+        object(item,@"setLabel:",@"Rotate");
+    } else if ([identifier isEqual:@"expand"]) {
+        expandButton=button(@"arrow.up.left.and.arrow.down.right",@"Expand",@selector(expand:));content=expandButton;
+        object(item,@"setLabel:",@"Expand / Collapse");
+    } else return nil;
+    object(item,@"setView:",content);
+    return item;
+}
+- (void)apply:(NSDictionary *)changes {
+    NSError *error=nil;
+    if (!IOSUsePlayConfigureDevice(changes,&error)) NSLog(@"[ios-use] Device configuration failed: %@",error.localizedDescription);
+}
+- (void)selectModel:(id)sender { [self apply:@{@"preset":get(get(sender,@"selectedItem"),@"representedObject")}]; }
+- (void)rotate:(__unused id)sender { [self apply:@{@"orientation":IOSUsePlayDeviceIsLandscape() ? @"portrait" : @"landscape-right"}]; }
+- (void)expand:(__unused id)sender { [self apply:@{@"expanded":([IOSUsePlayDeviceState()[@"expanded"] boolValue] ? @NO : @YES)}]; }
+@end
