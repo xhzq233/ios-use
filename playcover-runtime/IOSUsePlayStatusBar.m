@@ -80,37 +80,50 @@ static void drawTime(CGFloat x, CGFloat centerY, CGFloat size, UIColor *color, B
     CGSize bounds = [@"9:41" sizeWithAttributes:attributes];
     [@"9:41" drawAtPoint:CGPointMake(centered ? x-bounds.width/2 : x,centerY-bounds.height/2) withAttributes:attributes];
 }
-static UIImage *duoCluster(BOOL lightContent) {
-    static UIImage *black, *white;
+static void drawDuoCluster(BOOL lightContent, CGRect frame) {
+    static CGPDFDocumentRef black, white;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         NSBundle *bundle = [NSBundle bundleForClass:NSClassFromString(@"IOSUsePlayDeviceChromeController")];
         NSString *directory = [bundle.resourcePath stringByAppendingPathComponent:@"DeviceChrome"];
-        black = [UIImage imageWithContentsOfFile:[directory stringByAppendingPathComponent:@"duo-status-black.png"]];
-        white = [UIImage imageWithContentsOfFile:[directory stringByAppendingPathComponent:@"duo-status-white.png"]];
+        black = CGPDFDocumentCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:
+            [directory stringByAppendingPathComponent:@"duo-status-black.pdf"]]);
+        white = CGPDFDocumentCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:
+            [directory stringByAppendingPathComponent:@"duo-status-white.pdf"]]);
     });
-    return lightContent ? white : black;
+    CGPDFDocumentRef document = lightContent ? white : black;
+    if (!document) return;
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSaveGState(context);
+    CGContextTranslateCTM(context,frame.origin.x,CGRectGetMaxY(frame));
+    CGContextScaleCTM(context,frame.size.width/46,-frame.size.height/46);
+    CGContextDrawPDFPage(context,CGPDFDocumentGetPage(document,1));
+    CGContextRestoreGState(context);
 }
 
-UIImage *IOSUsePlayStatusBarImage(BOOL lightContent) {
+UIImage *IOSUsePlayStatusBarImage(BOOL lightContent, CGSize pixelSize) {
     IOSUsePlayDeviceRect frame = IOSUsePlayDeviceStatusBarRect();
     if (frame.height == 0) return nil;
     UIColor *color = lightContent ? UIColor.whiteColor : UIColor.blackColor;
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(frame.width,frame.height),NO,IOSUsePlayDeviceScale);
+    UIGraphicsBeginImageContextWithOptions(pixelSize,NO,1);
+    CGContextScaleCTM(UIGraphicsGetCurrentContext(),pixelSize.width/frame.width,pixelSize.height/frame.height);
     if (IOSUsePlayDeviceHasSideStatusBar()) {
-        // Exact raster crops from Apple Tech Talk 111466, not a hand-drawn ring
-        // or a replacement Wi-Fi glyph. See DeviceChrome/README.md for source.
+        // Apple's iOS 27 UI Kit: 48x86 component, time at (0,11), Ring at
+        // (1,35) sized 46x46. Import the original paths instead of video pixels.
         BOOL left = IOSUsePlayDeviceStatusBarOnLeft();
         CGFloat x = left ? 48 : frame.width-48;
         int turns = IOSUsePlayDeviceQuarterTurns();
         BOOL cameraAbove = !IOSUsePlayDeviceIsDuoInner() && (turns == 0 || turns == 3);
-        CGFloat timeY = cameraAbove ? 93 : 30, centerY = timeY+37;
-        drawTime(x,timeY,16,color,YES);
-        // The 56px crop's ring center is (28,26). The reference outer screen
-        // spans 548 video pixels for the 466pt preview; retain that proportion.
-        CGFloat pixelsPerPoint = 548.0/466.0;
-        [duoCluster(lightContent) drawInRect:CGRectMake(x-28/pixelsPerPoint,
-            centerY-26/pixelsPerPoint,56/pixelsPerPoint,56/pixelsPerPoint)];
+        // Outer portrait and inner landscape Tab Bar examples place the
+        // component at y=72 and y=24 respectively. Runtime layout may vary.
+        CGFloat top = cameraAbove ? 72 : 24;
+        UIFont *bold = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+        UIFont *font = [UIFont fontWithDescriptor:
+            [bold.fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignRounded] size:16];
+        NSDictionary *attributes = @{NSFontAttributeName:font,NSForegroundColorAttributeName:color};
+        CGFloat textWidth = [@"9:41" sizeWithAttributes:attributes].width;
+        [@"9:41" drawAtPoint:CGPointMake(x-textWidth/2,top+11) withAttributes:attributes];
+        drawDuoCluster(lightContent,CGRectMake(x-23,top+35,46,46));
     } else {
         UIImage *wifi = glyph(@"wifi",color), *cell = glyph(@"cellular",color), *battery = glyph(@"battery",color);
         CGFloat w=frame.width, centerY=frame.height/2.0;

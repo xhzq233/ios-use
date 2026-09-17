@@ -333,12 +333,17 @@ void IOSUsePlayDeviceChromeRefreshAppearance(void) {
     NSCParameterAssert(NSThread.isMainThread);
     if (!statusArtwork) return;
     BOOL lightContent=IOSUsePlayStatusBarUsesLightContent();
-    NSString *key=[NSString stringWithFormat:@"%@-%d-%d",@(IOSUsePlayDeviceCurrent()->name),IOSUsePlayDeviceQuarterTurns(),lightContent];
+    CGFloat backingScale=((CGFloat (*)(id,SEL))objc_msgSend)(host,NSSelectorFromString(@"backingScaleFactor"));
+    CGSize pixels=CGSizeMake(round(statusArtwork.bounds.size.width*backingScale),round(statusArtwork.bounds.size.height*backingScale));
+    NSString *key=[NSString stringWithFormat:@"%@-%d-%d-%.0fx%.0f",@(IOSUsePlayDeviceCurrent()->name),IOSUsePlayDeviceQuarterTurns(),lightContent,pixels.width,pixels.height];
     if (![statusImageKey isEqual:key]) {
-        statusImageKey=key;statusImage=IOSUsePlayStatusBarImage(lightContent);
+        // Rasterize decoration once at its actual desktop size, not at device
+        // 3x followed by another downsample into the smaller native window.
+        statusImageKey=key;statusImage=IOSUsePlayStatusBarImage(lightContent,pixels);
     }
     [CATransaction begin];[CATransaction setDisableActions:YES];
     statusArtwork.contents=(__bridge id)statusImage.CGImage;
+    statusArtwork.contentsScale=backingScale;
     statusArtwork.hidden=statusBarHidden;
     [CATransaction commit];
 }
@@ -441,9 +446,12 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     artwork.frame=CGRectMake(frame.origin.x-actualFrame.origin.x,frame.origin.y-actualFrame.origin.y,frame.size.width,frame.size.height);
     artwork.contents=(__bridge id)frameImage.CGImage;
     IOSUsePlayDeviceRect status=IOSUsePlayDeviceStatusBarRect();
-    statusArtwork.frame=CGRectMake(artwork.frame.origin.x+(frameInsets.left+status.x)*scale,
+    CGRect statusFrame=CGRectMake(artwork.frame.origin.x+(frameInsets.left+status.x)*scale,
         artwork.frame.origin.y+(frameInsets.bottom+IOSUsePlayDeviceLogicalHeight-status.y-status.height)*scaleY,
         status.width*scale,status.height*scaleY);
+    CGFloat backing=((CGFloat (*)(id,SEL))objc_msgSend)(host,NSSelectorFromString(@"backingScaleFactor"));
+    statusArtwork.frame=CGRectMake(round(statusFrame.origin.x*backing)/backing,round(statusFrame.origin.y*backing)/backing,
+        round(statusFrame.size.width*backing)/backing,round(statusFrame.size.height*backing)/backing);
     IOSUsePlayDeviceChromeRefreshAppearance();
     shapeHost();
     [CATransaction commit];

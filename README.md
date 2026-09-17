@@ -193,8 +193,10 @@ Its Hide button, next to Rotate, is off by default. Hide changes only that overl
 the device shell and App safe areas remain. The status bar is drawn in the separate
 chrome window and is excluded from CLI screenshots, captures, DOM and App input.
 Traditional bars reuse the host UIKit's signal and battery glyphs and the App's
-light/dark status style. Duo's circular cluster uses cropped pixels from Apple's
-demonstration video, not a component extracted from the Duo system runtime.
+light/dark status style. Duo's circular cluster uses original vector paths from
+Apple's iOS 27 design kit, not a component extracted from the Duo system runtime.
+Its preview spacing follows that kit's Tab Bar examples; actual system placement
+can vary with the surrounding bars and App layout.
 All values are decorative, not live device telemetry. Standard phone landscape
 previews omit the status bar when the preset has no top status region.
 
