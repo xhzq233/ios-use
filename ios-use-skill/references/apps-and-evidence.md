@@ -7,21 +7,21 @@ backend, use only `start`, `status`, and `stop` for lifecycle.
 
 ```bash
 ios-use activateApp com.example.app
-ios-use activateApp com.example.app --dom
+ios-use activateApp com.example.app -D
 ios-use activateApp com.example.app --no-wait
 ios-use activateApp com.example.app --terminateExisting --log
 ios-use terminateApp com.example.app
 ios-use open "https://example.com"
-ios-use open "https://example.com" --dom
-ios-use open "myapp://page" --bundle-id com.example.app --dom
+ios-use open "https://example.com" -D
+ios-use open "myapp://page" --bundle-id com.example.app -D
 ios-use dismissAlert --only-button
 ios-use dismissAlert --label "Allow Full Access"
 ```
 
 - Normal `activateApp` waits for the App to reach the foreground and for one fresh
-  UI snapshot. Add `--dom` to return that snapshot, or use `--no-wait` only when
-  host launch acknowledgement is sufficient.
-- `open` only dispatches the URL by default. Add `--dom` for immediate foreground
+  UI snapshot. Add `-D` to return its changes (full on first use/App change),
+  or use `--no-wait` only when host launch acknowledgement is sufficient.
+- `open` only dispatches the URL by default. Add `-D` for immediate foreground
   UI evidence, then use `waitFor` for the destination condition that matters.
   Use `--bundle-id` to select an App on a local or remote real device without
   restarting it. On Mac it must match the active App; Simulator does not support
@@ -30,7 +30,7 @@ ios-use dismissAlert --label "Allow Full Access"
   `--only-button` for a one-button alert, `--label` or `--index` for a known
   multi-button alert, and `--primary` only when the visual trailing/top heuristic
   is intentional.
-- Rotate with `ios-use rotate --to landscape-right --dom`. On Mac, use a fixed
+- Rotate with `ios-use rotate --to landscape-right -D`. On Mac, use a fixed
   device canvas (`config --mac --window-mode fixed`); rotation affects the current
   session. See `ios-use help rotate` for orientations and limitations.
 
