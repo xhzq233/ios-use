@@ -200,15 +200,17 @@ enum CoreDeviceIPv6TCPCodec {
     }
 
     static func internetChecksum(_ data: Data) -> UInt16 {
-        var sum: UInt32 = 0
-        var index = 0
-        while index + 1 < data.count {
-            sum += UInt32(readUInt16BE(data, index))
-            index += 2
+        let sumOfWords: UInt32 = data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            var sum: UInt32 = 0
+            var index = 0
+            while index + 1 < bytes.count {
+                sum += (UInt32(bytes[index]) << 8) | UInt32(bytes[index + 1])
+                index += 2
+            }
+            if index < bytes.count { sum += UInt32(bytes[index]) << 8 }
+            return sum
         }
-        if index < data.count {
-            sum += UInt32(data[index]) << 8
-        }
+        var sum = sumOfWords
         while (sum >> 16) != 0 {
             sum = (sum & 0xffff) + (sum >> 16)
         }
