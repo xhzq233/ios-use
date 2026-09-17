@@ -80,32 +80,39 @@ static void drawTime(CGFloat x, CGFloat centerY, CGFloat size, UIColor *color, B
     CGSize bounds = [@"9:41" sizeWithAttributes:attributes];
     [@"9:41" drawAtPoint:CGPointMake(centered ? x-bounds.width/2 : x,centerY-bounds.height/2) withAttributes:attributes];
 }
+static UIImage *duoCluster(BOOL lightContent) {
+    static UIImage *black, *white;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSBundle *bundle = [NSBundle bundleForClass:NSClassFromString(@"IOSUsePlayDeviceChromeController")];
+        NSString *directory = [bundle.resourcePath stringByAppendingPathComponent:@"DeviceChrome"];
+        black = [UIImage imageWithContentsOfFile:[directory stringByAppendingPathComponent:@"duo-status-black.png"]];
+        white = [UIImage imageWithContentsOfFile:[directory stringByAppendingPathComponent:@"duo-status-white.png"]];
+    });
+    return lightContent ? white : black;
+}
 
 UIImage *IOSUsePlayStatusBarImage(BOOL lightContent) {
     IOSUsePlayDeviceRect frame = IOSUsePlayDeviceStatusBarRect();
     if (frame.height == 0) return nil;
     UIColor *color = lightContent ? UIColor.whiteColor : UIColor.blackColor;
-    UIImage *wifi = glyph(@"wifi",color), *cell = glyph(@"cellular",color), *battery = glyph(@"battery",color);
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(frame.width,frame.height),NO,IOSUsePlayDeviceScale);
     if (IOSUsePlayDeviceHasSideStatusBar()) {
-        // Duo's circular status cluster, from Apple Tech Talk 111466 (7:00).
-        // This drawing and its placement are a visual preview, not iOS 27 UI.
+        // Exact raster crops from Apple Tech Talk 111466, not a hand-drawn ring
+        // or a replacement Wi-Fi glyph. See DeviceChrome/README.md for source.
         BOOL left = IOSUsePlayDeviceStatusBarOnLeft();
         CGFloat x = left ? 48 : frame.width-48;
         int turns = IOSUsePlayDeviceQuarterTurns();
         BOOL cameraAbove = !IOSUsePlayDeviceIsDuoInner() && (turns == 0 || turns == 3);
         CGFloat timeY = cameraAbove ? 93 : 30, centerY = timeY+37;
         drawTime(x,timeY,16,color,YES);
-        UIBezierPath *ring = [UIBezierPath bezierPathWithArcCenter:CGPointMake(x,centerY) radius:18.5
-            startAngle:M_PI_4 endAngle:3*M_PI_4 clockwise:NO];
-        ring.lineWidth=2.6;ring.lineCapStyle=kCGLineCapRound;[color setStroke];[ring stroke];
-        drawGlyph(wifi,x-wifi.size.width/2,centerY);
-        [color setFill];
-        for (int i=0;i<4;i++) {
-            CGFloat dx=(i-1.5)*7.5, y=centerY+18.5+(i==1 || i==2 ? 2 : 0);
-            [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(x+dx-1.6,y-1.6,3.2,3.2)] fill];
-        }
+        // The 56px crop's ring center is (28,26). The reference outer screen
+        // spans 548 video pixels for the 466pt preview; retain that proportion.
+        CGFloat pixelsPerPoint = 548.0/466.0;
+        [duoCluster(lightContent) drawInRect:CGRectMake(x-28/pixelsPerPoint,
+            centerY-26/pixelsPerPoint,56/pixelsPerPoint,56/pixelsPerPoint)];
     } else {
+        UIImage *wifi = glyph(@"wifi",color), *cell = glyph(@"cellular",color), *battery = glyph(@"battery",color);
         CGFloat w=frame.width, centerY=frame.height/2.0;
         BOOL tablet=IOSUsePlayDeviceUserInterfaceIdiom == 1 || IOSUsePlayDeviceIsDuoInner();
         BOOL duoPortrait=IOSUsePlayDeviceIsDuoInner();

@@ -193,8 +193,8 @@ Its Hide button, next to Rotate, is off by default. Hide changes only that overl
 the device shell and App safe areas remain. The status bar is drawn in the separate
 chrome window and is excluded from CLI screenshots, captures, DOM and App input.
 Traditional bars reuse the host UIKit's signal and battery glyphs and the App's
-light/dark status style. Duo's circular cluster is a drawing reconstructed from
-Apple's demonstration, not a component extracted from the Duo system runtime.
+light/dark status style. Duo's circular cluster uses cropped pixels from Apple's
+demonstration video, not a component extracted from the Duo system runtime.
 All values are decorative, not live device telemetry. Standard phone landscape
 previews omit the status bar when the preset has no top status region.
 
@@ -202,6 +202,9 @@ Duo's rounded screen clips only desktop presentation. CLI screenshots keep the
 complete rectangular App canvas: capture hosts the existing Core Animation scene
 without the desktop mask, including its Web and Metal content. The temporary
 capture window stays below the desktop and closes immediately after capture.
+For automation without a visual shell, `ios-use config --mac --device-chrome off`
+uses direct App-window capture with no temporary window. It preserves the model,
+App canvas and safe areas; DOM and input never use the capture helper.
 
 `ios-use rotate --to landscape-right --dom` also works with a running Mac App
 in fixed canvas mode. All four CLI orientations are supported; the toolbar
