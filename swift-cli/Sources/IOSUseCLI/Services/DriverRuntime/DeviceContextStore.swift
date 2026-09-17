@@ -21,6 +21,17 @@ enum DeviceContextStore {
         udid
     }
 
+    static func sameUDID(_ left: String, _ right: String) -> Bool {
+        left.replacingOccurrences(of: "-", with: "").lowercased()
+            == right.replacingOccurrences(of: "-", with: "").lowercased()
+    }
+
+    private static func validateTarget(_ info: SessionService.Info, impliedUDID: String?) throws {
+        if let impliedUDID, !sameUDID(info.udid, impliedUDID) {
+            throw CLIParseError.invalidValue("--udid \(impliedUDID) does not match the selected Device's UDID \(info.udid).")
+        }
+    }
+
     static func simulatorDeviceID(_ udid: String) -> String {
         udid
     }
@@ -120,6 +131,7 @@ enum DeviceContextStore {
             )
             if let info = try? DriverSessionStore.readInfo(paths: paths),
                deviceID(for: info) == normalized {
+                try validateTarget(info, impliedUDID: impliedUDID)
                 return Context(
                     deviceID: normalized,
                     paths: paths,
@@ -144,6 +156,7 @@ enum DeviceContextStore {
                     "No active driver for Device \(normalized). \(startHint)"
                 )
             }
+            try validateTarget(info, impliedUDID: impliedUDID)
             return Context(
                 deviceID: normalized,
                 paths: contextPaths,
@@ -152,10 +165,10 @@ enum DeviceContextStore {
             )
         }
         let active = sessions(paths: paths)
-        if let impliedUDID,
-           let context = active.first(where: {
-               $0.info.udid == impliedUDID
-           }) {
+        if let impliedUDID {
+            guard let context = active.first(where: { sameUDID($0.info.udid, impliedUDID) }) else {
+                throw CLIParseError.invalidValue("No active driver for UDID \(impliedUDID). \(startHint)")
+            }
             return context
         }
         guard active.count == 1 else {

@@ -8,6 +8,12 @@ enum RemoteDeviceService {
                 guard try DriverSessionStore.readInfo(paths: paths) == nil else {
                     throw CLIParseError.invalidValue("Device already has an active session")
                 }
+                let homePaths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": paths.root])
+                if let existing = DeviceContextStore.sessions(paths: homePaths).first(where: {
+                    DeviceContextStore.sameUDID($0.info.udid, connection.udid)
+                }) {
+                    throw CLIParseError.invalidValue("Device \(connection.udid) is already running as \(existing.deviceID). Stop that session before starting another alias.")
+                }
                 let metadata = try DriverLifecycleService.launchRealDriverHolder(
                     udid: connection.udid, bundleId: connection.driverBundleID, paths: paths, verbose: verbose
                 )
@@ -29,6 +35,39 @@ enum RemoteDeviceService {
                     throw error
                 }
             }
+        }
+    }
+
+    struct Health {
+        let status: String
+        let error: String?
+
+        var machineFields: [String: MachineValue] {
+            ["status": .string(status), "error": error.map(MachineValue.string) ?? .null]
+        }
+    }
+
+    static func health(info: SessionService.Info) -> Health {
+        guard let pid = info.holderPid.flatMap(Int32.init(exactly:)),
+              pid > 0, DriverLifecycleService.processAlive(pid: pid) else {
+            return Health(status: "stale", error: "XCTest holder is no longer running. Stop this session, then start it again.")
+        }
+        guard let socket = info.controlSocketPath, let connection = info.remoteConnection else {
+            return Health(status: "unhealthy", error: "Remote session has no holder control connection")
+        }
+        do {
+            let holder = try XCTestSessionHolderControlClient.request(socketPath: socket, command: "status", timeoutSeconds: 1)
+            guard holder.holderPid == info.holderPid,
+                  holder.sessionIdentifier == info.sessionIdentifier,
+                  holder.runnerPid == info.runnerPid,
+                  holder.status == "ready" else {
+                return Health(status: "unhealthy", error: "XCTest holder is not ready for the recorded session (\(holder.status))")
+            }
+            let fd = try TCPConnector.connect(host: connection.driver.host, port: connection.driver.port, timeoutSeconds: 1)
+            _ = posixClose(fd)
+            return Health(status: "healthy", error: nil)
+        } catch {
+            return Health(status: "unhealthy", error: String(describing: error))
         }
     }
 

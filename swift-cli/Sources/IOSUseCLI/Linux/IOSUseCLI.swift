@@ -62,12 +62,14 @@ public struct IOSUseCLI: Sendable {
                 if let id = invocation.deviceID {
                     contexts = [try DeviceContextStore.activeContext(explicitDeviceID: id, paths: paths)]
                 } else { contexts = DeviceContextStore.sessions(paths: paths) }
+                let health = contexts.map { RemoteDeviceService.health(info: $0.info) }
                 if json {
                     return MachineOutput.success(command: command, data: .object([
                         "cliVersion": .string(Self.version),
-                        "devices": .array(contexts.map { context in .object([
+                        "devices": .array(zip(contexts, health).map { context, health in .object([
                             "deviceId": .string(context.deviceID), "deviceType": .string(context.info.deviceType),
-                            "status": .string("running"),
+                            "status": .string(health.status),
+                            "error": health.error.map(MachineValue.string) ?? .null,
                             "lifecycleOwner": .string("ios-use"),
                             "driverHost": context.info.driverHost.map(MachineValue.string) ?? .null,
                             "driverPort": context.info.driverPort.map(MachineValue.integer) ?? .null,
@@ -75,10 +77,19 @@ public struct IOSUseCLI: Sendable {
                         ]) })
                     ]))
                 }
-                let output = contexts.map { "\($0.deviceID) running (ios-use) \($0.info.driverHost ?? ""):\($0.info.driverPort ?? 0)" }.joined(separator: "\n")
+                let output = zip(contexts, health).map { context, health in "\(context.deviceID) \(health.status) (ios-use) \(context.info.driverHost ?? ""):\(context.info.driverPort ?? 0)" + (health.error.map { " — \($0)" } ?? "") }.joined(separator: "\n")
                 return CLIResult(exitCode: 0, stdout: contexts.isEmpty ? "No active Devices. Use start --connection <file>.\n" : output + "\n")
             case .driver, .appLifecycle, .stop, .apps, .install, .uninstall, .open:
-                let context = try DeviceContextStore.activeContext(explicitDeviceID: invocation.deviceID, paths: paths)
+                let requestedUDID: String?
+                switch invocation.command {
+                case .apps(let options): requestedUDID = options.udid
+                case .install(let options): requestedUDID = options.udid
+                case .uninstall(let options): requestedUDID = options.udid
+                case .open(let options): requestedUDID = options.session.udid
+                case .appLifecycle(let options): requestedUDID = options.session.udid
+                default: requestedUDID = nil
+                }
+                let context = try DeviceContextStore.activeContext(explicitDeviceID: invocation.deviceID, impliedUDID: requestedUDID, paths: paths)
                 guard context.info.remoteConnection != nil else {
                     throw CLIParseError.invalidValue("Linux requires a remote device connection.")
                 }

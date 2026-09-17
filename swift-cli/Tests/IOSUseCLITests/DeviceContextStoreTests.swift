@@ -115,9 +115,9 @@ final class DeviceContextStoreTests: XCTestCase {
             ))
 
             SessionService.clear(paths: second)
-            XCTAssertEqual(try DeviceContextStore.activeContext(
+            XCTAssertThrowsError(try DeviceContextStore.activeContext(
                 explicitDeviceID: nil, impliedUDID: "MISSING", paths: paths
-            ).paths, first)
+            ))
             try Data("{".utf8).write(to: URL(fileURLWithPath: first.driverLock))
             XCTAssertThrowsError(try DeviceContextStore.activeContext(
                 explicitDeviceID: "Desk-A", paths: paths

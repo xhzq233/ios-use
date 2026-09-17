@@ -47,6 +47,14 @@ public enum StatusService {
         }
 
         let sessionContexts = DeviceContextStore.sessions(paths: paths)
+        // Reuse this command's probes in both summary and per-device output.
+        let macHealth = Dictionary(uniqueKeysWithValues: sessionContexts.filter {
+            $0.info.deviceType == PlayCoverSessionService.deviceType
+        }.map { ($0.paths.driverLock, playCoverRuntimeHealth(info: $0.info)) })
+        let remoteHealth = Dictionary(uniqueKeysWithValues: sessionContexts.filter {
+            $0.info.remoteConnection != nil
+        }.map { ($0.paths.driverLock, RemoteDeviceService.health(info: $0.info)) })
+        let readiness = macReadiness(paths: paths)
         let driver: MachineValue
         if sessionContexts.count > 1 {
             driver = .object([
@@ -59,9 +67,7 @@ public enum StatusService {
         } else {
         let driverPaths = sessionContexts.first?.paths ?? paths
         do {
-            if let info = try SessionService.readDriverLockInfo(
-                paths: driverPaths
-            ) {
+            if let info = try sessionContexts.first?.info ?? SessionService.readDriverLockInfo(paths: driverPaths) {
                 let config = configured[info.udid]
                 var fields: [String: MachineValue] = [
                     "status": .string("running"),
@@ -85,12 +91,12 @@ public enum StatusService {
                     "macLogPath": info.macLogPath.map(MachineValue.string) ?? .null,
                     "macDevice": macDeviceValue(info: info),
                     "driverVersion": config.flatMap(\.driverVersion).map(MachineValue.string) ?? .null,
-                    "versionMatchesCli": info.deviceType == PlayCoverSessionService.deviceType
+                    "versionMatchesCli": info.deviceType == PlayCoverSessionService.deviceType || config?.driverVersion == nil
                         ? .null
                         : .boolean(config?.driverVersion == IOSUseCLI.version),
                 ]
                 if info.deviceType == PlayCoverSessionService.deviceType {
-                    switch playCoverRuntimeHealth(info: info) {
+                    switch macHealth[driverPaths.driverLock] ?? playCoverRuntimeHealth(info: info) {
                     case .healthy(let payload):
                         fields["status"] = .string("healthy")
                         fields["runtime"] = playCoverRuntimeMachineValue(payload)
@@ -140,6 +146,10 @@ public enum StatusService {
                         ])
                         warnings.append("Mac session is stale: \(error)")
                     }
+                }
+                if let health = remoteHealth[driverPaths.driverLock] {
+                    fields.merge(health.machineFields) { _, new in new }
+                    if let error = health.error { warnings.append("Remote Driver: \(error)") }
                 }
                 driver = .object(fields)
             } else {
@@ -213,6 +223,9 @@ public enum StatusService {
             configured: ConfigService.listEntries(paths: paths),
             sessions: sessionContexts,
             paths: paths,
+            macHealth: macHealth,
+            remoteHealth: remoteHealth,
+            readiness: readiness,
             warnings: &warnings
         )
         return (
@@ -222,7 +235,7 @@ public enum StatusService {
                 "devices": .array(aggregateDevices),
                 "connectedDevices": .array(deviceValues),
                 "driver": driver,
-                "macBackend": macReadinessMachineValue(paths: paths),
+                "macBackend": macReadinessMachineValue(readiness),
                 "configuredMacDevice": (try? PlayCoverDevicePreset.configured(paths: paths).machineData) ?? .null,
                 "configuredDevices": .array(configValues),
             ]),
@@ -246,6 +259,9 @@ public enum StatusService {
         configured: [DeviceConfigEntry],
         sessions: [DeviceContextStore.Context],
         paths: IOSUsePaths,
+        macHealth: [String: PlayCoverRuntimeHealth],
+        remoteHealth: [String: RemoteDeviceService.Health],
+        readiness: MacReadiness,
         warnings: inout [String]
     ) -> [MachineValue] {
         var connectedDevices = realDevices
@@ -318,7 +334,6 @@ public enum StatusService {
             records[context.deviceID] = record
         }
 
-        let macReadiness = macReadiness(paths: paths)
         var mac = records[DeviceContextStore.macDeviceID]
             ?? AggregateDevice(
                 id: DeviceContextStore.macDeviceID,
@@ -338,11 +353,11 @@ public enum StatusService {
         return records.keys.sorted().compactMap { id in
             guard let record = records[id] else { return nil }
             let driver = record.session.map {
-                aggregateDriverValue(context: $0)
+                aggregateDriverValue(context: $0, macHealth: macHealth[$0.paths.driverLock], remoteHealth: remoteHealth[$0.paths.driverLock])
             } ?? .object(["status": .string("notRunning")])
             let isMac = id == DeviceContextStore.macDeviceID
             let isConfigured = isMac
-                ? macReadiness.ready
+                ? readiness.ready
                 : record.config != nil
             let updateRequired = isMac
                 ? false
@@ -370,7 +385,9 @@ public enum StatusService {
     }
 
     private static func aggregateDriverValue(
-        context: DeviceContextStore.Context
+        context: DeviceContextStore.Context,
+        macHealth: PlayCoverRuntimeHealth?,
+        remoteHealth: RemoteDeviceService.Health?
     ) -> MachineValue {
         let info = context.info
         var fields: [String: MachineValue] = [
@@ -391,7 +408,7 @@ public enum StatusService {
         ]
         if info.deviceType == PlayCoverSessionService.deviceType {
             fields["macDevice"] = macDeviceValue(info: info)
-            switch playCoverRuntimeHealth(info: info) {
+            switch macHealth ?? playCoverRuntimeHealth(info: info) {
             case .healthy(let payload):
                 fields["status"] = .string("healthy")
                 if let state = payload.deviceState { fields["macDevice"] = state.machineData }
@@ -403,6 +420,7 @@ public enum StatusService {
                 fields["error"] = .string(error)
             }
         }
+        if let remoteHealth { fields.merge(remoteHealth.machineFields) { _, new in new } }
         return .object(fields)
     }
 
@@ -523,9 +541,8 @@ public enum StatusService {
     }
 
     private static func macReadinessMachineValue(
-        paths: IOSUsePaths
+        _ readiness: MacReadiness
     ) -> MachineValue {
-        let readiness = macReadiness(paths: paths)
         return .object([
             "status": .string(
                 readiness.ready ? "ready" : "unavailable"
@@ -730,6 +747,11 @@ public enum StatusService {
                     parts[0] = "stale"
                     parts.append("runtime: stale (\(error))")
                 }
+            }
+            if info.remoteConnection != nil {
+                let health = RemoteDeviceService.health(info: info)
+                parts[0] = health.status
+                if let error = health.error { parts.append("remote: \(error)") }
             }
             return ["  - \(parts.joined(separator: " | "))"]
         } catch {

@@ -288,6 +288,7 @@ public struct IOSUseCLI: Sendable {
     private struct InvocationTarget {
         let paths: IOSUsePaths
         let startUDID: String?
+        var remoteConnection: RemoteDeviceConnection? = nil
     }
 
     private func resolveInvocationTarget(
@@ -412,7 +413,8 @@ public struct IOSUseCLI: Sendable {
             )
             return InvocationTarget(
                 paths: context.paths,
-                startUDID: nil
+                startUDID: nil,
+                remoteConnection: context.info.remoteConnection
             )
 
         case .nslog, .proxy(.read):
@@ -422,16 +424,19 @@ public struct IOSUseCLI: Sendable {
                         explicitDeviceID,
                         paths: paths
                     )
+                let scoped = try paths.deviceContext(normalized)
                 return InvocationTarget(
-                    paths: try paths.deviceContext(normalized),
-                    startUDID: nil
+                    paths: scoped,
+                    startUDID: nil,
+                    remoteConnection: SessionService.read(paths: scoped)?.remoteConnection
                 )
             }
             let active = DeviceContextStore.sessions(paths: paths)
             if active.count == 1 {
                 return InvocationTarget(
                     paths: active[0].paths,
-                    startUDID: nil
+                    startUDID: nil,
+                    remoteConnection: active[0].info.remoteConnection
                 )
             }
             if active.count > 1 {
@@ -488,7 +493,8 @@ public struct IOSUseCLI: Sendable {
             )
             return InvocationTarget(
                 paths: context.paths,
-                startUDID: nil
+                startUDID: nil,
+                remoteConnection: context.info.remoteConnection
             )
 
         case .du, .status, .config,
@@ -514,17 +520,19 @@ public struct IOSUseCLI: Sendable {
             )
             return InvocationTarget(
                 paths: context.paths,
-                startUDID: nil
+                startUDID: nil,
+                remoteConnection: context.info.remoteConnection
             )
         }
         let active = DeviceContextStore.sessions(paths: paths)
         if let impliedUDID {
             if let context = active.first(where: {
-                $0.info.udid == impliedUDID
+                DeviceContextStore.sameUDID($0.info.udid, impliedUDID)
             }) {
                 return InvocationTarget(
                     paths: context.paths,
-                    startUDID: nil
+                    startUDID: nil,
+                    remoteConnection: context.info.remoteConnection
                 )
             }
             return InvocationTarget(paths: paths, startUDID: nil)
@@ -532,7 +540,8 @@ public struct IOSUseCLI: Sendable {
         if active.count == 1 {
             return InvocationTarget(
                 paths: active[0].paths,
-                startUDID: nil
+                startUDID: nil,
+                remoteConnection: active[0].info.remoteConnection
             )
         }
         if active.count > 1 {
@@ -593,7 +602,7 @@ public struct IOSUseCLI: Sendable {
                 json: json
             )
         }
-        return RemoteDeviceConnection.$current.withValue(SessionService.read(paths: target.paths)?.remoteConnection) {
+        return RemoteDeviceConnection.$current.withValue(target.remoteConnection) {
             executeTarget(parsed, target: target, deviceID: deviceID, json: json,
                           explicitMacSigningIdentity: explicitMacSigningIdentity)
         }

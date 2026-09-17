@@ -811,7 +811,7 @@ enum RemoteServiceDiscoveryClient {
 }
 
 enum TCPConnector {
-    static func connect(host: String, port: Int) throws -> Int32 {
+    static func connect(host: String, port: Int, timeoutSeconds: Int = 10) throws -> Int32 {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = posixStreamSocketType
@@ -829,7 +829,7 @@ enum TCPConnector {
             let fd = posixSocket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
             if fd >= 0 {
                 setSocketNoSigPipe(fd)
-                if posixConnect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0 {
+                if posixConnect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen, timeoutSeconds: timeoutSeconds) {
                     return fd
                 }
                 lastErrno = errno
