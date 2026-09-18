@@ -12,7 +12,7 @@ ios-use start <udid>
 
 For remote devices on macOS or Linux, obtain the provider's device connection
 file and use `ios-use start -d phone --connection device-connection.json`.
-See [Remote device services](#remote-device-services-prepare-210) below.
+See [Remote device services](#remote-device-services) below.
 
 For the Mac backend, complete its one-time setup and start an App:
 
@@ -155,7 +155,7 @@ Never place passwords, two-factor codes, certificates, or complete provisioning
 profiles in commands, logs, artifacts, or reports. A full UDID is required in some
 local commands; redact it before sharing logs, artifacts, or reports.
 
-## Remote device services (Prepare 210)
+## Remote device services
 
 When the provider supplies a paired usbmux endpoint and Driver endpoint, use
 `ios-use start -d phone --connection device-connection.json`. The JSON contains
