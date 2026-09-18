@@ -94,8 +94,8 @@ Redact device identifiers and signed URLs before sharing artifacts.
 
 ## Linux hosts
 
-Linux x86_64 supports remote devices through a provider connection. Use a
-Prepare 210 build with matching Driver; published Alpha 4 lacks this interface.
+Linux x86_64 supports remote devices through a provider connection. Use
+ios-use 2.1.0 or newer with a matching Driver.
 The provider signs/installs the Driver and keeps the device connection alive:
 
 ```bash

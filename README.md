@@ -135,7 +135,7 @@ Screenshots default to JPEG output without OCR on both hosts. On macOS, use
 remains accepted; Linux has no OCR engine. These defaults apply to local and
 remote targets from Alpha 4; earlier macOS releases default to OCR enabled.
 
-### Remote Apple device services (Prepare 210)
+### Remote Apple device services
 
 A provider can expose a paired usbmux endpoint and a Driver TCP endpoint.
 Save its connection description as `device-connection.json`:
