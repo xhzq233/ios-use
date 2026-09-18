@@ -1,9 +1,13 @@
 # ios-use v2.1.0
 
-> Unreleased. This is a version-preparation draft, not a published release.
-
 ## Highlights
 
+- Support Linux x86_64 alongside macOS arm64. With `start --connection`,
+  ios-use owns remote XCTest start/stop, App installation and management,
+  `activateApp --log` stdout/stderr capture, URL opening and UI commands;
+  a provider maintains the paired device connection and supplies signed Apps.
+- Select an iOS URL handler with `open --bundle-id`. On Mac this targets the
+  active App and rejects a different bundle ID.
 - Switch the running Mac App's device preset with `config --mac --device-model`:
   iPhone SE, iPhone 13, iPhone 15 Pro/Pro Max, iPad Pro 11-inch and iPhone Duo.
   The native toolbar also selects models, rotates the viewport, and folds or
@@ -13,6 +17,12 @@
 - Bundle the original Simulator device chrome assets in the Runtime framework,
   alongside the Duo preview artwork. A spaced native toolbar keeps controls
   clear of the device frame, including tall iPhone SE bezels.
+- Rotate from the CLI or toolbar; show optional status-bar overlays outside
+  CLI screenshots. Screenshots capture the current App window with transparent
+  corners filled black, without device chrome or status overlays.
+- Default screenshot OCR off; request it explicitly with `--ocr`.
+- Allow Mac UI commands in background states and attach scene/window context
+  to failures. Fresh rendering while locked/backgrounded remains under investigation.
 - Run multiple Devices in one `IOS_USE_HOME`, with separate Driver sessions,
   logs, and artifacts. Use the stable Device IDs shown by `status` with
   `--device` / `-d` when more than one Device is running.
@@ -45,6 +55,8 @@
 
 ## Compatibility and Upgrade Notes
 
+- Remove UI-only `attach` and `start --host/--port`. Remote sessions use
+  `start --connection` and native device services.
 - Remove `nslog` and its NSLogger receiver, daemon, state and bundled TLS
   credentials. Use `activateApp <bundleId> --terminateExisting --log` for App
   stdout/stderr, `start --mac --log` on Mac, or `oslog` for unified logging.
@@ -60,8 +72,11 @@
   With exactly one running Device, the selector remains optional.
 - Existing single-Device state remains readable and moves to the per-Device
   layout after its next stop/start.
-- After this version is published and installed, refresh configured real-device
-  Drivers with `ios-use config --udid <device-udid>` before starting them with
-  the new CLI. This preparation does not install or update any Driver.
-- No release tag, release assets, or GitHub Release are created by this version
-  preparation. Use the latest published release until v2.1.0 is available.
+- After installing, refresh configured real-device Drivers with
+  `ios-use config --udid <device-udid>` before starting them with the new CLI.
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0/scripts/install.sh | bash -s -- --version v2.1.0
+```

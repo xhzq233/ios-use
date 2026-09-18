@@ -22,7 +22,6 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 ```
 
 The CLI and Skill come from the same release, including when installing latest.
-Linux users currently need the explicit alpha install below.
 
 By default, the installer links `~/.agents/skills/ios-use` to
 `~/.ios-use/skill`. Add `--no-skill` to skip creating the default link; existing
@@ -37,19 +36,19 @@ ln -s "$HOME/.ios-use/skill" .agents/skills/ios-use
 Install a specific release or build from source:
 
 ```bash
-# Opt in to the 2.1.0 alpha pre-release.
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0-alpha.5/scripts/install.sh | bash -s -- --version v2.1.0-alpha.5
+# Install version 2.1.0.
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.0/scripts/install.sh | bash -s -- --version v2.1.0
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
 ### Linux remote client
 
-Version `v2.1.0-alpha.5` supports native remote XCTest and Apple device
-services on Linux x86_64. Install the alpha with the command above, or build
-the development branch with Swift 6.2+ and standard Linux build tools:
+Version `v2.1.0` supports native remote XCTest and Apple device
+services on Linux x86_64. Install with the command above, or build from
+source with Swift 6.2+ and standard Linux build tools:
 
 ```bash
-git clone --branch codex/prepare-210 https://github.com/xhzq233/ios-use.git
+git clone --branch v2.1.0 https://github.com/xhzq233/ios-use.git
 cd ios-use
 bash scripts/build_swift_cli.sh
 ./ios-use start -d phone --connection device-connection.json
