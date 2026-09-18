@@ -2,22 +2,6 @@ import XCTest
 import IOSUseCLI
 
 final class CLIParserTests: XCTestCase {
-    func testDiffObservationOptionsAndConflicts() throws {
-        XCTAssertEqual(try CLIParser.parse(["dom", "--diff"]),
-                       .driver(.dom(raw: false, fresh: true, waitQuiescence: false, diff: true)))
-        XCTAssertEqual(try CLIParser.parse(["tap", "Continue", "-D"]),
-                       .driver(.tap(target: "Continue", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: .diffAfterQuiescence)))
-        XCTAssertEqual(try CLIParser.parse(["home", "-D", "0.2s"]),
-                       .driver(.home(postDom: .diffAfterMilliseconds(200))))
-        for arguments in [["dom", "--raw", "--diff"], ["tap", "Continue", "--dom", "-D"],
-                          ["tap", "Continue", "-D", "--dom"], ["input", "--content", "test", "-D", "99ms"],
-                          ["activateApp", "example", "--no-wait", "-D"], ["open", "example://", "-D", "--dom"]] {
-            XCTAssertThrowsError(try CLIParser.parse(arguments))
-        }
-        guard case .open(let options) = try CLIParser.parse(["open", "example://", "-D", "250"]) else { return XCTFail("Expected open") }
-        XCTAssertEqual(options.postDom, .diffAfterMilliseconds(250))
-    }
-
     func testParsesDeviceAndConfigCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["status", "--verbose"]),
@@ -808,11 +792,11 @@ final class CLIParserTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--fresh"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence or --diff"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--wait-quiescence"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence or --diff"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--ocr"])) { error in
@@ -941,7 +925,7 @@ final class CLIParserTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["activateApp", "com.example", "--dom", "--no-wait"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("activateApp --dom/-D cannot be combined with --no-wait"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("activateApp --dom cannot be combined with --no-wait"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["tap", "67", "269", "270"])) { error in

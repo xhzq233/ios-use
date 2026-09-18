@@ -5,7 +5,7 @@ enum AppLifecycleService {
     struct Result {
         let message: String
         let didTerminateApp: Bool?
-        var dom: ForyDomPayload?
+        let dom: ForyDomPayload?
         let targetUdid: String?
         let deviceType: String?
         let readiness: ForyWaitAppForegroundPayload?
@@ -92,13 +92,7 @@ enum AppLifecycleService {
     /// `--no-wait` it returns at L0 without contacting the driver.
     static func runWithReadiness(options: AppLifecycleOptions, paths: IOSUsePaths) throws -> Result {
         guard options.action == .activate else {
-            if options.postDom != nil { _ = try SessionService.requireDriverLock(paths: paths) }
-            var result = try run(options: options, paths: paths)
-            if let mode = options.postDom {
-                do { result.dom = try DriverCommandExecutor.collectPostDom(mode: mode, paths: paths) }
-                catch { throw ReadinessError(hostResult: result, underlying: error) }
-            }
-            return result
+            return try run(options: options, paths: paths)
         }
         if options.noWait {
             return try run(options: options, paths: paths)
@@ -118,7 +112,7 @@ enum AppLifecycleService {
         // Host mutation first (may start log recording).
         let hostResult = try run(options: options, paths: paths)
         // Then wait for L2 through the driver.
-        var readiness: ForyWaitAppForegroundPayload
+        let readiness: ForyWaitAppForegroundPayload
         do {
             readiness = try DriverCommandExecution.withLockedClient(paths: paths, verbose: options.session.verbose) { client in
                 try client.waitAppForeground(
@@ -126,9 +120,6 @@ enum AppLifecycleService {
                     timeout: 0,
                     returnDom: options.dom
                 )
-            }
-            if let mode = options.postDom, readiness.snapshotReady {
-                readiness.dom = try DriverCommandExecutor.collectPostDom(mode: mode, paths: paths)
             }
         } catch {
             throw ReadinessError(hostResult: hostResult, underlying: error)
@@ -159,7 +150,7 @@ enum AppLifecycleService {
         )
     }
 
-    static func machineData(options: AppLifecycleOptions, result: Result, observation: DomObservation.Output? = nil) -> MachineValue {
+    static func machineData(options: AppLifecycleOptions, result: Result) -> MachineValue {
         let mutationDispatched = options.action == .activate || result.didTerminateApp != false
         var data: [String: MachineValue] = [
             "action": .string(options.action.commandName),
@@ -172,14 +163,17 @@ enum AppLifecycleService {
             "logCapturePid": result.logCapturePid.map { .integer(Int($0)) } ?? .null,
         ]
         if let readiness = result.readiness {
-            var fields = readinessFields(readiness)
-            fields["dom"] = observation?.value ?? readiness.dom.map(machineDom) ?? .null
-            data["readiness"] = .object(fields)
+            data["readiness"] = machineReadiness(readiness)
         } else {
             data["readiness"] = .null
-            if let observation { data["postDom"] = observation.value }
         }
         return .object(data)
+    }
+
+    static func machineReadiness(_ readiness: ForyWaitAppForegroundPayload) -> MachineValue {
+        var fields = readinessFields(readiness)
+        fields["dom"] = readiness.dom.map(machineDom) ?? .null
+        return .object(fields)
     }
 
     static func readinessFields(_ readiness: ForyWaitAppForegroundPayload) -> [String: MachineValue] {

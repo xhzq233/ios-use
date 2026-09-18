@@ -106,7 +106,7 @@ enum CLIHelp {
             Show connected devices, capture processes, proxy state, config state,
             and read-only Mac backend resource/signer/session readiness.
             Session lifecycleOwner is ios-use for local and remote runtimes.
-            Remote status checks holder identity/readiness and Driver TCP reachability. Use dom to verify UI responsiveness.
+            Run dom to check remote responsiveness.
 
             Options:
               --verbose    Enable verbose device output
@@ -308,20 +308,16 @@ enum CLIHelp {
             """
         case "dom":
             return driverHelp(
-                usage: "ios-use dom [--raw] [--fresh] [--wait-quiescence] [--diff]",
+                usage: "ios-use dom [--raw] [--fresh] [--wait-quiescence]",
                 summary: "Print the current UI element tree.",
                 options: [
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
                     "--fresh             Ignore cached snapshot and rebuild",
-                    "--diff              Fresh observation: show changes since the Device's last DOM; first call returns full",
                     "--wait-quiescence   Request UI-idle waiting, then refresh the tree",
                 ],
                 footer: """
                 Use labels/values as action targets, not entire DOM lines. --dom on an action already returns an updated tree.
-                Use plain dom for a full tree. App/session/size changes reset diff; unchanged is explicit.
-                Leading numeric IDs identify observed nodes, not tap targets. Updates give new values; removed IDs are ranges.
-                Use current labels/values for actions; frame updates replace old coordinates.
-                Example: ios-use dom --diff
+                Example: ios-use dom --fresh
                 """
             )
         case "ui-tree":
@@ -391,7 +387,7 @@ enum CLIHelp {
             """
         case "tap":
             return driverHelp(
-                usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [duration] | -D [duration]]",
+                usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
                 summary: "Tap a label/value from DOM, or a coordinate such as 67,269.",
                 options: [
                     "--offset <x,y>        Pixel offset from target top-left",
@@ -399,7 +395,6 @@ enum CLIHelp {
                     "--traits <traits>     Comma-separated trait filter",
                     "--cindex <index>      Select the Nth child under a matched parent",
                     postDOMOption,
-                    diffDOMOption,
                 ],
                 footer: """
                 Examples:
@@ -409,20 +404,19 @@ enum CLIHelp {
             )
         case "longpress":
             return driverHelp(
-                usage: "ios-use longpress <target> [--duration <duration>] [--traits <traits>] [--cindex <index>] [--dom [duration] | -D [duration]]",
+                usage: "ios-use longpress <target> [--duration <duration>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
                 summary: "Long press an element label or x,y coordinate.",
                 options: [
                     "--duration <duration> Press duration; accepts s/ms suffixes and defaults to milliseconds",
                     "--traits <traits>  Comma-separated trait filter",
                     "--cindex <index>   Select the Nth child under a matched parent",
                     postDOMOption,
-                    diffDOMOption,
                 ],
                 footer: "Example: ios-use longpress \"照片\" --duration 800ms --dom"
             )
         case "input":
             return driverHelp(
-                usage: "ios-use input [--tap <target>] --content <text> [--delete <n>] [--enter] [--traits <traits>] [--cindex <index>] [--dom [duration] | -D [duration]]",
+                usage: "ios-use input [--tap <target>] --content <text> [--delete <n>] [--enter] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
                 summary: "Insert text at the cursor; existing text is not replaced automatically.",
                 options: [
                     "--tap <target>     Optional label or x,y target to tap before typing",
@@ -432,13 +426,12 @@ enum CLIHelp {
                     "--traits <traits>  Comma-separated trait filter for label tap target",
                     "--cindex <index>   Select the Nth child under a label tap target",
                     postDOMOption,
-                    diffDOMOption,
                 ],
                 footer: "Example: ios-use input --tap \"搜索\" --content \"蓝牙\" --dom"
             )
         case "swipe":
             return driverHelp(
-                usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [duration] | -D [duration]]",
+                usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
                 summary: "Scroll to a DOM label, or use a fixed distance when no label is available.",
                 options: [
                     "--to <label>       Target element",
@@ -448,7 +441,6 @@ enum CLIHelp {
                     "--traits <traits>  Comma-separated trait filter for --to",
                     "--cindex <index>   Select the Nth child under a matched --to parent",
                     postDOMOption,
-                    diffDOMOption,
                 ],
                 footer: """
                 Use the target's exact label and a visible anchor in the same list or panel:
@@ -459,7 +451,7 @@ enum CLIHelp {
             )
         case "activateApp":
             return """
-            Usage: ios-use activateApp <bundleId> [--udid <udid>] [--terminateExisting] [--log] [--dom | -D [duration] | --no-wait] [--verbose] [--json]
+            Usage: ios-use activateApp <bundleId> [--udid <udid>] [--terminateExisting] [--log] [--dom | --no-wait] [--verbose] [--json]
 
             Activate an app by bundle ID using host-side device services.
             By default, waits for the app to reach foreground and for one fresh UI snapshot.
@@ -474,7 +466,6 @@ enum CLIHelp {
               --terminateExisting    Relaunch the app instead of activating an existing process
               --log                  Capture stdout/stderr; requires --terminateExisting
               --dom                  Return the fresh DOM already obtained by readiness
-              -D [duration]          Return DOM changes after idle, or a fixed delay (ms/s; default ms; min 100ms)
               --no-wait              Return after host launch dispatch without contacting the Driver
               --verbose              Enable verbose output
               --json                 Print the common machine-readable envelope
@@ -482,7 +473,7 @@ enum CLIHelp {
             """
         case "terminateApp":
             return """
-            Usage: ios-use terminateApp <bundleId> [--udid <udid>] [-D [duration]] [--verbose] [--json]
+            Usage: ios-use terminateApp <bundleId> [--udid <udid>] [--verbose] [--json]
 
             Terminate an app by bundle ID using host-side device services.
             Defaults to the active driver.lock UDID when --udid is omitted.
@@ -492,31 +483,28 @@ enum CLIHelp {
             Options:
               --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
               --verbose      Enable verbose output
-              -D [duration]  Observe DOM changes after termination (requires an active Driver)
               --json         Print the common machine-readable envelope
 
             """
         case "home":
             return driverHelp(
-                usage: "ios-use home [-D [duration]]",
+                usage: "ios-use home",
                 summary: "Press the Home button.",
-                options: [diffDOMOption],
                 footer: "The Mac backend has no Home action. Use start/status/stop; restart it with stop, then start --mac."
             )
         case "rotate":
             return driverHelp(
-                usage: "ios-use rotate --to <orientation> [--dom [duration] | -D [duration]]",
+                usage: "ios-use rotate --to <orientation> [--dom [duration]]",
                 summary: "Rotate the device and verify the resulting orientation.",
                 options: [
                     "--to <orientation>  portrait, portrait-upside-down, landscape-left, or landscape-right",
                     postDOMOption,
-                    diffDOMOption,
                 ],
                 footer: "An orientation-locked App may keep its layout. On Mac, rotates the fixed device preview in the current App; use config --mac --window-mode fixed first if resizable. Rotation is session-only. Duo keeps physical orientation separate from the inner display's aspect."
             )
         case "open":
             return """
-            Usage: ios-use open <url> [--bundle-id <bundleId>] [--udid <udid>] [--dom | -D [duration]] [--verbose] [--json]
+            Usage: ios-use open <url> [--bundle-id <bundleId>] [--udid <udid>] [--dom] [--verbose] [--json]
 
             Open a URL on the device using host-side device services.
             Defaults to the active driver.lock UDID when --udid is omitted.
@@ -525,7 +513,6 @@ enum CLIHelp {
               --bundle-id <bundleId>  Deliver the URL to this App without terminating its running instance
               --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
               --dom          Return the first fresh DOM available after URL dispatch
-              -D [duration]  Return DOM changes after idle, or a fixed delay (ms/s; default ms; min 100ms)
               --verbose      Enable verbose output
               --json         Print the common machine-readable envelope
 
@@ -540,7 +527,7 @@ enum CLIHelp {
             """
         case "dismissAlert":
             return driverHelp(
-                usage: "ios-use dismissAlert [--index <index> | --label <label> | --primary | --only-button] [--scope springboard|app|any] [--wait <duration>] [-D [duration]]",
+                usage: "ios-use dismissAlert [--index <index> | --label <label> | --primary | --only-button] [--scope springboard|app|any] [--wait <duration>]",
                 summary: "Dismiss an alert only when its button selection is explicit or unambiguous.",
                 options: [
                     "--index <index>          Select the exact XCTest query-result index",
@@ -548,7 +535,6 @@ enum CLIHelp {
                     "--primary                Select the visual trailing/top button heuristic",
                     "--only-button            Require exactly one hittable button; this is the default",
                     "--scope <scope>           springboard, app, or any; defaults to any",
-                    diffDOMOption,
                     "--wait <duration>         Bounded alert wait; defaults to 0 (one check), maximum 30s",
                 ]
             )
@@ -601,7 +587,6 @@ enum CLIHelp {
         return CLIResult(exitCode: 0, stdout: help)
     }
 
-    private static let diffDOMOption = "-D [duration]        Like --dom, but show only changes; first observation or changed context returns full"
     private static let postDOMOption = "--dom [duration]      Return updated UI; bare flag waits for idle, value sets a fixed delay (ms/s; default ms; min 100ms)"
 
     private static func driverHelp(usage: String, summary: String, options: [String] = [], footer: String? = nil) -> String {

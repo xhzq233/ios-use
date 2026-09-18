@@ -4,9 +4,6 @@
 
 ## Highlights
 
-- Add `dom --diff` and `-D [duration]` on UI mutations. Each Device session keeps
-  one observation history, preserves full element lookup, and resets to full
-  after context changes.
 - Switch the running Mac App's device preset with `config --mac --device-model`:
   iPhone SE, iPhone 13, iPhone 15 Pro/Pro Max, iPad Pro 11-inch and iPhone Duo.
   The native toolbar also selects models, rotates the viewport, and folds or
