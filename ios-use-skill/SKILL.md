@@ -35,6 +35,9 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   Keep the initial DOM and subsequent changes in context. If that context is
   missing (for example after compaction or a handoff), run plain `dom` to recover
   a full view; use `--dom` when an action needs a self-contained full result.
+  Unchanged nodes retain their last observed state. Combine earlier observations
+  with subsequent changes to verify multiple results; a full DOM is not needed
+  just to display those already-observed results together.
 - First diff use, changed App/session/size, or broad changes returns full
   automatically. Each Device session keeps one history; diff paths are positions,
   not tap IDs. Use the latest labels/values for actions.
@@ -43,7 +46,8 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   idle; `-D 300ms` uses a fixed delay. Neither an unchanged DOM nor native idle
   proves App readiness; wait on an observed page/loading condition when needed.
 - After navigation, scrolling or a failed lookup, refresh stale context before
-  choosing the next action. Read inline target/candidate/rejection/suggestion/alert
+  choosing the next action; the action's fresh `-D` output already does this.
+  Read inline target/candidate/rejection/suggestion/alert
   details first; request `dom --fresh` or a screenshot when more context is needed.
 - Keep page-dependent actions sequential. Batch known steps with `&&` so failure
   stops later mutations; inspect intermediate UI when the next step is not known.
