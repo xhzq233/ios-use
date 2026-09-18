@@ -39,7 +39,7 @@ public enum OSLogService {
             if !shouldPoll || !lines.isEmpty {
                 break
             }
-            usleep(useconds_t(IOSUseProtocol.nslogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
+            usleep(useconds_t(IOSUseProtocol.oslogPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
         } while Date() < deadline
         return formatLogOutput(lines)
     }

@@ -1,3 +1,5 @@
+#import "IOSUsePlayDeviceConfiguration.h"
+#import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayRuntimeDOM.h"
 #import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlayAppKitBridge.h"
@@ -3169,8 +3171,7 @@ static NSArray<UIWindow *> *IOSUseDOMActiveWindows(void) {
         if (![scene isKindOfClass:UIWindowScene.class]) {
             continue;
         }
-        if (scene.activationState != UISceneActivationStateForegroundActive &&
-            scene.activationState != UISceneActivationStateForegroundInactive) {
+        if (scene.activationState == UISceneActivationStateUnattached) {
             continue;
         }
         [scenes addObject:(UIWindowScene *)scene];
@@ -3178,10 +3179,8 @@ static NSArray<UIWindow *> *IOSUseDOMActiveWindows(void) {
     [scenes sortUsingComparator:
         ^NSComparisonResult(UIWindowScene *lhs, UIWindowScene *rhs) {
             if (lhs.activationState != rhs.activationState) {
-                return lhs.activationState ==
-                        UISceneActivationStateForegroundActive
-                    ? NSOrderedAscending
-                    : NSOrderedDescending;
+                return lhs.activationState < rhs.activationState
+                    ? NSOrderedAscending : NSOrderedDescending;
             }
             NSString *lhsID = lhs.session.persistentIdentifier ?: @"";
             NSString *rhsID = rhs.session.persistentIdentifier ?: @"";
@@ -3238,7 +3237,7 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
     NSArray<UIWindow *> *windows = IOSUseDOMActiveWindows();
     if (windows.count == 0) {
         if (failureMessage != NULL) {
-            *failureMessage = @"no active UIWindowScene has a UIKit window";
+            *failureMessage = @"no connected UIWindowScene has a UIKit window";
         }
         return nil;
     }
@@ -4157,6 +4156,8 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
     }
     return @{
         @"app": snapshot.application,
+        @"deviceState": IOSUsePlayDeviceState(),
+        @"windowMode": IOSUsePlayCanvasIsResizable() ? @"resizable" : @"fixed",
         @"windowSize": @{
             @"x": @(snapshot.windowSize.width),
             @"y": @(snapshot.windowSize.height),

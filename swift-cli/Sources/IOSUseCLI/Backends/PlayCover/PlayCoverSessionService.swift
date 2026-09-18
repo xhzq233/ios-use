@@ -76,6 +76,7 @@ enum PlayCoverSessionService {
         let logPath: String?
         let reused: Bool
         let recovered: Bool
+        var devicePreset: String? = nil
     }
 
     enum ProcessState: Equatable {
@@ -231,12 +232,13 @@ enum PlayCoverSessionService {
                 bundleIdentifier: identity.bundleIdentifier,
                 executablePath: identity.executablePath,
                 installRevision: identity.installRevision,
-                productType: String(cString: IOSUsePlayDeviceProductType()),
+                productType: try PlayCoverDevicePreset.named(identity.hello.devicePreset ?? PlayCoverDevicePreset.defaultPreset.name).productType,
                 pid: identity.pid,
                 runtimeSocketPath: identity.runtimeSocketPath,
                 logPath: stdioLog?.path,
                 reused: reused,
-                recovered: false
+                recovered: false,
+                devicePreset: identity.hello.devicePreset
             )
         } catch let error as PlayCoverSlotUnterminatedLaunchError {
             throw PlayCoverSessionUnterminatedLaunchError(
@@ -332,7 +334,7 @@ enum PlayCoverSessionService {
                     sessionID: record.sessionID,
                     paths: paths
                 )
-                _ = try PlayCoverSlotLauncher.authenticate(
+                let hello = try PlayCoverSlotLauncher.authenticate(
                     pid: pid,
                     slot: slot,
                     record: record,
@@ -344,14 +346,13 @@ enum PlayCoverSessionService {
                     bundleIdentifier: record.bundleIdentifier,
                     executablePath: slot.executablePath,
                     installRevision: slot.metadata.installRevision,
-                    productType: String(
-                        cString: IOSUsePlayDeviceProductType()
-                    ),
+                    productType: try PlayCoverDevicePreset.named(hello.devicePreset ?? PlayCoverDevicePreset.defaultPreset.name).productType,
                     pid: pid,
                     runtimeSocketPath: record.runtimeSocketPath,
                     logPath: record.logPath,
                     reused: true,
-                    recovered: true
+                    recovered: true,
+                    devicePreset: hello.devicePreset
                 )
             } catch {
                 if !PlayCoverService.runtimeHelloFailureIsTerminal(error),
@@ -697,7 +698,8 @@ enum PlayCoverSessionService {
             macExecutablePath: result.executablePath,
             macInstallRevision: result.installRevision,
             macRuntimeSocketPath: result.runtimeSocketPath,
-            macLogPath: result.logPath
+            macLogPath: result.logPath,
+            macDevicePreset: result.devicePreset
         )
     }
 

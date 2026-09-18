@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 
 enum DriverLifecycleService {
@@ -27,6 +32,7 @@ enum DriverLifecycleService {
     static var signalSenderForTesting: ((Int32, Int32) -> Int32)?
     static var processExitWaiterForTesting: ((Int32, Double) -> Bool)?
 
+    #if os(macOS)
     static func resolveDriverInfo(udid: String, paths: IOSUsePaths) throws -> SessionService.Info {
         guard let configEntry = ConfigService.listEntries(paths: paths).first(where: { $0.udid == udid }) else {
             throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
@@ -184,7 +190,9 @@ enum DriverLifecycleService {
         }
     }
 
-    private static func launchRealDriverHolder(
+    #endif
+
+    static func launchRealDriverHolder(
         udid: String,
         bundleId: String,
         paths: IOSUsePaths,
@@ -192,7 +200,16 @@ enum DriverLifecycleService {
     ) throws -> LaunchMetadata {
         let stateDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true, attributes: nil)
-        let controlSocket = "\(stateDir)/xctest-holder-\(UUID().uuidString).sock"
+        try FileManager.default.createDirectory(
+            atPath: paths.playcoverSocketRoot,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let socketToken = UUID().uuidString.replacingOccurrences(
+            of: "-",
+            with: ""
+        )
+        let controlSocket = "\(paths.playcoverSocketRoot)/x-\(socketToken).sock"
         try? FileManager.default.removeItem(atPath: controlSocket)
 
         let process = Process()
@@ -203,17 +220,21 @@ enum DriverLifecycleService {
             "--bundle-id", bundleId,
             "--control-socket", controlSocket,
         ]
+        if let deviceID = paths.deviceID {
+            arguments.append(contentsOf: ["--device", deviceID])
+        }
         if verbose {
             arguments.append("--verbose")
+        }
+        if let connection = RemoteDeviceConnection.current {
+            let connectionPath = URL(fileURLWithPath: stateDir).appendingPathComponent("device-connection.json")
+            try JSONEncoder().encode(connection).write(to: connectionPath, options: .atomic)
+            arguments += ["--connection", connectionPath.path]
         }
         process.arguments = arguments
         process.environment = ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new }
         let holderLogPath = CLILogService.holderLogPath(paths: paths)
-        if !FileManager.default.fileExists(atPath: holderLogPath) {
-            FileManager.default.createFile(atPath: holderLogPath, contents: nil)
-        }
-        let holderLogHandle = try FileHandle(forWritingTo: URL(fileURLWithPath: holderLogPath))
-        _ = try? holderLogHandle.seekToEnd()
+        let holderLogHandle = try CLILogService.openAppendHandle(path: holderLogPath)
         defer { try? holderLogHandle.close() }
         process.standardOutput = holderLogHandle
         process.standardError = holderLogHandle
@@ -392,7 +413,7 @@ enum DriverLifecycleService {
             return processAliveForTesting(pid)
         }
         guard pid > 0 else { return false }
-        return Darwin.kill(pid, 0) == 0
+        return posixKill(pid, 0) == 0
     }
 
     @discardableResult
@@ -427,7 +448,7 @@ enum DriverLifecycleService {
         if let signalSenderForTesting {
             return signalSenderForTesting(pid, signal)
         }
-        return Darwin.kill(pid, signal)
+        return posixKill(pid, signal)
     }
 
     static func isExpectedHolderProcess(pid: Int32, udid: String) -> Bool {

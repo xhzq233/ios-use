@@ -56,6 +56,59 @@ private final class FakeRawSnapshot: NSObject {
 
 final class TypesTests: XCTestCase {
 
+    func testDefaultScrollKeepsOverlayInsteadOfCoveredLargerPage() {
+        let appFrame = CGRect(x: 0, y: 0, width: 400, height: 800)
+        let strip = FakeRawSnapshot(elementType: .scrollView,
+                                    frame: CGRect(x: 0, y: 300, width: 400, height: 100))
+        let page = FakeRawSnapshot(elementType: .scrollView, frame: appFrame, children: [strip])
+        let sheet = FakeRawSnapshot(elementType: .scrollView,
+                                    frame: CGRect(x: 0, y: 120, width: 400, height: 600))
+        let overlaid = SafeSnapshot(raw: FakeRawSnapshot(elementType: .application,
+                                                        frame: appFrame, children: [page, sheet]),
+                                    appFrame: appFrame)
+        XCTAssertTrue(findLargestScrollable(overlaid)?.raw as AnyObject === sheet)
+        let plain = SafeSnapshot(raw: page, appFrame: appFrame)
+        XCTAssertTrue(findLargestScrollable(plain)?.raw as AnyObject === page)
+    }
+
+    func testGridAxisUsesAllRowsInsteadOfBoundarySamples() {
+        let viewport = CGRect(x: 0, y: 100, width: 400, height: 600)
+        let cells = (0..<4).flatMap { row in
+            (0..<4).map { column in
+                FakeRawSnapshot(frame: CGRect(x: 20 + column * 90, y: 120 + row * 150, width: 60, height: 30))
+            }
+        }
+        let grid = SafeSnapshot(raw: FakeRawSnapshot(elementType: .scrollView, frame: viewport,
+                                                     children: cells), appFrame: viewport)
+        XCTAssertEqual(collectVisibleCellFrames(grid).count, 3)
+        let allFrames = collectVisibleCellFrames(grid, limit: nil)
+        XCTAssertEqual(allFrames.count, 16)
+        XCTAssertEqual(primaryScrollAxis(visibleCellFrames: allFrames, scrollFrame: viewport), .vertical)
+    }
+
+    func testSectionedScrollTraversalAndMovementIgnoreStationaryWrappers() {
+        let firstLeaf = FakeRawSnapshot(frame: CGRect(x: 20, y: 200, width: 80, height: 30))
+        let secondLeaf = FakeRawSnapshot(frame: CGRect(x: 20, y: 400, width: 80, height: 30))
+        let firstSection = FakeRawSnapshot(elementType: .other, children: [firstLeaf])
+        let secondSection = FakeRawSnapshot(elementType: .other, children: [secondLeaf])
+        let raw = FakeRawSnapshot(elementType: .scrollView, children: [firstSection, secondSection])
+        let snapshot = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 400, height: 800))
+        let descendants = snapshot.allDescendants
+        XCTAssertEqual(descendants.count, 4)
+        XCTAssertTrue(descendants[0].raw as AnyObject === firstSection)
+        XCTAssertTrue(descendants[1].raw as AnyObject === firstLeaf)
+        XCTAssertTrue(descendants[2].raw as AnyObject === secondSection)
+        XCTAssertTrue(descendants[3].raw as AnyObject === secondLeaf)
+        XCTAssertEqual(collectVisibleCellFrames(snapshot), [firstLeaf.frame.cgRectValue, secondLeaf.frame.cgRectValue])
+
+        let movedLeaf = FakeRawSnapshot(frame: CGRect(x: 20, y: 100, width: 80, height: 30))
+        let movedRaw = FakeRawSnapshot(elementType: .scrollView, children: [
+            FakeRawSnapshot(elementType: .other, children: [movedLeaf]), secondSection,
+        ])
+        let moved = SafeSnapshot(raw: movedRaw, appFrame: snapshot.appFrame)
+        XCTAssertNotEqual(collectVisibleCellFrames(snapshot), collectVisibleCellFrames(moved))
+    }
+
     private func makeElement(
         label: String? = nil,
         identifier: String? = nil,
@@ -88,14 +141,7 @@ final class TypesTests: XCTestCase {
 
     private func makeCleanedSnapshot(_ elements: [SnapshotElement]) -> CleanedSnapshot {
         let root = elements.first!.node
-        let searchEntries = elements.map { element in
-            let rawTexts = searchableTexts(for: element.node)
-            return SearchEntry(
-                element: element,
-                rawTexts: rawTexts,
-                normalizedTexts: normalizedSearchableTexts(from: rawTexts)
-            )
-        }
+        let searchEntries = buildSearchEntries(from: elements)
         let searchCandidates = searchEntries.flatMap { entry in
             entry.rawTexts.compactMap { text -> SearchCandidate? in
                 let normalized = normalizeSearchText(text)
@@ -104,6 +150,7 @@ final class TypesTests: XCTestCase {
             }
         }
         return CleanedSnapshot(
+            bundleId: "com.example.fixture",
             root: root,
             appFrame: CGRect(x: 0, y: 0, width: 375, height: 812),
             rawRoot: root,
@@ -111,6 +158,36 @@ final class TypesTests: XCTestCase {
             searchEntries: searchEntries,
             searchCandidates: searchCandidates
         )
+    }
+
+    func testApplicationContextDoesNotShadowButtonsOrBecomeSearchable() {
+        let first = FakeRawSnapshot(label: "Settings", elementType: .button)
+        let second = FakeRawSnapshot(label: "Settings", elementType: .button)
+        let panel = FakeRawSnapshot(label: "Panel", elementType: .scrollView, children: [first, second])
+        let app = FakeRawSnapshot(label: "Settings", elementType: .application, children: [panel])
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+        assignAutoLabels(elements)
+        let cs = makeCleanedSnapshot(elements)
+
+        XCTAssertTrue(cs.elements.contains { $0.node.raw as AnyObject === app })
+        XCTAssertFalse(cs.searchEntries.contains { $0.element.node.raw as AnyObject === app })
+        for (target, expected) in [
+            (ForyTarget(label: "Settings", traits: "Button"), first),
+            (ForyTarget(label: "Settings-1"), second),
+            (ForyTarget(label: "Panel", cindex: 1), second),
+        ] {
+            guard case .found(let element) = rawFindInSnapshot(target, cs: cs) else {
+                XCTFail("Expected a child element to remain selectable")
+                continue
+            }
+            XCTAssertTrue(element.node.raw as AnyObject === expected)
+        }
+
+        let rootOnly = makeCleanedSnapshot([makeElement(label: "Application context", type: .application)])
+        XCTAssertTrue(rootOnly.searchCandidates.isEmpty)
+        guard case .notFound = rawFindInSnapshot(ForyTarget(label: "Application context"), cs: rootOnly) else {
+            return XCTFail("Application context must not be an element target")
+        }
     }
 
     private func makeSnapshotElement(_ snapshot: SafeSnapshot) -> SnapshotElement {

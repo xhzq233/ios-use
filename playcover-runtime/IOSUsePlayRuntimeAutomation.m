@@ -3,6 +3,7 @@
 #import "IOSUsePlayRuntimeDOM.h"
 #import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayCanvas.h"
 #import "IOSUsePlaySwiftBridge.h"
 #import "PTFakeMetaTouch.h"
 
@@ -15,10 +16,8 @@ static const NSTimeInterval IOSUseAutomationMainTimeout = 40.0;
 static const NSUInteger IOSUseAutomationMaximumSemanticScrolls = 25;
 static const CGFloat IOSUseAutomationScrollProportion = 0.75;
 static const CGFloat IOSUseAutomationScrollEpsilon = 0.5;
-static const CGFloat IOSUseAutomationDeviceLogicalWidth =
-    (CGFloat)IOSUsePlayDeviceLogicalWidth;
-static const CGFloat IOSUseAutomationDeviceLogicalHeight =
-    (CGFloat)IOSUsePlayDeviceLogicalHeight;
+#define IOSUseAutomationDeviceLogicalWidth ((CGFloat)IOSUsePlayCanvasWidth)
+#define IOSUseAutomationDeviceLogicalHeight ((CGFloat)IOSUsePlayCanvasHeight)
 
 NSTimeInterval IOSUsePlayRuntimeAutomationMainThreadTimeout(void) {
     return IOSUseAutomationMainTimeout;
@@ -282,10 +281,7 @@ static NSArray<UIWindow *> *IOSUseAutomationWindows(void) {
     for (UIScene *scene in
          UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class] ||
-            (scene.activationState !=
-                UISceneActivationStateForegroundActive &&
-             scene.activationState !=
-                UISceneActivationStateForegroundInactive)) {
+            scene.activationState == UISceneActivationStateUnattached) {
             continue;
         }
         [scenes addObject:(UIWindowScene *)scene];
@@ -295,10 +291,8 @@ static NSArray<UIWindow *> *IOSUseAutomationWindows(void) {
         UIWindowScene *right
     ) {
         if (left.activationState != right.activationState) {
-            return left.activationState ==
-                    UISceneActivationStateForegroundActive
-                ? NSOrderedAscending
-                : NSOrderedDescending;
+            return left.activationState < right.activationState
+                ? NSOrderedAscending : NSOrderedDescending;
         }
         NSString *leftIdentifier =
             left.session.persistentIdentifier ?: @"";
@@ -443,8 +437,8 @@ static NSDictionary<NSString *, id> *IOSUseAutomationElementJSON(
             CGRectMake(
                 0,
                 0,
-                IOSUsePlayDeviceLogicalWidth,
-                IOSUsePlayDeviceLogicalHeight
+                IOSUsePlayCanvasWidth,
+                IOSUsePlayCanvasHeight
             )
         );
     NSString *type = IOSUseAutomationType(candidate);
@@ -1033,8 +1027,8 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
                 @"invalid_target_point",
                 [NSString stringWithFormat:
                     @"resolved point is outside the %ld x %ld logical screen",
-                    (long)IOSUsePlayDeviceLogicalWidth,
-                    (long)IOSUsePlayDeviceLogicalHeight],
+                    (long)IOSUsePlayCanvasWidth,
+                    (long)IOSUsePlayCanvasHeight],
                 @"validation",
                 @"lookup",
                 NO,
@@ -1237,8 +1231,8 @@ static CGRect IOSUseAutomationScrollViewport(UIScrollView *scrollView) {
     CGRect logical = CGRectMake(
         0,
         0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
+        IOSUsePlayCanvasWidth,
+        IOSUsePlayCanvasHeight
     );
     return CGRectIntersection(frame, logical);
 }
@@ -2090,8 +2084,8 @@ static BOOL IOSUseAutomationPlaceTap(
     CGRect logicalScreen = CGRectMake(
         0,
         0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
+        IOSUsePlayCanvasWidth,
+        IOSUsePlayCanvasHeight
     );
     CGRect visibleFrame = CGRectIntersection(frame, logicalScreen);
     if (!IOSUseAutomationRectHasArea(visibleFrame)) {
@@ -2364,8 +2358,8 @@ IOSUseAutomationSemanticSwipe(
         CGRect logicalScreen = CGRectMake(
             0,
             0,
-            IOSUsePlayDeviceLogicalWidth,
-            IOSUsePlayDeviceLogicalHeight
+            IOSUsePlayCanvasWidth,
+            IOSUsePlayCanvasHeight
         );
         CGRect tolerantScreen = CGRectInset(
             logicalScreen,

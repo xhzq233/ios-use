@@ -1,3 +1,5 @@
+#import "IOSUsePlayDeviceConfiguration.h"
+#import "IOSUsePlayDeviceChrome.h"
 #import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlayRuntime.h"
 #import "IOSUsePlayRuntimeAutomation.h"
@@ -9,6 +11,7 @@
 #import "IOSUsePlayRuntimeStdio.h"
 #import "IOSUsePlayRuntimeFrida.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayCanvas.h"
 #import "IOSUsePlaySwiftBridge.h"
 
 #import <UIKit/UIKit.h>
@@ -32,18 +35,12 @@
 static const NSUInteger IOSUseMaximumRequestFrameSize = 64 * 1024;
 static const NSUInteger IOSUseMaximumResponseFrameSize = 16 * 1024 * 1024;
 static const NSTimeInterval IOSUseSocketIOTimeoutSeconds = 15;
-static const CGFloat IOSUseRuntimeDeviceLogicalWidth =
-    (CGFloat)IOSUsePlayDeviceLogicalWidth;
-static const CGFloat IOSUseRuntimeDeviceLogicalHeight =
-    (CGFloat)IOSUsePlayDeviceLogicalHeight;
-static const CGFloat IOSUseRuntimeDeviceNativeWidth =
-    (CGFloat)IOSUsePlayDeviceNativeWidth;
-static const CGFloat IOSUseRuntimeDeviceNativeHeight =
-    (CGFloat)IOSUsePlayDeviceNativeHeight;
-static const CGFloat IOSUseRuntimeDeviceScale =
-    (CGFloat)IOSUsePlayDeviceScale;
-static const CGFloat IOSUseRuntimeDeviceSafeAreaTop =
-    (CGFloat)IOSUsePlayDeviceSafeAreaTop;
+#define IOSUseRuntimeDeviceLogicalWidth ((CGFloat)IOSUsePlayCanvasWidth)
+#define IOSUseRuntimeDeviceLogicalHeight ((CGFloat)IOSUsePlayCanvasHeight)
+#define IOSUseRuntimeDeviceNativeWidth ((CGFloat)IOSUsePlayCanvasNativeWidth)
+#define IOSUseRuntimeDeviceNativeHeight ((CGFloat)IOSUsePlayCanvasNativeHeight)
+#define IOSUseRuntimeDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
+#define IOSUseRuntimeDeviceSafeAreaTop ((CGFloat)IOSUsePlayDeviceSafeAreaTop)
 
 static NSString *IOSUseRuntimeSessionID;
 static NSString *IOSUseRuntimeSocketPath;
@@ -64,6 +61,9 @@ static os_unfair_lock IOSUseRuntimeUIStateLock =
     OS_UNFAIR_LOCK_INIT;
 static NSDictionary<NSString *, id> *IOSUseRuntimeUIState;
 static NSDictionary<NSString *, id> *IOSUseRuntimeUISnapshot;
+// UI requests are serialized; each readiness check records the state actually
+// observed on the main thread, without an extra diagnostic round trip.
+static NSDictionary<NSString *, id> *IOSUseRuntimeCommandUIContext;
 static dispatch_queue_t IOSUseRuntimeCommandQueue;
 static dispatch_queue_t IOSUseRuntimeDebugQueue;
 static dispatch_queue_t IOSUseRuntimeConnectionQueue;
@@ -168,7 +168,7 @@ void IOSUsePlayRuntimeSetUIReadiness(
     NSString *stage,
     NSString *failure
 ) {
-    if (![@[@"initializing", @"ready", @"backgrounded", @"failed"]
+    if (![@[@"initializing", @"ready", @"failed"]
             containsObject:state] ||
         stage.length == 0) {
         return;
@@ -375,6 +375,7 @@ static NSArray<NSString *> *IOSUseCapabilities(BOOL requiredHooksReady) {
         @"hello",
         @"ping",
         @"diagnostics",
+        @"configureDevice",
         @"screenshot",
         @"dom",
         @"uiTree",
@@ -677,8 +678,7 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         [host[@"status"] isEqualToString:@"configured"] &&
         [host[@"hostPolicy"] boolValue] &&
         [host[@"publicTitleBar"] boolValue] &&
-        [host[@"titleVisible"] boolValue] &&
-        ![host[@"resizable"] boolValue] &&
+        [host[@"resizable"] boolValue] == IOSUsePlayCanvasIsResizable() &&
         title.length > 0 && [title isEqualToString:expectedTitle] &&
         IOSUseSocketRectFromJSON(host[@"frame"], &frame) &&
         IOSUseSocketRectFromJSON(
@@ -708,13 +708,12 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         isfinite(backingScaleFactor) && backingScaleFactor > 0
             ? 0.5 / backingScaleFactor
             : 0.01;
-    return [host[@"opaque"] boolValue] &&
-        isfinite(backingScaleFactor) &&
+    return isfinite(backingScaleFactor) &&
         backingScaleFactor > 0 && backingScaleFactor <= 4 &&
         isfinite(sceneRasterizationScale) &&
         sceneRasterizationScale > 0 &&
         isfinite(fixedBackingScale) &&
-        (fixedBackingScale == 0 || fixedBackingScale == 3) &&
+        (fixedBackingScale == 0 || fixedBackingScale == IOSUsePlayDeviceScale) &&
         IOSUseSocketMatchesFixedLogicalCanvas(
             canvasBounds,
             0.01,
@@ -805,14 +804,15 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                     applicationStatusBarFrameSelector
                 )
                 : CGRectZero;
+        IOSUsePlayDeviceRect expectedStatus = IOSUsePlayDeviceStatusBarRect();
+        CGRect expectedStatusFrame = CGRectMake(expectedStatus.x, expectedStatus.y, expectedStatus.width, expectedStatus.height);
         BOOL statusBarReady =
             statusBarManager != nil &&
             isfinite(statusBarFrame.size.height) &&
-            statusBarFrame.size.height ==
-                IOSUseRuntimeDeviceSafeAreaTop &&
             isfinite(applicationStatusBarFrame.size.height) &&
-            applicationStatusBarFrame.size.height ==
-                IOSUseRuntimeDeviceSafeAreaTop;
+            (IOSUsePlayCanvasIsResizable() ||
+                (CGRectEqualToRect(statusBarFrame, expectedStatusFrame) &&
+                 CGRectEqualToRect(applicationStatusBarFrame, expectedStatusFrame)));
         NSString *deviceModel = device.model ?: @"";
         NSString *localizedDeviceModel = device.localizedModel ?: @"";
         BOOL deviceIdentityReady =
@@ -830,7 +830,8 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                     IOSUsePlayDeviceUserInterfaceIdiom &&
             deviceOrientation ==
                 (UIDeviceOrientation)IOSUsePlayDeviceOrientation &&
-            sceneOrientation == UIInterfaceOrientationPortrait &&
+            (IOSUsePlayCanvasIsResizable() ||
+                sceneOrientation == (UIInterfaceOrientation)IOSUsePlayDeviceInterfaceOrientation()) &&
             nativeScale == IOSUseRuntimeDeviceScale &&
             statusBarReady;
         hooks = IOSUsePlayRuntimeHookDiagnostics(
@@ -940,13 +941,13 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
         };
         BOOL exact =
             fabs(logical.size.width -
-                IOSUseRuntimeDeviceLogicalWidth) <= 0.01 &&
+                IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
             fabs(logical.size.height -
-                IOSUseRuntimeDeviceLogicalHeight) <= 0.01 &&
+                IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
             fabs(native.size.width -
-                IOSUseRuntimeDeviceNativeWidth) <= 0.01 &&
+                IOSUsePlayDeviceNativeWidth) <= 0.01 &&
             fabs(native.size.height -
-                IOSUseRuntimeDeviceNativeHeight) <= 0.01 &&
+                IOSUsePlayDeviceNativeHeight) <= 0.01 &&
             fabs(screenScale - IOSUseRuntimeDeviceScale) <= 0.01 &&
             fabs(nativeScale - IOSUseRuntimeDeviceScale) <= 0.01 &&
             fabs(windowBounds.size.width -
@@ -1013,12 +1014,12 @@ static NSDictionary<NSString *, id> *IOSUseInitialUISnapshot(void) {
         IOSUsePlayRuntimeRequiredHooksReady();
     NSDictionary<NSString *, id> *geometry = @{
         @"logical": @{
-            @"width": @(IOSUsePlayDeviceLogicalWidth),
-            @"height": @(IOSUsePlayDeviceLogicalHeight),
+            @"width": @(IOSUsePlayCanvasWidth),
+            @"height": @(IOSUsePlayCanvasHeight),
         },
         @"native": @{
-            @"width": @(IOSUsePlayDeviceNativeWidth),
-            @"height": @(IOSUsePlayDeviceNativeHeight),
+            @"width": @(IOSUsePlayCanvasNativeWidth),
+            @"height": @(IOSUsePlayCanvasNativeHeight),
         },
         @"scale": @(IOSUsePlayDeviceScale),
         @"nativeScale": @(IOSUsePlayDeviceScale),
@@ -1091,7 +1092,7 @@ void IOSUsePlayRuntimePublishUIReadiness(void) {
     if (![state isEqualToString:@"failed"] &&
         ![availability[@"available"] boolValue] &&
         ![availabilityReason isEqualToString:@"window-unavailable"]) {
-        state = @"backgrounded";
+        state = @"initializing";
         stage = availabilityReason;
     }
     NSDictionary<NSString *, id> *runtime = snapshot[@"runtime"];
@@ -1145,6 +1146,7 @@ static NSDictionary<NSString *, id> *IOSUseControlHelloPayload(void) {
         @"installRevision": IOSUseRuntimeInstallRevision ?: @"",
         @"capabilities": IOSUseCapabilities(requiredHooksReady),
         @"controlStage": controlStage,
+        @"devicePreset": [NSString stringWithUTF8String:IOSUsePlayDeviceCurrent()->name],
         @"controlFailure":
             IOSUsePlayRuntimeRequiredHooksFailure() ?: NSNull.null,
         @"uiState": IOSUseCurrentUIReadiness(),
@@ -1589,7 +1591,6 @@ IOSUseRuntimeUIReadinessErrorObject(
         ? uiState[@"stage"]
         : @"runtime-constructor";
     BOOL failed = [state isEqualToString:@"failed"];
-    BOOL backgrounded = [state isEqualToString:@"backgrounded"];
     id rawFailure = uiState[@"failure"];
     NSString *failure = [rawFailure isKindOfClass:NSString.class]
         ? rawFailure
@@ -1597,29 +1598,21 @@ IOSUseRuntimeUIReadinessErrorObject(
     return @{
         @"code": failed
             ? @"runtime_ui_failed"
-            : backgrounded
-                ? @"runtime_ui_backgrounded"
-                : @"runtime_ui_not_ready",
+            : @"runtime_ui_not_ready",
         @"message": failed
             ? failure ?: @"Runtime UI initialization failed"
-            : backgrounded
-                ? [NSString stringWithFormat:
-                    @"Runtime UI is not available: %@",
-                    stage]
-                : @"Runtime UI is still initializing; retry this command",
+            : @"Runtime UI is still initializing; retry this command",
         @"details": @{
             @"category": @"precondition",
             @"phase": stage,
-            @"reason": backgrounded ? stage : (id)NSNull.null,
+            @"reason": stage,
             @"retryable": @((BOOL)!failed),
             @"fatal": @(failed),
             @"candidateCount": @0,
             @"candidates": @[],
             @"suggestions": failed
                 ? @[]
-                : backgrounded
-                    ? @[@"make the App window visible on the active Space, then retry"]
-                    : @[@"retry the same UI command"],
+                : @[@"retry the same UI command"],
         },
     };
 }
@@ -1629,6 +1622,12 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeUICommandError(void) {
         NSThread.isMainThread,
         @"UI command readiness validation is main-only"
     );
+    IOSUsePlayDeviceChromeRefreshAppearance();
+    NSDictionary<NSString *, id> *context =
+        [IOSUsePlayAppKitBridge uiAutomationContext];
+    os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
+    IOSUseRuntimeCommandUIContext = context;
+    os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
     NSDictionary<NSString *, id> *uiState = IOSUseCurrentUIReadiness();
     if ([uiState[@"state"] isEqualToString:@"failed"]) {
         return IOSUseRuntimeUIReadinessErrorObject(uiState);
@@ -1645,12 +1644,16 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeUICommandError(void) {
             return IOSUseRuntimeUIReadinessErrorObject(uiState);
         }
         IOSUsePlayRuntimeSetUIReadiness(
-            @"backgrounded",
+            @"initializing",
             reason,
             nil
         );
-        return IOSUseRuntimeUIReadinessErrorObject(
-            IOSUseCurrentUIReadiness()
+        return IOSUseErrorObject(
+            @"runtime_ui_unavailable",
+            [NSString stringWithFormat:@"Runtime UI is not available: %@", reason],
+            @"precondition",
+            reason,
+            YES
         );
     }
     if (![uiState[@"state"] isEqualToString:@"ready"]) {
@@ -2042,6 +2045,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
         NSDictionary<NSString *, id> *snapshot =
             IOSUseCachedUISnapshot();
         payload = [snapshot[@"identity"] mutableCopy];
+        payload[@"deviceState"] = IOSUsePlayDeviceState();
         payload[@"uiState"] = IOSUseCurrentUIReadiness();
         payload[@"stdio"] = IOSUseRuntimeStdioEvidence();
         payload[@"diagnostics"] = @{
@@ -2050,6 +2054,33 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             @"observed": snapshot[@"observed"],
             @"playChain": snapshot[@"playChain"],
         };
+    } else if ([command isEqualToString:@"configureDevice"]) {
+        __block NSDictionary *state;
+        __block NSError *configurationError;
+        void (^apply)(void) = ^{ state = IOSUsePlayConfigureDevice(arguments, &configurationError); };
+        if (NSThread.isMainThread) apply(); else dispatch_sync(dispatch_get_main_queue(), apply);
+        if (!state) return IOSUseBasicErrorEnvelope(requestID, @"device_configuration_failed",
+            configurationError.localizedDescription ?: @"Could not change the Mac device", @"configuration", @"device", NO);
+        // Allow Catalyst to deliver its native resize/layout events, checking
+        // actual canvas readiness rather than treating a fixed delay as proof.
+        __block BOOL ready = NO;
+        NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 5;
+        do {
+            void (^check)(void) = ^{
+                ready = [IOSUsePlayAppKitBridge configureFixedWindow:NULL];
+                IOSUsePlayRuntimePublishUIReadiness();
+                // UIWindow bounds can settle before the host view and safe-area
+                // layout used by the next DOM request. Check the same readiness
+                // that UI commands require before reporting configuration done.
+                ready = ready && [IOSUseCurrentUIReadiness()[@"state"] isEqualToString:@"ready"];
+            };
+            if (NSThread.isMainThread) { check(); break; }
+            dispatch_sync(dispatch_get_main_queue(), check);
+            if (!ready) [NSThread sleepForTimeInterval:0.02];
+        } while (!ready && NSProcessInfo.processInfo.systemUptime < deadline);
+        if (!ready) return IOSUseBasicErrorEnvelope(requestID, @"device_configuration_pending",
+            @"Device selection changed, but the App window has not settled to the requested geometry", @"configuration", @"layout", YES);
+        payload = [state mutableCopy];
     } else if ([command isEqualToString:@"debug"]) {
         NSDictionary<NSString *, id> *commandError = nil;
         NSDictionary<NSString *, id> *debug =
@@ -2198,6 +2229,13 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
     void * _Nullable fridaEventContext,
     BOOL * _Nullable fridaEventSubscription
 ) {
+    BOOL isUICommand = [object isKindOfClass:NSDictionary.class] &&
+        IOSUseRuntimeIsUICommand(object[@"command"] ?: @"");
+    if (isUICommand) {
+        os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
+        IOSUseRuntimeCommandUIContext = nil;
+        os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
+    }
     NSDictionary<NSString *, id> *interactionState = nil;
     NSNumber *alertRefreshElapsedMs = nil;
     NSDictionary<NSString *, id> *response =
@@ -2209,11 +2247,21 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
             fridaEventContext,
             fridaEventSubscription
         );
-    return IOSUseRuntimeResponseWithMetadata(
+    NSMutableDictionary<NSString *, id> *result =
+        [IOSUseRuntimeResponseWithMetadata(
         response,
         interactionState,
         alertRefreshElapsedMs
-    );
+    ) mutableCopy];
+    if (isUICommand) {
+        os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
+        NSDictionary<NSString *, id> *context = IOSUseRuntimeCommandUIContext;
+        os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
+        if (context != nil) {
+            result[@"uiContext"] = context;
+        }
+    }
+    return result;
 }
 
 static void IOSUseWriteResponse(
@@ -2244,6 +2292,7 @@ static void IOSUseWriteResponse(
             response[@"interactionState"] ?: NSNull.null;
         fallback[@"performance"] =
             response[@"performance"] ?: NSNull.null;
+        fallback[@"uiContext"] = response[@"uiContext"] ?: NSNull.null;
         response = fallback;
         data = [NSJSONSerialization
             dataWithJSONObject:response

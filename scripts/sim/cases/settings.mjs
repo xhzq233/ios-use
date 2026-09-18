@@ -152,7 +152,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'SC-2', run: async () => {
       await runCase('SC-2', ['screenshot', '--name', 'sim_command_screenshot'], settingsHome);
       if (selected('SC-2')) {
-        const screenshot = path.join(ctx.iosHome, 'artifacts/sim_command_screenshot.jpg');
+        const screenshot = path.join(ctx.deviceArtifactDir, 'sim_command_screenshot.jpg');
         if (fs.existsSync(screenshot) && fs.statSync(screenshot).size > 0) fs.copyFileSync(screenshot, path.join(artifactDir, 'sim_command_screenshot.jpg'));
         else recordFail('SC-2', `[sim-test] FAIL SC-2 screenshot file missing: ${screenshot}\n`, 'assertion');
       }
@@ -165,7 +165,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
       const err = path.join(artifactDir, 'SC-1.err');
       const name = 'sim_command_protocol_screenshot';
       const res = runCliToFiles(['screenshot', '--name', name], out, err);
-      const screenshot = path.join(ctx.iosHome, 'artifacts', `${name}.jpg`);
+      const screenshot = path.join(ctx.deviceArtifactDir, `${name}.jpg`);
       if (res.code === 0 && fs.existsSync(screenshot) && fs.statSync(screenshot).size > 2) recordPass('SC-1');
       else recordFail('SC-1', res.stdout + res.stderr, res.code === 0 ? 'assertion' : 'command');
     } },

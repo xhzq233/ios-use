@@ -1,4 +1,7 @@
 #import "IOSUsePlayAppKitBridge.h"
+#import "IOSUsePlayDeviceChrome.h"
+#import "IOSUsePlayDeviceConfiguration.h"
+#import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayDevice.h"
 #import "IOSUsePlayHookRegistry.h"
 #import "IOSUsePlaySafeAreaCompatibility.h"
@@ -66,7 +69,7 @@ void IOSUsePlayAppKitBridgeSetNativeAlertWindowsProviderForTesting(
     IOSUseBridgeNativeAlertWindowsProvider windowsProvider
 );
 NSDictionary<NSNumber *, NSDictionary<NSString *, id> *> * _Nullable
-IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting(void);
+IOSUsePlayAppKitBridgeCopyOwnCGWindowMetadataForTesting(void);
 NSDictionary<NSString *, id> * _Nullable
 IOSUsePlayAppKitBridgeSelectVisibleNativeAlertForTesting(
     NSArray * _Nullable windows,
@@ -108,9 +111,11 @@ typedef NS_ENUM(NSUInteger, IOSUseBridgeSceneGeometryState) {
     IOSUseBridgeSceneGeometryStateFailed,
 };
 static UIWindowScene *IOSUsePlaySceneGeometryScene;
+static __weak UIWindow *IOSUsePlayDeviceSwitchWindow;
 static IOSUseBridgeSceneGeometryState IOSUsePlaySceneGeometryState =
     IOSUseBridgeSceneGeometryStateNotRequested;
 static NSString *IOSUsePlaySceneGeometryFailure;
+static NSMapTable<UIWindowScene *, NSArray<NSValue *> *> *IOSUsePlayAppSizeRestrictions;
 
 static UIWindow *IOSUseBridgeAutomationUIKitWindow(void);
 
@@ -132,10 +137,7 @@ static UIWindow *IOSUseBridgeKeyUIKitWindow(void) {
     for (UIScene *scene in
          UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class] ||
-            (scene.activationState !=
-                UISceneActivationStateForegroundActive &&
-             scene.activationState !=
-                UISceneActivationStateForegroundInactive)) {
+            scene.activationState == UISceneActivationStateUnattached) {
             continue;
         }
         [scenes addObject:(UIWindowScene *)scene];
@@ -145,10 +147,8 @@ static UIWindow *IOSUseBridgeKeyUIKitWindow(void) {
         UIWindowScene *right
     ) {
         if (left.activationState != right.activationState) {
-            return left.activationState ==
-                    UISceneActivationStateForegroundActive
-                ? NSOrderedAscending
-                : NSOrderedDescending;
+            return left.activationState < right.activationState
+                ? NSOrderedAscending : NSOrderedDescending;
         }
         NSString *leftIdentifier =
             left.session.persistentIdentifier ?: @"";
@@ -328,7 +328,7 @@ static CGDirectDisplayID IOSUseBridgeDisplayIDForScreen(id screen) {
 static NSDictionary<
     NSNumber *,
     NSDictionary<NSString *, id> *
-> *IOSUseBridgeOwnOnscreenCGWindowMetadata(void) {
+> *IOSUseBridgeOwnCGWindowMetadata(void) {
     IOSUseBridgeCGWindowListCopyWindowInfo copyWindowInfo = NULL;
 #if defined(IOS_USE_PLAY_APPKIT_BRIDGE_TESTING)
     copyWindowInfo =
@@ -351,7 +351,7 @@ static NSDictionary<
         return nil;
     }
     CFArrayRef raw = copyWindowInfo(
-        kCGWindowListOptionOnScreenOnly,
+        kCGWindowListOptionAll,
         kCGNullWindowID
     );
     if (raw == NULL ||
@@ -377,15 +377,11 @@ static NSDictionary<
             entry[(__bridge NSString *)kCGWindowOwnerPID];
         NSNumber *number =
             entry[(__bridge NSString *)kCGWindowNumber];
-        NSNumber *onscreen =
-            entry[(__bridge NSString *)kCGWindowIsOnscreen];
         if (![owner isKindOfClass:NSNumber.class] ||
             owner.intValue != processID ||
             ![number isKindOfClass:NSNumber.class] ||
             number.unsignedLongLongValue == 0 ||
-            number.unsignedLongLongValue > UINT32_MAX ||
-            ([onscreen isKindOfClass:NSNumber.class] &&
-             !onscreen.boolValue)) {
+            number.unsignedLongLongValue > UINT32_MAX) {
             continue;
         }
         id rawBounds =
@@ -426,13 +422,13 @@ void IOSUsePlayAppKitBridgeSetCGWindowListCopyWindowInfoForTesting(
 }
 
 NSDictionary<NSNumber *, NSDictionary<NSString *, id> *> * _Nullable
-IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting(void) {
-    return IOSUseBridgeOwnOnscreenCGWindowMetadata();
+IOSUsePlayAppKitBridgeCopyOwnCGWindowMetadataForTesting(void) {
+    return IOSUseBridgeOwnCGWindowMetadata();
 }
 #endif
 
 static NSDictionary<NSString *, id> *
-IOSUseBridgeExactOnscreenCGWindowMetadata(
+IOSUseBridgeExactCGWindowMetadata(
     id window,
     NSDictionary<
         NSNumber *,
@@ -540,8 +536,7 @@ static BOOL IOSUseBridgeWindowPolicyIsHost(id window) {
     const NSInteger resizable = 1 << 3;
     NSInteger styleMask = IOSUseBridgeInteger(window, @"styleMask");
     return (styleMask & titled) != 0 &&
-        (styleMask & resizable) == 0 &&
-        IOSUseBridgeBool(window, @"isOpaque") &&
+        ((styleMask & resizable) != 0) == IOSUsePlayCanvasIsResizable() &&
         IOSUseBridgeBool(window, @"isMovable") &&
         !IOSUseBridgeBool(window, @"ignoresMouseEvents");
 }
@@ -632,6 +627,11 @@ IOSUseBridgeSceneInventory(void) {
 }
 
 static BOOL IOSUseBridgeRectIsDeviceScreen(CGRect rect) {
+    if (IOSUsePlayCanvasIsResizable()) {
+        return isfinite(rect.size.width) && isfinite(rect.size.height) &&
+            rect.size.width > 0 && rect.size.height > 0 &&
+            fabs(rect.origin.x) < 0.01 && fabs(rect.origin.y) < 0.01;
+    }
     return IOSUseBridgeApproximatelyEqual(rect.origin.x, 0) &&
         IOSUseBridgeApproximatelyEqual(rect.origin.y, 0) &&
         IOSUseBridgeApproximatelyEqual(
@@ -949,6 +949,26 @@ IOSUseBridgeLockSceneToFixedCanvas(UIWindow *uiWindow) {
             @"UIKit scene size restrictions are unavailable";
         return IOSUsePlaySceneGeometryState;
     }
+    if (!IOSUsePlayAppSizeRestrictions) IOSUsePlayAppSizeRestrictions = [NSMapTable weakToStrongObjectsMapTable];
+    if (IOSUsePlayCanvasIsResizable()) {
+        NSArray<NSValue *> *original = [IOSUsePlayAppSizeRestrictions objectForKey:scene];
+        if (original) {
+            scene.sizeRestrictions.minimumSize = original[0].CGSizeValue;
+            scene.sizeRestrictions.maximumSize = original[1].CGSizeValue;
+            [IOSUsePlayAppSizeRestrictions removeObjectForKey:scene];
+        }
+        // Leave the App's constraints intact, including changes after launch.
+        IOSUsePlaySceneGeometryScene = scene;
+        IOSUsePlaySceneGeometryState = IOSUseBridgeSceneGeometryStateReady;
+        IOSUsePlaySceneGeometryFailure = nil;
+        return IOSUsePlaySceneGeometryState;
+    }
+    if (![IOSUsePlayAppSizeRestrictions objectForKey:scene]) {
+        [IOSUsePlayAppSizeRestrictions setObject:@[
+            [NSValue valueWithCGSize:scene.sizeRestrictions.minimumSize],
+            [NSValue valueWithCGSize:scene.sizeRestrictions.maximumSize]
+        ] forKey:scene];
+    }
     CGSize fixed = IOSUseBridgeFixedSceneCanvasSize();
     // The iPhone model remains fixed in UIKit. Catalyst owns how that logical
     // scene is presented in its native, non-resizable AppKit window.
@@ -984,16 +1004,19 @@ IOSUseBridgeLockSceneToFixedCanvas(UIWindow *uiWindow) {
 }
 
 static BOOL IOSUseBridgeApplyWindowPolicy(id window) {
+    // The automatic separator is drawn into the first canvas pixels.
+    IOSUseBridgeSetInteger(window, @"setTitlebarSeparatorStyle:", 1);
     // Preserve UIKitMacHelper's native titled window and disable only public
     // resizing. Catalyst remains the sole owner of content size and scene
     // presentation scale.
     const NSInteger resizable = 1 << 3;
     NSInteger styleMask = IOSUseBridgeInteger(window, @"styleMask");
-    if ((styleMask & resizable) != 0) {
+    NSInteger desiredStyle = IOSUsePlayCanvasIsResizable() ? styleMask | resizable : styleMask & ~resizable;
+    if (styleMask != desiredStyle) {
         IOSUseBridgeSetInteger(
             window,
             @"setStyleMask:",
-            styleMask & ~resizable
+            desiredStyle
         );
     }
     return IOSUseBridgeWindowPolicyIsHost(window);
@@ -1127,7 +1150,7 @@ static BOOL IOSUseBridgeReconcileSceneBacking(
         ((void (*)(id, SEL, CGFloat))objc_msgSend)(
             sceneView,
             NSSelectorFromString(fixedSetterName),
-            3.0
+            (CGFloat)IOSUsePlayDeviceScale
         );
         IOSUseBridgeLayoutIfNeeded(sceneView);
     }
@@ -1153,10 +1176,10 @@ static BOOL IOSUseBridgeReconcileSceneBacking(
     if (IOSUsePlayRequest3XBacking) {
         ready = ready && IOSUseBridgeApproximatelyEqual(
             IOSUsePlayObservedFixedBackingScale,
-            3.0
+            (CGFloat)IOSUsePlayDeviceScale
         ) && IOSUseBridgeApproximatelyEqual(
             IOSUsePlayObservedRasterizationScale,
-            3.0
+            (CGFloat)IOSUsePlayDeviceScale
         );
     }
     IOSUsePlaySceneBackingStatus = ready
@@ -1330,7 +1353,7 @@ IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
             continue;
         }
         NSDictionary<NSString *, id> *exactMetadata =
-            IOSUseBridgeExactOnscreenCGWindowMetadata(
+            IOSUseBridgeExactCGWindowMetadata(
                 window,
                 cgMetadata
             );
@@ -1396,7 +1419,7 @@ IOSUseBridgeVisibleNativeAlertSelection(void) {
     NSDictionary<
         NSNumber *,
         NSDictionary<NSString *, id> *
-    > *cgMetadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
+    > *cgMetadata = IOSUseBridgeOwnCGWindowMetadata();
     return IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
         windows,
         cgMetadata
@@ -1775,7 +1798,7 @@ IOSUseBridgeHostCanvasCaptureGeometry(
         return nil;
     }
     NSDictionary<NSString *, id> *hostMetadata =
-        IOSUseBridgeExactOnscreenCGWindowMetadata(window, cgMetadata);
+        IOSUseBridgeExactCGWindowMetadata(window, cgMetadata);
     CGRect hostCGWindowBounds = hostMetadata == nil
         ? CGRectNull
         : [hostMetadata[@"boundsValue"] CGRectValue];
@@ -1847,7 +1870,7 @@ static CGRect IOSUseBridgeWindowLogicalFrame(
 ) {
     id hostWindow = IOSUsePlayHostWindow;
     NSDictionary<NSString *, id> *windowMetadata =
-        IOSUseBridgeExactOnscreenCGWindowMetadata(window, cgMetadata);
+        IOSUseBridgeExactCGWindowMetadata(window, cgMetadata);
     NSError *canvasError = nil;
     NSDictionary<NSString *, id> *canvasGeometry =
         IOSUseBridgeHostCanvasCaptureGeometry(
@@ -2300,6 +2323,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             UISceneWillDeactivateNotification,
             UISceneDidEnterBackgroundNotification,
             UISceneDidDisconnectNotification,
+            @"NSWindowDidResizeNotification",
             @"NSWindowDidChangeBackingPropertiesNotification",
             @"NSWindowDidChangeScreenNotification",
         ]) {
@@ -2317,13 +2341,28 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     // Window reconciliation starts only after UIKit creates a scene.
 }
 
+static CGSize IOSUsePlayObservedCanvas;
++ (CGSize)automationCanvasSize {
+    @synchronized(self) {
+        return IOSUsePlayObservedCanvas.width > 0 ? IOSUsePlayObservedCanvas
+            : CGSizeMake(IOSUsePlayDeviceLogicalWidth, IOSUsePlayDeviceLogicalHeight);
+    }
+}
+
++ (void)prepareDeviceConfiguration {
+    IOSUsePlayDeviceSwitchWindow = IOSUseBridgeAutomationUIKitWindow() ?: IOSUseBridgeKeyUIKitWindow();
+}
+
 + (BOOL)configureFixedWindow:(NSError **)error {
     NSParameterAssert(NSThread.isMainThread);
     IOSUsePlayWindowAttemptCount += 1;
-    UIWindow *uiWindow = IOSUseBridgeAutomationUIKitWindow();
+    UIWindow *uiWindow = IOSUsePlayDeviceSwitchWindow ?: IOSUseBridgeAutomationUIKitWindow();
     id window = uiWindow == nil
         ? nil
         : IOSUseBridgeWindowForUIKitWindow(uiWindow, NO);
+    if (uiWindow.bounds.size.width > 0 && uiWindow.bounds.size.height > 0) {
+        @synchronized(self) { IOSUsePlayObservedCanvas = uiWindow.bounds.size; }
+    }
     NSError *safeAreaError = nil;
     BOOL safeAreaReconciled =
         IOSUsePlaySafeAreaCompatibilityReconcile(&safeAreaError);
@@ -2379,6 +2418,18 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         return NO;
     }
     IOSUseBridgeLayoutIfNeeded(IOSUsePlayHostContentView);
+    IOSUsePlayRefreshDeviceTraits(uiWindow);
+    // Catalyst can create its full-scene text overlay with portrait dimensions
+    // on a landscape launch. Keep it aligned with the actual App canvas, just
+    // as the main native window is reconciled after a model/orientation change.
+    Class textEffectsClass = NSClassFromString(@"UITextEffectsWindow");
+    for (UIWindow *overlay in uiWindow.windowScene.windows) {
+        if ([overlay isKindOfClass:textEffectsClass] &&
+            !CGRectEqualToRect(overlay.frame, uiWindow.bounds)) {
+            overlay.frame = uiWindow.bounds;
+        }
+    }
+    IOSUsePlayDeviceChromeUpdate(window);
     id sceneRenderView =
         IOSUseBridgeSceneRenderView(IOSUsePlayHostContentView);
     id inputRenderView =
@@ -2427,7 +2478,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         : nil;
     BOOL geometryExact =
         IOSUseBridgeWindowPolicyIsHost(window) &&
-        sceneFixed &&
+        (sceneFixed || IOSUsePlayCanvasIsResizable()) &&
         sceneGeometryReady &&
         currentContent == IOSUsePlayHostContentView &&
         sceneRenderView != nil &&
@@ -2483,6 +2534,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             NSLocalizedDescriptionKey: IOSUsePlayWindowFailure,
         }];
     }
+    if (exact) IOSUsePlayDeviceSwitchWindow = nil;
     return exact;
 }
 
@@ -2608,7 +2660,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     NSDictionary<
         NSNumber *,
         NSDictionary<NSString *, id> *
-    > *cgMetadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
+    > *cgMetadata = IOSUseBridgeOwnCGWindowMetadata();
     NSDictionary<NSString *, id> *selection =
         IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
             windows,
@@ -2672,7 +2724,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     NSDictionary<
         NSNumber *,
         NSDictionary<NSString *, id> *
-    > *metadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
+    > *metadata = IOSUseBridgeOwnCGWindowMetadata();
     return IOSUseBridgeHostCanvasCaptureGeometry(
         IOSUsePlayHostWindow,
         metadata,
@@ -2918,7 +2970,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     > *cgWindowMetadata =
         [rawCapturedMetadata isKindOfClass:NSDictionary.class]
             ? rawCapturedMetadata
-            : IOSUseBridgeOwnOnscreenCGWindowMetadata();
+            : IOSUseBridgeOwnCGWindowMetadata();
     CGRect frame = IOSUseBridgeRect(window, @"frame");
     id contentView = [window respondsToSelector:
         NSSelectorFromString(@"contentView")]
@@ -3016,7 +3068,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     UISceneSizeRestrictions *restrictions =
         uiWindow.windowScene.sizeRestrictions;
     NSDictionary<NSString *, id> *baseCGWindow =
-        IOSUseBridgeExactOnscreenCGWindowMetadata(
+        IOSUseBridgeExactCGWindowMetadata(
             window,
             cgWindowMetadata
         );
@@ -3054,6 +3106,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             ? nativeAlertSnapshot[@"actions"] ?: @[]
             : IOSUseBridgePublicNativeAlertActions(nativeAlertWindow);
     [result addEntriesFromDictionary:@{
+        @"uiContext": [self uiAutomationContext],
         @"attempts": @(IOSUsePlayWindowAttemptCount),
         @"contentLayoutRect": IOSUseBridgeRectJSON(
             IOSUseBridgeRect(window, @"contentLayoutRect")
@@ -3210,7 +3263,6 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     NSParameterAssert(NSThread.isMainThread);
     UIWindow *uiWindow = IOSUseBridgeAutomationUIKitWindow();
     if (uiWindow == nil) {
-        BOOL hasBackgroundScene = NO;
         BOOL hasDisconnectedScene = NO;
         for (UIScene *candidate in
              UIApplication.sharedApplication.connectedScenes) {
@@ -3220,32 +3272,23 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
                         UIWindowSceneSessionRoleApplication]) {
                 continue;
             }
-            hasBackgroundScene = hasBackgroundScene ||
-                candidate.activationState ==
-                    UISceneActivationStateBackground;
             hasDisconnectedScene = hasDisconnectedScene ||
                 candidate.activationState ==
                     UISceneActivationStateUnattached;
         }
         return @{
             @"available": @NO,
-            @"reason": hasBackgroundScene
-                ? @"scene-backgrounded"
-                : hasDisconnectedScene || IOSUsePlayHostWindow != nil
+            @"reason": hasDisconnectedScene || IOSUsePlayHostWindow != nil
                     ? @"scene-disconnected"
                     : @"window-unavailable",
         };
     }
     UISceneActivationState activationState =
         uiWindow.windowScene.activationState;
-    if (activationState == UISceneActivationStateBackground ||
-        activationState == UISceneActivationStateUnattached) {
+    if (activationState == UISceneActivationStateUnattached) {
         return @{
             @"available": @NO,
-            @"reason": activationState ==
-                    UISceneActivationStateBackground
-                ? @"scene-backgrounded"
-                : @"scene-disconnected",
+            @"reason": @"scene-disconnected",
         };
     }
     id window = IOSUseBridgeWindowForUIKitWindow(uiWindow, NO);
@@ -3255,43 +3298,40 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             @"reason": @"window-unavailable",
         };
     }
-    if (IOSUseBridgeBool(window, @"isMiniaturized")) {
-        return @{
-            @"available": @NO,
-            @"reason": @"minimized",
-        };
-    }
-    if (uiWindow.hidden || uiWindow.alpha <= 0.01 ||
-        !IOSUseBridgeBool(window, @"isVisible")) {
-        return @{
-            @"available": @NO,
-            @"reason": @"hidden",
-        };
-    }
-    SEL activeSpaceSelector = NSSelectorFromString(@"isOnActiveSpace");
-    if (![window respondsToSelector:activeSpaceSelector] ||
-        !((IOSUseBridgeSendBool)objc_msgSend)(
-            window,
-            activeSpaceSelector
-        )) {
-        return @{
-            @"available": @NO,
-            @"reason": @"inactive-space",
-        };
-    }
-    SEL screenSelector = NSSelectorFromString(@"screen");
-    id screen = [window respondsToSelector:screenSelector]
-        ? ((IOSUseBridgeSendID)objc_msgSend)(window, screenSelector)
-        : nil;
-    if (screen == nil || [self screenCount] == 0) {
-        return @{
-            @"available": @NO,
-            @"reason": @"display-unavailable",
-        };
-    }
     return @{
         @"available": @YES,
         @"reason": NSNull.null,
+    };
+}
+
++ (NSDictionary<NSString *, id> *)uiAutomationContext {
+    NSParameterAssert(NSThread.isMainThread);
+    UIWindow *uiWindow = IOSUseBridgeAutomationUIKitWindow();
+    UIWindowScene *scene = uiWindow.windowScene;
+    NSString *sceneState = @"unavailable";
+    if (scene != nil) {
+        switch (scene.activationState) {
+            case UISceneActivationStateForegroundActive:
+                sceneState = @"foreground-active";
+                break;
+            case UISceneActivationStateForegroundInactive:
+                sceneState = @"foreground-inactive";
+                break;
+            case UISceneActivationStateBackground:
+                sceneState = @"background";
+                break;
+            case UISceneActivationStateUnattached:
+                sceneState = @"unattached";
+                break;
+        }
+    }
+    id window = IOSUseBridgeWindowForUIKitWindow(uiWindow, NO);
+    return @{
+        @"sceneState": sceneState,
+        @"minimized": window == nil ? (id)NSNull.null
+            : @(IOSUseBridgeBool(window, @"isMiniaturized")),
+        @"activeSpace": window == nil ? (id)NSNull.null
+            : @(IOSUseBridgeBool(window, @"isOnActiveSpace")),
     };
 }
 

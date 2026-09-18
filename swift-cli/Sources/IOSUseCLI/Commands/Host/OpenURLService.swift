@@ -5,7 +5,7 @@ import AppKit
 #endif
 
 enum OpenURLService {
-    static var realDeviceURLLauncherForTesting: ((String, String) throws -> Void)?
+    static var realDeviceURLLauncherForTesting: ((String, String, String?) throws -> Void)?
     static var macURLLauncherForTesting: ((
         URL,
         URL,
@@ -143,6 +143,7 @@ enum OpenURLService {
         let deviceType: String?
         let registeredHandlers: [String]
         let schemeLookupVerified: Bool?
+        let requestedBundleID: String?
         let readiness: ForyWaitAppForegroundPayload?
 
         init(
@@ -153,6 +154,7 @@ enum OpenURLService {
             deviceType: String? = nil,
             registeredHandlers: [String] = [],
             schemeLookupVerified: Bool? = nil,
+            requestedBundleID: String? = nil,
             readiness: ForyWaitAppForegroundPayload? = nil
         ) {
             self.message = message
@@ -162,6 +164,7 @@ enum OpenURLService {
             self.deviceType = deviceType
             self.registeredHandlers = registeredHandlers
             self.schemeLookupVerified = schemeLookupVerified
+            self.requestedBundleID = requestedBundleID
             self.readiness = readiness
         }
     }
@@ -186,9 +189,10 @@ enum OpenURLService {
         return url
     }
 
-    static func openHostSideIfAvailable(url: String, session: SessionOptions, paths: IOSUsePaths) throws -> OpenResult? {
+    static func openHostSideIfAvailable(url: String, bundleID: String? = nil, session: SessionOptions, paths: IOSUsePaths) throws -> OpenResult? {
         let validated = try validatedURL(url)
         let activeDriver = SessionService.read(paths: paths)
+        #if os(macOS)
         if let activeDriver,
            activeDriver.deviceType
             == PlayCoverSessionService.deviceType {
@@ -201,10 +205,12 @@ enum OpenURLService {
             }
             return try openPlayCover(
                 url: validated,
+                bundleID: bundleID,
                 session: activeDriver,
                 paths: paths
             )
         }
+        #endif
         let targetUdid = try SessionService.resolveTargetUdid(
             explicitUdid: session.udid,
             paths: paths,
@@ -212,26 +218,28 @@ enum OpenURLService {
         )
         if activeDriver?.udid == targetUdid {
             if activeDriver?.deviceType == "simulator" {
-                try openSimulator(url: validated, udid: targetUdid)
+                try openSimulator(url: validated, udid: targetUdid, bundleID: bundleID)
                 return OpenResult(message: "Opened URL: \(validated)", url: validated, targetUdid: targetUdid, deviceType: "simulator")
             }
-            return try openRealDevice(url: validated, udid: targetUdid)
+            return try openRealDevice(url: validated, udid: targetUdid, bundleID: bundleID)
         }
+        #if os(macOS)
         if DeviceService.looksLikeSimulatorUDID(targetUdid) {
             let bootedSimulators = try DeviceService.listDevices(simulatorOnly: true, paths: paths)
             guard bootedSimulators.contains(where: { $0.udid == targetUdid }) else {
                 return nil
             }
-            try openSimulator(url: validated, udid: targetUdid)
+            try openSimulator(url: validated, udid: targetUdid, bundleID: bundleID)
             return OpenResult(message: "Opened URL: \(validated)", url: validated, targetUdid: targetUdid, deviceType: "simulator")
         }
-        return try openRealDevice(url: validated, udid: targetUdid)
+        #endif
+        return try openRealDevice(url: validated, udid: targetUdid, bundleID: bundleID)
     }
 
     /// Dispatch the URL, wait for a registered handler when one is known, then
     /// obtain one fresh DOM. This is observation convenience, not proof that the
     /// deep-link destination finished loading.
-    static func openWithDom(url: String, session: SessionOptions, paths: IOSUsePaths) throws -> OpenResult {
+    static func openWithDom(url: String, bundleID: String? = nil, session: SessionOptions, paths: IOSUsePaths) throws -> OpenResult {
         let activeDriver = try SessionService.requireDriverLock(paths: paths)
         let targetUdid = try SessionService.resolveTargetUdid(
             explicitUdid: session.udid,
@@ -241,12 +249,14 @@ enum OpenURLService {
         guard activeDriver.udid == targetUdid else {
             throw CLIParseError.invalidValue("open --dom target \(targetUdid) does not match active Driver target \(activeDriver.udid). Run `ios-use stop` and `ios-use start \(targetUdid)`.")
         }
+        #if os(macOS)
         if activeDriver.deviceType
             == PlayCoverSessionService.deviceType {
             let base: OpenResult
             do {
                 base = try openPlayCover(
                     url: try validatedURL(url),
+                    bundleID: bundleID,
                     session: activeDriver,
                     paths: paths
                 )
@@ -271,7 +281,8 @@ enum OpenURLService {
                     targetUdid: base.targetUdid,
                     deviceType: base.deviceType,
                     registeredHandlers: base.registeredHandlers,
-                    schemeLookupVerified: base.schemeLookupVerified
+                    schemeLookupVerified: base.schemeLookupVerified,
+                    requestedBundleID: base.requestedBundleID
                 )
             } catch {
                 throw ReadinessError(
@@ -280,11 +291,12 @@ enum OpenURLService {
                 )
             }
         }
-        let base = try openHostSideIfAvailable(url: url, session: session, paths: paths)
+        #endif
+        let base = try openHostSideIfAvailable(url: url, bundleID: bundleID, session: session, paths: paths)
         guard let base else {
             throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start` first.")
         }
-        if base.deviceType == "real", base.schemeLookupVerified != true {
+        if base.deviceType == "real", base.requestedBundleID == nil, base.schemeLookupVerified != true {
             throw ReadinessError(
                 hostResult: base,
                 underlying: CLIParseError.invalidValue("open --dom cannot verify the target App because URL handler lookup failed; retry the lookup, or compose `open` and `dom` explicitly")
@@ -317,11 +329,13 @@ enum OpenURLService {
             deviceType: base.deviceType,
             registeredHandlers: base.registeredHandlers,
             schemeLookupVerified: base.schemeLookupVerified,
+            requestedBundleID: base.requestedBundleID,
             readiness: readiness
         )
     }
 
     static func readinessBundleIds(url: String, result: OpenResult) -> [String] {
+        if let requestedBundleID = result.requestedBundleID { return [requestedBundleID] }
         if result.schemeLookupVerified == true, !result.registeredHandlers.isEmpty {
             return result.registeredHandlers
         }
@@ -333,20 +347,20 @@ enum OpenURLService {
         return ["com.apple.mobilesafari"]
     }
 
-    static func openHostSideIfAvailable(url: String, udid: String?, deviceType: String?, paths: IOSUsePaths) throws -> OpenResult? {
+    static func openHostSideIfAvailable(url: String, bundleID: String? = nil, udid: String?, deviceType: String?, paths: IOSUsePaths) throws -> OpenResult? {
         let validated = try validatedURL(url)
         switch deviceType {
         case "simulator":
             guard let udid, !udid.isEmpty else {
                 throw CLIParseError.invalidValue("openURL requires a simulator UDID")
             }
-            try openSimulator(url: validated, udid: udid)
+            try openSimulator(url: validated, udid: udid, bundleID: bundleID)
             return OpenResult(message: "Opened URL: \(validated)", url: validated, targetUdid: udid, deviceType: "simulator")
         case "real":
             guard let udid, !udid.isEmpty else {
                 throw CLIParseError.invalidValue("openURL requires a real device UDID")
             }
-            return try openRealDevice(url: validated, udid: udid)
+            return try openRealDevice(url: validated, udid: udid, bundleID: bundleID)
         default:
             return nil
         }
@@ -354,21 +368,33 @@ enum OpenURLService {
 
     // MARK: - Simulator
 
-    private static func openSimulator(url: String, udid: String) throws {
+    private static func openSimulator(url: String, udid: String, bundleID: String?) throws {
+        guard bundleID == nil else {
+            throw CLIParseError.invalidValue("open --bundle-id is not supported on Simulator; omit it for system URL routing")
+        }
+        #if os(macOS)
         try SimulatorService.openURL(url, udid: udid)
+        #else
+        throw CLIParseError.invalidValue("Simulator URL opening is unavailable on Linux")
+        #endif
     }
 
     // MARK: - Real Device
 
-    private static func openRealDevice(url: String, udid: String) throws -> OpenResult {
+    private static func openRealDevice(url: String, udid: String, bundleID: String?) throws -> OpenResult {
         let scheme = URLComponents(string: url)?.scheme ?? ""
         let lookup = SchemeRegistry.lookupScheme(scheme, udid: udid)
 
-        if !lookup.lookupFailed, lookup.registeredHandlers.isEmpty {
+        let isWebURL = ["http", "https"].contains(scheme.lowercased())
+        if !lookup.lookupFailed, !isWebURL, let bundleID,
+           !lookup.registeredHandlers.contains(bundleID) {
+            throw CLIParseError.invalidValue("URL scheme \"\(scheme)\" is not registered by \(bundleID) on device")
+        }
+        if !lookup.lookupFailed, !isWebURL, lookup.registeredHandlers.isEmpty {
             throw CLIParseError.invalidValue("URL scheme \"\(scheme)\" not registered on device")
         }
 
-        try openRealDeviceURL(url: url, udid: udid)
+        try openRealDeviceURL(url: url, udid: udid, bundleID: bundleID)
 
         if lookup.lookupFailed {
             return OpenResult(
@@ -376,18 +402,19 @@ enum OpenURLService {
                 url: url,
                 targetUdid: udid,
                 deviceType: "real",
-                schemeLookupVerified: false
+                schemeLookupVerified: false,
+                requestedBundleID: bundleID
             )
         }
 
-        let handlers = lookup.registeredHandlers.joined(separator: ", ")
         return OpenResult(
-            message: "Opened URL: \(url) (handler: \(handlers))",
+            message: "Sent URL request: \(url) (\(bundleID.map { "target: \($0)" } ?? "system routing"))",
             url: url,
             targetUdid: udid,
             deviceType: "real",
             registeredHandlers: lookup.registeredHandlers,
-            schemeLookupVerified: true
+            schemeLookupVerified: true,
+            requestedBundleID: bundleID
         )
     }
 
@@ -396,19 +423,26 @@ enum OpenURLService {
             "url": result.url.map(MachineValue.string) ?? .null,
             "deviceUdid": result.targetUdid.map(MachineValue.string) ?? .null,
             "deviceType": result.deviceType.map(MachineValue.string) ?? .null,
+            "requestedBundleId": result.requestedBundleID.map(MachineValue.string) ?? .null,
+            "dispatchMode": .string(result.deviceType == "mac" ? "active-app" : result.requestedBundleID == nil ? "system" : "explicit-app"),
             "mutationDispatched": .boolean(true),
             "schemeLookupVerified": result.schemeLookupVerified.map(MachineValue.boolean) ?? .null,
             "registeredHandlers": .array(result.registeredHandlers.map(MachineValue.string)),
-            "readiness": result.readiness.map(AppLifecycleService.machineReadiness) ?? .null,
+            "readiness": result.readiness.map { .object(AppLifecycleService.readinessFields($0)) } ?? .null,
             "dom": result.dom.map(machineDom) ?? .null,
         ])
     }
 
+    #if os(macOS)
     private static func openPlayCover(
         url: String,
+        bundleID: String?,
         session: SessionService.Info,
         paths: IOSUsePaths
     ) throws -> OpenResult {
+        if let bundleID, bundleID != session.bundleId {
+            throw MacOpenError.targetMismatch("requested \(bundleID), active \(session.bundleId ?? "unknown")")
+        }
         let slot: PlayCoverInstalledSlot
         do {
             slot = try PlayCoverSessionService.validateSlot(
@@ -422,7 +456,7 @@ enum OpenURLService {
               let scheme = dispatchURL.scheme?.lowercased() else {
             throw CLIParseError.invalidValue("Invalid URL: \(url)")
         }
-        guard registeredSchemes(in: slot.appPath).contains(scheme) else {
+        guard ["http", "https"].contains(scheme) || registeredSchemes(in: slot.appPath).contains(scheme) else {
             throw MacOpenError.schemeNotRegistered(scheme)
         }
         let appURL = URL(
@@ -440,7 +474,8 @@ enum OpenURLService {
             targetUdid: session.udid,
             deviceType: PlayCoverSessionService.deviceType,
             registeredHandlers: session.bundleId.map { [$0] } ?? [],
-            schemeLookupVerified: true
+            schemeLookupVerified: true,
+            requestedBundleID: bundleID
         )
     }
 
@@ -592,12 +627,14 @@ enum OpenURLService {
     }
     #endif
 
-    private static func openRealDeviceURL(url: String, udid: String) throws {
+    #endif
+
+    private static func openRealDeviceURL(url: String, udid: String, bundleID: String?) throws {
         if let launcher = realDeviceURLLauncherForTesting {
-            try launcher(url, udid)
+            try launcher(url, udid, bundleID)
             return
         }
-        try CoreDeviceURLLauncher().open(url: url, udid: udid)
+        try CoreDeviceURLLauncher().open(url: url, udid: udid, bundleID: bundleID)
     }
 
 }

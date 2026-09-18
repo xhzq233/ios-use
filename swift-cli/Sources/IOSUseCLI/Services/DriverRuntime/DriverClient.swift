@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 
 enum DriverClientError: Error, CustomStringConvertible {
@@ -16,7 +21,7 @@ enum DriverClientError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .socketCreateFailed(let errno): return "socket create failed: \(errno)"
-        case .connectFailed(let errno): return "driver TCP connect failed: \(errno). Is the Simulator driver running?"
+        case .connectFailed(let errno): return "driver TCP connect failed: \(errno). Check that the driver is running and its TCP endpoint is reachable."
         case .connectFailedMessage(let message, _): return "driver TCP connect failed: \(message)"
         case .readFailed: return "driver TCP read failed"
         case .writeFailed: return "driver TCP write failed"
@@ -211,7 +216,9 @@ final class LockedDriverClientSession {
         do {
             return try body(currentClient(for: lock))
         } catch {
-            guard lock.deviceType != PlayCoverSessionService.deviceType,
+#if os(macOS)
+            guard lock.remoteConnection == nil,
+                  lock.deviceType != PlayCoverSessionService.deviceType,
                   (error as? DriverClientError)?.isRecoverableConnectFailure == true,
                   !didRecoverConnectFailure else {
                 throw error
@@ -219,6 +226,9 @@ final class LockedDriverClientSession {
             didRecoverConnectFailure = true
             let recoveredLock = try relaunchDriver(for: lock)
             return try body(replaceClient(for: recoveredLock))
+#else
+            throw error
+#endif
         }
     }
 
@@ -227,10 +237,11 @@ final class LockedDriverClientSession {
     }
 
     private func lockedInfo() throws -> SessionService.Info {
-        if let info {
-            return info
-        }
         let lock = try SessionService.requireDriverLock(paths: paths)
+        if let info, info != lock {
+            closeClient()
+            didRecoverConnectFailure = false
+        }
         info = lock
         return lock
     }
@@ -245,6 +256,7 @@ final class LockedDriverClientSession {
     private func replaceClient(for info: SessionService.Info) -> DriverCommandClient {
         closeClient()
         let next: DriverCommandClient
+#if os(macOS)
         if info.deviceType == PlayCoverSessionService.deviceType {
             next = DriverCommandExecution.playCoverClientFactoryForTesting?(info)
                 ?? PlayCoverDriverClient(
@@ -255,10 +267,15 @@ final class LockedDriverClientSession {
             next = DriverCommandExecution.clientFactoryForTesting?(info)
                 ?? DriverClient(session: info, paths: paths)
         }
+#else
+        next = DriverCommandExecution.clientFactoryForTesting?(info)
+            ?? DriverClient(session: info, paths: paths)
+#endif
         client = next
         return next
     }
 
+#if os(macOS)
     private func relaunchDriver(for lock: SessionService.Info) throws -> SessionService.Info {
         closeClient()
         return try SessionOperationLock.withExclusiveLock(paths: paths) {
@@ -314,6 +331,7 @@ final class LockedDriverClientSession {
         }
     }
 
+#endif
     private func closeClient() {
         client?.close()
         client = nil
@@ -363,8 +381,11 @@ final class DriverClient: DriverCommandClient {
         socketTimeoutSeconds: Int = IOSUseProtocol.commandSocketReadTimeoutSeconds
     ) {
         self.init(
+            host: session.driverHost ?? "127.0.0.1",
+            port: UInt16(session.driverPort ?? Int(IOSUseProtocol.defaultDriverPort)),
             udid: session.udid,
-            deviceType: session.deviceType,
+            // Remote UI uses the provider endpoint directly, without local usbmux.
+            deviceType: session.remoteConnection == nil ? session.deviceType : "tcp",
             cliLogPath: paths.map { CLILogService.logPath(paths: $0) },
             socketTimeoutSeconds: socketTimeoutSeconds
         )
@@ -377,8 +398,8 @@ final class DriverClient: DriverCommandClient {
     func close() {
         if let fd {
             appendDriverConnectionLog(event: "close", connectionID: connectionID, fd: fd)
-            _ = Darwin.shutdown(fd, SHUT_RDWR)
-            Darwin.close(fd)
+            _ = shutdown(fd, Int32(SHUT_RDWR))
+            _ = posixClose(fd)
             self.fd = nil
             self.connectionID = nil
         }
@@ -789,33 +810,42 @@ final class DriverClient: DriverCommandClient {
     }
 
     private func connect() throws -> Int32 {
+#if os(macOS)
         if deviceType == "real", let udid {
             return try connectRealDeviceOnce(udid: udid)
         }
+#endif
 
-        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw DriverClientError.socketCreateFailed(errno) }
-        configureSocket(fd)
-
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        addr.sin_addr.s_addr = inet_addr(host)
-
-        let result = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = posixStreamSocketType
+        hints.ai_protocol = Int32(IPPROTO_TCP)
+        var addresses: UnsafeMutablePointer<addrinfo>?
+        let result = getaddrinfo(host, String(port), &hints, &addresses)
+        guard result == 0, let first = addresses else {
+            throw DriverClientError.connectFailedMessage(
+                "Cannot resolve \(host): \(String(cString: gai_strerror(result)))",
+                recoverable: false
+            )
+        }
+        defer { freeaddrinfo(first) }
+        var next: UnsafeMutablePointer<addrinfo>? = first
+        var lastError = ECONNREFUSED
+        while let address = next {
+            next = address.pointee.ai_next
+            let fd = socket(address.pointee.ai_family, posixStreamSocketType, Int32(IPPROTO_TCP))
+            guard fd >= 0 else { lastError = errno; continue }
+            configureSocket(fd)
+            if posixConnect(fd, address.pointee.ai_addr, address.pointee.ai_addrlen, timeoutSeconds: 10) {
+                return fd
             }
+            lastError = errno
+            _ = posixClose(fd)
         }
-
-        guard result == 0 else {
-            let err = errno
-            Darwin.close(fd)
-            throw DriverClientError.connectFailed(err)
-        }
-        return fd
+        throw DriverClientError.connectFailed(lastError)
     }
 
+#if os(macOS)
     private func connectRealDeviceOnce(udid: String) throws -> Int32 {
         do {
             let connector = Self.usbmuxConnectorForTesting ?? { try Usbmux.connect(udid: $0, port: $1) }
@@ -839,18 +869,21 @@ final class DriverClient: DriverCommandClient {
         }
     }
 
+#endif
     private func configureSocket(_ fd: Int32) {
         var noDelay: Int32 = 1
-        Darwin.setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(fd, Int32(IPPROTO_TCP), TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
+#if os(macOS)
         var noSigPipe: Int32 = 1
-        Darwin.setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+#endif
         configureSocketTimeout(fd, seconds: socketTimeoutSeconds)
     }
 
     private func configureSocketTimeout(_ fd: Int32, seconds: Int) {
         var timeout = timeval(tv_sec: time_t(seconds), tv_usec: 0)
-        Darwin.setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        Darwin.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     }
 
     private func readLengthPrefixed(_ fd: Int32) throws -> Data {
@@ -891,7 +924,7 @@ final class DriverClient: DriverCommandClient {
     private func readExact(_ fd: Int32, into pointer: UnsafeMutableRawPointer, count: Int) throws {
         var offset = 0
         while offset < count {
-            let n = Darwin.read(fd, pointer.advanced(by: offset), count - offset)
+            let n = read(fd, pointer.advanced(by: offset), count - offset)
             if n < 0 {
                 if errno == EINTR { continue }
                 throw DriverClientError.readFailed
@@ -904,7 +937,7 @@ final class DriverClient: DriverCommandClient {
     private func writeExact(_ fd: Int32, _ pointer: UnsafeRawPointer, count: Int) throws {
         var offset = 0
         while offset < count {
-            let n = Darwin.write(fd, pointer.advanced(by: offset), count - offset)
+            let n = posixSocketWrite(fd, pointer.advanced(by: offset), count - offset)
             if n < 0 {
                 if errno == EINTR { continue }
                 throw DriverClientError.writeFailed

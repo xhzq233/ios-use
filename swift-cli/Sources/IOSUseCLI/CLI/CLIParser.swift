@@ -11,7 +11,10 @@ public enum CLIParser {
     }
 
     public static func parseInvocation(_ arguments: [String]) throws -> ParsedInvocation {
-        let (normalizedArguments, json) = extractGlobalJSONFlag(arguments)
+        let (argumentsWithoutJSON, json) = extractGlobalJSONFlag(arguments)
+        let (normalizedArguments, deviceID) = try extractGlobalDeviceFlag(
+            argumentsWithoutJSON
+        )
         var parser = ArgumentParser(normalizedArguments)
         guard let command = parser.consume() else {
             throw CLIParseError.missingCommand
@@ -41,8 +44,6 @@ public enum CLIParser {
             parsed = .apps(options)
         case "ddi-mount":
             parsed = .ddiMount(try parseDDIMount(&parser))
-        case "nslog":
-            parsed = .nslog(try parseNSLog(&parser))
         case "proxy":
             parsed = .proxy(try parseProxy(&parser))
         case "media":
@@ -86,7 +87,7 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .du, .start, .stop, .status, .install, .apps, .open,
+            case .du, .start, .stop, .status, .install, .uninstall, .apps, .open,
                     .config, .appLifecycle, .driver, .mediaImport,
                     .debug, .uiTree:
                 break
@@ -94,17 +95,21 @@ public enum CLIParser {
                 throw CLIParseError.unknownOption("--json")
             }
         }
-        return ParsedInvocation(command: parsed, json: json)
+        return ParsedInvocation(
+            command: parsed,
+            json: json,
+            deviceID: deviceID
+        )
     }
 
     static func extractGlobalJSONFlag(_ arguments: [String]) -> ([String], Bool) {
         let valueOptions: Set<String> = [
             "--udid", "--path", "--name", "--pattern",
-            "--flags", "--timeout", "--last", "--capture-mode", "--filter", "--interface",
+            "--flags", "--timeout", "--last", "--filter", "--interface",
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "--target", "--depth", "-i"
+            "--app", "--target", "--depth", "--device", "--connection", "--device-model", "--device-chrome", "--window-mode", "--bundle-id", "-d", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -127,6 +132,49 @@ public enum CLIParser {
         return (normalized, json)
     }
 
+    static func extractGlobalDeviceFlag(
+        _ arguments: [String]
+    ) throws -> ([String], String?) {
+        let valueOptions: Set<String> = [
+            "--udid", "--path", "--name", "--pattern",
+            "--flags", "--timeout", "--last",
+            "--filter", "--interface", "--offset", "--offset-ratio",
+            "--traits", "--cindex", "--duration", "--tap", "--label",
+            "--content", "--delete", "--to", "--from", "--dir",
+            "--distance", "--match", "--fps", "--index", "--process",
+            "--pid", "--output", "--runtime", "--app", "--target",
+            "--depth", "--connection", "--device-model", "--device-chrome", "--window-mode", "--bundle-id", "-i",
+        ]
+        var normalized: [String] = []
+        var deviceID: String?
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "--device" || argument == "-d" {
+                guard deviceID == nil else {
+                    throw CLIParseError.invalidValue(
+                        "--device/-d may only be provided once"
+                    )
+                }
+                index += 1
+                guard index < arguments.count,
+                      !arguments[index].isEmpty else {
+                    throw CLIParseError.missingOptionValue(argument)
+                }
+                deviceID = arguments[index]
+                index += 1
+                continue
+            }
+            normalized.append(argument)
+            if valueOptions.contains(argument), index + 1 < arguments.count {
+                index += 1
+                normalized.append(arguments[index])
+            }
+            index += 1
+        }
+        return (normalized, deviceID)
+    }
+
     private static func parseStatus(_ parser: inout ArgumentParser) throws -> StatusOptions {
         var options = StatusOptions()
         while let arg = parser.consume() {
@@ -147,8 +195,20 @@ public enum CLIParser {
             case "--simulator": options.simulator = true
             case "--verbose": options.verbose = true
             case "--mac": options.playCover = true
+            case "--device-model": options.macDevice = try parser.value(for: arg)
+            case "--device-chrome": options.macChrome = try parser.value(for: arg)
+            case "--window-mode": options.macWindowMode = try parser.value(for: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
+        }
+        if let value = options.macChrome, !["on", "off"].contains(value) {
+            throw CLIParseError.invalidValue("--device-chrome must be on or off")
+        }
+        if let value = options.macWindowMode, !["fixed", "resizable"].contains(value) {
+            throw CLIParseError.invalidValue("--window-mode must be fixed or resizable")
+        }
+        if (options.macDevice != nil || options.macChrome != nil || options.macWindowMode != nil) && !options.playCover {
+            throw CLIParseError.invalidValue("Mac device and window options require --mac")
         }
         if options.playCover,
            options.udid != nil
@@ -167,6 +227,11 @@ public enum CLIParser {
         var timeoutWasProvided = false
         while let arg = parser.consume() {
             switch arg {
+            case "--connection":
+                guard options.connectionPath == nil else {
+                    throw CLIParseError.invalidValue("--connection may only be provided once")
+                }
+                options.connectionPath = try parser.value(for: arg)
             case "--verbose": options.verbose = true
             case "--mac":
                 guard !options.mac else {
@@ -201,6 +266,13 @@ public enum CLIParser {
                 }
                 options.udid = arg
             }
+        }
+        if options.connectionPath != nil {
+            guard options.udid == nil, !options.mac,
+                  options.appPath == nil, !options.log, !timeoutWasProvided else {
+                throw CLIParseError.invalidValue("--connection cannot be combined with a UDID, --mac, --app, --log, or --timeout")
+            }
+            return options
         }
         if options.mac {
             guard options.udid == nil else {
@@ -394,52 +466,6 @@ public enum CLIParser {
         }
         return options
     }
-
-    private static func parseNSLog(_ parser: inout ArgumentParser) throws -> NSLogOptions {
-        var options = NSLogOptions(command: .stream)
-        while let arg = parser.consume() {
-            switch arg {
-            case "start":
-                guard options.command == .stream, options.name == nil, options.pattern == nil, options.flags.isEmpty else {
-                    throw CLIParseError.unexpectedArgument(arg)
-                }
-                options.command = .start
-                while let startArg = parser.consume() {
-                    switch startArg {
-                    case "--name": options.name = try parser.value(for: startArg)
-                    default: throw CLIParseError.unknownOption(startArg)
-                    }
-                }
-            case "read":
-                guard options.command == .stream, options.name == nil, options.pattern == nil, options.flags.isEmpty else {
-                    throw CLIParseError.unexpectedArgument(arg)
-                }
-                options.command = .read
-                while let readArg = parser.consume() {
-                    switch readArg {
-                    case "--pattern": options.pattern = try parser.valueAllowingLeadingDash(for: readArg)
-                    case "--flags": options.flags = try parser.value(for: readArg)
-                    case "--timeout": options.timeout = try parseNonNegativeDurationSecondsStrict(parser.valueAllowingLeadingDash(for: readArg), label: readArg)
-                    case "--clearAfterRead": options.clearAfterRead = true
-                    case "--last": options.last = try parsePositiveIntStrict(parser.value(for: readArg), label: readArg)
-                    default: throw CLIParseError.unknownOption(readArg)
-                    }
-                }
-            case "stop":
-                guard options.command == .stream, options.name == nil, options.pattern == nil, options.flags.isEmpty else {
-                    throw CLIParseError.unexpectedArgument(arg)
-                }
-                options.command = .stop
-            case "--name": options.name = try parser.value(for: arg)
-            case "--grep", "--flags":
-                throw CLIParseError.invalidValue("\(arg) moved to `ios-use nslog read`. Use `ios-use nslog read --pattern <regex> --flags <flags>`.")
-            case "--capture-mode": options.captureMode = try parser.value(for: arg)
-            default: throw CLIParseError.unknownOption(arg)
-            }
-        }
-        return options
-    }
-
 
     private static func parseProxy(_ parser: inout ArgumentParser) throws -> ProxyCommand {
         let subcommand = try parser.requiredPositional("subcommand")
@@ -646,10 +672,11 @@ public enum CLIParser {
 
     private static func parseScreenshot(_ parser: inout ArgumentParser) throws -> DriverAction {
         var name: String?
-        var ocr = true
+        var ocr = false
         while let arg = parser.consume() {
             switch arg {
             case "--name": name = try parser.value(for: arg)
+            case "--ocr": ocr = true
             case "--no-ocr": ocr = false
             default: throw CLIParseError.unknownOption(arg)
             }
@@ -771,16 +798,23 @@ public enum CLIParser {
 
     private static func parseOpen(_ parser: inout ArgumentParser) throws -> OpenURLOptions {
         let url = try parser.requiredPositional("url")
+        var bundleID: String?
         var session = SessionOptions()
         var dom = false
         while let arg = parser.consume() {
             if arg == "--dom" {
                 dom = true
+            } else if arg == "--bundle-id" {
+                let value = try parser.value(for: arg)
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw CLIParseError.invalidValue("--bundle-id requires a nonempty App bundle ID")
+                }
+                bundleID = value
             } else {
                 try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return OpenURLOptions(url: url, session: session, dom: dom)
+        return OpenURLOptions(url: url, bundleID: bundleID, session: session, dom: dom)
     }
 
     private static func parseAppLifecycle(_ parser: inout ArgumentParser, action: AppLifecycleOptions.Action) throws -> AppLifecycleOptions {

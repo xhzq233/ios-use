@@ -33,7 +33,7 @@ tests. Use this evidence order:
 - Shared protocol or driver lifecycle changes require updates to the shared models and owning tests. Update a design note only when a durable cross-file invariant changes.
 - Test cases and case IDs belong in the owning executable tests or scripts, not in a parallel Markdown matrix. Update verification guidance only when gate selection changes.
 - Keep `ios-use-skill/SKILL.md` and its references strictly actionable for CLI users. Update them only when command choice, invocation order, or a user-executable recovery path changes. Do not mirror schemas, implementation details, benchmarks, test matrices, or release notes there.
-- Record completed code-change work in the coordinating ContextShell history when the task spans repositories. Do not commit or push unless the user asks.
+- Keep planning and handoff notes proportional to the work. Small fixes can be explained in the commit and response; do not create a plan or completion report for every change. For work spanning sessions or repositories, update an existing ContextShell note only when useful context needs to survive. For user-requested implementation work, commit completed coherent stages locally. Do not push unless the user asks.
 
 ## 3. Development commands
 

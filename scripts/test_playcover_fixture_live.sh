@@ -1586,6 +1586,18 @@ assert_json dom_initial '
   (($header.frame[3] - 129) | fabs) <= 0.5
 '
 
+for orientation in landscape-left portrait-upside-down landscape-right portrait; do
+  record_case "rotate_${orientation}" rotate --to "$orientation" --dom --json
+  record_case "rotate_${orientation}_screenshot" screenshot --name "rotate-${orientation}" --json
+  if [[ "$orientation" == landscape-* ]]; then
+    assert_json "rotate_${orientation}" '.data.postDom.windowSize == [932, 430]'
+    assert_json "rotate_${orientation}_screenshot" '.data.pixelSize == [2796, 1290]'
+  else
+    assert_json "rotate_${orientation}" '.data.postDom.windowSize == [430, 932]'
+    assert_json "rotate_${orientation}_screenshot" '.data.pixelSize == [1290, 2796]'
+  fi
+done
+
 missing_stdout="$RUN_DIR/missing_target.stdout"
 missing_stderr="$RUN_DIR/missing_target.stderr"
 printf '%s\t%s\t%s\t%s\t%s\n' \

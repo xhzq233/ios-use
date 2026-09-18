@@ -2,29 +2,58 @@ import Foundation
 
 enum CLIHelp {
     static var rootText: String {
+        #if os(Linux)
+        return """
+        Usage: ios-use [--device <id>] <command>
+
+        Linux remote client for iOS UI and Apple device services.
+        Use a provider's device connection to start XCTest:
+          ios-use start -d phone --connection device-connection.json
+          ios-use status
+          ios-use dom -d phone
+          ios-use tap "<label>" -d phone --dom
+          ios-use screenshot -d phone
+          ios-use stop -d phone
+
+        Commands: start, stop, status, dom, waitFor, screenshot, tap,
+          longpress, input, swipe, apps, install, uninstall, open,
+          activateApp, terminateApp, home, rotate, dismissAlert
+        With multiple Devices, select one using -d <id>.
+        Inspect current DOM before acting and keep page-dependent actions sequential.
+        Use ios-use help <command> for options; --json returns structured results.
+        Screenshots save the original JPEG and geometry. OCR requires macOS.
+        The provider handles signing, Driver installation and transport setup.
+        ios-use owns XCTest and activateApp --log for --connection sessions.
+
         """
-        Usage: ios-use [--help] [--version] <command>
+        #else
+        return """
+        Usage: ios-use [--help] [--version] [--device <device-id>] <command>
 
-        Swift CLI for ios-use.
-
-        Agent recovery:
-          After context compaction or when resuming iOS device work, re-read:
-            ~/.ios-use/skill/SKILL.md
-          Use ordinary shell; compose workflows from stable semantic labels returned by DOM:
-            ios-use dom &&
-              ios-use swipe --to "<target>" --from "<visible-anchor>" --dom &&
-              ios-use tap "<target>" --dom
-          Coordinates and fixed-distance swipes are last-resort fallbacks.
-
-        Options:
-          -h, --help       Show help
-          -V, --version    Show version
+        Control iOS apps on real devices, Simulators and Mac.
 
         Commands:
-          du, status, config, start, stop, dom, ui-tree, waitFor, screenshot, capture, tap, longpress, input, swipe
-          activateApp, terminateApp, home, rotate, open, dismissAlert, debug, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
+          Devices    status, config, start, stop
+          Inspect    dom, screenshot, capture, ui-tree
+          Interact   tap, longpress, input, swipe, waitFor, dismissAlert
+          Apps       apps, activateApp, terminateApp, home, rotate, open
+          Manage     install, uninstall, media, ddi-mount, du
+          Diagnose   proxy, oslog, debug
+
+        Options:
+          -h, --help         Show help
+          -V, --version      Show version
+          -d, --device <id>  Use an ID from status; optional with one active target
+
+        Example (with a running target):
+          ios-use status
+          ios-use dom -d <id>
+          ios-use tap "<label-from-dom>" -d <id> --dom
+
+        Details: ios-use help <command> or ios-use <command> --help
 
         """
+        #endif
     }
 
     static func immediateResult(arguments: [String]) -> CLIResult? {
@@ -76,6 +105,8 @@ enum CLIHelp {
 
             Show connected devices, capture processes, proxy state, config state,
             and read-only Mac backend resource/signer/session readiness.
+            Session lifecycleOwner is ios-use for local and remote runtimes.
+            Run dom to check remote responsiveness.
 
             Options:
               --verbose    Enable verbose device output
@@ -85,11 +116,25 @@ enum CLIHelp {
         case "config":
             return """
             Usage: ios-use config [--udid <udid>] [--simulator] [--list] [--verbose] [--json]
-                   ios-use config --mac [--verbose] [--json]
+                   ios-use config --mac [--device-model <preset>] [--device-chrome on|off] [--window-mode fixed|resizable] [--verbose] [--json]
 
             Configure a device or Simulator, or explicitly initialize the
             dedicated stable Mac-backend signing identity.
             Run `config --mac` once before the first Mac backend start.
+            `config --mac --device-model <preset>` changes the running Mac App immediately
+            and saves the selection for future launches. Without a running App it only saves.
+            Presets: iphone-se, iphone-13, iphone-15-pro, iphone-15-pro-max (default),
+            ipad-pro-11, iphone-duo. The native title bar also provides a model selector,
+            Rotate, and a Duo Expand/Collapse button.
+            Device chrome is on by default and is omitted from screenshots.
+            `--window-mode resizable` preserves App scene size constraints and uses
+            the current window size for DOM, touches and screenshots. Device screen
+            identity stays fixed. This mode hides the device shell; use it to test
+            adaptive iPad layouts, not to emulate the iPadOS window manager.
+            Device/chrome/window preferences apply to the current Mac session.
+            Duo presets are 3x layout previews based on App Store screenshot
+            canvases; they retain the existing iPhone identity and do not emulate
+            the iOS fold lifecycle or iOS 27 system UI.
             macOS will show user authentication dialogs while the identity is
             created and trusted. If you cancel, safely retry the same command;
             the retry resumes the same signing identity instead of replacing it.
@@ -113,12 +158,21 @@ enum CLIHelp {
         case "start":
             return """
             Usage: ios-use start [udid] [--verbose]
+                   ios-use start [-d <id>] --connection <file> [--verbose]
                    ios-use start --mac --app <source.app> [--log] [--timeout <duration>]
                    ios-use start --mac [--log] [--timeout <duration>]
 
             Start a configured XCTest driver or an iOS App on this Mac and
-            record it as the active backend in driver.lock.
+            record it in that Device's context under IOS_USE_HOME.
             Defaults to the first connected USB real device when udid is omitted.
+            With --connection, load a provider's JSON description containing
+            udid, driverBundleID, usbmux {host, port} and driver {host, port}.
+            The provider must install a signed Driver and establish paired
+            device services. ios-use owns XCTest startup/stop, App management,
+            open and activateApp --log on macOS and Linux. stop leaves the
+            provider's transport and lease in place.
+            Multiple Devices can run together. Use --device <device-id> on
+            later commands; status prints the stable IDs.
             The Mac backend automatically prepares an unmodified iPhoneOS App
             into its account-global Bundle slot, or directly launches the
             current slot. The current IOS_USE_HOME stores only its selected
@@ -136,6 +190,7 @@ enum CLIHelp {
             crash, or launch failure.
 
             Options:
+              --connection <file>          Provider-established Apple device transport
               --verbose                    Enable verbose XCTest output
               --mac                        Select the Mac backend
               --app <source.app>            Install or update, then launch this App
@@ -189,12 +244,13 @@ enum CLIHelp {
             """
         case "stop":
             return """
-            Usage: ios-use stop [--json]
+            Usage: ios-use stop [-d <device-id>] [--json]
 
-            Stop the active XCTest driver or exact Mac process recorded
-            in driver.lock, then clear the active backend.
+            Stop one XCTest driver or exact Mac process recorded in its
+            Device Context. --device is required when multiple Devices run.
 
             Options:
+              -d, --device Device ID printed by status
               --json       Print the common machine-readable envelope
 
             """
@@ -202,8 +258,9 @@ enum CLIHelp {
             return """
             Usage: ios-use install <ipa|app> [--udid <udid>] [--verbose] [--json]
 
-            Install a signed IPA or .app bundle on a USB real device using devicectl when available,
-            with native AFC and installation_proxy fallback.
+            Install a signed IPA or .app bundle on a real device. Remote device
+            connections use native AFC and installation_proxy; local macOS uses
+            devicectl when available, with native fallback.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
@@ -214,9 +271,9 @@ enum CLIHelp {
             """
         case "uninstall":
             return """
-            Usage: ios-use uninstall <bundleId> [--udid <udid>] [--verbose]
+            Usage: ios-use uninstall <bundleId> [--udid <udid>] [--verbose] [--json]
 
-            Uninstall an app from a USB real device using installation_proxy.
+            Uninstall an app from a local or remote real device using installation_proxy.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
@@ -228,11 +285,11 @@ enum CLIHelp {
             return """
             Usage: ios-use apps [--udid <udid>] [--system] [--json]
 
-            List apps installed on a USB real device using installation_proxy.
+            List apps installed on a USB real device or booted Simulator.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
-              --udid <udid>  Target USB real device UDID; overrides active driver.lock
+              --udid <udid>  Target real device or Simulator UDID; overrides active driver.lock
               --system       Include system apps
               --json         Print JSON
 
@@ -256,8 +313,12 @@ enum CLIHelp {
                 options: [
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
                     "--fresh             Ignore cached snapshot and rebuild",
-                    "--wait-quiescence   Wait until the UI is idle before returning a fresh DOM",
-                ]
+                    "--wait-quiescence   Request UI-idle waiting, then refresh the tree",
+                ],
+                footer: """
+                Use labels/values as action targets, not entire DOM lines. --dom on an action already returns an updated tree.
+                Example: ios-use dom --fresh
+                """
             )
         case "ui-tree":
             return """
@@ -285,20 +346,26 @@ enum CLIHelp {
                 options: [
                     "--label <label>      Legacy alternative to the positional target",
                     "--timeout <duration> Maximum wait, up to 300s; accepts s/ms suffixes and defaults to seconds",
-                    "--match <mode>       contains (default; normalized exact preferred), exact, or regex",
+                    "--match <mode>       contains (default; prefers exact matches), exact, or regex",
                     "--traits <traits>    Comma-separated trait filter",
-                    "--cindex <index>     Select the Nth cleaned child under a matched parent",
+                    "--cindex <index>     Select the Nth child under a matched parent",
                     "--gone               Wait until no matching visible element remains",
                 ],
-                footer: "Use a stable substring for changing text, for example: ios-use waitFor '优化身形线条中' --gone --timeout 55s"
+                footer: """
+                App loading may continue after an action's --dom output. Wait for the label you need:
+                  ios-use waitFor "通用" --timeout 10s
+                Or wait for an observed loading message to disappear, matching its stable text:
+                  ios-use waitFor "Loading" --match contains --gone --timeout 20s
+                """
             )
         case "screenshot":
             return driverHelp(
-                usage: "ios-use screenshot [--name <name>] [--no-ocr]",
-                summary: "Save a screenshot under ios-use artifacts.",
+                usage: "ios-use screenshot [--name <name>] [--ocr | --no-ocr]",
+                summary: "Save a screenshot under ios-use artifacts. OCR is off by default.",
                 options: [
                     "--name <name>  Output name",
-                    "--no-ocr       Skip host-side Vision OCR"
+                    "--ocr          Enable host-side Vision OCR (macOS only)",
+                    "--no-ocr       Skip OCR (default; retained for compatibility)"
                 ]
             )
         case "capture":
@@ -321,18 +388,18 @@ enum CLIHelp {
         case "tap":
             return driverHelp(
                 usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
-                summary: "Tap a stable semantic label or value shown by DOM.",
+                summary: "Tap a label/value from DOM, or a coordinate such as 67,269.",
                 options: [
                     "--offset <x,y>        Pixel offset from target top-left",
                     "--offset-ratio <x,y>  Ratio offset from target top-left",
                     "--traits <traits>     Comma-separated trait filter",
-                    "--cindex <index>      Select the Nth cleaned child under a matched parent",
-                    "--dom [duration]      Return a fresh DOM after the mutation; bare values default to ms; minimum 100ms",
+                    "--cindex <index>      Select the Nth child under a matched parent",
+                    postDOMOption,
                 ],
                 footer: """
-                Preferred: ios-use tap "通用" --dom
-                Use coordinates only when Accessibility exposes no usable label or value; prefer a label-relative --offset or --offset-ratio first.
-                Last-resort coordinate forms: ios-use tap 67,269 or ios-use tap 67 269
+                Examples:
+                  ios-use tap "通用" --dom
+                  ios-use tap "亮度" --offset-ratio 0.8,0.5 --dom
                 """
             )
         case "longpress":
@@ -342,41 +409,44 @@ enum CLIHelp {
                 options: [
                     "--duration <duration> Press duration; accepts s/ms suffixes and defaults to milliseconds",
                     "--traits <traits>  Comma-separated trait filter",
-                    "--cindex <index>   Select the Nth cleaned child under a matched parent",
-                    "--dom [duration]   Return a fresh DOM after the mutation; bare values default to ms; minimum 100ms",
-                ]
+                    "--cindex <index>   Select the Nth child under a matched parent",
+                    postDOMOption,
+                ],
+                footer: "Example: ios-use longpress \"照片\" --duration 800ms --dom"
             )
         case "input":
             return driverHelp(
                 usage: "ios-use input [--tap <target>] --content <text> [--delete <n>] [--enter] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
-                summary: "Input text into the current keyboard focus, optionally tapping a target first.",
+                summary: "Insert text at the cursor; existing text is not replaced automatically.",
                 options: [
                     "--tap <target>     Optional label or x,y target to tap before typing",
-                    "--content <text>   Text to input",
+                    "--content <text>   Text to insert",
                     "--delete <n>       Send n delete characters before content",
                     "--enter            Send a trailing newline, which may trigger Enter, Done, Go, or send",
                     "--traits <traits>  Comma-separated trait filter for label tap target",
-                    "--cindex <index>   Select the Nth cleaned child under a label tap target",
-                    "--dom [duration]   Return a fresh DOM after the mutation; bare values default to ms; minimum 100ms",
-                ]
+                    "--cindex <index>   Select the Nth child under a label tap target",
+                    postDOMOption,
+                ],
+                footer: "Example: ios-use input --tap \"搜索\" --content \"蓝牙\" --dom"
             )
         case "swipe":
             return driverHelp(
                 usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
-                summary: "Scroll toward a stable semantic DOM label; use a fixed distance only as a fallback.",
+                summary: "Scroll to a DOM label, or use a fixed distance when no label is available.",
                 options: [
                     "--to <label>       Target element",
                     "--from <label|x,y> Anchor element or coordinate",
                     "--dir forth|back   Fixed-distance direction",
                     "--distance <px>    Fixed distance in pixels",
                     "--traits <traits>  Comma-separated trait filter for --to",
-                    "--cindex <index>   Select the Nth cleaned child under a matched --to parent",
-                    "--dom [duration]   Return a fresh DOM after the mutation; bare values default to ms; minimum 100ms",
+                    "--cindex <index>   Select the Nth child under a matched --to parent",
+                    postDOMOption,
                 ],
                 footer: """
-                Preferred for an off-screen target: ios-use swipe --to "开发者" --from "蓝牙" --dom
-                Use the exact displayed target and a currently visible DOM label or value from the same scroll container for --from.
-                Use coordinate anchors or --dir/--distance only when Accessibility exposes no usable semantic target.
+                Use the target's exact label and a visible anchor in the same list or panel:
+                  ios-use swipe --to "开发者" --from "蓝牙" --dom
+                Without a labeled target:
+                  ios-use swipe --dir forth --distance 300 --dom
                 """
             )
         case "activateApp":
@@ -385,7 +455,9 @@ enum CLIHelp {
 
             Activate an app by bundle ID using host-side device services.
             By default, waits for the app to reach foreground and for one fresh UI snapshot.
-            With --log, starts a background app stdio capture and returns a log file path.
+            With --log, starts background App stdout/stderr capture on the CLI host.
+            Files are retained under IOS_USE_HOME/logs/devices/<device-id>/;
+            --json returns data.logFile and data.logCapturePid.
             The Mac backend supports lifecycle through start/status/stop only;
             restart it with stop, then start --mac.
 
@@ -426,22 +498,31 @@ enum CLIHelp {
                 summary: "Rotate the device and verify the resulting orientation.",
                 options: [
                     "--to <orientation>  portrait, portrait-upside-down, landscape-left, or landscape-right",
-                    "--dom [duration]    Return a fresh DOM after rotation; bare values default to ms; minimum 100ms",
+                    postDOMOption,
                 ],
-                footer: "The Mac backend does not support device rotation."
+                footer: "An orientation-locked App may keep its layout. On Mac, rotates the fixed device preview in the current App; use config --mac --window-mode fixed first if resizable. Rotation is session-only. Duo keeps physical orientation separate from the inner display's aspect."
             )
         case "open":
             return """
-            Usage: ios-use open <url> [--udid <udid>] [--dom] [--verbose] [--json]
+            Usage: ios-use open <url> [--bundle-id <bundleId>] [--udid <udid>] [--dom] [--verbose] [--json]
 
             Open a URL on the device using host-side device services.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
+              --bundle-id <bundleId>  Deliver the URL to this App without terminating its running instance
               --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
               --dom          Return the first fresh DOM available after URL dispatch
               --verbose      Enable verbose output
               --json         Print the common machine-readable envelope
+
+            Explicit App delivery supports local and remote real devices. On the Mac
+            backend, the bundle ID must match the active App. Simulator supports only
+            system URL routing (omit --bundle-id). Without --bundle-id, real devices
+            retain system routing and the Mac backend uses its active App.
+            --dom waits for the specified App when given; it does not prove that the
+            deep-link destination has finished loading. Custom schemes must be
+            registered by the target App; HTTP(S) delivery is decided by the OS.
 
             """
         case "dismissAlert":
@@ -476,27 +557,6 @@ enum CLIHelp {
               --verbose              Enable verbose output
 
             """
-        case "nslog":
-            return """
-            Usage: ios-use nslog [--name <name>]
-
-            Forms:
-              ios-use nslog [--name <name>]
-              ios-use nslog start [--name <name>]
-              ios-use nslog read [--pattern <regex>] [--flags <flags>] [--timeout <duration>] [--clearAfterRead] [--last N]
-              ios-use nslog stop
-
-            Stream or capture NSLogger logs.
-
-            Options:
-              --name <name>       Bonjour service name
-              --pattern <regex>   Regex filter for nslog read
-              --flags <flags>     Regex flags for nslog read: i, m, s
-              --timeout <duration> Wait for a matching line; accepts s/ms suffixes and defaults to seconds
-              --clearAfterRead    Truncate the capture log after reading
-              --last N            Print only the last N matching lines (N > 0)
-
-            """
         case "proxy":
             return proxyHelp(arguments: rest)
         default:
@@ -527,6 +587,8 @@ enum CLIHelp {
         return CLIResult(exitCode: 0, stdout: help)
     }
 
+    private static let postDOMOption = "--dom [duration]      Return updated UI; bare flag waits for idle, value sets a fixed delay (ms/s; default ms; min 100ms)"
+
     private static func driverHelp(usage: String, summary: String, options: [String] = [], footer: String? = nil) -> String {
         let renderedUsage = usage.contains("--json") ? usage : usage + " [--json]"
         var lines = [
@@ -534,9 +596,12 @@ enum CLIHelp {
             "",
             summary,
             "",
-            "Requires an active driver.lock. Run `ios-use start` first.",
+            "Requires an active target; see `ios-use status`.",
         ]
-        let renderedOptions = options + ["--json               Print the common machine-readable envelope"]
+        let renderedOptions = options + [
+            "-d, --device <id>     Select a running Device; optional when only one runs",
+            "--json               Print JSON",
+        ]
         if !renderedOptions.isEmpty {
             lines += ["", "Options:"]
             lines += renderedOptions.map { "  \($0)" }
@@ -610,6 +675,7 @@ enum CLIHelp {
             Usage: ios-use proxy read [--filter <expression>] [--raw] [--last N]
 
             Read the most recent mitmdump capture recorded by proxy start.
+            Does not require a running Device.
 
             Options:
               --filter <expression>  mitmdump filter expression

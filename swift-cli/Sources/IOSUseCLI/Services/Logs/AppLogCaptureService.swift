@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 
 struct AppLogCaptureTarget: Codable, Equatable, Sendable {
@@ -37,23 +42,39 @@ enum AppLogCaptureService {
     static var processExitWaiterForTesting: ((Int32, Double) -> Bool)?
     static var terminateObservationTimeoutForTesting: Double?
 
+    private static func captureEnvironment(paths: IOSUsePaths) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["IOS_USE_HOME"] = paths.root
+        if let connection = RemoteDeviceConnection.current,
+           let data = try? JSONEncoder().encode(connection) {
+            environment["IOS_USE_DEVICE_CONNECTION"] = String(data: data, encoding: .utf8)
+        } else { environment.removeValue(forKey: "IOS_USE_DEVICE_CONNECTION") }
+        return environment
+    }
+
     static func start(bundleID: String, udid: String, deviceType: String, paths: IOSUsePaths) throws -> AppLifecycleService.Result {
         try stopExistingCaptureIfNeeded(paths: paths)
         try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
         let logFile = "\(paths.logs)/\(safeLogFileStem(bundleID))-\(nowSeconds()).log"
         FileManager.default.createFile(atPath: logFile, contents: nil)
 
+        var helperArguments = [
+            helperCommandName,
+            "--device-type", deviceType,
+            "--udid", udid,
+            "--bundle-id", bundleID,
+            "--log-file", logFile,
+            "--home", paths.root,
+        ]
+        if let deviceID = paths.deviceID {
+            helperArguments.append(
+                contentsOf: ["--device", deviceID]
+            )
+        }
         let request = HelperLaunchRequest(
             executablePath: try executablePath(),
-            arguments: [
-                helperCommandName,
-                "--device-type", deviceType,
-                "--udid", udid,
-                "--bundle-id", bundleID,
-                "--log-file", logFile,
-                "--home", paths.root,
-            ],
-            environment: ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new },
+            arguments: helperArguments,
+            environment: captureEnvironment(paths: paths),
             stderrPath: CLILogService.logPath(paths: paths)
         )
         let pid = try launchHelper(request)
@@ -66,8 +87,23 @@ enum AppLogCaptureService {
         )
     }
 
-    static func runHelper(arguments: [String], paths: IOSUsePaths) throws -> String {
+    static func runHelper(
+        arguments: [String],
+        paths basePaths: IOSUsePaths
+    ) throws -> String {
+        let connection = try ProcessInfo.processInfo.environment["IOS_USE_DEVICE_CONNECTION"].map {
+            try JSONDecoder().decode(RemoteDeviceConnection.self, from: Data($0.utf8))
+        }
+        return try RemoteDeviceConnection.$current.withValue(connection) {
+            try runConnectedHelper(arguments: arguments, paths: basePaths)
+        }
+    }
+
+    private static func runConnectedHelper(arguments: [String], paths basePaths: IOSUsePaths) throws -> String {
         let options = try parseHelperOptions(arguments)
+        let paths = try options.deviceID.map {
+            try basePaths.deviceContext($0)
+        } ?? basePaths
         if let home = options.home, standardizedPath(home) != standardizedPath(paths.root) {
             throw CLIParseError.invalidValue("app log helper home mismatch: \(home) != \(paths.root)")
         }
@@ -155,9 +191,10 @@ enum AppLogCaptureService {
         interruptMonitor: InterruptMonitor,
         didStart: () throws -> Void
     ) throws {
-        let fileHandle = try openAppendHandle(path: options.logFile)
+        let fileHandle = try CLILogService.openAppendHandle(path: options.logFile)
         defer { try? fileHandle.close() }
 
+        CLILogService.append(paths: paths, ["[app-log] opening CoreDevice tunnel"])
         let session = try CoreDeviceDirectTunnelRuntime(eventSink: nil).start(udid: options.udid)
         defer {
             session.close()
@@ -173,11 +210,14 @@ enum AppLogCaptureService {
             throw CLIParseError.invalidValue("CoreDevice openstdio service not available on this device.")
         }
 
+        CLILogService.append(paths: paths, ["[app-log] opening stdio socket"])
         let stdioSocket = try CoreDeviceOpenStdIOSocket.connect(session: session)
         defer { stdioSocket.close() }
 
+        CLILogService.append(paths: paths, ["[app-log] opening App service"])
         let appService = try CoreDeviceAppService(client: session.connectRemoteXPCService(CoreDeviceAppService.serviceName))
         defer { appService.close() }
+        CLILogService.append(paths: paths, ["[app-log] launching App with stdout/stderr"])
         _ = try appService.launchApplication(
             bundleID: options.bundleID,
             arguments: [],
@@ -191,6 +231,7 @@ enum AppLogCaptureService {
 
         try markRunning(options: options, deviceType: "real", paths: paths)
         try didStart()
+        CLILogService.append(paths: paths, ["[app-log] collecting stdout/stderr"])
         try stdioSocket.drainToFile(fileHandle, interruptMonitor: interruptMonitor)
     }
 
@@ -200,7 +241,7 @@ enum AppLogCaptureService {
         interruptMonitor: InterruptMonitor,
         didStart: () throws -> Void
     ) throws {
-        let fileHandle = try openAppendHandle(path: options.logFile)
+        let fileHandle = try CLILogService.openAppendHandle(path: options.logFile)
         defer { try? fileHandle.close() }
 
         let process = Process()
@@ -248,7 +289,7 @@ enum AppLogCaptureService {
         process.arguments = request.arguments
         process.environment = request.environment
 
-        let stderrHandle = try openAppendHandle(path: request.stderrPath)
+        let stderrHandle = try CLILogService.openAppendHandle(path: request.stderrPath)
         defer { try? stderrHandle.close() }
         process.standardOutput = FileHandle.nullDevice
         process.standardError = stderrHandle
@@ -373,6 +414,7 @@ enum AppLogCaptureService {
         var bundleID: String?
         var logFile: String?
         var home: String?
+        var deviceID: String?
         while let arg = parser.consume() {
             switch arg {
             case "--device-type": deviceType = try parser.value(for: arg)
@@ -380,6 +422,7 @@ enum AppLogCaptureService {
             case "--bundle-id": bundleID = try parser.value(for: arg)
             case "--log-file": logFile = try parser.value(for: arg)
             case "--home": home = try parser.value(for: arg)
+            case "--device": deviceID = try parser.value(for: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
@@ -388,24 +431,14 @@ enum AppLogCaptureService {
             udid: try require(udid, option: "--udid"),
             bundleID: try require(bundleID, option: "--bundle-id"),
             logFile: try require(logFile, option: "--log-file"),
-            home: home
+            home: home,
+            deviceID: deviceID
         )
     }
 
     private static func require(_ value: String?, option: String) throws -> String {
         guard let value, !value.isEmpty else { throw CLIParseError.missingRequiredOption(option) }
         return value
-    }
-
-    private static func openAppendHandle(path: String) throws -> FileHandle {
-        let url = URL(fileURLWithPath: path)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: path) {
-            FileManager.default.createFile(atPath: path, contents: nil)
-        }
-        let handle = try FileHandle(forWritingTo: url)
-        _ = try? handle.seekToEnd()
-        return handle
     }
 
     private static func executablePath() throws -> String {
@@ -415,7 +448,23 @@ enum AppLogCaptureService {
         if let path = Bundle.main.executableURL?.path, FileManager.default.isExecutableFile(atPath: path) {
             return path
         }
-        return try NSLogService.executablePath()
+        #if os(macOS)
+        let arg0 = CommandLine.arguments[0]
+        let candidates: [String]
+        if arg0.contains("/") {
+            candidates = [URL(fileURLWithPath: arg0).standardized.path]
+        } else {
+            candidates = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+                .split(separator: ":")
+                .map { URL(fileURLWithPath: String($0)).appendingPathComponent(arg0).path }
+        }
+        guard let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            throw CLIParseError.invalidValue("Unable to resolve current ios-use executable path from \(arg0) or PATH")
+        }
+        return path
+        #else
+        return try FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/exe")
+        #endif
     }
 
     private static func safeLogFileStem(_ bundleID: String) -> String {
@@ -443,7 +492,7 @@ enum AppLogCaptureService {
         if let processAliveOverrideForTesting {
             return processAliveOverrideForTesting(pid)
         }
-        return Darwin.kill(pid, 0) == 0
+        return posixKill(pid, 0) == 0
     }
 
     private static func processCommand(pid: Int32) -> String? {
@@ -486,7 +535,7 @@ enum AppLogCaptureService {
         if let signalSenderForTesting {
             return signalSenderForTesting(pid, signal)
         }
-        return Darwin.kill(pid, signal)
+        return posixKill(pid, signal)
     }
 }
 
@@ -496,4 +545,5 @@ private struct HelperOptions {
     var bundleID: String
     var logFile: String
     var home: String?
+    var deviceID: String?
 }

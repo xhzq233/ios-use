@@ -214,6 +214,7 @@ public struct PlayCoverHello: Codable, Equatable, Sendable {
     public let uiStage: String
     public let uiFailure: String?
     public let capabilities: [String]
+    public let devicePreset: String?
 
     init(
         sessionID: String,
@@ -225,7 +226,8 @@ public struct PlayCoverHello: Codable, Equatable, Sendable {
         uiState: String,
         uiStage: String,
         uiFailure: String?,
-        capabilities: [String]
+        capabilities: [String],
+        devicePreset: String? = nil
     ) {
         self.sessionID = sessionID
         self.pid = pid
@@ -237,6 +239,7 @@ public struct PlayCoverHello: Codable, Equatable, Sendable {
         self.uiStage = uiStage
         self.uiFailure = uiFailure
         self.capabilities = capabilities
+        self.devicePreset = devicePreset
     }
 }
 

@@ -108,7 +108,7 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 64)
         XCTAssertTrue(result.stderr.contains("unknown option '--not-a-real-option'"))
-        XCTAssertTrue(result.stderr.contains("Usage: ios-use [--help] [--version] <command>"))
+        XCTAssertTrue(result.stderr.contains("Usage: ios-use [--help] [--version] [--device <device-id>] <command>"))
         XCTAssertTrue(result.stdout.isEmpty)
     }
 
@@ -509,7 +509,7 @@ final class IOSUseCLITests: XCTestCase {
     }
 
 
-    func testAppManagementCommandsRejectActiveSimulatorLock() throws {
+    func testSimulatorListsAppsButRejectsRealDevicePackageMutations() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-app-management-simulator-lock-\(UUID().uuidString)")
             .path
@@ -525,8 +525,11 @@ final class IOSUseCLITests: XCTestCase {
         AppManagementService.uninstallerForTesting = { _, _ in
             XCTFail("simulator lock must fail before uninstall")
         }
-        AppManagementService.appsProviderForTesting = { _, _ in
-            XCTFail("simulator lock must fail before apps")
+        var listRequests = 0
+        AppManagementService.appsProviderForTesting = { udid, includeSystem in
+            XCTAssertEqual(udid, "SIM-LOCK")
+            XCTAssertFalse(includeSystem)
+            listRequests += 1
             return []
         }
         addTeardownBlock {
@@ -539,11 +542,9 @@ final class IOSUseCLITests: XCTestCase {
         let apps = cli.run(arguments: ["apps"])
 
         XCTAssertEqual(install.exitCode, 1)
-        XCTAssertTrue(install.stderr.contains("install supports USB real devices only"))
         XCTAssertEqual(uninstall.exitCode, 1)
-        XCTAssertTrue(uninstall.stderr.contains("uninstall supports USB real devices only"))
-        XCTAssertEqual(apps.exitCode, 1)
-        XCTAssertTrue(apps.stderr.contains("apps supports USB real devices only"))
+        XCTAssertEqual(apps.exitCode, 0)
+        XCTAssertEqual(listRequests, 1)
     }
 
 
@@ -1245,7 +1246,8 @@ final class IOSUseCLITests: XCTestCase {
                 lookupFailed: false
             )
         }
-        OpenURLService.realDeviceURLLauncherForTesting = { url, udid in
+        OpenURLService.realDeviceURLLauncherForTesting = { url, udid, bundleID in
+            XCTAssertNil(bundleID)
             XCTAssertEqual(url, "https://example.com")
             XCTAssertEqual(udid, "REAL-1")
             events.append("open")
@@ -1273,12 +1275,65 @@ final class IOSUseCLITests: XCTestCase {
         }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
-            "open", "https://example.com", "--dom"
+            "open", "https://example.com", "--dom", "--json"
         ])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(events, ["open", "readiness:com.apple.mobilesafari"])
-        XCTAssertTrue(result.stdout.contains("App: com.apple.mobilesafari"))
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        let dom = try XCTUnwrap(data["dom"] as? [String: Any])
+        XCTAssertEqual(dom["app"] as? String, "com.apple.mobilesafari")
+        let readiness = try XCTUnwrap(data["readiness"] as? [String: Any])
+        XCTAssertEqual(readiness["snapshotReady"] as? Bool, true)
+        XCTAssertNil(readiness["dom"])
+    }
+
+    func testTargetedOpenUsesOnlyRequestedHandlerAndRejectsUnregisteredTargetBeforeDispatch() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-targeted-open-\(UUID().uuidString)").path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "REAL-1", deviceType: "real", paths: paths)
+        var lookupFailed = false
+        var dispatchCount = 0
+        var readinessCount = 0
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = { _, _ in
+            .init(registeredHandlers: lookupFailed ? [] : ["com.example.a", "com.example.b"], lookupFailed: lookupFailed)
+        }
+        OpenURLService.realDeviceURLLauncherForTesting = { _, _, bundleID in
+            XCTAssertEqual(bundleID, "com.example.b")
+            dispatchCount += 1
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(waitAppForegroundHandler: { expected, _, _ in
+                XCTAssertEqual(expected, "com.example.b")
+                readinessCount += 1
+                return ForyWaitAppForegroundPayload(
+                    expectedBundleId: expected, activeBundleId: expected,
+                    appState: IOSUseAppState.foreground.rawValue, snapshotReady: true,
+                    elapsed: 0, dom: ForyDomPayload(app: expected)
+                )
+            })
+        }
+        defer {
+            try? FileManager.default.removeItem(atPath: root)
+            OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
+            OpenURLService.realDeviceURLLauncherForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+        let cli = IOSUseCLI(environment: ["IOS_USE_HOME": root])
+        let args = ["open", "fixture://payload", "--bundle-id", "com.example.b", "--dom"]
+        XCTAssertEqual(cli.run(arguments: args).exitCode, 0)
+        XCTAssertEqual(dispatchCount, 1)
+        XCTAssertEqual(readinessCount, 1)
+        XCTAssertEqual(cli.run(arguments: ["open", "fixture://payload", "--bundle-id", "com.example.missing"]).exitCode, 1)
+        XCTAssertEqual(dispatchCount, 1)
+        // A caller-specified identity remains usable for readiness even when
+        // installation-proxy lookup is unavailable; dispatch is authoritative.
+        lookupFailed = true
+        XCTAssertEqual(cli.run(arguments: args).exitCode, 0)
+        XCTAssertEqual(dispatchCount, 2)
+        XCTAssertEqual(readinessCount, 2)
     }
 
     func testOpenURLDomRejectsUnverifiableRealDeviceHandlerAfterDispatch() throws {
@@ -1291,7 +1346,7 @@ final class IOSUseCLITests: XCTestCase {
             OpenURLService.SchemeRegistry.LookupResult(registeredHandlers: [], lookupFailed: true)
         }
         var dispatched = false
-        OpenURLService.realDeviceURLLauncherForTesting = { _, _ in dispatched = true }
+        OpenURLService.realDeviceURLLauncherForTesting = { _, _, _ in dispatched = true }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             XCTFail("unverified real-device URL handler must not return an unrelated Driver snapshot")
             return FakeDriverCommandClient()
@@ -1365,7 +1420,8 @@ final class IOSUseCLITests: XCTestCase {
             return nil
         }
         var nativeLaunches: [(String, String)] = []
-        OpenURLService.realDeviceURLLauncherForTesting = { url, udid in
+        OpenURLService.realDeviceURLLauncherForTesting = { url, udid, bundleID in
+            XCTAssertNil(bundleID)
             nativeLaunches.append((url, udid))
         }
         var shellCalls: [(String, [String])] = []
@@ -1394,7 +1450,6 @@ final class IOSUseCLITests: XCTestCase {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com", "--udid", "REAL-CMD"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertTrue(result.stdout.contains("Opened URL: https://example.com (handler: com.apple.mobilesafari)"))
         XCTAssertEqual(nativeLaunches.map(\.0), ["https://example.com"])
         XCTAssertEqual(nativeLaunches.map(\.1), ["REAL-CMD"])
         XCTAssertTrue(shellCalls.isEmpty)

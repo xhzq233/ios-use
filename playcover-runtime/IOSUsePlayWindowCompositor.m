@@ -1,5 +1,6 @@
 #import "IOSUsePlayWindowCompositor.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayCanvas.h"
 
 #import <objc/message.h>
 
@@ -8,12 +9,9 @@
 typedef id (*IOSUseCompositorSendID)(id, SEL);
 
 static const CGFloat IOSUseCompositorGeometryTolerance = 0.01;
-static const CGFloat IOSUseCompositorDeviceLogicalWidth =
-    (CGFloat)IOSUsePlayDeviceLogicalWidth;
-static const CGFloat IOSUseCompositorDeviceLogicalHeight =
-    (CGFloat)IOSUsePlayDeviceLogicalHeight;
-static const CGFloat IOSUseCompositorDeviceScale =
-    (CGFloat)IOSUsePlayDeviceScale;
+#define IOSUseCompositorDeviceLogicalWidth ((CGFloat)IOSUsePlayCanvasWidth)
+#define IOSUseCompositorDeviceLogicalHeight ((CGFloat)IOSUsePlayCanvasHeight)
+#define IOSUseCompositorDeviceScale ((CGFloat)IOSUsePlayDeviceScale)
 static const CGBitmapInfo IOSUseCompositorBitmapInfo = (CGBitmapInfo)(
     (uint32_t)kCGBitmapByteOrder32Little |
     (uint32_t)kCGImageAlphaPremultipliedFirst
@@ -652,7 +650,7 @@ CGImageRef IOSUsePlayCropAndNormalizeCanvasCapture(
     return normalized;
 }
 
-NSArray *IOSUsePlayOrderForegroundScenes(
+NSArray *IOSUsePlayOrderConnectedScenes(
     NSArray *scenes,
     NSInteger (^activationRank)(id scene),
     NSString * _Nullable (^stableIdentifier)(id scene),
@@ -663,7 +661,7 @@ NSArray *IOSUsePlayOrderForegroundScenes(
     }
     if (activationRank == nil || stableIdentifier == nil) {
         if (failure != NULL) {
-            *failure = @"foreground scene policy accessors are unavailable";
+            *failure = @"connected scene policy accessors are unavailable";
         }
         return nil;
     }
@@ -681,7 +679,7 @@ NSArray *IOSUsePlayOrderForegroundScenes(
             [identifiers containsObject:identifier]) {
             if (failure != NULL) {
                 *failure =
-                    @"foreground scenes do not have unique stable "
+                    @"connected scenes do not have unique stable "
                     @"identifiers";
             }
             return nil;
@@ -806,12 +804,12 @@ NSArray *IOSUsePlayUnionCaptureWindows(
         NSInteger rawWindowNumber =
             window == nil ? 0 : windowNumber(window);
         if (window == nil ||
-            !isVisible(window) ||
+            (!required && !isVisible(window)) ||
             rawWindowNumber <= 0 ||
             (uint64_t)rawWindowNumber > UINT32_MAX) {
             if (required) {
                 appendFailure =
-                    @"mapped UIKit host is not a visible numbered "
+                    @"mapped UIKit host is not a numbered "
                     @"native window";
             }
             return !required;
@@ -839,6 +837,10 @@ NSArray *IOSUsePlayUnionCaptureWindows(
         }
     }
     for (id window in applicationWindows) {
+        // Only our decoration class is excluded; real App panels stay in capture.
+        if ([window isKindOfClass:NSClassFromString(@"IOSUsePlayChromeWindow")]) {
+            continue;
+        }
         if (!append(window, NO)) {
             if (failure != NULL) {
                 *failure = appendFailure;
@@ -1154,8 +1156,8 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
         if (failure != NULL) {
             *failure = [NSString stringWithFormat:
                 @"logical device frame is not origin-zero %ldx%ld",
-                (long)IOSUsePlayDeviceLogicalWidth,
-                (long)IOSUsePlayDeviceLogicalHeight
+                (long)IOSUsePlayCanvasWidth,
+                (long)IOSUsePlayCanvasHeight
             ];
         }
         return NULL;
@@ -1322,8 +1324,8 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
         return NULL;
     }
 
-    size_t width = IOSUsePlayDeviceNativeWidth;
-    size_t height = IOSUsePlayDeviceNativeHeight;
+    size_t width = IOSUsePlayCanvasNativeWidth;
+    size_t height = IOSUsePlayCanvasNativeHeight;
     size_t rowBytes = width * 4;
     void *pixels = calloc(height, rowBytes);
     if (pixels == NULL) {
@@ -1358,6 +1360,9 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
         }
         return NULL;
     }
+    // JPEG cannot preserve alpha; composite transparent screen corners on black.
+    CGContextSetRGBFillColor(context, 0, 0, 0, 1);
+    CGContextFillRect(context, CGRectMake(0, 0, width, height));
     CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
     // Inputs are front-to-back. Quartz uses an AppKit-style bottom-left
     // coordinate system, so draw from the native back to the native front.

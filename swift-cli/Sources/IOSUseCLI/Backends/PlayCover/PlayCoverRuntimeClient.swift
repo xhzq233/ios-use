@@ -5,6 +5,7 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case hello
     case ping
     case diagnostics
+    case configureDevice
     case screenshot
     case dom
     case uiTree
@@ -18,53 +19,40 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case debug
 }
 
-indirect enum PlayCoverRuntimeJSONValue: Codable, Equatable, Sendable {
-    case null
-    case bool(Bool)
-    case number(Double)
-    case string(String)
-    case array([PlayCoverRuntimeJSONValue])
-    case object([String: PlayCoverRuntimeJSONValue])
+struct PlayCoverRuntimeDeviceState: Codable, Equatable, Sendable {
+    let preset: String
+    let expanded: Bool
+    let orientation: String
+    var physicalOrientation: String? = nil
+    var safeAreaProfile: String? = nil
+    let chrome: String
+    let windowMode: String
+    let logicalWidth: Double
+    let logicalHeight: Double
+    let scale: Double
+    let idiom: Int
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() {
-            self = .null
-        } else if let value = try? container.decode(Bool.self) {
-            self = .bool(value)
-        } else if let value = try? container.decode(Double.self) {
-            self = .number(value)
-        } else if let value = try? container.decode(String.self) {
-            self = .string(value)
-        } else if let value = try? container.decode([PlayCoverRuntimeJSONValue].self) {
-            self = .array(value)
-        } else if let value = try? container.decode([String: PlayCoverRuntimeJSONValue].self) {
-            self = .object(value)
-        } else {
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "unsupported diagnostics JSON value"
-            )
-        }
+    var device: PlayCoverDevicePreset {
+        PlayCoverDevicePreset(name: preset,
+            productType: (try? PlayCoverDevicePreset.named(preset))?.productType ?? "",
+            logicalSize: CGSize(width: logicalWidth, height: logicalHeight), scale: scale)
     }
+    var machineData: MachineValue {
+        .object(["preset": .string(preset), "expanded": .boolean(expanded),
+            "layoutPreview": .boolean(preset.hasPrefix("iphone-duo")),
+            "physicalOrientation": physicalOrientation.map(MachineValue.string) ?? .null,
+            "safeAreaProfile": safeAreaProfile.map(MachineValue.string) ?? .null,
+            "orientation": .string(orientation), "deviceChrome": .string(chrome),
+            "windowMode": .string(windowMode), "logicalWidth": .double(logicalWidth),
+            "logicalHeight": .double(logicalHeight), "scale": .double(scale), "idiom": .integer(idiom)])
+    }
+}
 
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .null:
-            try container.encodeNil()
-        case .bool(let value):
-            try container.encode(value)
-        case .number(let value):
-            try container.encode(value)
-        case .string(let value):
-            try container.encode(value)
-        case .array(let value):
-            try container.encode(value)
-        case .object(let value):
-            try container.encode(value)
-        }
-    }
+struct PlayCoverRuntimeDeviceChanges: Codable, Equatable, Sendable {
+    var preset: String? = nil
+    var chrome: String? = nil
+    var windowMode: String? = nil
+    var physicalOrientation: String? = nil
 }
 
 struct PlayCoverRuntimeRect: Codable, Equatable, Sendable {
@@ -302,6 +290,7 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
         PlayCoverRuntimeDismissAlertByLabelArguments
     )
     case debug(PlayCoverRuntimeDebugArguments)
+    case configureDevice(PlayCoverRuntimeDeviceChanges)
 
     func encode(to encoder: Encoder) throws {
         switch self {
@@ -324,6 +313,8 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
         case .dismissAlert(let arguments):
             try arguments.encode(to: encoder)
         case .dismissAlertByLabel(let arguments):
+            try arguments.encode(to: encoder)
+        case .configureDevice(let arguments):
             try arguments.encode(to: encoder)
         case .debug(let arguments):
             try arguments.encode(to: encoder)
@@ -371,6 +362,8 @@ struct PlayCoverRuntimeDOMElement: Codable, Equatable, Sendable {
 }
 
 struct PlayCoverRuntimeDOMPayload: Codable, Equatable, Sendable {
+    var windowMode: String? = nil
+    var deviceState: PlayCoverRuntimeDeviceState? = nil
     let app: String
     let windowSize: PlayCoverRuntimePoint
     let raw: String
@@ -492,6 +485,8 @@ struct PlayCoverRuntimeFullFrame: Codable, Equatable, Sendable {
 }
 
 struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
+    var windowMode: String? = nil
+    var deviceState: PlayCoverRuntimeDeviceState? = nil
     let jpegBase64: String
     let pixelWidth: Int
     let pixelHeight: Int
@@ -592,6 +587,7 @@ struct PlayCoverRuntimeHelloPayload:
     let controlFailure: String?
     let uiState: PlayCoverRuntimeUIReadiness
     let stdio: PlayCoverRuntimeStdioState
+    var devicePreset: String? = nil
 }
 
 struct PlayCoverRuntimeDiagnosticsPayload:
@@ -604,6 +600,7 @@ struct PlayCoverRuntimeDiagnosticsPayload:
     let bundleIdentifier: String
     let executablePath: String
     let capabilities: [String]
+    var deviceState: PlayCoverRuntimeDeviceState? = nil
     let geometry: PlayCoverRuntimeGeometry
     let stage: String
     let uiState: PlayCoverRuntimeUIReadiness
@@ -678,6 +675,7 @@ enum PlayCoverRuntimeResponsePayload: Equatable, Sendable {
     case hello(PlayCoverRuntimeHelloPayload)
     case ping(PlayCoverRuntimePingPayload)
     case diagnostics(PlayCoverRuntimeDiagnosticsPayload)
+    case configureDevice(PlayCoverRuntimeDeviceState)
     case screenshot(PlayCoverRuntimeScreenshotResult)
     case dom(PlayCoverRuntimeDOMPayload)
     case uiTree(PlayCoverRuntimeUITreePayload)
@@ -1313,6 +1311,9 @@ final class PlayCoverRuntimeClient {
                 executablePath: executablePath
             )
             return .ping(payload)
+        case .configureDevice:
+            let payload: PlayCoverRuntimeDeviceState = try performRequest(command, arguments: arguments)
+            return .configureDevice(payload)
         case .diagnostics:
             let payload: PlayCoverRuntimeDiagnosticsPayload =
                 try performRequest(command, arguments: arguments)
@@ -1946,6 +1947,7 @@ final class PlayCoverRuntimeClient {
             "error",
             "interactionState",
             "performance",
+            "uiContext",
         ])
         let actualKeys = Set(object.keys)
         guard requiredKeys.isSubset(of: actualKeys),
@@ -1968,6 +1970,9 @@ final class PlayCoverRuntimeClient {
         }
         guard envelope.sessionID == sessionID else {
             throw PlayCoverRuntimeClientError.sessionIDMismatch
+        }
+        if let context = envelope.uiContext {
+            CLIInvocationContext.current?.recordUIContext(context)
         }
         try consumeResponseMetadata(
             interactionState: envelope.interactionState,
@@ -2146,6 +2151,7 @@ private extension PlayCoverRuntimeClient {
             PlayCoverRuntimeInteractionState?
         let performance:
             PlayCoverRuntimeResponsePerformance?
+        let uiContext: CLIUIContext?
     }
 
     struct DebugEventEnvelope: Decodable {

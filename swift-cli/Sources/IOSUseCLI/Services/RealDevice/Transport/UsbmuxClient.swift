@@ -1,5 +1,10 @@
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+import CoreFoundation
 import IOSUseProtocol
 
 enum UsbmuxError: Error, CustomStringConvertible, Equatable {
@@ -21,7 +26,7 @@ enum UsbmuxError: Error, CustomStringConvertible, Equatable {
         case .listDevicesMissing:
             return "usbmux ListDevices returned no devices"
         case .deviceNotFound(let udid):
-            return "Device \(udid) not found via usbmux. USB connection is required."
+            return "Device \(udid) not found via the selected usbmux connection."
         case .connectFailed(let response):
             return "usbmux Connect failed: \(response)"
         }
@@ -48,7 +53,7 @@ enum Usbmux {
 
     static func listUsbDevices() throws -> [Device] {
         let fd = try openSocket()
-        defer { Darwin.close(fd) }
+        defer { posixClose(fd) }
         let list = try request(fd: fd, payload: [
             "MessageType": IOSUseProtocol.XCConstants.usbmuxListDevicesMessageType,
             "ProgName": IOSUseProtocol.XCConstants.usbmuxProgramName,
@@ -75,14 +80,17 @@ enum Usbmux {
     }
 
     static func openSocket() throws -> Int32 {
-        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        if let endpoint = RemoteDeviceConnection.current?.usbmux {
+            return try TCPConnector.connect(host: endpoint.host, port: endpoint.port)
+        }
+        let fd = posixSocket(AF_UNIX, posixStreamSocketType, 0)
         guard fd >= 0 else { throw UsbmuxError.socketOpenFailed }
         setSocketNoSigPipe(fd)
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let path = Array(IOSUseProtocol.XCConstants.usbmuxSocketPath.utf8CString)
         guard path.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
-            Darwin.close(fd)
+            posixClose(fd)
             throw UsbmuxError.socketPathTooLong
         }
         withUnsafeMutablePointer(to: &addr.sun_path) { pointer in
@@ -93,12 +101,12 @@ enum Usbmux {
         let length = socklen_t(MemoryLayout<sa_family_t>.size + path.count)
         let result = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fd, $0, length)
+                posixConnect(fd, $0, length)
             }
         }
         guard result == 0 else {
             let err = errno
-            Darwin.close(fd)
+            posixClose(fd)
             throw UsbmuxError.daemonConnectFailed(errno: err)
         }
         return fd
@@ -137,7 +145,7 @@ enum Usbmux {
             }
             return fd
         } catch {
-            Darwin.close(fd)
+            posixClose(fd)
             throw error
         }
     }
@@ -207,7 +215,7 @@ func readExact(fd: Int32, byteCount: Int, timeoutSeconds: Double) throws -> Data
             throw CLIParseError.invalidValue("socket read timeout")
         }
         var buffer = [UInt8](repeating: 0, count: byteCount - out.count)
-        let n = Darwin.read(fd, &buffer, buffer.count)
+        let n = posixRead(fd, &buffer, buffer.count)
         if n > 0 {
             out.append(contentsOf: buffer.prefix(n))
         } else if n == 0 {
@@ -224,7 +232,7 @@ func writeAll(fd: Int32, data: Data) throws {
         guard let base = raw.baseAddress else { return }
         var offset = 0
         while offset < data.count {
-            let n = Darwin.write(fd, base.advanced(by: offset), data.count - offset)
+            let n = posixSocketWrite(fd, base.advanced(by: offset), data.count - offset)
             if n > 0 {
                 offset += n
             } else if n < 0, errno != EINTR && errno != EAGAIN {
@@ -235,14 +243,8 @@ func writeAll(fd: Int32, data: Data) throws {
 }
 
 func waitForReadable(fd: Int32, timeoutSeconds: Double) -> Bool {
-    var set = fd_set()
-    fdZero(&set)
-    fdSet(fd, &set)
-    var timeout = timeval(
-        tv_sec: Int(timeoutSeconds),
-        tv_usec: Int32((timeoutSeconds - floor(timeoutSeconds)) * 1_000_000)
-    )
-    return Darwin.select(fd + 1, &set, nil, nil, &timeout) > 0
+    var event = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+    return poll(&event, 1, Int32(max(0, timeoutSeconds) * 1000)) > 0
 }
 
 func setNonBlocking(_ fd: Int32) {
@@ -258,12 +260,16 @@ func setNonBlocking(_ fd: Int32) {
 }
 
 func setNoSigPipe(_ fd: Int32) {
+    #if os(macOS)
     _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+    #endif
 }
 
 func setSocketNoSigPipe(_ fd: Int32) {
+    #if os(macOS)
     var noSigPipe: Int32 = 1
-    _ = Darwin.setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+    _ = posixSetsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+    #endif
 }
 
 func fdZero(_ set: inout fd_set) {
@@ -271,12 +277,8 @@ func fdZero(_ set: inout fd_set) {
 }
 
 func fdSet(_ fd: Int32, _ set: inout fd_set) {
-    let intOffset = Int(fd / 32)
-    let bitOffset = Int(fd % 32)
-    withUnsafeMutablePointer(to: &set.fds_bits) { ptr in
-        ptr.withMemoryRebound(to: Int32.self, capacity: 32) { bits in
-            bits[intOffset] |= 1 << Int32(bitOffset)
-        }
+    withUnsafeMutableBytes(of: &set) { bytes in
+        bytes[Int(fd) / 8] |= UInt8(1 << (Int(fd) % 8))
     }
 }
 

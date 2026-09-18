@@ -6,8 +6,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apache/fory.git",
       "state" : {
-        "branch" : "main",
-        "revision" : "f021947c44317426f3c1021a0891cd422b208f4f"
+        "revision" : "affbd38a5869a3ec4deaf51a762bedf2c90400d5"
       }
     },
     {

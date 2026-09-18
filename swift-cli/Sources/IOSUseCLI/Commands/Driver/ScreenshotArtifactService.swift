@@ -2,9 +2,11 @@ import Foundation
 import IOSUseProtocol
 
 enum ScreenshotArtifactService {
+#if os(macOS)
     typealias OCRRecognizer = (Data, CGSize?, Double?, OCRService.RecognitionLevel) throws -> OCRService.Result
     static var ocrRecognizerForTesting: OCRRecognizer?
 
+#endif
     struct Result {
         let stdout: String
         let imagePath: String
@@ -37,6 +39,11 @@ enum ScreenshotArtifactService {
             defaultName: String,
             ocr: Bool
         ) throws {
+#if os(Linux)
+            guard !ocr else {
+                throw CLIParseError.invalidValue("OCR requires macOS. Use screenshot --no-ocr on Linux.")
+            }
+#endif
             self.capture = capture
             try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
             path = try ArtifactPaths.file(paths: paths, name: name, defaultName: defaultName, extension: "jpg")
@@ -56,6 +63,7 @@ enum ScreenshotArtifactService {
                 }
             }
 
+#if os(macOS)
             guard ocr else { return }
             let recognizer = ScreenshotArtifactService.ocrRecognizerForTesting ?? { data, logicalSize, scale, recognitionLevel in
                 try OCRService.recognize(
@@ -85,6 +93,8 @@ enum ScreenshotArtifactService {
                     lock.unlock()
                 }
             }
+#endif
+
         }
 
         func finish() throws -> Result {

@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 enum AppManagementService {
     struct AppInfo: Equatable {
@@ -33,6 +34,14 @@ enum AppManagementService {
     static var installerForTesting: ((String, String, String?) throws -> RealDevicePackageInstaller.InstallResult)?
     static var uninstallerForTesting: ((String, String) throws -> Void)?
     static var appsProviderForTesting: ((String, Bool) throws -> [AppInfo])?
+
+    private static func looksLikeSimulator(_ udid: String) -> Bool {
+        #if os(macOS)
+        return DeviceService.looksLikeSimulatorUDID(udid)
+        #else
+        return false
+        #endif
+    }
 
     static func install(options: AppInstallOptions, paths: IOSUsePaths) throws -> String {
         let result = try installResult(options: options, paths: paths)
@@ -172,15 +181,22 @@ enum AppManagementService {
     }
 
     static func listResult(options: AppsOptions, paths: IOSUsePaths) throws -> AppListResult {
-        let targetUdid = try resolveRealDeviceTargetUdid(
+        let targetUdid = try SessionService.resolveTargetUdid(
             explicitUdid: options.udid,
             paths: paths,
-            command: "apps",
             missingMessage: "apps requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`."
         )
+        let isSimulator = looksLikeSimulator(targetUdid)
+            || (SessionService.read(paths: paths).map { $0.udid == targetUdid && $0.deviceType == "simulator" } ?? false)
         let apps: [AppInfo]
         if let appsProviderForTesting {
             apps = try appsProviderForTesting(targetUdid, options.includeSystem)
+        } else if isSimulator {
+            #if os(macOS)
+            apps = try SimulatorService.listApps(udid: targetUdid, includeSystem: options.includeSystem)
+            #else
+            throw CLIParseError.invalidValue("Simulator App management is unavailable on Linux")
+            #endif
         } else {
             apps = try InstallationProxyClient.withClient(udid: targetUdid) { client in
                 let raw = try client.browse(
@@ -264,15 +280,15 @@ enum AppManagementService {
             missingMessage: missingMessage
         )
         if let explicitUdid, !explicitUdid.isEmpty {
-            if DeviceService.looksLikeSimulatorUDID(targetUdid) {
-                throw CLIParseError.invalidValue("\(command) supports USB real devices only; Simulator app management is not implemented.")
+            if looksLikeSimulator(targetUdid) {
+                throw CLIParseError.invalidValue("\(command) supports real devices only; Simulator app management is not implemented.")
             }
             return targetUdid
         }
         guard let current = SessionService.read(paths: paths),
               current.udid == targetUdid,
               current.deviceType == "real" else {
-            throw CLIParseError.invalidValue("\(command) supports USB real devices only. Pass a real device --udid or start a real device.")
+            throw CLIParseError.invalidValue("\(command) supports real devices only. Pass a real device --udid or start a real device.")
         }
         return targetUdid
     }
@@ -316,7 +332,7 @@ enum AppManagementService {
     }
 
     private static func extractBundleIDFromIpa(ipaPath: String) throws -> String {
-        let entries = try Shell.run("unzip", arguments: ["-Z1", ipaPath])
+        let entries = String(decoding: try Shell.runData("unzip", arguments: ["-Z1", ipaPath]), as: UTF8.self)
             .split(whereSeparator: \.isNewline)
             .map(String.init)
         guard let infoEntry = entries.first(where: { entry in
@@ -336,7 +352,11 @@ enum AppManagementService {
     }
 
     private static func extractBundleIDFromApp(appPath: String) throws -> String {
-        try Shell.run("plutil", arguments: ["-extract", "CFBundleIdentifier", "raw", "-o", "-", "\(appPath)/Info.plist"])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let data = try Data(contentsOf: URL(fileURLWithPath: appPath).appendingPathComponent("Info.plist"))
+        guard let info = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let bundleID = info["CFBundleIdentifier"] as? String, !bundleID.isEmpty else {
+            throw CLIParseError.invalidValue("No CFBundleIdentifier found in App Info.plist")
+        }
+        return bundleID
     }
 }

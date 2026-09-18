@@ -1,7 +1,7 @@
 # How To Release
 
-ios-use releases from Git tags. A release publishes exactly five assets: the
-CLI, two driver IPAs, the Mac resource archive, and their checksum manifest.
+ios-use releases from Git tags. A release publishes six assets: two host
+CLIs, two driver IPAs, the Mac resource archive, and their checksum manifest.
 
 ## 1. Pin the version
 
@@ -14,6 +14,18 @@ binary and tag match:
 IOSUseCLI.version = "X.Y.Z"
 tag = vX.Y.Z
 ```
+
+For a PR pre-release, use a full version such as `2.1.0-alpha.1` and tag
+`v2.1.0-alpha.1` on the PR commit. Push that branch and tag without merging it
+into main. Tags containing a hyphen publish as GitHub pre-releases and do not
+replace the stable latest release. Use the same full version in the changelog
+filename and explicit installer command. Use the tag in the installer URL for
+PR pre-releases so platform support comes from that release, even while main
+still contains an older installer.
+
+Driver IPAs retain the full version in `IOSUseDriverVersion`. Their Apple
+bundle version fields use the numeric release version (for example `2.1.0`);
+`config` checks the full identity and still reads older IPAs without that key.
 
 ## 2. Run the repository gate
 
@@ -44,7 +56,8 @@ The build:
 
 1. audits the pinned PlayCover, PlayTools, and `inject` sources, licenses, and
    recorded local patches;
-2. forces fresh Runtime, CLI, and real-device/simulator driver builds;
+2. builds the CLI and both Drivers from the current checkout, reusing compiler
+   intermediates where valid, and builds the Runtime in fresh DerivedData;
 3. fetches and validates the exact public Frida commits before building the
    resident GumJS Engine;
 4. packages only `IOSUsePlayRuntime.framework` and
@@ -53,7 +66,7 @@ The build:
 6. writes `SHA256SUMS` for the four content assets and rejects any release
    directory that is not the exact five-file set.
 
-Expected `release/` entries:
+Expected local Mac `release/` entries:
 
 - `ios-use-darwin-arm64`
 - `driver.ipa`
@@ -76,6 +89,12 @@ bash scripts/test_playcover_installed_layout.sh \
   --release-dir release \
   --verify-only
 ```
+
+This check takes the four Mac artifacts and their `SHA256SUMS` entries, before
+Linux assets are added by the publication job. To verify a published release,
+first check all five content hashes against its manifest, then run this check
+with a temporary directory containing the four Mac artifacts and only their
+manifest entries. Keep the original downloaded release unchanged.
 
 This verifies the exact asset set, every checksum, both framework signatures,
 the embedded Frida notices, and an isolated-prefix install. It does not launch
@@ -102,10 +121,49 @@ git push origin main
 git push origin vX.Y.Z
 ```
 
-Pushing the tag triggers `.github/workflows/release.yml`. The workflow rebuilds
-from the tag, reruns the isolated installed-layout validation, uses the tracked
-release note as the GitHub Release body, and uploads only the five explicit
-paths above.
+Pushing the tag triggers `.github/workflows/release.yml`. Linux CLI, Mac CLI,
+device Driver, Simulator Driver, and Mac resources build in five independent
+jobs. Each Driver has its own checkout and build cache, including both DerivedData
+and the products written outside it by `CONFIGURATION_BUILD_DIR`. Cache keys
+follow the toolchain and dependency manifests instead of each version/source
+edit. Both compilers still run against the current checkout; release artifacts
+are always restamped and verified. The final
+job downloads those artifacts, assembles the Mac package without recompiling,
+runs the isolated installed-layout validation, then adds the Linux checksum
+and publishes all six assets with the tracked release note. Linux uses Swift
+6.2.4 on Ubuntu 22.04 with the Swift runtime statically linked.
+
+To measure the complete build without publishing, dispatch the workflow on
+the candidate branch with `publish=false` and the version in that branch:
+
+```bash
+gh workflow run release.yml --ref <branch> -f tag=vX.Y.Z -F publish=false
+```
+
+This uses the selected branch commit, retains the verified `release-assets`
+Actions artifact, and leaves the existing tag and Release untouched. If the tag exists, a publication checks out that tag. If it does not exist,
+a manual publication builds the selected branch commit and creates the tag
+only after the assets pass verification. Independent versions can build at the
+same time; publication attempts for the same tag remain serialized.
+
+For separate local component builds, `build_swift_cli.sh --skip-runtime` skips
+the companion Runtime, `build_driver.sh --release --device-only` or
+`--simulator-only` selects one IPA, and `build_release_mac_resources.sh` builds
+the resource archive. Driver variants must use separate checkouts if run
+concurrently. `release_build.sh --assemble-only` stamps the checksum manifest
+for the four Mac artifacts already in `release/`; it does not compile them.
+
+For repeated prereleases, publish from the same release branch so Actions can
+reuse its release compilation cache. GitHub does not share caches between
+different tags. Push the version/changelog commit to the branch, then run:
+
+```bash
+gh workflow run release.yml --ref <release-branch> -f tag=vX.Y.Z -F publish=true
+```
+
+This creates the tag at the built commit when publication succeeds. There is
+no separate tag push for this path. Tag-push releases remain supported, but
+without a cache on the default branch they perform a cold build.
 
 Release assets are immutable in the normal workflow: a tag whose Release
 already has assets is rejected, and duplicate names are never overwritten.
@@ -117,8 +175,8 @@ After the workflow succeeds, confirm:
 
 - the tag resolves to the intended commit;
 - the Release body matches `release-notes/CHANGELOG-vX.Y.Z.md`;
-- the Release has exactly the five expected assets;
-- `SHA256SUMS` has exactly four entries and validates every content asset;
+- the Release has exactly the six expected assets;
+- `SHA256SUMS` has exactly five entries and validates every content asset;
 - the GitHub tag source contains the project/vendored licenses and source; and
 - every public Frida repository resolves the commit recorded in
   `ThirdParty/Frida/PROVENANCE.md`.
@@ -133,4 +191,4 @@ After the workflow succeeds, confirm:
 - [ ] `release/` contains exactly five files.
 - [ ] `git diff --check` passes.
 - [ ] Branch and tag are pushed.
-- [ ] GitHub Actions succeeds and the Release has exactly five assets.
+- [ ] GitHub Actions succeeds and the Release has exactly six assets.

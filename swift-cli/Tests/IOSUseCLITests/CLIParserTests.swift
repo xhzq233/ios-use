@@ -377,6 +377,23 @@ final class CLIParserTests: XCTestCase {
         }
     }
 
+    func testRemoteStartRejectsLegacyAndLocalSelectors() throws {
+        let invocation = try CLIParser.parseInvocation([
+            "start", "--connection", "device-connection.json", "-d", "phone", "--verbose", "--json"
+        ])
+        var options = StartOptions(verbose: true)
+        options.connectionPath = "device-connection.json"
+        XCTAssertEqual(invocation, ParsedInvocation(command: .start(options), json: true, deviceID: "phone"))
+        for local in [["test-udid"], ["--mac"], ["--app", "Example.app"],
+                      ["--log"], ["--timeout", "1s"], ["--connection", "another.json"]] {
+            XCTAssertThrowsError(try CLIParser.parse(["start", "--connection", "device-connection.json"] + local))
+        }
+        for arguments in [["attach"], ["detach"], ["start", "--host", "localhost"],
+                          ["start", "--port", "8102"]] {
+            XCTAssertThrowsError(try CLIParser.parse(arguments))
+        }
+    }
+
     func testParsesDriverReadCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["dom", "--wait-quiescence"]),
@@ -417,7 +434,12 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["screenshot", "--name", "home"]),
-            .driver(.screenshot(name: "home", ocr: true))
+            .driver(.screenshot(name: "home", ocr: false))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["screenshot", "--ocr"]),
+            .driver(.screenshot(name: nil, ocr: true))
         )
 
         XCTAssertEqual(
@@ -593,6 +615,15 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["open", "fixture://page", "--bundle-id=com.example.fixture", "--dom"]),
+            .open(OpenURLOptions(url: "fixture://page", bundleID: "com.example.fixture", dom: true))
+        )
+        XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id", ""]))
+        XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id"]))
+        XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id", "--json", "com.example.fixture"]))
+        XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id", "-d", "phone", "com.example.fixture"]))
+
+        XCTAssertEqual(
             try CLIParser.parse(["dismissAlert", "--index", "0"]),
             .driver(.dismissAlert(DismissAlertOptions(selection: .index(0))))
         )
@@ -635,27 +666,7 @@ final class CLIParserTests: XCTestCase {
 
     }
 
-    func testParsesNSLogAndProxyCommands() throws {
-        XCTAssertEqual(
-            try CLIParser.parse(["nslog", "--name=ios-use"]),
-            .nslog(NSLogOptions(name: "ios-use"))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["nslog", "start", "--name=ios-use"]),
-            .nslog(NSLogOptions(command: .start, name: "ios-use"))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["nslog", "read", "--pattern=ready", "--flags=i", "--timeout", "1.5", "--clearAfterRead", "--last", "5"]),
-            .nslog(NSLogOptions(command: .read, pattern: "ready", flags: "i", timeout: 1.5, clearAfterRead: true, last: 5))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["nslog", "stop"]),
-            .nslog(NSLogOptions(command: .stop))
-        )
-
+    func testParsesProxyCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["proxy", "start", "--interface=en0"]),
             .proxy(.start(interfaceName: "en0", serverOnly: false))
@@ -902,9 +913,7 @@ final class CLIParserTests: XCTestCase {
         XCTAssertThrowsError(try CLIParser.parse(["proxy", "read", "--last", "0"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--last must be greater than 0"))
         }
-        XCTAssertThrowsError(try CLIParser.parse(["nslog", "--grep", "ready"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("--grep moved to `ios-use nslog read`. Use `ios-use nslog read --pattern <regex> --flags <flags>`."))
-        }
+
         XCTAssertThrowsError(try CLIParser.parse(["activateApp", "com.example", "--log"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("activateApp --log requires --terminateExisting so the app starts with a fresh stdio pipe"))
         }
@@ -975,6 +984,49 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parseInvocation(["config", "--list", "--json"]),
             ParsedInvocation(command: .config(ConfigOptions(list: true)), json: true)
+        )
+    }
+
+    func testParsesGlobalDeviceSelection() throws {
+        XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "--device",
+                "real:DEVICE-1",
+                "--json",
+                "dom",
+            ]),
+            ParsedInvocation(
+                command: .driver(
+                    .dom(raw: false, fresh: false, waitQuiescence: false)
+                ),
+                json: true,
+                deviceID: "real:DEVICE-1"
+            )
+        )
+        XCTAssertThrowsError(
+            try CLIParser.parseInvocation([
+                "dom",
+                "--device",
+                "real:DEVICE-1",
+                "-d",
+                "real:DEVICE-2",
+            ])
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "dom",
+                "-d",
+                "mac",
+                "--json",
+            ]),
+            ParsedInvocation(
+                command: .driver(
+                    .dom(raw: false, fresh: false, waitQuiescence: false)
+                ),
+                json: true,
+                deviceID: "mac"
+            )
         )
     }
 }

@@ -41,12 +41,12 @@ final class DeviceServiceTests: XCTestCase {
 
     func testUsbOnlyDevicesFiltersAndPreservesUsbmuxOrder() throws {
         DeviceService.usbDeviceUdidsOverrideForTesting = {
-            ["00008150-0015309E2EE3401C", "CE83141B-D0FB-5983-B0DB-4C301BB773F6"]
+            ["USB-DEVICE-2", "USB-DEVICE-1"]
         }
         let devices = [
             IOSDevice(name: "WiFiOnly", version: "26.0", udid: "FFFFFFFF-FFFFFFFFFFFFFFFF", kind: .real),
-            IOSDevice(name: "SecondUSB", version: "26.2", udid: "00008150-0015309E2EE3401C", kind: .real),
-            IOSDevice(name: "FirstUSB", version: "26.1", udid: "CE83141B-D0FB-5983-B0DB-4C301BB773F6", kind: .real),
+            IOSDevice(name: "SecondUSB", version: "26.2", udid: "USB-DEVICE-2", kind: .real),
+            IOSDevice(name: "FirstUSB", version: "26.1", udid: "USB-DEVICE-1", kind: .real),
         ]
 
         let usbOnly = try DeviceService.usbOnlyDevices(from: devices)

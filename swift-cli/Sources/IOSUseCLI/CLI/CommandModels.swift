@@ -17,7 +17,6 @@ public enum ParsedCommand: Equatable, Sendable {
     case driver(DriverAction)
     case capture(CaptureOptions)
     case mediaImport(MediaImportOptions)
-    case nslog(NSLogOptions)
     case proxy(ProxyCommand)
     case debug(DebugOptions)
     case uiTree(UITreeOptions)
@@ -39,7 +38,6 @@ public enum ParsedCommand: Equatable, Sendable {
         case .driver(let action): return action.name
         case .capture: return "capture"
         case .mediaImport: return "media import"
-        case .nslog: return "nslog"
         case .proxy(let command): return "proxy \(command.subcommand)"
         case .debug: return "debug"
         case .uiTree: return "ui-tree"
@@ -50,10 +48,16 @@ public enum ParsedCommand: Equatable, Sendable {
 public struct ParsedInvocation: Equatable, Sendable {
     public var command: ParsedCommand
     public var json: Bool
+    public var deviceID: String?
 
-    public init(command: ParsedCommand, json: Bool = false) {
+    public init(
+        command: ParsedCommand,
+        json: Bool = false,
+        deviceID: String? = nil
+    ) {
         self.command = command
         self.json = json
+        self.deviceID = deviceID
     }
 }
 
@@ -71,6 +75,9 @@ public struct ConfigOptions: Equatable, Sendable {
     public var simulator = false
     public var verbose = false
     public var playCover = false
+    public var macDevice: String?
+    public var macChrome: String?
+    public var macWindowMode: String?
 
     public init(
         udid: String? = nil,
@@ -98,6 +105,7 @@ public struct SessionOptions: Equatable, Sendable {
 }
 
 public struct StartOptions: Equatable, Sendable {
+    public var connectionPath: String?
     public var udid: String?
     public var verbose = false
     public var mac = false
@@ -196,11 +204,13 @@ public struct DDIMountOptions: Equatable, Sendable {
 
 public struct OpenURLOptions: Equatable, Sendable {
     public var url: String
+    public var bundleID: String?
     public var session: SessionOptions
     public var dom: Bool
 
-    public init(url: String, session: SessionOptions = SessionOptions(), dom: Bool = false) {
+    public init(url: String, bundleID: String? = nil, session: SessionOptions = SessionOptions(), dom: Bool = false) {
         self.url = url
+        self.bundleID = bundleID
         self.session = session
         self.dom = dom
     }
@@ -373,35 +383,6 @@ public extension DriverAction {
     /// Source-compatible convenience for callers that use the default accurate OCR.
     static func screenshot(name: String?) -> DriverAction {
         .screenshot(name: name, ocr: true)
-    }
-}
-
-public struct NSLogOptions: Equatable, Sendable {
-    public enum Command: Equatable, Sendable {
-        case stream
-        case start
-        case read
-        case stop
-    }
-
-    public var command: Command
-    public var name: String?
-    public var pattern: String?
-    public var flags = ""
-    public var timeout: Double?
-    public var clearAfterRead = false
-    public var last: Int?
-    public var captureMode: String?
-
-    public init(command: Command = .stream, name: String? = nil, pattern: String? = nil, flags: String = "", timeout: Double? = nil, clearAfterRead: Bool = false, last: Int? = nil, captureMode: String? = nil) {
-        self.command = command
-        self.name = name
-        self.pattern = pattern
-        self.flags = flags
-        self.timeout = timeout
-        self.clearAfterRead = clearAfterRead
-        self.last = last
-        self.captureMode = captureMode
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 struct LockdownService {
     let port: Int

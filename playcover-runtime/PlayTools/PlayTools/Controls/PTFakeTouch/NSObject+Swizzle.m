@@ -205,6 +205,7 @@ static void IOSUsePlayInstallRequiredIdentityHook(
                 @selector(frame)
             );
     }
+    if (strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0) return original;
     return [PlayScreen frame:original];
 }
 
@@ -221,6 +222,7 @@ static void IOSUsePlayInstallRequiredIdentityHook(
                 @selector(bounds)
             );
     }
+    if (strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0) return original;
     return [PlayScreen bounds:original];
 }
 
@@ -257,6 +259,18 @@ static void IOSUsePlayInstallRequiredIdentityHook(
 }
 
 
+
+- (CGRect)iosUsePlayScreenBounds {
+    return CGRectMake(0, 0, IOSUsePlayDeviceLogicalWidth, IOSUsePlayDeviceLogicalHeight);
+}
+
+- (UIInterfaceOrientation)iosUsePlayInterfaceOrientation {
+    // A free Mac window uses Catalyst's own scene coordinates. Reporting the
+    // virtual display's landscape orientation here swaps its resized bounds.
+    if (strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0)
+        return [self iosUsePlayInterfaceOrientation];
+    return (UIInterfaceOrientation)IOSUsePlayDeviceInterfaceOrientation();
+}
 
 - (UIDeviceOrientation)iosUsePlayDeviceOrientation {
     IOSUsePlayHookRegistryRecordFirstUse(
@@ -302,12 +316,10 @@ static void IOSUsePlayInstallRequiredIdentityHook(
         identifier,
         self.class
     );
-    return CGRectMake(
-        0,
-        0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceSafeAreaTop
-    );
+    if (strcmp(getenv("IOS_USE_MAC_WINDOW_MODE") ?: "fixed", "resizable") == 0)
+        return [self iosUsePlayStatusBarFrame];
+    IOSUsePlayDeviceRect frame = IOSUsePlayDeviceStatusBarRect();
+    return CGRectMake(frame.x, frame.y, frame.width, frame.height);
 }
 
 - (double) hook_nativeScale {
@@ -437,6 +449,8 @@ bool menuWasCreated = false;
 
 @implementation PTSwizzleLoader
 + (void)load {
+    [UIWindowScene swizzleInstanceMethod:@selector(interfaceOrientation) withMethod:@selector(iosUsePlayInterfaceOrientation)];
+    [UIScreen swizzleInstanceMethod:@selector(bounds) withMethod:@selector(iosUsePlayScreenBounds)];
     Class sceneSettingsClass;
     if (@available(iOS 17.1, *)) {
         sceneSettingsClass =

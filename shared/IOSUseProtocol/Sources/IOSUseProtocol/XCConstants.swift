@@ -122,8 +122,6 @@ public extension IOSUseProtocol {
         public static let installationProxyProgressTimeoutSeconds = 120.0
         public static let installationProxyMaxResponseBytes = 100 * 1024 * 1024
 
-        public static let localFDProxyListenBacklog: Int32 = 1
-        public static let localFDProxyBridgeBufferBytes = 16 * 1024
 
         // MARK: DTX / Instruments
 

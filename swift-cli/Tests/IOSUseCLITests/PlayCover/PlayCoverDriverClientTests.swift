@@ -331,8 +331,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
         throws
     {
         let jpeg = try makeJPEG(
-            width: Int(IOSUsePlayDeviceNativeWidth),
-            height: Int(IOSUsePlayDeviceNativeHeight)
+            width: Int(PlayCoverDevicePreset.defaultPreset.nativeSize.width),
+            height: Int(PlayCoverDevicePreset.defaultPreset.nativeSize.height)
         )
         let valid = makeScreenshot(jpeg: jpeg)
         let client = makeClient(
@@ -347,23 +347,23 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertEqual(capture.jpeg, jpeg)
         XCTAssertEqual(
             capture.pixelSize?.x,
-            Double(IOSUsePlayDeviceNativeWidth)
+            Double(PlayCoverDevicePreset.defaultPreset.nativeSize.width)
         )
         XCTAssertEqual(
             capture.pixelSize?.y,
-            Double(IOSUsePlayDeviceNativeHeight)
+            Double(PlayCoverDevicePreset.defaultPreset.nativeSize.height)
         )
         XCTAssertEqual(
             capture.logicalSize?.x,
-            Double(IOSUsePlayDeviceLogicalWidth)
+            Double(PlayCoverDevicePreset.defaultPreset.logicalSize.width)
         )
         XCTAssertEqual(
             capture.logicalSize?.y,
-            Double(IOSUsePlayDeviceLogicalHeight)
+            Double(PlayCoverDevicePreset.defaultPreset.logicalSize.height)
         )
         XCTAssertEqual(
             capture.scale,
-            Double(IOSUsePlayDeviceScale)
+            Double(PlayCoverDevicePreset.defaultPreset.scale)
         )
         XCTAssertEqual(capture.snapshotGeneration, 20)
         XCTAssertEqual(capture.captureGeneration, 8)
@@ -465,10 +465,10 @@ final class PlayCoverDriverClientTests: XCTestCase {
                                 x: 1,
                                 y: 0,
                                 width: Double(
-                                    IOSUsePlayDeviceLogicalWidth
+                                    PlayCoverDevicePreset.defaultPreset.logicalSize.width
                                 ),
                                 height: Double(
-                                    IOSUsePlayDeviceLogicalHeight
+                                    PlayCoverDevicePreset.defaultPreset.logicalSize.height
                                 )
                             )
                         )
@@ -507,8 +507,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
         throws
     {
         let jpeg = try makeJPEG(
-            width: Int(IOSUsePlayDeviceNativeWidth),
-            height: Int(IOSUsePlayDeviceNativeHeight)
+            width: Int(PlayCoverDevicePreset.defaultPreset.nativeSize.width),
+            height: Int(PlayCoverDevicePreset.defaultPreset.nativeSize.height)
         )
         let fullFrame = makeFullFrame()
         let expected = PlayCoverDriverClientError
@@ -622,8 +622,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
         throws
     {
         let jpeg = try makeJPEG(
-            width: Int(IOSUsePlayDeviceNativeWidth),
-            height: Int(IOSUsePlayDeviceNativeHeight)
+            width: Int(PlayCoverDevicePreset.defaultPreset.nativeSize.width),
+            height: Int(PlayCoverDevicePreset.defaultPreset.nativeSize.height)
         )
         let fullFrame = makeFullFrame()
         let validBackingSize = PlayCoverRuntimeJSONValue.object([
@@ -851,8 +851,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
         let badDOM = PlayCoverRuntimeDOMPayload(
             app: "Demo",
             windowSize: .init(
-                x: Double(IOSUsePlayDeviceLogicalWidth) + 1,
-                y: Double(IOSUsePlayDeviceLogicalHeight)
+                x: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.width) + 1,
+                y: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.height)
             ),
             raw: "Application, Demo",
             snapshotGeneration: 1,
@@ -871,6 +871,22 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 .runtimeGeometryMismatch("DOM window size")
             )
         }
+    }
+
+    func testResizableDOMUsesCurrentViewportAndRejectsInvalidSizes() throws {
+        for size in [CGSize(width: 669, height: 845), CGSize(width: 900, height: 600)] {
+            var payload = PlayCoverRuntimeDOMPayload(app: "Demo",
+                windowSize: .init(x: size.width, y: size.height), raw: "", snapshotGeneration: 2,
+                elements: [makeElement(generation: 2)])
+            payload.windowMode = "resizable"
+            let result = try makeClient(response: .dom(payload)).dom(raw: false, fresh: true, waitQuiescence: false)
+            XCTAssertEqual(result.windowSize.x, size.width)
+            XCTAssertEqual(result.windowSize.y, size.height)
+        }
+        var empty = PlayCoverRuntimeDOMPayload(app: "Demo", windowSize: .init(x: 0, y: 845),
+            raw: "", snapshotGeneration: 2, elements: [])
+        empty.windowMode = "resizable"
+        XCTAssertThrowsError(try makeClient(response: .dom(empty)).dom(raw: false, fresh: true, waitQuiescence: false))
     }
 
     func testActionSucceedsWithoutGenericVisualPostcondition()
@@ -1130,7 +1146,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
 
     private func makeGeometry(
         logicalWidth: Double =
-            Double(IOSUsePlayDeviceLogicalWidth),
+            Double(PlayCoverDevicePreset.defaultPreset.logicalSize.width),
         safeArea: PlayCoverRuntimeSafeArea = .init(
             top: 17,
             left: 3,
@@ -1141,16 +1157,16 @@ final class PlayCoverDriverClientTests: XCTestCase {
         PlayCoverRuntimeGeometry(
             logical: .init(
                 width: logicalWidth,
-                height: Double(IOSUsePlayDeviceLogicalHeight)
+                height: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.height)
             ),
             native: .init(
-                width: Double(IOSUsePlayDeviceNativeWidth),
-                height: Double(IOSUsePlayDeviceNativeHeight)
+                width: Double(PlayCoverDevicePreset.defaultPreset.nativeSize.width),
+                height: Double(PlayCoverDevicePreset.defaultPreset.nativeSize.height)
             ),
-            scale: Double(IOSUsePlayDeviceScale),
+            scale: Double(PlayCoverDevicePreset.defaultPreset.scale),
             window: .init(
-                width: Double(IOSUsePlayDeviceLogicalWidth),
-                height: Double(IOSUsePlayDeviceLogicalHeight)
+                width: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.width),
+                height: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.height)
             ),
             safeArea: safeArea,
             host: makeNativeCatalystHostGeometry()
@@ -1223,6 +1239,11 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertEqual(base.host?.contentBounds.width, 331)
         XCTAssertEqual(base.host?.contentBounds.height, 718)
         XCTAssertEqual(base.host?.resizable, false)
+        // A shaped host leaves a transparent gap above the complete canvas.
+        let shaped = PlayCoverRuntimeGeometry(logical: base.logical, native: base.native,
+            scale: base.scale, window: base.window, safeArea: base.safeArea,
+            host: makeNativeCatalystHostGeometry(opaque: false))
+        XCTAssertNoThrow(try PlayCoverDriverClient.validateFixedDevice(shaped, stage: "ready"))
     }
 
     func testFixedDeviceRejectsInvalidNativeCatalystHost() throws {
@@ -1237,7 +1258,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
             ),
             makeNativeCatalystHostGeometry(canvasCGX: 41),
             makeNativeCatalystHostGeometry(hostFrameWidth: 320),
-            makeNativeCatalystHostGeometry(opaque: false),
         ]
         for host in invalidHosts {
             let geometry = PlayCoverRuntimeGeometry(
@@ -1271,6 +1291,9 @@ final class PlayCoverDriverClientTests: XCTestCase {
             PlayCoverRuntimeAlertPayload? = nil
     ) -> PlayCoverRuntimeResponsePayload {
         switch capability {
+        case .configureDevice:
+            return .configureDevice(.init(preset: "iphone-duo", expanded: true, orientation: "portrait",
+                chrome: "on", windowMode: "fixed", logicalWidth: 669, logicalHeight: 951, scale: 3, idiom: 0))
         case .hello:
             return .hello(
                 .init(
@@ -1489,8 +1512,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
         .init(
             app: "Demo",
             windowSize: .init(
-                x: Double(IOSUsePlayDeviceLogicalWidth),
-                y: Double(IOSUsePlayDeviceLogicalHeight)
+                x: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.width),
+                y: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.height)
             ),
             raw: "Application, Demo",
             snapshotGeneration: generation,
@@ -1545,7 +1568,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
         captureGeneration: Int64 = 8,
         source: String = "window-compositor",
         logicalWidth: Double =
-            Double(IOSUsePlayDeviceLogicalWidth)
+            Double(PlayCoverDevicePreset.defaultPreset.logicalSize.width)
     ) -> PlayCoverRuntimeScreenshotPayload {
         let resolvedFullFrame = fullFrame ?? makeFullFrame()
         let resolvedSourceBackingSizes =
@@ -1553,10 +1576,10 @@ final class PlayCoverDriverClientTests: XCTestCase {
             ? sourceBackingSizes ?? [
                 .object([
                     "width": .number(
-                        Double(IOSUsePlayDeviceNativeWidth)
+                        Double(PlayCoverDevicePreset.defaultPreset.nativeSize.width)
                     ),
                     "height": .number(
-                        Double(IOSUsePlayDeviceNativeHeight)
+                        Double(PlayCoverDevicePreset.defaultPreset.nativeSize.height)
                     ),
                 ]),
                 .object([
@@ -1567,12 +1590,12 @@ final class PlayCoverDriverClientTests: XCTestCase {
             : nil
         return .init(
             jpegBase64: jpeg.base64EncodedString(),
-            pixelWidth: Int(IOSUsePlayDeviceNativeWidth),
-            pixelHeight: Int(IOSUsePlayDeviceNativeHeight),
+            pixelWidth: Int(PlayCoverDevicePreset.defaultPreset.nativeSize.width),
+            pixelHeight: Int(PlayCoverDevicePreset.defaultPreset.nativeSize.height),
             logicalWidth: logicalWidth,
             logicalHeight:
-                Double(IOSUsePlayDeviceLogicalHeight),
-            scale: Double(IOSUsePlayDeviceScale),
+                Double(PlayCoverDevicePreset.defaultPreset.logicalSize.height),
+            scale: Double(PlayCoverDevicePreset.defaultPreset.scale),
             source: source,
             complete: complete,
             syntheticChrome: syntheticChrome,
@@ -1593,12 +1616,12 @@ final class PlayCoverDriverClientTests: XCTestCase {
         logicalRect: PlayCoverRuntimeFrame = .init(
             x: 0,
             y: 0,
-            width: Double(IOSUsePlayDeviceLogicalWidth),
-            height: Double(IOSUsePlayDeviceLogicalHeight)
+            width: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.width),
+            height: Double(PlayCoverDevicePreset.defaultPreset.logicalSize.height)
         ),
-        pixelWidth: Int = Int(IOSUsePlayDeviceNativeWidth),
-        pixelHeight: Int = Int(IOSUsePlayDeviceNativeHeight),
-        scale: Double = Double(IOSUsePlayDeviceScale),
+        pixelWidth: Int = Int(PlayCoverDevicePreset.defaultPreset.nativeSize.width),
+        pixelHeight: Int = Int(PlayCoverDevicePreset.defaultPreset.nativeSize.height),
+        scale: Double = Double(PlayCoverDevicePreset.defaultPreset.scale),
         uncropped: Bool = true,
         safeAreaCropped: Bool = false,
         nativeCanvas: Bool = true

@@ -137,6 +137,7 @@ xcodebuild build-for-testing \
   -scheme IOSUseDriverUnitTests \
   -destination "platform=iOS Simulator,id=$SIM_UDID" \
   -derivedDataPath "$DERIVED_DATA" \
+  -IDEPackageEnablePrebuilts=NO \
   -skipMacroValidation \
   CODE_SIGNING_ALLOWED=NO \
   >"$BUILD_LOG" 2>&1
@@ -192,6 +193,7 @@ xcodebuild test-without-building \
   -scheme IOSUseDriverUnitTests \
   -destination "platform=iOS Simulator,id=$SIM_UDID" \
   -derivedDataPath "$DERIVED_DATA" \
+  -IDEPackageEnablePrebuilts=NO \
   -skipMacroValidation \
   CODE_SIGNING_ALLOWED=NO \
   > "$TEST_LOG" 2>&1

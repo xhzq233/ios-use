@@ -1,5 +1,7 @@
 import Foundation
+#if os(macOS)
 import CryptoKit
+#endif
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -7,11 +9,10 @@ import Darwin
 public struct IOSUsePaths: Equatable, Sendable {
     public let root: String
     public let hasExplicitHome: Bool
+    public let deviceID: String?
     public let config: String
     public let session: String
     public let driverLock: String
-    public let nslogLock: String
-    public let nslogState: String
     public let appLogState: String
     public let logs: String
     public let artifacts: String
@@ -49,6 +50,7 @@ public struct IOSUsePaths: Equatable, Sendable {
         homeID: String,
         socketRoot: String
     ) throws -> String {
+#if os(macOS)
         let token = sessionID
             .unicodeScalars
             .filter { CharacterSet.alphanumerics.contains($0) }
@@ -86,6 +88,9 @@ public struct IOSUsePaths: Equatable, Sendable {
             )
         }
         return socket
+#else
+        throw CLIParseError.invalidValue("Mac runtime sockets require macOS.")
+#endif
     }
 
     private static func canonicalExistingPath(_ path: String) -> String {
@@ -127,9 +132,13 @@ public struct IOSUsePaths: Equatable, Sendable {
         let canonicalConfiguredRoot = canonicalExistingPrefix(
             configured.root
         )
+#if os(macOS)
         let homeID = SHA256.hash(
             data: Data(canonicalConfiguredRoot.utf8)
         ).map { String(format: "%02x", $0) }.joined()
+#else
+        let homeID = "" // Only used by the Mac runtime.
+#endif
         let accountCacheRoot =
             "\(accountHome)/Library/Caches/dev.ios-use"
         let accountApplicationSupportRoot =
@@ -147,11 +156,10 @@ public struct IOSUsePaths: Equatable, Sendable {
         return IOSUsePaths(
             root: configured.root,
             hasExplicitHome: configured.hasExplicitHome,
+            deviceID: nil,
             config: "\(configured.root)/config.json",
             session: "\(configured.root)/state/session.json",
             driverLock: "\(configured.root)/state/driver.lock",
-            nslogLock: "\(configured.root)/state/nslog.lock",
-            nslogState: "\(configured.root)/state/nslog-state.json",
             appLogState: "\(configured.root)/state/app-log.json",
             logs: "\(configured.root)/logs",
             artifacts: "\(configured.root)/artifacts",
@@ -181,6 +189,43 @@ public struct IOSUsePaths: Equatable, Sendable {
             playcoverPlayChain: playChain,
             playcoverSigningBinding:
                 "\(accountApplicationSupportRoot)/mac-stable-signing-binding-v1.json",
+        )
+    }
+
+    func deviceContext(_ deviceID: String) throws -> IOSUsePaths {
+        let validated = try DeviceContextStore.validateDeviceID(deviceID)
+        let stateRoot = "\(root)/state/devices/\(validated)"
+        let logRoot = "\(root)/logs/devices/\(validated)"
+        let artifactRoot = "\(root)/artifacts/devices/\(validated)"
+        return IOSUsePaths(
+            root: root,
+            hasExplicitHome: hasExplicitHome,
+            deviceID: validated,
+            config: config,
+            session: "\(stateRoot)/session.json",
+            driverLock: "\(stateRoot)/driver.lock",
+            appLogState: "\(stateRoot)/app-log.json",
+            logs: logRoot,
+            artifacts: artifactRoot,
+            playcover: playcover,
+            playcoverRun: playcoverRun,
+            playcoverLogs: logRoot,
+            playcoverLaunching: playcoverLaunching,
+            playcoverCurrentBundle: playcoverCurrentBundle,
+            playcoverApps: playcoverApps,
+            playcoverLocks: playcoverLocks,
+            playcoverLegacyPrepared: playcoverLegacyPrepared,
+            playcoverLegacyLaunchFacades: playcoverLegacyLaunchFacades,
+            playcoverHomeID: playcoverHomeID,
+            accountCacheRoot: accountCacheRoot,
+            accountApplicationSupportRoot:
+                accountApplicationSupportRoot,
+            knownHomes: knownHomes,
+            playcoverFridaSourceCache: playcoverFridaSourceCache,
+            playcoverFridaBuildCache: playcoverFridaBuildCache,
+            playcoverSocketRoot: playcoverSocketRoot,
+            playcoverPlayChain: playcoverPlayChain,
+            playcoverSigningBinding: playcoverSigningBinding
         )
     }
 

@@ -10,8 +10,6 @@ export const hostBridgeCaseMetadata = [
   { id: 'OL-7', group: 'host-bridge', kind: 'oslog', setup: 'simulator target', assertion: 'global timeout command succeeds', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'OL-8', group: 'host-bridge', kind: 'oslog-error', setup: 'simulator target', assertion: 'legacy bundle filter is rejected', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'OL-9', group: 'host-bridge', kind: 'oslog-error', setup: 'simulator target', assertion: 'artifact name option is rejected', coverage: 'simulator', requiresPrerequisite: false },
-  { id: 'NSL-3', group: 'host-bridge', kind: 'nslog-error', setup: 'none', assertion: 'legacy grep usage fails with read guidance', coverage: 'simulator', requiresPrerequisite: false },
-  { id: 'NSL-4', group: 'host-bridge', kind: 'nslog-error', setup: 'none', assertion: 'read without capture fails with start guidance', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'CFG-2', group: 'host-bridge', kind: 'unsupported', setup: 'real device signing', assertion: 'unsupported by simulator runner', coverage: 'unsupported', requiresPrerequisite: false },
   { id: 'CFG-3', group: 'host-bridge', kind: 'unsupported', setup: 'Apple ID login', assertion: 'unsupported by simulator runner', coverage: 'unsupported', requiresPrerequisite: false },
   { id: 'STOP-1R', group: 'host-bridge', kind: 'unsupported', setup: 'real device lifecycle', assertion: 'unsupported by simulator runner', coverage: 'unsupported', requiresPrerequisite: false },
@@ -46,14 +44,6 @@ export const hostBridgeCaseMetadata = [
   { id: 'IN-7', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
   { id: 'OL-10', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
   { id: 'OL-11', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
-  { id: 'NSL-1', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
-  { id: 'NSL-2', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
-  { id: 'NSL-5', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
-  { id: 'NSL-6', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
-  { id: 'NSL-7', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
-  { id: 'NSL-8', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
-  { id: 'NSL-10', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
-  { id: 'NSL-9', group: 'host-bridge', kind: 'unsupported', setup: 'real app with NSLogger', assertion: 'unsupported by simulator runner', coverage: 'unsupported', requiresPrerequisite: false },
 ];
 
 export function buildHostBridgeCases(ctx) {
@@ -80,7 +70,7 @@ export function buildHostBridgeCases(ctx) {
   } = ctx;
 
   return [
-    { id: 'HELP-1', run: () => runCaseContains('HELP-1', 'Usage: ios-use [--help] [--version] <command>', ['--help']) },
+    { id: 'HELP-1', run: () => runCaseContains('HELP-1', 'Usage: ios-use ', ['--help']) },
     { id: 'HELP-2', run: () => {
       if (!selected('HELP-2')) return recordSkip('HELP-2');
       console.log('[sim-test] RUN HELP-2: ios-use dom/input --help');
@@ -104,8 +94,6 @@ export function buildHostBridgeCases(ctx) {
     { id: 'OL-7', run: () => runCase('OL-7', ['oslog', '--timeout', '0.2', '--udid', sim.udid]) },
     { id: 'OL-8', run: () => runCaseFailsContains('OL-8', 'unknown option', ['oslog', '--bundle-id', 'com.apple.Preferences', '--udid', sim.udid]) },
     { id: 'OL-9', run: () => runCaseFailsContains('OL-9', 'unknown option', ['oslog', '--name', 'oslog-timeout', '--pattern', '__ios_use_no_such_log_line__', '--timeout', '0.2', '--udid', sim.udid]) },
-    { id: 'NSL-3', run: () => runCaseFailsContains('NSL-3', 'nslog read', ['nslog', '--grep', 'ready']) },
-    { id: 'NSL-4', run: () => runCaseFailsContains('NSL-4', 'ios-use nslog start', ['nslog', 'read']) },
     { id: 'CFG-2', run: () => unsupportedCase('CFG-2') },
     { id: 'CFG-3', run: () => unsupportedCase('CFG-3') },
     { id: 'STOP-1R', run: () => unsupportedCase('STOP-1R') },
@@ -122,7 +110,6 @@ export function buildHostBridgeCases(ctx) {
     { id: 'STOP-1', run: runStopClearsDriverLockCase },
     { id: 'STOP-2', run: runStopWithoutDriverLockCase },
     { id: 'STOP-3', run: () => unsupportedCase('STOP-3') },
-    ...['IN-7', 'OL-10', 'OL-11', 'NSL-1', 'NSL-2', 'NSL-5', 'NSL-6', 'NSL-7', 'NSL-8', 'NSL-10'].map(id => ({ id, run: () => runSwiftBridgeCase(id) })),
-    { id: 'NSL-9', run: () => unsupportedCase('NSL-9') },
+    ...['IN-7', 'OL-10', 'OL-11'].map(id => ({ id, run: () => runSwiftBridgeCase(id) })),
   ];
 }

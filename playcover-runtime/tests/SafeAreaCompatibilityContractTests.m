@@ -219,10 +219,10 @@ int main(void) {
             @"foreground-inactive scene lost fixed geometry"
         );
         passed &= IOSUsePlaySafeAreaRequire(
-            !IOSUsePlaySafeAreaSceneActivationStateSupportsFixedGeometryForTesting(
+            IOSUsePlaySafeAreaSceneActivationStateSupportsFixedGeometryForTesting(
                 UISceneActivationStateBackground
             ),
-            @"background scene received fixed foreground geometry"
+            @"background scene lost fixed device geometry"
         );
         passed &= IOSUsePlaySafeAreaRequire(
             !IOSUsePlaySafeAreaSceneActivationStateSupportsFixedGeometryForTesting(

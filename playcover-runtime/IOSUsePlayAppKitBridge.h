@@ -9,6 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (void)captureSceneBackingLaunchEnvironment;
 + (void)scheduleFixedWindowConfiguration;
++ (void)prepareDeviceConfiguration;
 + (BOOL)configureFixedWindow:(NSError * _Nullable * _Nullable)error;
 + (NSInteger)screenCount;
 + (CGPoint)mousePoint;
@@ -35,6 +36,7 @@ NS_ASSUME_NONNULL_BEGIN
         (NSError * _Nullable * _Nullable)error;
 + (NSDictionary<NSString *, id> *)readinessDiagnostics;
 + (NSDictionary<NSString *, id> *)uiAutomationAvailability;
++ (NSDictionary<NSString *, id> *)uiAutomationContext;
 + (NSDictionary<NSString *, id> *)diagnostics;
 + (NSDictionary<NSString *, id> *)diagnosticsWithNativeAlertSnapshot:
     (NSDictionary<NSString *, id> *)nativeAlertSnapshot;

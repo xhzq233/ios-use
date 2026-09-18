@@ -65,14 +65,20 @@ enum AppLifecycleService {
             paths: paths,
             missingMessage: "\(options.action.commandName) requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`."
         )
+#if os(macOS)
         let deviceType = activeDriver?.udid == udid
             ? activeDriver?.deviceType
             : (DeviceService.looksLikeSimulatorUDID(udid) ? "simulator" : "real")
 
+#else
+        let deviceType = activeDriver?.udid == udid ? activeDriver?.deviceType : nil
+#endif
         let result: Result
         switch deviceType {
+#if os(macOS)
         case "simulator":
             result = try runSimulator(options: options, udid: udid, paths: paths)
+#endif
         case "real":
             result = try runRealDevice(options: options, udid: udid, paths: paths)
         default:
@@ -165,15 +171,20 @@ enum AppLifecycleService {
     }
 
     static func machineReadiness(_ readiness: ForyWaitAppForegroundPayload) -> MachineValue {
-        .object([
+        var fields = readinessFields(readiness)
+        fields["dom"] = readiness.dom.map(machineDom) ?? .null
+        return .object(fields)
+    }
+
+    static func readinessFields(_ readiness: ForyWaitAppForegroundPayload) -> [String: MachineValue] {
+        [
             "expectedBundleId": .string(readiness.expectedBundleId),
             "activeBundleId": .string(readiness.activeBundleId),
             "appState": .string(appStateName(readiness.appState)),
             "appStateCode": .integer(Int(readiness.appState)),
             "snapshotReady": .boolean(readiness.snapshotReady),
             "elapsed": .double(readiness.elapsed),
-            "dom": readiness.dom.map(machineDom) ?? .null,
-        ])
+        ]
     }
 
     private static func appStateName(_ rawValue: Int32) -> String {
@@ -187,6 +198,7 @@ enum AppLifecycleService {
         }
     }
 
+#if os(macOS)
     private static func runSimulator(options: AppLifecycleOptions, udid: String, paths: IOSUsePaths) throws -> Result {
         if let simulatorRunnerForTesting {
             return try simulatorRunnerForTesting(options, udid)
@@ -203,6 +215,8 @@ enum AppLifecycleService {
             return try resultForTerminate(bundleID: options.bundleID, udid: udid, terminated: terminated, paths: paths)
         }
     }
+
+#endif
 
     private static func runRealDevice(options: AppLifecycleOptions, udid: String, paths: IOSUsePaths) throws -> Result {
         if let realDeviceRunnerForTesting {

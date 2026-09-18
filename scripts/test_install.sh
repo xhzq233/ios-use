@@ -117,7 +117,10 @@ write_output() {
 }
 
 case "$url" in
-  *codeload.github.com*)
+  */releases/latest)
+    printf 'https://github.com/example/ios-use/releases/tag/v1.0.3'
+    ;;
+  *codeload.github.com*/tar.gz/v1.0.3)
     if [[ -n "$out" ]]; then
       cp "$IOS_USE_INSTALL_TEST_TARBALL" "$out"
     else
@@ -306,7 +309,7 @@ DOWNLOAD_HOME="$FAKE_HOME/download"
 mkdir -p "$DOWNLOAD_HOME/share/ios-use/mac"
 printf 'legacy rules\n' > \
   "$DOWNLOAD_HOME/share/ios-use/mac/default-sandbox-rules.yaml"
-DOWNLOAD_PATH="$(run_install "$DOWNLOAD_HOME" | tail -n 1)"
+DOWNLOAD_PATH="$(run_install "$DOWNLOAD_HOME" --version latest | tail -n 1)"
 if [[ "$DOWNLOAD_PATH" != "$DOWNLOAD_HOME/bin/ios-use" || ! -x "$DOWNLOAD_PATH" ]]; then
   echo "[install-test] ERROR: release download install did not create expected binary" >&2
   exit 1
@@ -335,6 +338,36 @@ if [[ -e "$DOWNLOAD_HOME/.ios-use/playcover/IOSUsePlayRuntime.framework" ]]; the
   echo "[install-test] ERROR: release install put the Runtime in mutable IOS_USE_HOME state" >&2
   exit 1
 fi
+
+[[ -L "$DOWNLOAD_HOME/.agents/skills/ios-use" ]]
+[[ "$DOWNLOAD_HOME/.agents/skills/ios-use/SKILL.md" -ef "$DOWNLOAD_HOME/.ios-use/skill/SKILL.md" ]]
+
+NO_SKILL_HOME="$FAKE_HOME/no-skill"
+mkdir -p "$NO_SKILL_HOME"
+run_install "$NO_SKILL_HOME" --no-skill >/dev/null
+[[ -x "$NO_SKILL_HOME/bin/ios-use" ]]
+[[ -f "$NO_SKILL_HOME/.ios-use/skill/SKILL.md" ]]
+[[ ! -e "$NO_SKILL_HOME/.agents" ]]
+mkdir -p "$NO_SKILL_HOME/project/.agents/skills"
+ln -s "$NO_SKILL_HOME/.ios-use/skill" "$NO_SKILL_HOME/project/.agents/skills/ios-use"
+run_install "$NO_SKILL_HOME" --no-skill >/dev/null
+[[ "$NO_SKILL_HOME/project/.agents/skills/ios-use/SKILL.md" -ef "$NO_SKILL_HOME/.ios-use/skill/SKILL.md" ]]
+[[ ! -e "$NO_SKILL_HOME/.agents" ]]
+
+# Neither a normal update nor --no-skill replaces a user's custom discovery path.
+mkdir -p "$NO_SKILL_HOME/.agents/skills" "$NO_SKILL_HOME/custom-skill"
+ln -s "$NO_SKILL_HOME/custom-skill" "$NO_SKILL_HOME/.agents/skills/ios-use"
+run_install "$NO_SKILL_HOME" >/dev/null
+run_install "$NO_SKILL_HOME" --no-skill >/dev/null
+[[ "$NO_SKILL_HOME/.agents/skills/ios-use" -ef "$NO_SKILL_HOME/custom-skill" ]]
+
+COPIED_SKILL_HOME="$FAKE_HOME/copied-skill"
+mkdir -p "$COPIED_SKILL_HOME/.agents/skills/ios-use"
+touch "$COPIED_SKILL_HOME/.agents/skills/ios-use/local-note"
+run_install "$COPIED_SKILL_HOME" >/dev/null
+[[ ! -L "$COPIED_SKILL_HOME/.agents/skills/ios-use" ]]
+[[ -f "$COPIED_SKILL_HOME/.agents/skills/ios-use/local-note" ]]
+[[ ! -e "$COPIED_SKILL_HOME/.agents/skills/ios-use/skill" ]]
 
 VERBOSE_HOME="$FAKE_HOME/verbose"
 mkdir -p "$VERBOSE_HOME"

@@ -27,7 +27,7 @@ extern NSDictionary<
     NSNumber *,
     NSDictionary<NSString *, id> *
 > * _Nullable
-IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting(void);
+IOSUsePlayAppKitBridgeCopyOwnCGWindowMetadataForTesting(void);
 extern NSDictionary<NSString *, id> * _Nullable
 IOSUsePlayAppKitBridgeSelectVisibleNativeAlertForTesting(
     NSArray * _Nullable windows,
@@ -136,7 +136,7 @@ static CFArrayRef _Nullable IOSUseBridgeSnapshotCopyWindowInfo(
     CGWindowID relativeToWindow
 ) {
     IOSUseBridgeSnapshotEnumerationCount += 1;
-    if (option != kCGWindowListOptionOnScreenOnly ||
+    if (option != kCGWindowListOptionAll ||
         relativeToWindow != kCGNullWindowID) {
         IOSUseBridgeSnapshotUnexpectedEnumerationArguments = YES;
     }
@@ -190,7 +190,7 @@ static BOOL IOSUseBridgeSnapshotTestMetadataValidation(void) {
         IOSUseBridgeSnapshotFixtureModeValid
     );
     NSDictionary *valid =
-        IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting();
+        IOSUsePlayAppKitBridgeCopyOwnCGWindowMetadataForTesting();
     NSDictionary *entry = valid[@41];
     passed &= IOSUseBridgeSnapshotRequire(
         IOSUseBridgeSnapshotEnumerationCount == 1 &&
@@ -208,7 +208,7 @@ static BOOL IOSUseBridgeSnapshotTestMetadataValidation(void) {
         IOSUseBridgeSnapshotFixtureModeNil
     );
     passed &= IOSUseBridgeSnapshotRequire(
-        IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting() ==
+        IOSUsePlayAppKitBridgeCopyOwnCGWindowMetadataForTesting() ==
                 nil &&
             IOSUseBridgeSnapshotEnumerationCount == 1,
         @"a nil CGWindow snapshot did not fail closed"
@@ -218,7 +218,7 @@ static BOOL IOSUseBridgeSnapshotTestMetadataValidation(void) {
         IOSUseBridgeSnapshotFixtureModeDuplicate
     );
     passed &= IOSUseBridgeSnapshotRequire(
-        IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting() ==
+        IOSUsePlayAppKitBridgeCopyOwnCGWindowMetadataForTesting() ==
                 nil &&
             IOSUseBridgeSnapshotEnumerationCount == 1,
         @"duplicate own-process window numbers did not fail closed"
@@ -228,7 +228,7 @@ static BOOL IOSUseBridgeSnapshotTestMetadataValidation(void) {
         IOSUseBridgeSnapshotFixtureModeInvalidBounds
     );
     passed &= IOSUseBridgeSnapshotRequire(
-        IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting() ==
+        IOSUsePlayAppKitBridgeCopyOwnCGWindowMetadataForTesting() ==
                 nil &&
             IOSUseBridgeSnapshotEnumerationCount == 1,
         @"invalid own-process window bounds did not fail closed"
