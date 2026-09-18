@@ -22,11 +22,13 @@ options and examples. The CLI help is usable without loading this Skill.
 ios-use dom
 ios-use tap "Continue" -D
 ios-use swipe --to "<target>" --from "<visible-anchor>" -D
-ios-use input --tap "Search" --content "<query>" -D
+ios-use input --tap "Search" --content "<query>" --enter -D
+ios-use longpress "<target>" --duration 800ms -D
 ios-use waitFor "Loading" --match contains --gone --timeout 20s
 ```
 
 - Use displayed labels/values from current DOM, not the whole DOM line. Use
+  `"Result"` or `"idle"` for `Result=idle`, not `"Result=idle"`. Use
   `--traits` / `--cindex` for observed duplicates. Prefer an offscreen semantic
   target with a visible anchor in the same scroll container; use label-relative
   offsets before absolute coordinates when possible.
