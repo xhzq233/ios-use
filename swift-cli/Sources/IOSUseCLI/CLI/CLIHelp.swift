@@ -319,7 +319,8 @@ enum CLIHelp {
                 footer: """
                 Use labels/values as action targets, not entire DOM lines. --dom on an action already returns an updated tree.
                 Use plain dom for a full tree. App/session/size changes reset diff; unchanged is explicit.
-                Diff paths are tree positions, not tap IDs. Use current labels/values for actions.
+                Leading numeric IDs identify observed nodes, not tap targets. Updates give new values; removed IDs are ranges.
+                Use current labels/values for actions; frame updates replace old coordinates.
                 Example: ios-use dom --diff
                 """
             )
