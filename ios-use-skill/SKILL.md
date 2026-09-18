@@ -20,21 +20,37 @@ options and examples. The CLI help is usable without loading this Skill.
 
 ```bash
 ios-use dom
-ios-use tap "Continue" --dom
-ios-use swipe --to "<target>" --from "<visible-anchor>" --dom
-ios-use input --tap "Search" --content "<query>" --dom
+ios-use tap "Continue" -D
+ios-use swipe --to "<target>" --from "<visible-anchor>" -D
+ios-use input --tap "Search" --content "<query>" --enter -D
+ios-use longpress "<target>" --duration 800ms -D
 ios-use waitFor "Loading" --match contains --gone --timeout 20s
 ```
 
 - Use displayed labels/values from current DOM, not the whole DOM line. Use
+  `"Result"` or `"idle"` for `Result=idle`, not `"Result=idle"`. Use
   `--traits` / `--cindex` for observed duplicates. Prefer an offscreen semantic
   target with a visible anchor in the same scroll container; use label-relative
   offsets before absolute coordinates when possible.
-- Verify the result using the action's `--dom` output. Native idle does not
-  guarantee App readiness; wait on an observed page/loading condition when needed.
-  An explicit `--dom <duration>` is a fixed delay, not a readiness check.
+- Prefer `-D` after UI mutations and `dom --diff` for follow-up observations.
+  They reduce repeated output while preserving the full tree for element lookup.
+  Keep the initial DOM and subsequent changes in context. If that context is
+  missing (for example after compaction or a handoff), run plain `dom` to recover
+  a full view; use `--dom` when an action needs a self-contained full result.
+  Unchanged nodes retain their last observed state. Combine earlier observations
+  with subsequent changes to verify multiple results; a full DOM is not needed
+  just to display those already-observed results together.
+- First diff use, changed App/session/size, or broad changes returns full
+  automatically. Each Device session keeps one history. Leading numbers identify
+  observed nodes, not tap targets. Changes give new values; removed IDs are listed
+  as ranges. Use the latest labels/values and coordinates for actions.
+- Verify the result using the action's `-D` output; do not immediately request
+  another full DOM unless context is insufficient. Bare `-D` waits for native
+  idle; `-D 300ms` uses a fixed delay. Neither an unchanged DOM nor native idle
+  proves App readiness; wait on an observed page/loading condition when needed.
 - After navigation, scrolling or a failed lookup, refresh stale context before
-  choosing the next action. Read inline target/candidate/rejection/suggestion/alert
+  choosing the next action; the action's fresh `-D` output already does this.
+  Read inline target/candidate/rejection/suggestion/alert
   details first; request `dom --fresh` or a screenshot when more context is needed.
 - Keep page-dependent actions sequential. Batch known steps with `&&` so failure
   stops later mutations; inspect intermediate UI when the next step is not known.

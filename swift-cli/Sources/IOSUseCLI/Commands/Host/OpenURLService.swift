@@ -239,7 +239,7 @@ enum OpenURLService {
     /// Dispatch the URL, wait for a registered handler when one is known, then
     /// obtain one fresh DOM. This is observation convenience, not proof that the
     /// deep-link destination finished loading.
-    static func openWithDom(url: String, bundleID: String? = nil, session: SessionOptions, paths: IOSUsePaths) throws -> OpenResult {
+    static func openWithDom(url: String, bundleID: String? = nil, session: SessionOptions, paths: IOSUsePaths, postDom: PostDomMode? = nil) throws -> OpenResult {
         let activeDriver = try SessionService.requireDriverLock(paths: paths)
         let targetUdid = try SessionService.resolveTargetUdid(
             explicitUdid: session.udid,
@@ -264,15 +264,13 @@ enum OpenURLService {
                 throw error
             }
             do {
-                let dom = try DriverCommandExecution.withLockedClient(
-                    paths: paths,
-                    verbose: session.verbose
-                ) {
-                    try $0.dom(
-                        raw: false,
-                        fresh: true,
-                        waitQuiescence: false
-                    )
+                let dom: ForyDomPayload
+                if let postDom {
+                    dom = try DriverCommandExecutor.collectPostDom(mode: postDom, paths: paths)
+                } else {
+                    dom = try DriverCommandExecution.withLockedClient(paths: paths, verbose: session.verbose) {
+                        try $0.dom(raw: false, fresh: true, waitQuiescence: false)
+                    }
                 }
                 return OpenResult(
                     message: base.message,
@@ -303,14 +301,17 @@ enum OpenURLService {
             )
         }
         let acceptedBundleIds = readinessBundleIds(url: url, result: base)
-        let readiness: ForyWaitAppForegroundPayload
+        var readiness: ForyWaitAppForegroundPayload
         do {
             readiness = try DriverCommandExecution.withLockedClient(paths: paths, verbose: session.verbose) { client in
                 try client.waitAppForeground(
                     acceptedBundleIds: acceptedBundleIds,
                     timeout: 0,
-                    returnDom: true
+                    returnDom: postDom == nil
                 )
+            }
+            if let postDom, readiness.snapshotReady {
+                readiness.dom = try DriverCommandExecutor.collectPostDom(mode: postDom, paths: paths)
             }
         } catch {
             throw ReadinessError(hostResult: base, underlying: error)
@@ -418,7 +419,7 @@ enum OpenURLService {
         )
     }
 
-    static func machineData(_ result: OpenResult) -> MachineValue {
+    static func machineData(_ result: OpenResult, observation: DomObservation.Output? = nil) -> MachineValue {
         .object([
             "url": result.url.map(MachineValue.string) ?? .null,
             "deviceUdid": result.targetUdid.map(MachineValue.string) ?? .null,
@@ -429,7 +430,7 @@ enum OpenURLService {
             "schemeLookupVerified": result.schemeLookupVerified.map(MachineValue.boolean) ?? .null,
             "registeredHandlers": .array(result.registeredHandlers.map(MachineValue.string)),
             "readiness": result.readiness.map { .object(AppLifecycleService.readinessFields($0)) } ?? .null,
-            "dom": result.dom.map(machineDom) ?? .null,
+            "dom": observation?.value ?? result.dom.map(machineDom) ?? .null,
         ])
     }
 

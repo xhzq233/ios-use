@@ -15,6 +15,40 @@ Application nodes in the DOM provide page context. Element selectors search
 their contents, so an App name does not shadow a button with the same label.
 On XCTest targets, `dom --fresh` also redetects the foreground App after an external App switch.
 
+For repeated observations, use `dom --diff`, or append `-D [duration]` to a UI
+mutation (`tap`, `longpress`, `input`, `swipe`, `rotate`, `home`, `dismissAlert`,
+`open`, `activateApp`, `terminateApp`). For example:
+
+```bash
+ios-use dom --diff
+ios-use tap "Continue" -D
+ios-use input --tap "Search" --content "photos" -D 300ms
+```
+
+The first observation is full; subsequent output shows added nodes, removed ID
+ranges and updated values, or `DOM unchanged`. Unmentioned nodes keep their last
+observed state. Coordinate-only changes give new `frame.x`, `frame.y`, `frame.w` or `frame.h`
+values without repeating the label or unchanged coordinates. Plain `dom` and `--dom` always return full output and also update the Device's previous observation. Session,
+App or window-size changes reset to full; broad changes may also return full when
+that is shorter. `--raw` clears the previous structured observation. Each Device
+session keeps one observation history under `IOS_USE_HOME`; no extra configuration
+is needed.
+
+Bare `-D` waits for DOM quiescence; `-D 300ms` uses a fixed delay (ms by default,
+minimum 100ms). Neither proves that rendering or asynchronous loading has
+finished. Diff always reads a fresh full tree and leaves element lookup intact;
+it saves output/context, not tree capture work or transport. Observation
+IDs follow matched nodes within this history; they are not native IDs or tap
+targets. Use the latest labels/values and `--cindex` for actions. Matching uses
+unique identifier/label and role anchors across containers; otherwise duplicate
+siblings match in order within a matched parent. All properties and hierarchy
+are still compared.
+With `--json`, diff requests use `mode: full` with `nodes`, or `mode: diff` with
+`added`, `removed` (IDs) and `changed` (new nodes). Each node contains `id`,
+`parent`, sibling `index` and `element`. Apply removals then upsert added/changed
+nodes by ID. Plain full JSON retains `elements` and adds `observationID` to each.
+`open` returns its observation once at `data.dom`; `data.readiness` contains readiness metadata.
+
 ## Install
 
 ```bash

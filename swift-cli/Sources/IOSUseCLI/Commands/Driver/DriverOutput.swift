@@ -56,11 +56,11 @@ public enum DriverOutput {
         return index + 1
     }
 
-    private static func formatDomRect(_ element: ForyDomElement) -> String {
+    static func formatDomRect(_ element: ForyDomElement) -> String {
         element.rect.map { " (\($0.x),\($0.y),\($0.w),\($0.h))" } ?? ""
     }
 
-    private static func formatDomLine(_ element: ForyDomElement) -> String {
+    static func formatDomLine(_ element: ForyDomElement) -> String {
         let type = element.traits.first ?? "?"
         let flags = element.traits.dropFirst().joined(separator: ",")
         let allTraits = flags.isEmpty ? type : "\(type),\(flags)"
