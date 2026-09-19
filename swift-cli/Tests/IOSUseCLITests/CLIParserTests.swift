@@ -2,6 +2,28 @@ import XCTest
 import IOSUseCLI
 
 final class CLIParserTests: XCTestCase {
+    func testDefaultObservationsAndExplicitFullAcrossMutationEntrypoints() throws {
+        let commands = [["tap", "Continue"], ["longpress", "Item"], ["input", "--content", "--nodiff"],
+                        ["swipe", "--dir", "forth"], ["rotate", "--to", "portrait"], ["home"],
+                        ["dismissAlert"], ["activateApp", "com.example.app"],
+                        ["terminateApp", "com.example.app"], ["open", "example://page"]]
+        for command in commands {
+            for duration in [[], ["300ms"]] {
+                let short = try CLIParser.parse(command + ["-D"] + duration)
+                XCTAssertEqual(short, try CLIParser.parse(command + ["--dom"] + duration))
+                let full = try CLIParser.parse(command + ["--dom"] + duration + ["--nodiff"])
+                XCTAssertNotEqual(short, full)
+                XCTAssertEqual(full, try CLIParser.parse(command + ["--nodiff", "-D"] + duration))
+            }
+            XCTAssertThrowsError(try CLIParser.parse(command + ["--nodiff"]))
+        }
+        XCTAssertEqual(try CLIParser.parse(["dom"]), .driver(.dom(raw: false, fresh: true, waitQuiescence: false, diff: true)))
+        XCTAssertEqual(try CLIParser.parse(["dom", "--nodiff", "--json"]), .driver(.dom(raw: false, fresh: false, waitQuiescence: false, diff: false)))
+        XCTAssertEqual(try CLIParser.parse(["tap", "Continue", "--nodiff", "-D", "300ms"]),
+                       .driver(.tap(target: "Continue", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: .afterMilliseconds(300))))
+        XCTAssertThrowsError(try CLIParser.parse(["dom", "--diff", "--nodiff"]))
+    }
+
     func testDiffObservationOptionsAndConflicts() throws {
         XCTAssertEqual(try CLIParser.parse(["dom", "--diff"]),
                        .driver(.dom(raw: false, fresh: true, waitQuiescence: false, diff: true)))
@@ -413,12 +435,12 @@ final class CLIParserTests: XCTestCase {
     func testParsesDriverReadCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["dom", "--wait-quiescence"]),
-            .driver(.dom(raw: false, fresh: true, waitQuiescence: true))
+            .driver(.dom(raw: false, fresh: true, waitQuiescence: true, diff: true))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["dom", "--fresh", "--wait-quiescence"]),
-            .driver(.dom(raw: false, fresh: true, waitQuiescence: true))
+            .driver(.dom(raw: false, fresh: true, waitQuiescence: true, diff: true))
         )
 
         XCTAssertEqual(
@@ -491,7 +513,7 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["tap", "67", "269", "--dom"]),
-            .driver(.tap(target: "67,269", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: .afterQuiescence))
+            .driver(.tap(target: "67,269", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: .diffAfterQuiescence))
         )
 
         XCTAssertEqual(
@@ -526,22 +548,22 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["tap", "General", "--dom"]),
-            .driver(.tap(target: "General", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: .afterQuiescence))
+            .driver(.tap(target: "General", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: .diffAfterQuiescence))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["longpress", "General", "--dom", "100"]),
-            .driver(.longPress(target: "General", duration: nil, traits: nil, cindex: nil, postDom: .afterMilliseconds(100)))
+            .driver(.longPress(target: "General", duration: nil, traits: nil, cindex: nil, postDom: .diffAfterMilliseconds(100)))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["longpress", "General", "--dom", "0.2s"]),
-            .driver(.longPress(target: "General", duration: nil, traits: nil, cindex: nil, postDom: .afterMilliseconds(200)))
+            .driver(.longPress(target: "General", duration: nil, traits: nil, cindex: nil, postDom: .diffAfterMilliseconds(200)))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["input", "--tap", "First name", "--content", "Alpha", "--dom=300"]),
-            .driver(.input(tap: "First name", content: "Alpha", delete: 0, enter: false, traits: nil, cindex: nil, postDom: .afterMilliseconds(300)))
+            .driver(.input(tap: "First name", content: "Alpha", delete: 0, enter: false, traits: nil, cindex: nil, postDom: .diffAfterMilliseconds(300)))
         )
 
         XCTAssertEqual(
@@ -561,7 +583,7 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["swipe", "--dir", "forth", "--distance", "200", "--dom", "--traits", "Cell"]),
-            .driver(.swipe(to: nil, from: nil, dir: "forth", distance: 200, traits: "Cell", cindex: nil, postDom: .afterQuiescence))
+            .driver(.swipe(to: nil, from: nil, dir: "forth", distance: 200, traits: "Cell", cindex: nil, postDom: .diffAfterQuiescence))
         )
     }
 
@@ -600,15 +622,9 @@ final class CLIParserTests: XCTestCase {
             ))
         )
 
-        XCTAssertEqual(
-            try CLIParser.parse(["activateApp", "com.apple.Preferences", "--dom", "--udid", "REAL-1"]),
-            .appLifecycle(AppLifecycleOptions(
-                action: .activate,
-                bundleID: "com.apple.Preferences",
-                session: SessionOptions(udid: "REAL-1"),
-                dom: true
-            ))
-        )
+        var activation = AppLifecycleOptions(action: .activate, bundleID: "com.apple.Preferences", session: SessionOptions(udid: "REAL-1"))
+        activation.postDom = .diffAfterQuiescence
+        XCTAssertEqual(try CLIParser.parse(["activateApp", "com.apple.Preferences", "--dom", "--udid", "REAL-1"]), .appLifecycle(activation))
 
         XCTAssertEqual(
             try CLIParser.parse(["activateApp", "com.apple.Preferences", "--no-wait"]),
@@ -625,15 +641,13 @@ final class CLIParserTests: XCTestCase {
             .open(OpenURLOptions(url: "https://example.com"))
         )
 
-        XCTAssertEqual(
-            try CLIParser.parse(["open", "https://example.com", "--dom"]),
-            .open(OpenURLOptions(url: "https://example.com", dom: true))
-        )
+        var open = OpenURLOptions(url: "https://example.com")
+        open.postDom = .diffAfterQuiescence
+        XCTAssertEqual(try CLIParser.parse(["open", "https://example.com", "--dom"]), .open(open))
 
-        XCTAssertEqual(
-            try CLIParser.parse(["open", "fixture://page", "--bundle-id=com.example.fixture", "--dom"]),
-            .open(OpenURLOptions(url: "fixture://page", bundleID: "com.example.fixture", dom: true))
-        )
+        var handler = OpenURLOptions(url: "fixture://page", bundleID: "com.example.fixture")
+        handler.postDom = .diffAfterQuiescence
+        XCTAssertEqual(try CLIParser.parse(["open", "fixture://page", "--bundle-id=com.example.fixture", "--dom"]), .open(handler))
         XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id", ""]))
         XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id"]))
         XCTAssertThrowsError(try CLIParser.parse(["open", "fixture://page", "--bundle-id", "--json", "com.example.fixture"]))
@@ -923,9 +937,6 @@ final class CLIParserTests: XCTestCase {
         XCTAssertThrowsError(try CLIParser.parse(["tap", "General", "--dom", "1.5"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--dom must resolve to a whole number of milliseconds"))
         }
-        XCTAssertThrowsError(try CLIParser.parse(["home", "--dom"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .unknownOption("--dom"))
-        }
         XCTAssertThrowsError(try CLIParser.parse(["proxy", "read", "--last", "0"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--last must be greater than 0"))
         }
@@ -1013,7 +1024,7 @@ final class CLIParserTests: XCTestCase {
             ]),
             ParsedInvocation(
                 command: .driver(
-                    .dom(raw: false, fresh: false, waitQuiescence: false)
+                    .dom(raw: false, fresh: true, waitQuiescence: false, diff: true)
                 ),
                 json: true,
                 deviceID: "real:DEVICE-1"
@@ -1038,7 +1049,7 @@ final class CLIParserTests: XCTestCase {
             ]),
             ParsedInvocation(
                 command: .driver(
-                    .dom(raw: false, fresh: false, waitQuiescence: false)
+                    .dom(raw: false, fresh: true, waitQuiescence: false, diff: true)
                 ),
                 json: true,
                 deviceID: "mac"

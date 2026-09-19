@@ -17,27 +17,27 @@ DOM reads, semantic actions and each wait poll capture the current tree; the
 Driver does not reuse a snapshot across commands. On XCTest targets,
 `dom --fresh` additionally redetects the foreground App after an external App switch.
 
-For repeated observations, use `dom --diff`, or append `-D [duration]` to a UI
+DOM observations default to diff. Use `dom`, or append `--dom [duration]` / `-D [duration]` to a UI
 mutation (`tap`, `longpress`, `input`, `swipe`, `rotate`, `home`, `dismissAlert`,
 `open`, `activateApp`, `terminateApp`). For example:
 
 ```bash
-ios-use dom --diff
+ios-use dom
 ios-use tap "Continue" -D
 ios-use input --tap "Search" --content "photos" -D 300ms
 ```
 
 Normal DOM is an indented semantic tree: labels, roles, values, state, hints and
 hierarchy. Existing selector labels are retained, including generated names and
-aliases. `dom --json` returns the detailed tree with rectangles, identifiers,
+aliases. `dom --nodiff --json` returns the detailed tree with rectangles, identifiers,
 original `accessibilityLabel` and `labelSource`; it does not guess provenance
 from a label's spelling.
 
 The first diff observation is full. Later observations show removed/added rows
 with parent context and zero-based child positions, or `DOM semantics unchanged`.
 Positions describe tree order, not visual direction or new tap IDs. Pure geometry
-changes are reported as `Layout changed`; request `dom --json` when exact current
-coordinates are needed. Plain `dom` and `--dom` return full semantics. An App or
+changes are reported as `Layout changed`; request `dom --nodiff --json` when exact current
+coordinates are needed. Add `--nodiff` to `dom` or an action with `--dom` / `-D` for full semantics. An App or
 window-size change, lost continuation, restarted Driver, or broad change returns
 full automatically. Raw and detailed reads clear the CLI continuation.
 
@@ -48,17 +48,20 @@ clear this history. The CLI stores only a continuation token per Device under
 bytes and model output. It still captures a fresh tree after mutations, so it
 does not avoid the native work needed to observe asynchronous UI changes.
 
-Bare `-D` waits for DOM quiescence; `-D 300ms` uses a fixed delay (ms by default,
-minimum 100ms). Neither unchanged semantics nor quiescence proves that rendering
+Bare `-D` / `--dom` waits briefly for DOM quiescence; `-D 300ms` uses a fixed delay (ms by default,
+minimum 100ms). XCTest application-idle waits are limited to 2s; a missing animation
+notification does not wait for the native 60s default. The Driver checks the
+command deadline before dispatching further input; already dispatched gestures
+cannot be retracted. Neither unchanged semantics nor best-effort settling proves that rendering
 or asynchronous loading has finished. Use current labels/values for actions;
 the Driver resolves them against its complete current tree.
 
-`dom --diff --json` returns `mode: full` with `lines`, or `mode: diff` with
+`dom --json` returns `mode: full` with `lines`, or `mode: diff` with
 `removed` and `added` edits. Removal offsets refer to the previous semantic lines;
 insertion offsets refer to the resulting lines. Apply removals in descending
 order, then insertions in ascending order. Edits include their line, parent
 context and child position. The result reconstructs the complete ordered semantic
-text; geometry is deliberately separate. Plain `dom --json` retains `elements`.
+text; geometry is deliberately separate. `dom --nodiff --json` retains `elements`.
 `open` returns its observation once at `data.dom`; `data.readiness` holds readiness
 metadata. This experimental protocol requires the matching CLI and Driver/Runtime.
 
