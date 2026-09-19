@@ -69,6 +69,12 @@ final class FixtureTabBarController: UITabBarController {
                 symbol: "square.stack.3d.up",
                 identifier: "fixture.tab.metal"
             ),
+            tab(
+                ScrollFixtureViewController(),
+                title: "Scroll",
+                symbol: "arrow.up.arrow.down",
+                identifier: "fixture.tab.scroll"
+            ),
         ]
         selectedIndex = 0
         addFullScreenBottomProbe(

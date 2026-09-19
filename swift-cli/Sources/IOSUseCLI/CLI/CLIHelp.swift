@@ -446,7 +446,7 @@ enum CLIHelp {
                 summary: "Scroll to a DOM label, or use a fixed distance when no label is available.",
                 options: [
                     "--to <label>       Target element",
-                    "--from <label|x,y> Anchor element or coordinate",
+                    "--from <label|x,y> Select the scroll container using a visible element, container label or point",
                     "--dir forth|back   Fixed-distance direction",
                     "--distance <px>    Fixed distance in pixels",
                     "--traits <traits>  Comma-separated trait filter for --to",
@@ -458,6 +458,8 @@ enum CLIHelp {
                 Use the target's exact label and a visible anchor in the same list or panel:
                   ios-use swipe --to "开发者" --from "蓝牙" --dom
                 Without a labeled target:
+                  ios-use swipe --from "<visible-anchor>" --dir forth --distance 300 --dom
+                Omit --from to use the backend's default scroll region:
                   ios-use swipe --dir forth --distance 300 --dom
                 """
             )

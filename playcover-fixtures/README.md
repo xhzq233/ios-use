@@ -8,6 +8,9 @@ PlayCover backend. It deliberately combines:
 - SwiftUI controls and text input;
 - a `WKWebView` with accessible controls;
 - an animated `MTKView` underneath a UIKit overlay;
+- a Scroll tab with unequal sibling tables, a nested horizontal strip and
+  recycled/reordered rows; `Documents/scroll-state.json` records actual scroll
+  offsets independently of accessibility snapshots;
 - a bottom `UITabBarController` whose items exercise the App's bottom canvas
   edge without a fabricated Home Indicator;
 - the `iosusefixture://` URL scheme with an accessible
@@ -31,6 +34,16 @@ ios-use:
 `--derived-data-path /absolute/path` gives isolated acceptance gates a fresh
 Xcode build directory without changing the normal local default.
 Generated projects and build products stay untracked under this directory.
+
+With an isolated Simulator or Mac session already showing the Scroll tab,
+verify anchor selection, nested axes, long distances and the reached row's
+actual selection callback:
+
+```bash
+IOS_USE_HOME=/path/to/test-home python3 playcover-fixtures/test_swipe_anchor.py \
+  --cli ./ios-use --state /path/to/Documents/scroll-state.json \
+  --output /path/to/swipe-evidence
+```
 
 The native `UIAlertController` and the custom popup are separate gates.
 On Catalyst the alert intentionally exercises the native AppKit panel. The

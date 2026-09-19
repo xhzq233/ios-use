@@ -195,7 +195,10 @@ func scrollAncestorByVector(_ vector: CGVector, scrollFrame: CGRect, app: XCUIAp
             pressDuration: IOSUseProtocol.touchPressDuration,
             velocity: IOSUseProtocol.touchVelocity,
             holdDuration: IOSUseProtocol.touchHoldDuration
-        )
+        ),
+        // SwipeCommands waits before resolving the initial container and takes
+        // fresh trees between scroll attempts. Do not add a stale-frame wait here.
+        waitForIdle: false
     )
 }
 
