@@ -7,7 +7,6 @@ enum TouchCommands {
     /// doc 1.2 — tap. `target` is decoded from ForyTapArgs.target (ForyTarget).
     static func tap(_ args: ForyTapArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
-        defer { invalidateSnapshot() }
 
         let target = args.target
 
@@ -32,7 +31,7 @@ enum TouchCommands {
             return try Codec.foryOK(payload)
         }
 
-        // Path B: label lookup via rawFind.
+        // Path B: label lookup in a command-owned snapshot.
         guard !target.label.isEmpty else {
             return try Codec.foryError(
                 "tap: invalid label/point target",
@@ -42,7 +41,16 @@ enum TouchCommands {
                 target: target
             )
         }
-        switch rawFind(target, visibility: .only) {
+        // Resolve the semantic target after settling, so asynchronous layout during
+        // the idle wait cannot leave us tapping an old coordinate.
+        try Quiescence.wait(app: app, command: "tap")
+        guard let cs = captureCleanedSnapshot() else {
+            return try Codec.foryError("failed to take snapshot",
+                category: IOSUseErrorCategory.lookup, code: IOSUseErrorCode.snapshotFailed,
+                phase: IOSUseErrorPhase.snapshot, retryable: true, target: target)
+        }
+        defer { withExtendedLifetime(cs) {} }
+        switch rawFindInSnapshot(target, cs: cs, visibility: .only) {
         case .found(let elem):
             guard let frame = interactionFrame(elem.node) else {
                 return try Codec.foryError(
@@ -63,7 +71,7 @@ enum TouchCommands {
                 )
             }
             let point = resolveTapPoint(frame: frame, offset: args.offset, ratio: args.ratio)
-            try tapAtPoint(point, app: app)
+            try tapAtPoint(point, app: app, waitForIdle: false)
             let payload = ForyElementPayload(
                 element: makeForyElementSummary(elem.node)
             )
@@ -82,7 +90,6 @@ enum TouchCommands {
     static func longPress(_ args: ForyLongPressArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         let duration = args.duration > 0 ? args.duration : IOSUseProtocol.defaultLongPressDurationSeconds
-        defer { invalidateSnapshot() }
 
         let target = args.target
 
@@ -115,7 +122,14 @@ enum TouchCommands {
                 target: target
             )
         }
-        switch rawFind(target, visibility: .only) {
+        try Quiescence.wait(app: app, command: "longpress")
+        guard let cs = captureCleanedSnapshot() else {
+            return try Codec.foryError("failed to take snapshot",
+                category: IOSUseErrorCategory.lookup, code: IOSUseErrorCode.snapshotFailed,
+                phase: IOSUseErrorPhase.snapshot, retryable: true, target: target)
+        }
+        defer { withExtendedLifetime(cs) {} }
+        switch rawFindInSnapshot(target, cs: cs, visibility: .only) {
         case .found(let elem):
             guard let frame = interactionFrame(elem.node) else {
                 return try Codec.foryError(
@@ -135,7 +149,7 @@ enum TouchCommands {
                     candidateCount: 1
                 )
             }
-            try pressAtPoint(CGPoint(x: frame.midX, y: frame.midY), duration: duration, app: app)
+            try pressAtPoint(CGPoint(x: frame.midX, y: frame.midY), duration: duration, app: app, waitForIdle: false)
             let payload = ForyElementPayload(
                 element: makeForyElementSummary(elem.node)
             )
@@ -151,14 +165,14 @@ enum TouchCommands {
 
     // MARK: - Internals
 
-    private static func tapAtPoint(_ p: CGPoint, app: XCUIApplication) throws {
-        if let error = RawPointer.perform(app: app, event: .tap(p)) {
+    private static func tapAtPoint(_ p: CGPoint, app: XCUIApplication, waitForIdle: Bool = true) throws {
+        if let error = try RawPointer.perform(app: app, event: .tap(p), waitForIdle: waitForIdle) {
             throw DriverError.gestureFailed("tap synthesis failed: \(error.localizedDescription)")
         }
     }
 
-    private static func pressAtPoint(_ p: CGPoint, duration: Double, app: XCUIApplication) throws {
-        if let error = RawPointer.perform(app: app, event: .longPress(p, duration: duration)) {
+    private static func pressAtPoint(_ p: CGPoint, duration: Double, app: XCUIApplication, waitForIdle: Bool = true) throws {
+        if let error = try RawPointer.perform(app: app, event: .longPress(p, duration: duration), waitForIdle: waitForIdle) {
             throw DriverError.gestureFailed("longPress synthesis failed: \(error.localizedDescription)")
         }
     }

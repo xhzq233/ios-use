@@ -40,6 +40,7 @@ targets:
     platform: iOS
     supportsMacCatalyst: true
     sources:
+      - path: "${IOS_USE_RUNTIME_SOURCE_ROOT}/../shared/IOSUseProtocol/Sources/IOSUseProtocol/SemanticDOM.swift"
       - path: "${IOS_USE_RUNTIME_SOURCE_ROOT}"
         excludes:
           - Info.plist

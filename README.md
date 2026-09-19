@@ -13,7 +13,63 @@ can operate iOS Drivers and Apple device services over remote connections.
 
 Application nodes in the DOM provide page context. Element selectors search
 their contents, so an App name does not shadow a button with the same label.
-On XCTest targets, `dom --fresh` also redetects the foreground App after an external App switch.
+DOM reads, semantic actions and each wait poll capture the current tree; the
+Driver does not reuse a snapshot across commands. On XCTest targets,
+`dom --fresh` additionally redetects the foreground App after an external App switch.
+
+DOM observations default to diff. Use `dom`, or append `--dom [duration]` / `-D [duration]` to a UI
+mutation (`tap`, `longpress`, `input`, `swipe`, `rotate`, `home`, `dismissAlert`,
+`open`, `activateApp`, `terminateApp`). For example:
+
+```bash
+ios-use dom
+ios-use tap "Continue" -D
+ios-use input --tap "Search" --content "photos" -D 300ms
+```
+
+Normal DOM is an indented semantic tree: labels, roles, values, state, hints and
+hierarchy. Existing selector labels are retained, including generated names and
+aliases. `dom --nodiff --json` returns the detailed tree with rectangles, identifiers,
+original `accessibilityLabel` and `labelSource`; it does not guess provenance
+from a label's spelling.
+
+The first diff observation is full. Later observations show removed/added/updated rows
+with shared parent context and zero-based child positions, or `DOM semantics unchanged`.
+Positions describe tree order, not visual direction or new tap IDs. Pure geometry
+changes are reported as `Layout changed`; request `dom --nodiff --json` when exact current
+coordinates are needed. Add `--nodiff` to `dom` or an action with `--dom` / `-D` for full semantics. An App or
+window-size change, lost continuation, restarted Driver, or broad change returns
+full automatically. Raw and detailed reads clear the CLI continuation.
+
+XCTest and Mac Runtime own the last semantic observation in memory, separate
+from their current lookup snapshots. Internal action lookups do not advance or
+clear this history. The CLI stores only a continuation token per Device under
+`IOS_USE_HOME`; no per-agent configuration is needed. Diff avoids repeating
+unchanged semantic rows. It still captures a fresh tree after mutations, so it
+does not avoid the native work needed to observe asynchronous UI changes.
+
+Bare `-D` / `--dom` waits briefly for DOM quiescence; `-D 300ms` uses a fixed delay (ms by default,
+minimum 100ms). XCTest application-idle waits are limited to 2s; a missing animation
+notification does not wait for the native 60s default. The Driver checks the
+command deadline before dispatching further input; already dispatched gestures
+cannot be retracted. Neither unchanged semantics nor best-effort settling proves that rendering
+or asynchronous loading has finished. Use current labels/values for actions;
+the Driver resolves them against its complete current tree. Semantic tap, long
+press and input focus settle before taking that tree, so layout changes during
+the wait do not leave their target coordinates stale.
+
+`dom --json` returns `mode: full` with `lines`, or `mode: diff` with
+`changes` grouped by parent `context`. Each group contains `removed` (old offset,
+child index and selector label), `added` (new offset, child index and full line),
+and `updated` (same old/new offset, child index and replacement line). `~` updates
+are emitted only for a unique unchanged selector at the same position and parent
+path; otherwise the exact remove/add edits are kept. To reconstruct, remove both
+removed/updated old offsets in descending order, then insert added/updated lines
+at their final offsets in ascending order. Removed values are already present in
+the preceding observation and are not repeated. The shorter model-facing text
+wins; transport size is measured separately. Geometry is deliberately separate. `dom --nodiff --json` retains `elements`.
+`open` returns its observation once at `data.dom`; `data.readiness` holds readiness
+metadata. This experimental protocol requires the matching CLI and Driver/Runtime.
 
 ## Install
 

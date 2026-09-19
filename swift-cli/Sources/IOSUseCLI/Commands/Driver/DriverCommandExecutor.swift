@@ -17,6 +17,7 @@ struct DriverCommandResult {
     var stdout: String
     var payload: DriverCommandPayload?
     var postDom: ForyDomPayload? = nil
+    var observation: DomObservation.Output? = nil
     var artifact: ScreenshotArtifactService.Result? = nil
 }
 
@@ -34,7 +35,8 @@ enum DriverCommandExecutionError: Error, CustomStringConvertible {
 enum DriverCommandExecutor {
     typealias ClientRunner = ((DriverCommandClient) throws -> DriverCommandPayload?) throws -> DriverCommandPayload?
 
-    static func execute(action: DriverAction, paths: IOSUsePaths, hostDeviceTypeHint: String? = nil, clientRunner: ClientRunner) throws -> DriverCommandResult {
+    static func execute(action: DriverAction, paths: IOSUsePaths, hostDeviceTypeHint: String? = nil, detailedDom: Bool = false, clientRunner: ClientRunner) throws -> DriverCommandResult {
+        let observer = action.observesDom ? try DomObservation(paths: paths, detailed: detailedDom) : nil
         let startedAt = CFAbsoluteTimeGetCurrent()
         var ok = false
         defer {
@@ -46,10 +48,11 @@ enum DriverCommandExecutor {
             )
         }
         switch action {
-        case .dom(let raw, let fresh, let waitQuiescence):
-            let payload = try requiredPayload(clientRunner { .dom(try $0.dom(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence)) }, as: ForyDomPayload.self)
+        case .dom(let raw, let fresh, let waitQuiescence, let diff):
+            let payload = try requiredPayload(clientRunner { .dom(try $0.observeDOM(observer!.arguments(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence, diff: diff))) }, as: ForyDomPayload.self)
+            let observation = try observer!.observe(payload, diff: diff)
             ok = true
-            return DriverCommandResult(stdout: DriverOutput.formatDom(payload), payload: .dom(payload))
+            return DriverCommandResult(stdout: observation.text, payload: .dom(payload), observation: observation)
 
         case .waitFor(let label, let timeout, let traits, let cindex, let gone, let matchMode):
             let payload = try requiredPayload(clientRunner {
@@ -95,6 +98,7 @@ enum DriverCommandExecutor {
             let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: "Tap\n\(DriverOutput.formatElement(payload))", payload: .element(payload)),
                 postDom: postDom,
+                observer: observer,
                 clientRunner: clientRunner
             )
             ok = true
@@ -108,6 +112,7 @@ enum DriverCommandExecutor {
             let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: "Longpress\n\(DriverOutput.formatElement(payload))", payload: .element(payload)),
                 postDom: postDom,
+                observer: observer,
                 clientRunner: clientRunner
             )
             ok = true
@@ -138,6 +143,7 @@ enum DriverCommandExecutor {
                     payload: .element(payload)
                 ),
                 postDom: postDom,
+                observer: observer,
                 clientRunner: clientRunner
             )
             ok = true
@@ -151,6 +157,7 @@ enum DriverCommandExecutor {
             let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: DriverOutput.formatSwipe(payload), payload: .swipe(payload)),
                 postDom: postDom,
+                observer: observer,
                 clientRunner: clientRunner
             )
             ok = true
@@ -180,13 +187,16 @@ enum DriverCommandExecutor {
             ok = true
             return DriverCommandResult(stdout: "App \(bundleId) terminated\n", payload: nil)
 
-        case .home:
+        case .home(let postDom):
             _ = try clientRunner {
                 try $0.home()
                 return nil
             }
+            let result = try appendPostDomIfNeeded(
+                DriverCommandResult(stdout: "Pressed Home\n", payload: nil),
+                postDom: postDom, observer: observer, clientRunner: clientRunner)
             ok = true
-            return DriverCommandResult(stdout: "Pressed Home\n", payload: nil)
+            return result
 
         case .rotate(let orientation, let postDom):
             let payload = try requiredPayload(
@@ -199,6 +209,7 @@ enum DriverCommandExecutor {
                     payload: .rotate(payload)
                 ),
                 postDom: postDom,
+                observer: observer,
                 clientRunner: clientRunner
             )
             ok = true
@@ -210,8 +221,11 @@ enum DriverCommandExecutor {
                 clientRunner { .alert(try $0.dismissAlert(args: args)) },
                 as: ForyAlertPayload.self
             )
+            let result = try appendPostDomIfNeeded(
+                DriverCommandResult(stdout: DriverOutput.formatAlert(payload), payload: .alert(payload)),
+                postDom: options.postDom, observer: observer, clientRunner: clientRunner)
             ok = true
-            return DriverCommandResult(stdout: DriverOutput.formatAlert(payload), payload: .alert(payload))
+            return result
         }
     }
 
@@ -267,46 +281,38 @@ enum DriverCommandExecutor {
         )
     }
 
-    private static func appendPostDomIfNeeded(_ result: DriverCommandResult, postDom: PostDomMode?, clientRunner: ClientRunner) throws -> DriverCommandResult {
+    private static func appendPostDomIfNeeded(_ result: DriverCommandResult, postDom: PostDomMode?, observer: DomObservation?, clientRunner: ClientRunner) throws -> DriverCommandResult {
         guard let postDom else { return result }
-        let title: String
-        let waitQuiescence: Bool
-        switch postDom {
-        case .afterQuiescence:
-            title = "DOM after quiescence"
-            waitQuiescence = true
-        case .afterMilliseconds(let domAfterMs):
-            if domAfterMs > 0 {
-                Thread.sleep(forTimeInterval: Double(domAfterMs) / 1000.0)
-            }
-            title = "DOM after \(domAfterMs)ms"
-            waitQuiescence = false
-        }
-        let payload: ForyDomPayload
+        let title = postDom.milliseconds.map { "DOM after \($0)ms" } ?? "DOM after quiescence"
         do {
-            payload = try postMutationDom(
-                waitQuiescence: waitQuiescence,
-                clientRunner: clientRunner
-            )
+            let payload = try collectPostDom(mode: postDom, observer: observer, clientRunner: clientRunner)
+            let observation = try observer!.observe(payload, diff: postDom.diff)
+            var result = result
+            if !result.stdout.hasSuffix("\n") { result.stdout += "\n" }
+            result.stdout += "\n\(title)\n" + observation.text
+            result.postDom = payload
+            result.observation = observation
+            return result
         } catch {
             throw DriverCommandExecutionError.postconditionFailed(label: title, underlying: error)
         }
-        var stdout = result.stdout
-        if !stdout.hasSuffix("\n") {
-            stdout += "\n"
+    }
+
+    static func collectPostDom(mode: PostDomMode, observer: DomObservation? = nil, clientRunner: ClientRunner) throws -> ForyDomPayload {
+        if let milliseconds = mode.milliseconds {
+            Thread.sleep(forTimeInterval: Double(milliseconds) / 1000)
         }
-        stdout += "\n\(title)\n"
-        stdout += DriverOutput.formatDom(payload)
-        return DriverCommandResult(
-            stdout: stdout,
-            payload: result.payload,
-            postDom: payload,
-            artifact: result.artifact
-        )
+        return try postMutationDom(args: observer?.arguments(fresh: true, waitQuiescence: mode.milliseconds == nil, diff: mode.diff) ?? ForyDomArgs(fresh: true, waitQuiescence: mode.milliseconds == nil), clientRunner: clientRunner)
+    }
+
+    static func collectPostDom(mode: PostDomMode, paths: IOSUsePaths, detailed: Bool = false) throws -> ForyDomPayload {
+        try collectPostDom(mode: mode, observer: DomObservation(paths: paths, detailed: detailed)) { body in
+            try DriverCommandExecution.withLockedClient(paths: paths, body)
+        }
     }
 
     private static func postMutationDom(
-        waitQuiescence: Bool,
+        args: ForyDomArgs,
         clientRunner: ClientRunner
     ) throws -> ForyDomPayload {
         let deadline = CFAbsoluteTimeGetCurrent() + IOSUseProtocol.postMutationSnapshotRetrySeconds
@@ -314,7 +320,7 @@ enum DriverCommandExecutor {
             do {
                 return try requiredPayload(
                     clientRunner {
-                        .dom(try $0.dom(raw: false, fresh: true, waitQuiescence: waitQuiescence))
+                        .dom(try $0.observeDOM(args))
                     },
                     as: ForyDomPayload.self
                 )

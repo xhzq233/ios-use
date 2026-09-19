@@ -207,8 +207,7 @@ enum AppCommands {
                     runLoopPoll()
                     continue
                 }
-                invalidateSnapshot()
-                if let cs = getCleanedSnapshot() {
+                if let cs = captureCleanedSnapshot() {
                     lastBundleId = cs.bundleId
                     guard snapshotBundleAccepted(
                         lastBundleId,

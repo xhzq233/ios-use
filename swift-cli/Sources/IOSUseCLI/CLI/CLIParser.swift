@@ -544,13 +544,15 @@ public enum CLIParser {
         var traits: String?
         var cindex: Int32?
         var postDom: PostDomMode?
+        var noDiff = false
         while let arg = parser.consume() {
             switch arg {
             case "--offset": offset = try parser.valueAllowingLeadingDash(for: arg)
             case "--offset-ratio": offsetRatio = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
+            case "--nodiff": noDiff = true
+            case "--dom", "-D": postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             default:
                 if arg.hasPrefix("-") {
                     throw CLIParseError.unknownOption(arg)
@@ -558,7 +560,7 @@ public enum CLIParser {
                 throw CLIParseError.unexpectedArgument(arg)
             }
         }
-        return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, postDom: postDom)
+        return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, postDom: try resolvedPostDom(postDom, noDiff: noDiff))
     }
 
     private static func parseLongPress(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -567,16 +569,18 @@ public enum CLIParser {
         var traits: String?
         var cindex: Int32?
         var postDom: PostDomMode?
+        var noDiff = false
         while let arg = parser.consume() {
             switch arg {
             case "--duration": duration = try parseNonNegativeDurationMillisecondsStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
+            case "--nodiff": noDiff = true
+            case "--dom", "-D": postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .longPress(target: target, duration: duration, traits: traits, cindex: cindex, postDom: postDom)
+        return .longPress(target: target, duration: duration, traits: traits, cindex: cindex, postDom: try resolvedPostDom(postDom, noDiff: noDiff))
     }
 
     private static func parseInput(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -587,6 +591,7 @@ public enum CLIParser {
         var traits: String?
         var cindex: Int32?
         var postDom: PostDomMode?
+        var noDiff = false
         while let arg = parser.consume() {
             switch arg {
             case "--tap": tap = try parser.value(for: arg)
@@ -605,12 +610,13 @@ public enum CLIParser {
             case "--enter": enter = true
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
+            case "--nodiff": noDiff = true
+            case "--dom", "-D": postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
         _ = try DriverCommandExecutor.resolveInputTapTarget(tap, traits: traits, cindex: cindex)
-        return .input(tap: tap, content: try require(content, option: "--content"), delete: delete, enter: enter, traits: traits, cindex: cindex, postDom: postDom)
+        return .input(tap: tap, content: try require(content, option: "--content"), delete: delete, enter: enter, traits: traits, cindex: cindex, postDom: try resolvedPostDom(postDom, noDiff: noDiff))
     }
 
     private static func parseSwipe(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -621,6 +627,7 @@ public enum CLIParser {
         var traits: String?
         var cindex: Int32?
         var postDom: PostDomMode?
+        var noDiff = false
         while let arg = parser.consume() {
             switch arg {
             case "--to": to = try parser.value(for: arg)
@@ -632,42 +639,62 @@ public enum CLIParser {
             case "--distance": distance = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
+            case "--nodiff": noDiff = true
+            case "--dom", "-D": postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, cindex: cindex, postDom: postDom)
+        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, cindex: cindex, postDom: try resolvedPostDom(postDom, noDiff: noDiff))
     }
 
     private static func parseDom(_ parser: inout ArgumentParser) throws -> DriverAction {
         var raw = false
         var fresh = false
         var waitQuiescence = false
+        var diff: Bool?
         while let arg = parser.consume() {
             switch arg {
+            case "--diff", "--nodiff":
+                let requested = arg == "--diff"
+                if let diff, diff != requested {
+                    throw CLIParseError.invalidValue("Use only one of --diff or --nodiff")
+                }
+                diff = requested
             case "--raw": raw = true
             case "--fresh": fresh = true
             case "--wait-quiescence": waitQuiescence = true
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        if raw && (fresh || waitQuiescence) {
+        if raw && (fresh || waitQuiescence || diff == true) {
             throw CLIParseError.invalidValue(
-                "dom --raw cannot be combined with --fresh or --wait-quiescence"
+                "dom --raw cannot be combined with --fresh, --wait-quiescence or --diff"
             )
         }
-        return .dom(raw: raw, fresh: fresh || waitQuiescence, waitQuiescence: waitQuiescence)
+        let useDiff = !raw && (diff ?? true)
+        return .dom(raw: raw, fresh: fresh || waitQuiescence || useDiff, waitQuiescence: waitQuiescence, diff: useDiff)
     }
 
-    private static func parsePostDomMode(_ parser: inout ArgumentParser, option: String) throws -> PostDomMode {
+    private static func resolvedPostDom(_ mode: PostDomMode?, noDiff: Bool) throws -> PostDomMode? {
+        guard noDiff else { return mode }
+        guard let mode else {
+            throw CLIParseError.invalidValue("--nodiff requires --dom or -D")
+        }
+        return mode.milliseconds.map(PostDomMode.afterMilliseconds) ?? .afterQuiescence
+    }
+
+    private static func parsePostDomMode(_ parser: inout ArgumentParser, option: String, existing: PostDomMode? = nil) throws -> PostDomMode {
+        guard existing == nil else {
+            throw CLIParseError.invalidValue("Use only one of --dom or -D")
+        }
         guard let value = parser.optionalValueAllowingLeadingDash() else {
-            return .afterQuiescence
+            return .diffAfterQuiescence
         }
         let milliseconds = try parseNonNegativeDurationMillisecondsStrict(value, label: option)
         guard milliseconds >= IOSUseProtocol.minimumPostDomMilliseconds else {
             throw CLIParseError.invalidValue("\(option) must be at least \(IOSUseProtocol.minimumPostDomMilliseconds)ms")
         }
-        return .afterMilliseconds(milliseconds)
+        return .diffAfterMilliseconds(milliseconds)
     }
 
     private static func parseScreenshot(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -768,13 +795,20 @@ public enum CLIParser {
     }
 
     private static func parseHome(_ parser: inout ArgumentParser) throws -> DriverAction {
-        try parser.requireEnd()
-        return .home
+        var postDom: PostDomMode?
+        var noDiff = false
+        while let arg = parser.consume() {
+            if arg == "--nodiff" { noDiff = true; continue }
+            guard arg == "-D" || arg == "--dom" else { throw CLIParseError.unknownOption(arg) }
+            postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
+        }
+        return .home(postDom: try resolvedPostDom(postDom, noDiff: noDiff))
     }
 
     private static func parseRotate(_ parser: inout ArgumentParser) throws -> DriverAction {
         var orientation: IOSUseDeviceOrientation?
         var postDom: PostDomMode?
+        var noDiff = false
         while let arg = parser.consume() {
             switch arg {
             case "--to":
@@ -784,8 +818,9 @@ public enum CLIParser {
                     throw CLIParseError.invalidValue("--to must be one of: \(values)")
                 }
                 orientation = parsed
-            case "--dom":
-                postDom = try parsePostDomMode(&parser, option: arg)
+            case "--nodiff": noDiff = true
+            case "--dom", "-D":
+                postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             default:
                 throw CLIParseError.unknownOption(arg)
             }
@@ -793,17 +828,20 @@ public enum CLIParser {
         guard let orientation else {
             throw CLIParseError.missingRequiredArgument("--to")
         }
-        return .rotate(orientation: orientation, postDom: postDom)
+        return .rotate(orientation: orientation, postDom: try resolvedPostDom(postDom, noDiff: noDiff))
     }
 
     private static func parseOpen(_ parser: inout ArgumentParser) throws -> OpenURLOptions {
         let url = try parser.requiredPositional("url")
         var bundleID: String?
         var session = SessionOptions()
-        var dom = false
+        var postDom: PostDomMode?
+        var noDiff = false
         while let arg = parser.consume() {
-            if arg == "--dom" {
-                dom = true
+            if arg == "--nodiff" {
+                noDiff = true
+            } else if arg == "--dom" || arg == "-D" {
+                postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             } else if arg == "--bundle-id" {
                 let value = try parser.value(for: arg)
                 guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -814,7 +852,9 @@ public enum CLIParser {
                 try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return OpenURLOptions(url: url, bundleID: bundleID, session: session, dom: dom)
+        var options = OpenURLOptions(url: url, bundleID: bundleID, session: session)
+        options.postDom = try resolvedPostDom(postDom, noDiff: noDiff)
+        return options
     }
 
     private static func parseAppLifecycle(_ parser: inout ArgumentParser, action: AppLifecycleOptions.Action) throws -> AppLifecycleOptions {
@@ -822,7 +862,8 @@ public enum CLIParser {
         var session = SessionOptions()
         var terminateExisting = false
         var log = false
-        var dom = false
+        var postDom: PostDomMode?
+        var noDiff = false
         var noWait = false
         while let arg = parser.consume() {
             switch arg {
@@ -832,9 +873,9 @@ public enum CLIParser {
             case "--log":
                 guard action == .activate else { throw CLIParseError.unknownOption(arg) }
                 log = true
-            case "--dom":
-                guard action == .activate else { throw CLIParseError.unknownOption(arg) }
-                dom = true
+            case "--nodiff": noDiff = true
+            case "--dom", "-D":
+                postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             case "--no-wait":
                 guard action == .activate else { throw CLIParseError.unknownOption(arg) }
                 noWait = true
@@ -845,24 +886,27 @@ public enum CLIParser {
         if log && !terminateExisting {
             throw CLIParseError.invalidValue("activateApp --log requires --terminateExisting so the app starts with a fresh stdio pipe")
         }
-        if dom && noWait {
-            throw CLIParseError.invalidValue("activateApp --dom cannot be combined with --no-wait")
+        if postDom != nil && noWait {
+            throw CLIParseError.invalidValue("activateApp --dom/-D cannot be combined with --no-wait")
         }
-        return AppLifecycleOptions(
+        var options = AppLifecycleOptions(
             action: action,
             bundleID: bundleID,
             session: session,
             terminateExisting: terminateExisting,
             log: log,
-            dom: dom,
             noWait: noWait
         )
+        options.postDom = try resolvedPostDom(postDom, noDiff: noDiff)
+        return options
     }
 
     private static func parseDismissAlert(_ parser: inout ArgumentParser) throws -> DriverAction {
         var selection: AlertSelectionOption?
         var scope: AlertScopeOption?
         var wait: Double?
+        var postDom: PostDomMode?
+        var noDiff = false
 
         func select(_ value: AlertSelectionOption) throws {
             guard selection == nil else {
@@ -890,6 +934,9 @@ public enum CLIParser {
                 try select(.visualPrimary)
             case "--only-button":
                 try select(.onlyButton)
+            case "--nodiff": noDiff = true
+            case "--dom", "-D":
+                postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
             case "--scope":
                 guard scope == nil else {
                     throw CLIParseError.invalidValue("--scope can only be provided once")
@@ -918,11 +965,13 @@ public enum CLIParser {
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .dismissAlert(DismissAlertOptions(
+        var options = DismissAlertOptions(
             selection: selection ?? .onlyButton,
             scope: scope ?? .any,
             wait: wait ?? 0
-        ))
+        )
+        options.postDom = try resolvedPostDom(postDom, noDiff: noDiff)
+        return .dismissAlert(options)
     }
 
     private static func parseOSLog(_ parser: inout ArgumentParser) throws -> OSLogOptions {

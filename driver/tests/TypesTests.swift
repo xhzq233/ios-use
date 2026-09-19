@@ -56,6 +56,41 @@ private final class FakeRawSnapshot: NSObject {
 
 final class TypesTests: XCTestCase {
 
+    func testCommandOwnedSnapshotKeepsUnindexedAncestorsAliveUntilLookupFinishes() {
+        weak var releasedRoot: SafeSnapshot?
+        weak var releasedWindow: SafeSnapshot?
+        var commandSnapshot: CleanedSnapshot?
+        var target: SafeSnapshot?
+
+        autoreleasepool {
+            let button = FakeRawSnapshot(label: "Save", elementType: .button)
+            let window = FakeRawSnapshot(elementType: .window, children: [button])
+            let root = SafeSnapshot(raw: FakeRawSnapshot(elementType: .application, children: [window]),
+                                    appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+            let elements = buildCleanElements(from: root)
+            let cs = makeCleanedSnapshot(elements)
+            guard case .found(let found) = rawFindInSnapshot(ForyTarget(label: "Save"), cs: cs) else {
+                return XCTFail("Expected the button to be selectable")
+            }
+            commandSnapshot = cs
+            target = found.node
+            releasedRoot = root
+            releasedWindow = root.children.first
+            XCTAssertFalse(elements.contains { $0.node === releasedWindow })
+        }
+
+        withExtendedLifetime(commandSnapshot) {
+            XCTAssertNotNil(releasedWindow)
+            XCTAssertTrue(target?.parent === releasedWindow)
+            XCTAssertTrue(target?.parent?.parent === releasedRoot)
+            XCTAssertNotNil(target.flatMap(interactionFrame))
+        }
+        commandSnapshot = nil
+        XCTAssertNotNil(target)
+        XCTAssertNil(releasedRoot)
+        XCTAssertNil(releasedWindow)
+    }
+
     func testDefaultScrollKeepsOverlayInsteadOfCoveredLargerPage() {
         let appFrame = CGRect(x: 0, y: 0, width: 400, height: 800)
         let strip = FakeRawSnapshot(elementType: .scrollView,
@@ -69,6 +104,25 @@ final class TypesTests: XCTestCase {
         XCTAssertTrue(findLargestScrollable(overlaid)?.raw as AnyObject === sheet)
         let plain = SafeSnapshot(raw: page, appFrame: appFrame)
         XCTAssertTrue(findLargestScrollable(plain)?.raw as AnyObject === page)
+    }
+
+    func testScrollAnchorKeepsNearestContainerForSingleChildAndNestedStrip() {
+        let frame = CGRect(x: 0, y: 0, width: 400, height: 800)
+        let child = FakeRawSnapshot(frame: CGRect(x: 20, y: 150, width: 80, height: 30))
+        let strip = FakeRawSnapshot(elementType: .scrollView,
+                                    frame: CGRect(x: 10, y: 120, width: 150, height: 80), children: [child])
+        let left = FakeRawSnapshot(elementType: .table,
+                                   frame: CGRect(x: 0, y: 100, width: 170, height: 350), children: [strip])
+        let right = FakeRawSnapshot(elementType: .table,
+                                    frame: CGRect(x: 180, y: 100, width: 220, height: 600))
+        let root = SafeSnapshot(raw: FakeRawSnapshot(elementType: .application, frame: frame,
+                                                     children: [left, right]), appFrame: frame)
+        XCTAssertTrue(findLargestScrollable(root)?.raw as AnyObject === right)
+        XCTAssertTrue(findScrollableAncestor(root.children[0])?.raw as AnyObject === left)
+        XCTAssertTrue(findScrollableAncestor(root.children[0].children[0].children[0])?.raw as AnyObject === strip)
+        XCTAssertTrue(findScrollableAtPoint(CGPoint(x: 40, y: 160), root)?.raw as AnyObject === strip)
+        XCTAssertNil(findScrollableAtPoint(CGPoint(x: 40, y: 50), root))
+        XCTAssertNil(findScrollableAncestor(root))
     }
 
     func testGridAxisUsesAllRowsInsteadOfBoundarySamples() {
@@ -470,6 +524,33 @@ final class TypesTests: XCTestCase {
     }
 
     // MARK: - serializeDomFlat (ForyDomElement)
+
+    func testDetailedDOMAndActionSummaryCarryNativeState() throws {
+        let raw = FakeRawSnapshot(label: "Name", identifier: "name.field", value: "Value",
+                                  elementType: .textField, isSelected: true, hasKeyboardFocus: true)
+        let node = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let elements = [
+            SnapshotElement(node: node, traits: snapshotTraits(for: node, disabled: false, invisible: false),
+                            disabled: false, invisible: false, childCount: 0),
+            SnapshotElement(node: node, traits: snapshotTraits(for: node, disabled: true, invisible: true),
+                            disabled: true, invisible: true, childCount: 0),
+        ]
+        let fory = createFory()
+        let payload = ForyDomPayload(elements: serializeDomFlat(from: elements))
+        let decoded = try fory.deserialize(fory.serialize(payload), as: ForyDomPayload.self)
+        XCTAssertTrue(decoded.elements[0].state.visible)
+        XCTAssertTrue(decoded.elements[0].state.enabled)
+        XCTAssertTrue(decoded.elements[0].state.selected)
+        XCTAssertTrue(decoded.elements[0].state.focused)
+        XCTAssertEqual(decoded.elements[0].elementType, Int32(XCUIElement.ElementType.textField.rawValue))
+        XCTAssertFalse(decoded.elements[1].state.visible)
+        XCTAssertFalse(decoded.elements[1].state.enabled)
+        let summary = makeForyElementSummary(node)
+        XCTAssertTrue(summary.state.visible)
+        XCTAssertTrue(summary.state.enabled)
+        XCTAssertTrue(summary.state.selected)
+        XCTAssertTrue(summary.state.focused)
+    }
 
     func testSerializeDomFlat_SerializesPreorderElements() {
         let root = makeElement(label: "Root", type: .other)

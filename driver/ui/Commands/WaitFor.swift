@@ -5,7 +5,7 @@ import Fory
 // MARK: - WaitFor (doc 6.5)
 
 enum WaitForCommands {
-    /// Poll rawFind until target label is visible, or (with --gone) until no visible match remains.
+    /// Capture and search until the target is visible, or (with --gone) no visible match remains.
     static func waitFor(_ args: ForyWaitForArgs) throws -> ForyResponseFrame {
         _ = try Session.shared.ensureActive()
 
@@ -75,14 +75,11 @@ enum WaitForCommands {
         }
         let t0 = CFAbsoluteTimeGetCurrent()
 
-        var shouldUseFreshSnapshot = false
         var remainingMatches = 0
         var lastSnapshotFailure: String?
         while true {
-            if shouldUseFreshSnapshot {
-                invalidateSnapshot()
-            }
-            if let cs = getCleanedSnapshot() {
+            if let cs = captureCleanedSnapshot() {
+                defer { withExtendedLifetime(cs) {} }
                 lastSnapshotFailure = nil
                 // Polling only needs selector state. Skip rejected-candidate diagnostics
                 // so every miss does not rescan the full DOM or build ancestor chains.
@@ -149,7 +146,6 @@ enum WaitForCommands {
                     target: args.target
                 )
             }
-            shouldUseFreshSnapshot = true
             usleep(UInt32(IOSUseProtocol.waitForPollIntervalMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
         }
     }

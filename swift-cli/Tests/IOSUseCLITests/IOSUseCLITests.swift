@@ -999,7 +999,7 @@ final class IOSUseCLITests: XCTestCase {
     }
 
 
-    func testActivateAppDefaultsToReadinessAndReusesReturnedDom() throws {
+    func testActivateAppWaitsForReadinessBeforePostDomObservation() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-activate-ready-\(UUID().uuidString)")
             .path
@@ -1011,10 +1011,15 @@ final class IOSUseCLITests: XCTestCase {
             return AppLifecycleService.Result(message: "App \(options.bundleID) activated")
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(waitAppForegroundHandler: { expected, timeout, returnDom in
+            FakeDriverCommandClient(domHandler: { raw, fresh, wait in
+                XCTAssertFalse(raw)
+                XCTAssertTrue(fresh)
+                XCTAssertTrue(wait)
+                return ForyDomPayload(app: "com.example.app", elements: [ForyDomElement(traits: ["Button"], label: "Ready")])
+            }, waitAppForegroundHandler: { expected, timeout, returnDom in
                 events.append("driver:\(expected)")
                 XCTAssertEqual(timeout, 0)
-                XCTAssertTrue(returnDom)
+                XCTAssertFalse(returnDom)
                 return ForyWaitAppForegroundPayload(
                     expectedBundleId: expected,
                     activeBundleId: expected,
@@ -1149,7 +1154,7 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Tap\nButton \"Continue\" (10,20,30,40)"))
-        XCTAssertTrue(result.stdout.contains("DOM after 100ms\nApp: com.example"))
+        XCTAssertTrue(result.stdout.contains("DOM after 100ms\nDOM full (Driver did not return a delta)\nApp: com.example"))
         XCTAssertEqual(server.acceptCount, 1)
         XCTAssertEqual(server.requestCommands, ["tap", "dom"])
         XCTAssertTrue(server.waitForDisconnect(timeout: 1.0))
@@ -1253,10 +1258,15 @@ final class IOSUseCLITests: XCTestCase {
             events.append("open")
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(waitAppForegroundHandler: { expected, timeout, returnDom in
+            FakeDriverCommandClient(domHandler: { raw, fresh, wait in
+                XCTAssertFalse(raw)
+                XCTAssertTrue(fresh)
+                XCTAssertTrue(wait)
+                return ForyDomPayload(app: "com.apple.mobilesafari", elements: [ForyDomElement(traits: ["Button"], label: "Ready")])
+            }, waitAppForegroundHandler: { expected, timeout, returnDom in
                 events.append("readiness:\(expected)")
                 XCTAssertEqual(timeout, 0)
-                XCTAssertTrue(returnDom)
+                XCTAssertFalse(returnDom)
                 return ForyWaitAppForegroundPayload(
                     expectedBundleId: expected,
                     activeBundleId: expected,
@@ -1305,7 +1315,12 @@ final class IOSUseCLITests: XCTestCase {
             dispatchCount += 1
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(waitAppForegroundHandler: { expected, _, _ in
+            FakeDriverCommandClient(domHandler: { raw, fresh, wait in
+                XCTAssertFalse(raw)
+                XCTAssertTrue(fresh)
+                XCTAssertTrue(wait)
+                return ForyDomPayload(app: "com.example.b", elements: [ForyDomElement(traits: ["Button"], label: "Ready")])
+            }, waitAppForegroundHandler: { expected, _, _ in
                 XCTAssertEqual(expected, "com.example.b")
                 readinessCount += 1
                 return ForyWaitAppForegroundPayload(

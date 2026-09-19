@@ -1138,21 +1138,6 @@ static NSInteger IOSUseAutomationSendTouch(
     return result == nil ? -1 : result.integerValue;
 }
 
-static UIView *IOSUseAutomationScrollDeliveryView(UIView *hitView) {
-    UIView *candidate = hitView;
-    while (candidate != nil) {
-        if ([candidate isKindOfClass:UIScrollView.class]) {
-            UIScrollView *scrollView = (UIScrollView *)candidate;
-            if (scrollView.scrollEnabled &&
-                scrollView.userInteractionEnabled) {
-                return scrollView;
-            }
-        }
-        candidate = candidate.superview;
-    }
-    return hitView;
-}
-
 static UIView *IOSUseAutomationCandidateView(
     IOSUseAutomationCandidate *candidate,
     UIView *fallback
@@ -3063,6 +3048,9 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
     UIView *deliveryView = hitView;
     UIScrollView *observedScrollView = nil;
     CGPoint contentOffsetBefore = CGPointZero;
+    CGFloat remainingScroll = 0;
+    BOOL scrollHorizontal = NO;
+    BOOL scrollBack = NO;
     if ([toTarget isKindOfClass:NSDictionary.class]) {
         UIWindow *endWindow = nil;
         UIView *endHitView = nil;
@@ -3126,34 +3114,38 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         }
         BOOL isBack =
             direction == 1;
-        endPoint = CGPointMake(
-            point.x,
-            point.y + (isBack ? distance : -distance)
+        observedScrollView = IOSUseAutomationScrollableAncestor(
+            IOSUseAutomationCandidateView(candidate, hitView)
         );
-        deliveryView =
-            IOSUseAutomationScrollDeliveryView(hitView);
-        if ([deliveryView isKindOfClass:UIScrollView.class]) {
-            observedScrollView = (UIScrollView *)deliveryView;
+        if (observedScrollView == nil &&
+            [arguments[@"fromTarget"] isKindOfClass:NSDictionary.class]) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"scroll_unavailable",
+                    @"the swipe anchor is not inside a scrollable UIKit view; use two point endpoints for a raw drag",
+                    @"action", @"interaction", NO, target, @[]
+                );
+            }
+            return nil;
+        }
+        BOOL horizontal = observedScrollView != nil &&
+            IOSUseAutomationScrollUsesHorizontalAxis(observedScrollView, nil);
+        CGFloat displacement = isBack ? distance : -distance;
+        endPoint = CGPointMake(
+            point.x + (horizontal ? displacement : 0),
+            point.y + (horizontal ? 0 : displacement)
+        );
+        deliveryView = observedScrollView ?: hitView;
+        if (observedScrollView != nil) {
+            remainingScroll = distance;
+            scrollHorizontal = horizontal;
+            scrollBack = isBack;
             contentOffsetBefore =
                 IOSUseAutomationClampedContentOffset(
                     observedScrollView,
                     observedScrollView.contentOffset
                 );
         }
-    }
-    if (!IOSUseAutomationFinitePoint(endPoint)) {
-        if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"invalid_target_point",
-                @"swipe endpoint is outside the logical screen",
-                @"validation",
-                @"validation",
-                NO,
-                target,
-                @[]
-            );
-        }
-        return nil;
     }
     double duration = IOSUseAutomationIsNumber(arguments[@"durationMs"])
         ? [arguments[@"durationMs"] doubleValue] / 1000.0
@@ -3172,69 +3164,111 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         }
         return nil;
     }
-    unsigned long long deliveryBefore =
-        PTFakeMetaTouch.deliveryGeneration;
-    NSInteger touchID = IOSUseAutomationSendTouch(
-        point,
-        UITouchPhaseBegan,
-        -1,
-        window,
-        deliveryView
-    );
-    IOSUseAutomationPump(0.015);
-    unsigned long long deliveryAfterBegan =
-        PTFakeMetaTouch.deliveryGeneration;
-    BOOL beganDelivered = touchID >= 0 &&
-        deliveryAfterBegan >= deliveryBefore + 1;
-    const NSUInteger steps = 12;
-    BOOL movesAccepted = YES;
-    for (NSUInteger step = 1; step <= steps; step += 1) {
-        CGFloat progress = (CGFloat)step / (CGFloat)steps;
-        CGPoint current = CGPointMake(
-            point.x + (endPoint.x - point.x) * progress,
-            point.y + (endPoint.y - point.y) * progress
+    NSInteger touchID = -1;
+    NSUInteger scrolls = 0;
+    do {
+        if (observedScrollView != nil) {
+            CGRect viewport = IOSUseAutomationScrollViewport(observedScrollView);
+            CGFloat axisSize = scrollHorizontal ? viewport.size.width : viewport.size.height;
+            if (!IOSUseAutomationRectHasArea(viewport) || axisSize < 1) {
+                if (commandError != NULL) {
+                    *commandError = IOSUseAutomationError(
+                        @"scroll_unavailable", @"the scroll container has no visible viewport",
+                        @"action", @"interaction", scrolls > 0, target, @[]
+                    );
+                }
+                return nil;
+            }
+            CGFloat distance = MIN(remainingScroll, axisSize * 0.75);
+            CGFloat fraction = scrollBack ? 0.25 : 0.75;
+            point = CGPointMake(
+                scrollHorizontal ? CGRectGetMinX(viewport) + axisSize * fraction : CGRectGetMidX(viewport),
+                scrollHorizontal ? CGRectGetMidY(viewport) : CGRectGetMinY(viewport) + axisSize * fraction
+            );
+            CGFloat displacement = scrollBack ? distance : -distance;
+            endPoint = CGPointMake(point.x + (scrollHorizontal ? displacement : 0),
+                                  point.y + (scrollHorizontal ? 0 : displacement));
+            remainingScroll -= distance;
+        }
+        if (!IOSUseAutomationFinitePoint(endPoint)) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"invalid_target_point",
+                    @"swipe endpoint is outside the logical screen",
+                    @"validation",
+                    @"validation",
+                    NO,
+                    target,
+                    @[]
+                );
+            }
+            return nil;
+        }
+        unsigned long long deliveryBefore =
+            PTFakeMetaTouch.deliveryGeneration;
+        touchID = IOSUseAutomationSendTouch(
+            point,
+            UITouchPhaseBegan,
+            -1,
+            window,
+            deliveryView
         );
-        NSInteger movedTouchID = IOSUseAutomationSendTouch(
-            current,
-            UITouchPhaseMoved,
+        IOSUseAutomationPump(0.015);
+        unsigned long long deliveryAfterBegan =
+            PTFakeMetaTouch.deliveryGeneration;
+        BOOL beganDelivered = touchID >= 0 &&
+            deliveryAfterBegan >= deliveryBefore + 1;
+        const NSUInteger steps = 12;
+        BOOL movesAccepted = YES;
+        for (NSUInteger step = 1; step <= steps; step += 1) {
+            CGFloat progress = (CGFloat)step / (CGFloat)steps;
+            CGPoint current = CGPointMake(
+                point.x + (endPoint.x - point.x) * progress,
+                point.y + (endPoint.y - point.y) * progress
+            );
+            NSInteger movedTouchID = IOSUseAutomationSendTouch(
+                current,
+                UITouchPhaseMoved,
+                touchID,
+                window,
+                deliveryView
+            );
+            movesAccepted = movesAccepted &&
+                movedTouchID == touchID;
+            IOSUseAutomationPump(duration / steps);
+        }
+        unsigned long long deliveryAfterMoves =
+            PTFakeMetaTouch.deliveryGeneration;
+        BOOL movesDelivered = movesAccepted &&
+            deliveryAfterMoves >= deliveryAfterBegan + steps;
+        unsigned long long deliveryBeforeEnd =
+            PTFakeMetaTouch.deliveryGeneration;
+        NSInteger endedTouchID = IOSUseAutomationSendTouch(
+            endPoint,
+            UITouchPhaseEnded,
             touchID,
             window,
             deliveryView
         );
-        movesAccepted = movesAccepted &&
-            movedTouchID == touchID;
-        IOSUseAutomationPump(duration / steps);
-    }
-    unsigned long long deliveryAfterMoves =
-        PTFakeMetaTouch.deliveryGeneration;
-    BOOL movesDelivered = movesAccepted &&
-        deliveryAfterMoves >= deliveryAfterBegan + steps;
-    unsigned long long deliveryBeforeEnd =
-        PTFakeMetaTouch.deliveryGeneration;
-    NSInteger endedTouchID = IOSUseAutomationSendTouch(
-        endPoint,
-        UITouchPhaseEnded,
-        touchID,
-        window,
-        deliveryView
-    );
-    IOSUseAutomationPump(0.03);
-    BOOL endDelivered = endedTouchID == -1 &&
-        PTFakeMetaTouch.deliveryGeneration >= deliveryBeforeEnd + 1;
-    if (!beganDelivered || !movesDelivered || !endDelivered) {
-        if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"touch_delivery_failed",
-                @"swipe began, moved, and ended phases were not all delivered to UIApplication",
-                @"interaction",
-                @"delivery",
-                YES,
-                target,
-                @[]
-            );
+        IOSUseAutomationPump(0.03);
+        BOOL endDelivered = endedTouchID == -1 &&
+            PTFakeMetaTouch.deliveryGeneration >= deliveryBeforeEnd + 1;
+        if (!beganDelivered || !movesDelivered || !endDelivered) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"touch_delivery_failed",
+                    @"swipe began, moved, and ended phases were not all delivered to UIApplication",
+                    @"interaction",
+                    @"delivery",
+                    YES,
+                    target,
+                    @[]
+                );
+            }
+            return nil;
         }
-        return nil;
-    }
+        scrolls += 1;
+    } while (observedScrollView != nil && remainingScroll > IOSUseAutomationScrollEpsilon && scrolls < 20);
     if (observedScrollView != nil &&
         IOSUseAutomationPointsApproximatelyEqual(
             contentOffsetBefore,
@@ -3264,7 +3298,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         @"ended",
         nil,
         @{
-            @"scrolls": @1,
+            @"scrolls": @(scrolls),
             @"direction":
                 [arguments[@"direction"] integerValue] == 0
                     ? @"forth"

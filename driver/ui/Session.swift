@@ -7,7 +7,6 @@ final class Session {
 
     func cache(app: XCUIApplication) {
         _app = app
-        invalidateSnapshot()
     }
 
     /// Potentially expensive XCTest live operation.
@@ -37,9 +36,6 @@ final class Session {
     func refreshActive() throws -> XCUIApplication {
         guard let detected = GetActiveApplication() else {
             throw DriverError.noSession
-        }
-        if detected !== _app {
-            invalidateSnapshot()
         }
         _app = detected
         return detected

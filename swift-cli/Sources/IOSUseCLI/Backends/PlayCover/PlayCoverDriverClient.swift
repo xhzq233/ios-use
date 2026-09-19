@@ -110,23 +110,15 @@ final class PlayCoverDriverClient: DriverCommandClient {
         return try mapScreenshot(result.screenshot)
     }
 
-    func dom(
-        raw: Bool,
-        fresh: Bool,
-        waitQuiescence: Bool
-    ) throws -> ForyDomPayload {
-        guard case .dom(let payload) = try request(
-            .dom,
-            arguments: .dom(
-                PlayCoverRuntimeDOMArguments(
-                    raw: raw,
-                    fresh: fresh,
-                    waitQuiescence: waitQuiescence
-                )
-            )
-        ) else {
-            throw PlayCoverDriverClientError
-                .malformedRuntimePayload("dom response type")
+    func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload {
+        try observeDOM(ForyDomArgs(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence))
+    }
+
+    func observeDOM(_ args: ForyDomArgs) throws -> ForyDomPayload {
+        guard case .dom(let payload) = try request(.dom, arguments: .dom(
+            PlayCoverRuntimeDOMArguments(semantic: args.semantic, diff: args.diff, since: args.since,
+                raw: args.raw, fresh: args.fresh, waitQuiescence: args.waitQuiescence))) else {
+            throw PlayCoverDriverClientError.malformedRuntimePayload("dom response type")
         }
         return try mapDOM(payload)
     }
@@ -760,6 +752,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
         ).mapValues(\.count)
         return ForyDomPayload(
             app: payload.app,
+            observation: payload.observation ?? "",
             windowSize: ForyPoint(
                 x: payload.windowSize.x,
                 y: payload.windowSize.y
@@ -776,6 +769,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
                         childCounts[$0.nodeID] ?? 0
                     ),
                     label: $0.label,
+                    accessibilityLabel: $0.accessibilityLabel ?? "",
+                    labelSource: $0.labelSource ?? "",
                     value: $0.value,
                     identifier: $0.identifier,
                     hint: $0.hint,

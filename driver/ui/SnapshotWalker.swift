@@ -79,39 +79,13 @@ func displayValue(for node: SafeSnapshot) -> String? {
     return value
 }
 
-// MARK: - Cache (doc 4.3)
+// MARK: - Capture
 
-/// Global cached snapshot. Invalidated by tap/swipe/input/longPress.
-private var _cachedSnapshot: CleanedSnapshot?
-private var _cachedAt: TimeInterval = 0
-private let _snapshotLock = NSLock()
-private let _cacheTTL: TimeInterval = IOSUseProtocol.snapshotCacheTTLSeconds
-
-/// doc 4.3 — all commands share the same entry point.
-/// Returns a cached snapshot if available; otherwise builds a fresh one.
-/// Time complexity: O(1) on cache hit; O(n) on cache miss, where n is the
-/// number of nodes in the snapshot tree.
-func getCleanedSnapshot() -> CleanedSnapshot? {
-    _snapshotLock.lock()
-    if let cached = _cachedSnapshot, Date().timeIntervalSince1970 - _cachedAt < _cacheTTL {
-        _snapshotLock.unlock()
-        return cached
-    }
-    _snapshotLock.unlock()
-
-    guard let fresh = rebuildCleanedSnapshot() else { return nil }
-
-    _snapshotLock.lock()
-    _cachedSnapshot = fresh
-    _cachedAt = Date().timeIntervalSince1970
-    _snapshotLock.unlock()
-    return fresh
-}
-
-/// Force a fresh snapshot (no cache). Used by waitFor and mutation post-checks.
+/// Capture the current tree. Callers own and reuse this snapshot while resolving
+/// targets; capture again after a mutation or on the next polling iteration.
 /// Time complexity: O(n), where n is the number of nodes traversed by
 /// `cleanTree` while rebuilding the flat index.
-func rebuildCleanedSnapshot() -> CleanedSnapshot? {
+func captureCleanedSnapshot() -> CleanedSnapshot? {
     let startedAt = CFAbsoluteTimeGetCurrent()
     guard let app = try? Session.shared.ensureActive() else { return nil }
     guard let raw = withPerf(stage: "SafeSnapshot", { SafeSnapshot(ofApp: app) }) else {
@@ -261,14 +235,6 @@ private func buildSearchCandidates(from entries: [SearchEntry]) -> [SearchCandid
 
 func isSpringBoardApp(_ app: XCUIApplication) -> Bool {
     (app.value(forKey: "bundleID") as? String) == IOSUseProtocol.springboardBundleId
-}
-
-/// doc 4.3 — mutations (tap/swipe/input/longPress) must invalidate the cache.
-func invalidateSnapshot() {
-    _snapshotLock.lock()
-    _cachedSnapshot = nil
-    _cachedAt = 0
-    _snapshotLock.unlock()
 }
 
 // MARK: - cleanTree (doc 2.4: rules 1-6)
@@ -539,16 +505,15 @@ func findLargestScrollable(_ root: SafeSnapshot) -> SafeSnapshot? {
 
 // MARK: - findScrollableAncestor (doc 5.1 STEP 4)
 
-/// Walks the parent chain and validates candidate containers by visible cells.
-/// Time complexity: O(h * n_sub) in the worst case, where h is ancestor depth
-/// and n_sub is the size of each checked ancestor subtree.
+/// Finds the nearest visible scroll container, including an explicitly named
+/// container itself. A scroll view may contain only one large child.
+/// Time complexity: O(h), where h is the ancestor depth.
 func findScrollableAncestor(_ node: SafeSnapshot) -> SafeSnapshot? {
-    var cur: SafeSnapshot? = node.parent
+    var cur: SafeSnapshot? = node
     while let p = cur {
         if scrollableElementTypes.contains(UInt(p.elementType))
             && interactionFrame(p) != nil {
-            let frames = collectVisibleCellFrames(p, limit: 2)
-            if frames.count > 1 { return p }
+            return p
         }
         cur = p.parent
     }

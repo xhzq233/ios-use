@@ -80,3 +80,11 @@ attributesToUpdate:(NSDictionary *)attributes;
 @end
 
 NS_ASSUME_NONNULL_END
+
+@interface IOSUseDOMObservationBridge : NSObject
++ (NSString * _Nonnull)observe:(NSArray<NSDictionary *> * _Nonnull)elements
+                          app:(NSString * _Nonnull)app
+                        width:(double)width height:(double)height
+                         diff:(BOOL)diff since:(NSString * _Nonnull)since;
++ (void)reset;
+@end

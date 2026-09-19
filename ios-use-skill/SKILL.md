@@ -20,21 +20,46 @@ options and examples. The CLI help is usable without loading this Skill.
 
 ```bash
 ios-use dom
-ios-use tap "Continue" --dom
-ios-use swipe --to "<target>" --from "<visible-anchor>" --dom
-ios-use input --tap "Search" --content "<query>" --dom
+ios-use tap "Continue" -D
+ios-use swipe --to "<target>" --from "<visible-anchor>" -D
+ios-use input --tap "Search" --content "<query>" --enter -D
+ios-use longpress "<target>" --duration 800ms -D
 ios-use waitFor "Loading" --match contains --gone --timeout 20s
 ```
 
 - Use displayed labels/values from current DOM, not the whole DOM line. Use
+  `"Result"` or `"idle"` for `Result=idle`, not `"Result=idle"`. Use
   `--traits` / `--cindex` for observed duplicates. Prefer an offscreen semantic
   target with a visible anchor in the same scroll container; use label-relative
   offsets before absolute coordinates when possible.
-- Verify the result using the action's `--dom` output. Native idle does not
-  guarantee App readiness; wait on an observed page/loading condition when needed.
-  An explicit `--dom <duration>` is a fixed delay, not a readiness check.
+- For a bounded scroll in one panel, use `swipe --from "<visible-anchor>"
+  --dir forth --distance 150 -D`. The anchor can be the scroll container itself
+  or a point inside it. Nested containers use their own scroll axis; an invalid
+  anchor does not fall back to another panel. Two point endpoints perform a raw drag.
+- `dom`, `--dom` and `-D` default to diff. Append `-D` / `--dom` to actions
+  to observe their result; the first observation or broad changes return full.
+  Keep the initial tree and subsequent changes in context. If context is missing
+  (after compaction or handoff), use `dom --nodiff` to recover a full tree.
+  Add `--nodiff` to an action with `-D` when its result must be self-contained.
+  Unchanged nodes retain their last observed state. Combine earlier observations
+  with subsequent changes to verify multiple results; a full DOM is not needed
+  just to display those already-observed results together.
+- First diff use, changed App/session/size, or broad changes returns full
+  automatically. The Driver keeps the last semantic observation across CLI calls.
+  Changes show `-` removals, `+` additions and `~` updated rows under shared
+  parent context. Removals name the selector; `~` supplies its current state.
+  Rows include zero-based child position;
+  the position describes tree order, not screen coordinates. Labels remain action targets.
+  Normal DOM omits rectangles. Use `dom --nodiff --json` for exact current geometry and
+  original label provenance. Layout changes are reported separately and do not
+  imply that semantics changed. A detailed/raw read resets the next diff to full.
+- Verify the result using the action's observation; request another full DOM
+  only when the available context is insufficient. Bare `-D` waits briefly for native
+  idle (XCTest waits are bounded); `-D 300ms` uses a fixed delay. Neither an unchanged DOM nor native idle
+  proves App readiness; wait on an observed page/loading condition when needed.
 - After navigation, scrolling or a failed lookup, refresh stale context before
-  choosing the next action. Read inline target/candidate/rejection/suggestion/alert
+  choosing the next action; the action's fresh `-D` output already does this.
+  Read inline target/candidate/rejection/suggestion/alert
   details first; request `dom --fresh` or a screenshot when more context is needed.
 - Keep page-dependent actions sequential. Batch known steps with `&&` so failure
   stops later mutations; inspect intermediate UI when the next step is not known.

@@ -205,15 +205,6 @@ private func contentMatches(
     }
 }
 
-/// Unified label search: exact(label/value) → contains(label/value) → fuzzy → trait filter.
-/// Used by all label-based commands (find, tap, longPress, input, swipe, waitFor).
-func rawFind(_ target: ForyTarget, visibility: RawFindVisibility = .only) -> FindResult {
-    guard let cs = getCleanedSnapshot() else {
-        return .notFound(suggestions: [], rejected: [])
-    }
-    return rawFindInSnapshot(target, cs: cs, visibility: visibility)
-}
-
 private func searchCandidates(from entries: [SearchEntry]) -> [SearchCandidate] {
     entries.flatMap { entry in
         entry.rawTexts.compactMap { text -> SearchCandidate? in
@@ -421,8 +412,14 @@ func makeForyFindMatch(_ elem: SnapshotElement, includeAncestors: Bool = false) 
 
 func makeForyElementSummary(_ node: SafeSnapshot, includeAncestors: Bool = false) -> ForyElementSummary {
     ForyElementSummary(
+        type: elementTypeName(XCUIElement.ElementType(rawValue: UInt(node.elementType)) ?? .other),
         elemType: Int32(truncatingIfNeeded: node.elementType),
         label: displayName(for: node) ?? "",
+        value: displayValue(for: node) ?? "",
+        identifier: node.identifier ?? "",
+        traits: snapshotTraits(for: node, disabled: !node.isEnabled, invisible: !node.isVisible),
+        state: ForyElementState(enabled: node.isEnabled, visible: node.isVisible,
+                                selected: node.isSelected, focused: node.hasFocus || node.hasKeyboardFocus),
         rect: makeForyRect(node.frame),
         ancestors: includeAncestors ? ancestorChainNames(node) : []
     )

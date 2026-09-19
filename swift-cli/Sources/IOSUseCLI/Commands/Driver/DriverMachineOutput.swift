@@ -5,7 +5,7 @@ extension DriverCommandResult {
     func machineOutput(for action: DriverAction) -> (data: MachineValue, warnings: [String]) {
         var value = baseMachineValue(for: action)
         if let postDom {
-            value = merging(value, key: "postDom", value: machineDom(postDom))
+            value = merging(value, key: "postDom", value: observation?.value ?? machineDom(postDom))
         }
         let warnings = artifact?.warning.map { [$0] } ?? []
         return (value, warnings)
@@ -14,7 +14,7 @@ extension DriverCommandResult {
     private func baseMachineValue(for action: DriverAction) -> MachineValue {
         switch (action, payload) {
         case (.dom, .dom(let dom)):
-            return machineDom(dom)
+            return observation?.value ?? machineDom(dom)
         case (.waitFor(_, _, _, _, let gone, _), .waitFor(let wait)):
             return .object([
                 "gone": .boolean(gone),
@@ -228,7 +228,7 @@ func machineDom(_ payload: ForyDomPayload) -> MachineValue {
     ])
 }
 
-private func machineDomElement(_ element: ForyDomElement) -> MachineValue {
+func machineDomElement(_ element: ForyDomElement) -> MachineValue {
     .object([
         "traits": .array(element.traits.map(MachineValue.string)),
         "nodeID": .string(element.nodeID),
@@ -236,6 +236,8 @@ private func machineDomElement(_ element: ForyDomElement) -> MachineValue {
         "elementType": .integer(Int(element.elementType)),
         "childCount": .integer(Int(element.childCount)),
         "label": .string(element.label),
+        "accessibilityLabel": .string(element.accessibilityLabel),
+        "labelSource": .string(element.labelSource),
         "value": .string(element.value),
         "identifier": .string(element.identifier),
         "hint": .string(element.hint),

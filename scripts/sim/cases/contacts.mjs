@@ -52,7 +52,7 @@ export function buildContactsCases(ctx) {
       const domErr = path.join(artifactDir, 'IN-3-dom.err');
       console.log('[sim-test] RUN IN-3: ios-use input --content More with keyboard visible');
       const res = runCliToFiles(['input', '--content', 'More'], out, err);
-      const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
+      const dom = runCliToFiles(['dom', '--nodiff', '--fresh'], domOut, domErr);
       if (res.code === 0 && dom.code === 0 && dom.stdout.includes('First name=AlphaMore')) recordPass('IN-3');
       else recordFail('IN-3', `${res.stdout}${res.stderr}${dom.stdout}${dom.stderr}`, res.code === 0 && dom.code === 0 ? 'assertion' : 'command');
       await discardContactIfNeeded();

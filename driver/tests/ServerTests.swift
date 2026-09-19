@@ -3,6 +3,25 @@ import Foundation
 import XCTest
 
 final class ServerTests: XCTestCase {
+    func testExpiredRunningCommandCannotStartAnotherGesture() throws {
+        let deadline = DispatchTime.now() + .milliseconds(10)
+        var injected = 0
+        XCTAssertThrowsError(try CommandDeadline.withDeadline(deadline) {
+            // Model a native idle wait returning after the outer watchdog.
+            Thread.sleep(forTimeInterval: 0.03)
+            try CommandDeadline.check()
+            injected += 1
+        })
+        XCTAssertEqual(injected, 0)
+        XCTAssertNil(CommandDeadline.current)
+        // A later command gets its own deadline rather than inheriting expiry.
+        try CommandDeadline.withDeadline(.now() + .seconds(1)) {
+            try CommandDeadline.check()
+            injected += 1
+        }
+        XCTAssertEqual(injected, 1)
+    }
+
     override func tearDown() {
         DriverServer.shared.stop()
         super.tearDown()
