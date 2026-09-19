@@ -1,6 +1,6 @@
 # Standalone Simulator runtime experiment (issue #20)
 
-This experiment launches Simulator-linked executables as ordinary macOS child
+The default runner launches Simulator-linked executables as ordinary macOS child
 processes, loads UIKit from an installed Simulator runtime, and connects Metal
 and IOSurface to a small native host broker. It does not boot a Simulator,
 invoke `simctl`, borrow a Simulator bootstrap namespace, or register launchd
@@ -91,20 +91,78 @@ forwards GPU work to a native host implementation. Successful standalone GPU
 execution does not require replacing the Simulator Metal driver with the host
 Metal framework.
 
-`UIApplicationMain` remains a separate unresolved boundary. Direct startup
-trapped in `BKSDisplayServicesStart`; local disassembly identifies missing
-BackBoard display service communication. In a separate diagnostic, borrowing
-a booted experimental Simulator's bootstrap namespace passed this failure.
-Sampling then showed `UIApplication._run → GSEventRunModal → CFRunLoop` on the
-main thread, with a UIKit event-fetch thread also waiting. Logs show a FrontBoard workspace connection and an outgoing scene handshake,
-without the delegate's launch callback firing. This points to application/scene launch delivery
-as the next investigation, not an observed GPU wait; the exact missing request
-has not been established.
+## Application startup diagnostic
 
-This harness does not emulate BackBoard, FrontBoard, RunningBoard, or window
-composition. It does not establish native NSWindow presentation, input delivery,
-WebKit processes, or full app execution. Standalone UIKit still emits a
-duplicate `_NoAnimationDelegate` warning, which is not suppressed.
+The default standalone runner still fails at `BKSDisplayServicesStart` when
+entering `UIApplicationMain`: it has no BackBoard display service. A separate
+controlled experiment borrowed an experimental Simulator's bootstrap namespace
+to isolate the subsequent application startup problem.
+
+XPC records and the server's logs established that the scene handshake was
+**received**, not lost. Normally launched apps have an
+`RBSEmbeddedAppProcessIdentity`. A directly executed process has an
+`RBSOpaqueProcessIdentity`, even when its executable is inside the installed
+app container. Its application initialization context lacks the default scene.
+It waits in the UIKit event loop without calling the launch delegate.
+
+`SceneBootstrap.m` supplies that missing local scene through
+`FBSWorkspaceScenesClient.createSceneWithIdentity:parameters:transitionContext:completion:`.
+It uses the runtime's actual application scene specification, display
+configuration, frame, foreground state, and a scene identity in `FBSceneManager`.
+UIKit then calls the real launch delegate and creates UIWindow. It does not
+call AppDelegate directly or replace UIKit's scene implementation.
+
+This is a diagnostic for one initially empty scene source. It relies on private
+selectors, a named workspace ivar (no fixed memory offsets), and a one-second
+delay for endpoint registration. It has not been generalized to arbitrary app
+scene configurations. Keep it separate from the standalone Metal/IOSurface
+runner, and only inject it into a controlled test app.
+
+To reproduce scene delivery, use a booted experimental Simulator and an existing
+Simulator-built UIKit app with a launch delegate that creates a window:
+
+```sh
+SCENE_OUT="$PWD/.ios-use/artifacts/runtime-probe/scene"
+mkdir -p "$SCENE_OUT/home"
+xcrun clang -fobjc-arc -fblocks -dynamiclib \
+  -target arm64-apple-ios17.0-simulator \
+  -isysroot "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+  experiments/simulator-runtime/SceneBootstrap.m \
+  -framework Foundation -framework UIKit -o "$SCENE_OUT/SceneBootstrap.dylib"
+
+# Set UDID and APP_EXECUTABLE to your experimental Simulator and test app.
+SIMCTL_CHILD_CFFIXED_USER_HOME="$SCENE_OUT/home" \
+SIMCTL_CHILD_DYLD_INSERT_LIBRARIES="$SCENE_OUT/SceneBootstrap.dylib" \
+  xcrun simctl spawn "$UDID" "$APP_EXECUTABLE"
+```
+
+Observe the app's launch callback, then terminate the test process explicitly.
+The diagnostic does not start or stop the Simulator. Compare the same `spawn`
+without the injected library to distinguish scene creation from process launch.
+
+Measured with the same small UIKit/MetalKit/WKWebView app:
+
+| Execution path | UIKit launch callback / UIWindow | WebKit |
+| --- | --- | --- |
+| Normal Simulator app launch | Yes | Loads HTML |
+| Raw `simctl spawn`, no scene bootstrap | No | No window |
+| Raw `simctl spawn` + scene bootstrap | Yes; window snapshot saved | JavaScript returns the expected body text; webpage snapshot saved |
+| Native exec + borrowed bootstrap + scene bootstrap | Yes; window snapshot saved | Extension launch fails: missing launchd domain |
+
+The native process initially hit a LaunchServices environment mismatch. Local
+CoreServices inspection identifies runtime root, runtime version, runtime build
+version, and CPU type as inputs to its database compatibility check. Supplying
+matching `SIMULATOR_ROOT`, `SIMULATOR_RUNTIME_VERSION`, and
+`SIMULATOR_RUNTIME_BUILD_VERSION` passed that check. WebKit then reached
+ExtensionKit/RunningBoard and failed with `OSLaunchdErrorDomain Code=112`,
+"Could not find specified domain". Copying a bootstrap Mach port therefore does
+not establish the launchd process-domain membership needed by this path.
+
+These results concern an offscreen UIWindow and a WebKit snapshot. They do not
+establish native NSWindow presentation, physical input delivery, or a complete
+converted app. The original Metal compute/readback proof remains independent
+of these borrowed services. Standalone UIKit still emits a duplicate
+`_NoAnimationDelegate` warning, which is not suppressed.
 
 Before the IOSurface endpoint was added, whole-view-tree rendering emitted
 `IOSurface not available`. An earlier visual inspection incorrectly concluded
@@ -116,5 +174,6 @@ access, and disappearance of that warning with the endpoint connected.
 Device-app retargeting is additional work: Mach-O platform metadata and embedded
 Metal AIR targets both matter. The generic Simulator-built probe does not
 validate arbitrary device frameworks, OpenGL ES paths, or a complete converted
-app. The next UI experiment should investigate display/application launch
-services while keeping the verified Metal and IOSurface connections reusable.
+app. The next independent-runtime experiment needs BackBoard/display setup and
+process-domain or explicit child-service hosting, while keeping the verified
+Metal/IOSurface connections and local scene delivery reusable.
