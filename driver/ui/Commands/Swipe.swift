@@ -8,7 +8,6 @@ enum SwipeCommands {
     /// doc 5 — unified swipe with to/from/distance/dir/traits.
     static func swipe(_ args: ForySwipeArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
-        defer { invalidateSnapshot() }
 
         let toTarget = args.toTarget
         let fromTarget = args.fromTarget
@@ -28,10 +27,10 @@ enum SwipeCommands {
             return try handleAbsolutePointSwipe(from: from, to: to, app: app)
         }
 
-        guard let cs = getCleanedSnapshot() else {
+        guard let cs = captureCleanedSnapshot() else {
             return try snapshotFailure("swipe: failed to take snapshot", target: toTarget.label.isEmpty ? nil : toTarget)
         }
-        // Gestures invalidate the cache, but response ancestors still use this tree.
+        // Response ancestors still use this tree after the gesture.
         defer { withExtendedLifetime(cs) {} }
 
         // Path B: `to` is a point → STEP_POINT
@@ -353,8 +352,7 @@ enum SwipeCommands {
             }
             Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
 
-            invalidateSnapshot()
-            guard let freshCS = rebuildCleanedSnapshot() else { return .snapshotFailed }
+            guard let freshCS = captureCleanedSnapshot() else { return .snapshotFailed }
 
             guard let freshScrollView = findMatching(in: freshCS.rawRoot, against: currentScrollView) else {
                 return .hitBoundary
@@ -399,7 +397,7 @@ enum SwipeCommands {
         Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
 
         if !prevFrames.isEmpty,
-           let freshCS = rebuildCleanedSnapshot(),
+           let freshCS = captureCleanedSnapshot(),
            let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) {
             defer { withExtendedLifetime(freshCS) {} }
             let nowFrames = collectVisibleCellFrames(freshScrollView)

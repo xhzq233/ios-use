@@ -9,7 +9,6 @@ enum InputCommands {
     /// tap it first to focus an input and require the keyboard to become visible.
     static func input(_ args: ForyInputArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
-        defer { invalidateSnapshot() }
         guard args.deleteCount >= 0,
               args.deleteCount <= 1_048_576 else {
             return try Codec.foryError(
@@ -80,8 +79,14 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -
         }
         summary = ForyElementSummary(rect: ForyRect(x: Int32(point.x.rounded()), y: Int32(point.y.rounded()), w: 0, h: 0))
     } else {
+        guard let cs = captureCleanedSnapshot() else {
+            return .failure(try Codec.foryError("failed to take snapshot",
+                category: IOSUseErrorCategory.lookup, code: IOSUseErrorCode.snapshotFailed,
+                phase: IOSUseErrorPhase.snapshot, retryable: true, target: target))
+        }
+        defer { withExtendedLifetime(cs) {} }
         let elem: SnapshotElement
-        switch rawFind(target, visibility: .only) {
+        switch rawFindInSnapshot(target, cs: cs, visibility: .only) {
         case .found(let e): elem = e
         case .ambiguous(let matches): return .failure(try ambiguityResponse(target, matches: matches))
         case .fuzzy(let s):
@@ -105,7 +110,6 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -
     }
 
     Thread.sleep(forTimeInterval: IOSUseProtocol.inputPostTapFocusSettleSeconds)
-    invalidateSnapshot()
     return .success(summary)
 }
 

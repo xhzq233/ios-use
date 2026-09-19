@@ -7,7 +7,6 @@ enum TouchCommands {
     /// doc 1.2 — tap. `target` is decoded from ForyTapArgs.target (ForyTarget).
     static func tap(_ args: ForyTapArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
-        defer { invalidateSnapshot() }
 
         let target = args.target
 
@@ -32,7 +31,7 @@ enum TouchCommands {
             return try Codec.foryOK(payload)
         }
 
-        // Path B: label lookup via rawFind.
+        // Path B: label lookup in a command-owned snapshot.
         guard !target.label.isEmpty else {
             return try Codec.foryError(
                 "tap: invalid label/point target",
@@ -42,7 +41,13 @@ enum TouchCommands {
                 target: target
             )
         }
-        switch rawFind(target, visibility: .only) {
+        guard let cs = captureCleanedSnapshot() else {
+            return try Codec.foryError("failed to take snapshot",
+                category: IOSUseErrorCategory.lookup, code: IOSUseErrorCode.snapshotFailed,
+                phase: IOSUseErrorPhase.snapshot, retryable: true, target: target)
+        }
+        defer { withExtendedLifetime(cs) {} }
+        switch rawFindInSnapshot(target, cs: cs, visibility: .only) {
         case .found(let elem):
             guard let frame = interactionFrame(elem.node) else {
                 return try Codec.foryError(
@@ -82,7 +87,6 @@ enum TouchCommands {
     static func longPress(_ args: ForyLongPressArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         let duration = args.duration > 0 ? args.duration : IOSUseProtocol.defaultLongPressDurationSeconds
-        defer { invalidateSnapshot() }
 
         let target = args.target
 
@@ -115,7 +119,13 @@ enum TouchCommands {
                 target: target
             )
         }
-        switch rawFind(target, visibility: .only) {
+        guard let cs = captureCleanedSnapshot() else {
+            return try Codec.foryError("failed to take snapshot",
+                category: IOSUseErrorCategory.lookup, code: IOSUseErrorCode.snapshotFailed,
+                phase: IOSUseErrorPhase.snapshot, retryable: true, target: target)
+        }
+        defer { withExtendedLifetime(cs) {} }
+        switch rawFindInSnapshot(target, cs: cs, visibility: .only) {
         case .found(let elem):
             guard let frame = interactionFrame(elem.node) else {
                 return try Codec.foryError(

@@ -18,7 +18,6 @@ enum DomCommands {
         // --raw mode: format the pre-clean snapshot as an indented string.
         if args.raw {
             observations.reset()
-            invalidateSnapshot()
             guard let root = SafeSnapshot(ofApp: app) else {
                 return try Codec.foryError(
                     "failed to take snapshot",
@@ -41,12 +40,7 @@ enum DomCommands {
             return try Codec.foryOK(payload)
         }
 
-        // --fresh mode: invalidate cache before taking snapshot.
-        if args.fresh || args.waitQuiescence {
-            invalidateSnapshot()
-        }
-
-        guard let cs = getCleanedSnapshot() else {
+        guard let cs = captureCleanedSnapshot() else {
             return try Codec.foryError(
                 "failed to take snapshot",
                 category: IOSUseErrorCategory.lookup,

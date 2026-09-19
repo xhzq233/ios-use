@@ -56,6 +56,41 @@ private final class FakeRawSnapshot: NSObject {
 
 final class TypesTests: XCTestCase {
 
+    func testCommandOwnedSnapshotKeepsUnindexedAncestorsAliveUntilLookupFinishes() {
+        weak var releasedRoot: SafeSnapshot?
+        weak var releasedWindow: SafeSnapshot?
+        var commandSnapshot: CleanedSnapshot?
+        var target: SafeSnapshot?
+
+        autoreleasepool {
+            let button = FakeRawSnapshot(label: "Save", elementType: .button)
+            let window = FakeRawSnapshot(elementType: .window, children: [button])
+            let root = SafeSnapshot(raw: FakeRawSnapshot(elementType: .application, children: [window]),
+                                    appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+            let elements = buildCleanElements(from: root)
+            let cs = makeCleanedSnapshot(elements)
+            guard case .found(let found) = rawFindInSnapshot(ForyTarget(label: "Save"), cs: cs) else {
+                return XCTFail("Expected the button to be selectable")
+            }
+            commandSnapshot = cs
+            target = found.node
+            releasedRoot = root
+            releasedWindow = root.children.first
+            XCTAssertFalse(elements.contains { $0.node === releasedWindow })
+        }
+
+        withExtendedLifetime(commandSnapshot) {
+            XCTAssertNotNil(releasedWindow)
+            XCTAssertTrue(target?.parent === releasedWindow)
+            XCTAssertTrue(target?.parent?.parent === releasedRoot)
+            XCTAssertNotNil(target.flatMap(interactionFrame))
+        }
+        commandSnapshot = nil
+        XCTAssertNotNil(target)
+        XCTAssertNil(releasedRoot)
+        XCTAssertNil(releasedWindow)
+    }
+
     func testDefaultScrollKeepsOverlayInsteadOfCoveredLargerPage() {
         let appFrame = CGRect(x: 0, y: 0, width: 400, height: 800)
         let strip = FakeRawSnapshot(elementType: .scrollView,

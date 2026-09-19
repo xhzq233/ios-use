@@ -13,7 +13,9 @@ can operate iOS Drivers and Apple device services over remote connections.
 
 Application nodes in the DOM provide page context. Element selectors search
 their contents, so an App name does not shadow a button with the same label.
-On XCTest targets, `dom --fresh` also redetects the foreground App after an external App switch.
+DOM reads, semantic actions and each wait poll capture the current tree; the
+Driver does not reuse a snapshot across commands. On XCTest targets,
+`dom --fresh` additionally redetects the foreground App after an external App switch.
 
 For repeated observations, use `dom --diff`, or append `-D [duration]` to a UI
 mutation (`tap`, `longpress`, `input`, `swipe`, `rotate`, `home`, `dismissAlert`,

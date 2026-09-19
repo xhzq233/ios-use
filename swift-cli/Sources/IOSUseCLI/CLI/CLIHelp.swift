@@ -312,17 +312,16 @@ enum CLIHelp {
                 summary: "Print the current UI element tree.",
                 options: [
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
-                    "--fresh             Ignore cached snapshot and rebuild",
+                    "--fresh             Also redetect the foreground App on XCTest targets",
                     "--diff              Fresh observation: show changes since the Device's last DOM; first call returns full",
                     "--wait-quiescence   Request UI-idle waiting, then refresh the tree",
                 ],
                 footer: """
                 Use labels/values as action targets, not entire DOM lines. --dom on an action already returns an updated tree.
                 Use plain dom for the full semantic tree; dom --json retains exact geometry and label provenance.
+                Each observation captures the current tree; snapshots are not reused across commands.
                 Diff is computed in the Driver; changes include parent context. Layout-only changes are reported separately.
                 App/session/size changes reset diff; unchanged semantics do not prove visual readiness.
-                Leading numeric IDs identify observed nodes, not tap targets. Updates give new values; removed IDs are ranges.
-                Use current labels/values for actions; frame updates replace old coordinates.
                 Example: ios-use dom --diff
                 """
             )

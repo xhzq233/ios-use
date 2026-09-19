@@ -136,7 +136,7 @@ public enum SemanticDOM {
     }
 
     /// One last observation per Driver, independent of short-lived CLI sockets.
-    /// Current snapshots still obey the backend's normal invalidation rules.
+    /// This history is only for diffing; lookups and actions capture their own trees.
     public final class Store {
         private let lock = NSLock()
         private let epoch = UUID().uuidString
