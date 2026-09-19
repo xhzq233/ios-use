@@ -1,10 +1,13 @@
-// Diagnostic only: requires a working Simulator service namespace.
+// Diagnostic for one scene: uses a local host when linked, otherwise an existing service namespace.
 // Delivers a local scene through FrontBoardServices without calling AppDelegate.
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <dlfcn.h>
 
 @interface NSObject (SceneBootstrapAPI)
 - (id)_workspace;
+- (void)_registerSourceEndpoint:(id)endpoint;
+- (CGRect)bounds;
 - (id)machQueue;
 - (void)performAsync:(void (^)(void))block;
 - (id)scenes;
@@ -23,8 +26,11 @@ __attribute__((constructor)) static void installSceneBootstrap(void) {
     // This delay is specific to the diagnostic, not an application readiness API.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         id workspace = [UIApplication.sharedApplication _workspace];
-        CGRect frame = UIScreen.mainScreen.bounds;
-        id display = [UIScreen.mainScreen valueForKey:@"_displayConfiguration"];
+        id (*localEndpoint)(void) = dlsym(RTLD_DEFAULT, "IOSUseLocalSceneEndpoint");
+        if (localEndpoint) [workspace _registerSourceEndpoint:localEndpoint()];
+        id (*localDisplay)(void) = dlsym(RTLD_DEFAULT, "IOSUseLocalDisplayConfiguration");
+        id display = localDisplay ? localDisplay() : [UIScreen.mainScreen valueForKey:@"_displayConfiguration"];
+        CGRect frame = localDisplay ? [display bounds] : UIScreen.mainScreen.bounds;
         NSString *identifier = [@"sceneID:" stringByAppendingFormat:@"%@-default",
                                 NSBundle.mainBundle.bundleIdentifier];
         [[workspace machQueue] performAsync:^{

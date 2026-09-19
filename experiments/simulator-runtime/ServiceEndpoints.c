@@ -46,14 +46,24 @@ static void loadEndpoints(void) {
     kern_return_t kr = mach_msg(&reply.header, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0,
                                sizeof(reply), replyPort, 5000, 0);
     if (kr || reply.header.msgh_id != 201 || reply.body.msgh_descriptor_count != 3) exit(20);
-    metalEndpoint = xpc_endpoint_create_mach_port_4sim(reply.ports[0].name);
-    compilerEndpoint = xpc_endpoint_create_mach_port_4sim(reply.ports[1].name);
-    surfaceEndpoint = xpc_endpoint_create_mach_port_4sim(reply.ports[2].name);
+    if (reply.ports[0].name) metalEndpoint = xpc_endpoint_create_mach_port_4sim(reply.ports[0].name);
+    if (reply.ports[1].name) compilerEndpoint = xpc_endpoint_create_mach_port_4sim(reply.ports[1].name);
+    if (reply.ports[2].name) surfaceEndpoint = xpc_endpoint_create_mach_port_4sim(reply.ports[2].name);
     mach_port_mod_refs(mach_task_self(), replyPort, MACH_PORT_RIGHT_RECEIVE, -1);
     mach_port_deallocate(mach_task_self(), rendezvous);
 }
 
 static xpc_connection_t connectEndpoint(xpc_endpoint_t endpoint, dispatch_queue_t queue) {
+    if (!endpoint) {
+        // A dead anonymous endpoint reports a real connection failure. Do not
+        // fall through to a booted Simulator or prevent the caller's CPU fallback.
+        mach_port_t port = MACH_PORT_NULL;
+        if (mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &port)) exit(20);
+        if (mach_port_insert_right(mach_task_self(), port, port, MACH_MSG_TYPE_MAKE_SEND)) exit(20);
+        endpoint = xpc_endpoint_create_mach_port_4sim(port);
+        mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_RECEIVE, -1);
+        fprintf(stderr, "[endpoint] disabled service: closed endpoint\n");
+    }
     xpc_connection_t connection = xpc_connection_create_from_endpoint(endpoint);
     xpc_connection_set_target_queue(connection, queue);
     return connection;
@@ -64,13 +74,13 @@ static xpc_connection_t routeMachService(const char *name, dispatch_queue_t queu
     size_t length = strlen(prefix);
     if (name && strncmp(name, prefix, length) == 0 && (name[length] == 0 || name[length] == '.')) {
         pthread_once(&endpointsOnce, loadEndpoints);
-        fprintf(stderr, "[endpoint] Metal -> standalone host\n");
+        fprintf(stderr, "[endpoint] Metal -> %s\n", metalEndpoint ? "standalone host" : "disabled");
         // MTLSimDriver itself selects the sim-to-host wire format on this connection.
         return connectEndpoint(metalEndpoint, queue);
     }
     if (name && strcmp(name, "com.apple.IOSurface.Remote") == 0) {
         pthread_once(&endpointsOnce, loadEndpoints);
-        fprintf(stderr, "[endpoint] IOSurface -> standalone host\n");
+        fprintf(stderr, "[endpoint] IOSurface -> %s\n", surfaceEndpoint ? "standalone host" : "disabled");
         return connectEndpoint(surfaceEndpoint, queue);
     }
     return original_mach_service(name, queue, flags);
@@ -79,7 +89,7 @@ static xpc_connection_t routeMachService(const char *name, dispatch_queue_t queu
 static xpc_connection_t routeCompiler(const char *name, dispatch_queue_t queue) {
     if (name && strcmp(name, "com.apple.MTLCompilerService") == 0) {
         pthread_once(&endpointsOnce, loadEndpoints);
-        fprintf(stderr, "[endpoint] compiler -> standalone runtime service\n");
+        fprintf(stderr, "[endpoint] compiler -> %s\n", compilerEndpoint ? "standalone runtime service" : "disabled");
         return connectEndpoint(compilerEndpoint, queue);
     }
     return original_service(name, queue);

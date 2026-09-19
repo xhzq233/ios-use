@@ -7,6 +7,13 @@
 int main(int argc, char **argv) {
     @autoreleasepool {
         setbuf(stdout, NULL);
+        NSString *mode = argc > 1 ? @(argv[1]) : @"source";
+        BOOL computeOnly = [mode hasPrefix:@"compute-"];
+        BOOL clearOnly = [mode isEqual:@"clear"] || [mode isEqual:@"surface"];
+        BOOL useSurface = ![mode isEqual:@"clear"];
+        BOOL useMetallib = [mode hasSuffix:@"metallib"];
+        if (![@[@"clear", @"surface", @"source", @"metallib", @"compute-source", @"compute-metallib"] containsObject:mode]
+            || (useMetallib && argc != 3)) return 2;
         printf("[probe] iOS=%s UIKit=%s\n", UIDevice.currentDevice.systemVersion.UTF8String,
                class_getImageName(UIView.class));
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -14,59 +21,67 @@ int main(int argc, char **argv) {
         printf("[probe] GPU class=%s image=%s\n", object_getClassName(device),
                class_getImageName(object_getClass(device)));
         id<MTLCommandQueue> queue = [device newCommandQueue];
-        MTLTextureDescriptor *descriptor = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:4 height:4 mipmapped:NO];
-        descriptor.storageMode = MTLStorageModeShared;
-        descriptor.usage = MTLTextureUsageRenderTarget;
-        IOSurfaceRef surface = IOSurfaceCreate((__bridge CFDictionaryRef)@{
-            (id)kIOSurfaceWidth: @4, (id)kIOSurfaceHeight: @4,
-            (id)kIOSurfaceBytesPerElement: @4, (id)kIOSurfaceBytesPerRow: @64,
-            (id)kIOSurfacePixelFormat: @((uint32_t)'BGRA')
-        });
-        if (!surface) return 19;
-        id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor iosurface:surface plane:0];
-        if (!queue || !texture) return 11;
-        MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-        pass.colorAttachments[0].texture = texture;
-        pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-        pass.colorAttachments[0].clearColor = MTLClearColorMake(0.25, 0.5, 0.75, 1);
-        id<MTLCommandBuffer> command = [queue commandBuffer];
-        id<MTLRenderCommandEncoder> render = [command renderCommandEncoderWithDescriptor:pass];
-        if (!render) return 11;
-        [render endEncoding];
-        [command commit];
-        [command waitUntilCompleted];
-        if (command.status != MTLCommandBufferStatusCompleted) {
-            NSLog(@"Render failed: %@", command.error);
-            return 12;
-        }
-        uint8_t pixels[64] = {0};
-        [texture getBytes:pixels bytesPerRow:16 fromRegion:MTLRegionMake2D(0, 0, 4, 4) mipmapLevel:0];
-        const uint8_t expected[] = {191, 128, 64, 255};
-        for (int i = 0; i < 64; ++i) {
-            if (abs((int)pixels[i] - expected[i % 4]) > 1) return 13;
-        }
-        if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL)) return 19;
-        const uint8_t *sharedPixels = IOSurfaceGetBaseAddress(surface);
-        size_t stride = IOSurfaceGetBytesPerRow(surface);
-        BOOL surfaceMatches = sharedPixels != NULL;
-        for (int y = 0; sharedPixels && y < 4; ++y) {
-            for (int x = 0; x < 16; ++x) {
-                if (abs((int)sharedPixels[y * stride + x] - expected[x % 4]) > 1) surfaceMatches = NO;
+        if (!queue) return 11;
+        id<MTLCommandBuffer> command;
+        if (!computeOnly) {
+            MTLTextureDescriptor *descriptor = [MTLTextureDescriptor
+                texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:4 height:4 mipmapped:NO];
+            descriptor.storageMode = MTLStorageModeShared;
+            descriptor.usage = MTLTextureUsageRenderTarget;
+            IOSurfaceRef surface = useSurface ? IOSurfaceCreate((__bridge CFDictionaryRef)@{
+                (id)kIOSurfaceWidth: @4, (id)kIOSurfaceHeight: @4,
+                (id)kIOSurfaceBytesPerElement: @4, (id)kIOSurfaceBytesPerRow: @64,
+                (id)kIOSurfacePixelFormat: @((uint32_t)'BGRA')
+            }) : NULL;
+            if (useSurface && !surface) return 19;
+            id<MTLTexture> texture = useSurface ? [device newTextureWithDescriptor:descriptor iosurface:surface plane:0]
+                                               : [device newTextureWithDescriptor:descriptor];
+            if (!texture) return 11;
+            MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+            pass.colorAttachments[0].texture = texture;
+            pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+            pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+            pass.colorAttachments[0].clearColor = MTLClearColorMake(0.25, 0.5, 0.75, 1);
+            command = [queue commandBuffer];
+            id<MTLRenderCommandEncoder> render = [command renderCommandEncoderWithDescriptor:pass];
+            if (!render) return 11;
+            [render endEncoding];
+            [command commit];
+            [command waitUntilCompleted];
+            if (command.status != MTLCommandBufferStatusCompleted) {
+                NSLog(@"Render failed: %@", command.error);
+                return 12;
             }
+            uint8_t pixels[64] = {0};
+            [texture getBytes:pixels bytesPerRow:16 fromRegion:MTLRegionMake2D(0, 0, 4, 4) mipmapLevel:0];
+            const uint8_t expected[] = {191, 128, 64, 255};
+            for (int i = 0; i < 64; ++i) {
+                if (abs((int)pixels[i] - expected[i % 4]) > 1) return 13;
+            }
+            if (useSurface) {
+                if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL)) return 19;
+                const uint8_t *sharedPixels = IOSurfaceGetBaseAddress(surface);
+                size_t stride = IOSurfaceGetBytesPerRow(surface);
+                BOOL surfaceMatches = sharedPixels != NULL;
+                for (int y = 0; sharedPixels && y < 4; ++y) {
+                    for (int x = 0; x < 16; ++x) {
+                        if (abs((int)sharedPixels[y * stride + x] - expected[x % 4]) > 1) surfaceMatches = NO;
+                    }
+                }
+                IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+                CFRelease(surface);
+                if (!surfaceMatches) return 19;
+                printf("[probe] IOSurface: GPU write and CPU mapping verified\n");
+            }
+            printf("[probe] render: 16 pixels verified, BGRA=%u,%u,%u,%u\n",
+                   pixels[0], pixels[1], pixels[2], pixels[3]);
         }
-        IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
-        CFRelease(surface);
-        if (!surfaceMatches) return 19;
-        printf("[probe] IOSurface: GPU write and CPU mapping verified\n");
-        printf("[probe] render: 16 pixels verified, BGRA=%u,%u,%u,%u\n",
-               pixels[0], pixels[1], pixels[2], pixels[3]);
+        if (clearOnly) return 0;
 
         NSError *error = nil;
         id<MTLLibrary> library;
-        if (argc == 2) {
-            library = [device newLibraryWithURL:[NSURL fileURLWithPath:@(argv[1])] error:&error];
+        if (useMetallib) {
+            library = [device newLibraryWithURL:[NSURL fileURLWithPath:@(argv[2])] error:&error];
         } else {
             MTLCompileOptions *options = [MTLCompileOptions new];
             options.languageVersion = MTLLanguageVersion3_0;
@@ -93,7 +108,7 @@ int main(int argc, char **argv) {
         [command commit];
         [command waitUntilCompleted];
         printf("[probe] compute=%u status=%lu mode=%s\n", *(uint32_t *)output.contents,
-               (unsigned long)command.status, argc == 2 ? "metallib" : "source");
+               (unsigned long)command.status, mode.UTF8String);
         return command.status == MTLCommandBufferStatusCompleted && *(uint32_t *)output.contents == 42 ? 0 : 18;
     }
 }

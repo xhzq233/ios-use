@@ -1,179 +1,188 @@
-# Standalone Simulator runtime experiment (issue #20)
+# Minimal standalone Simulator runtime (issue #20)
 
-The default runner launches Simulator-linked executables as ordinary macOS child
-processes, loads UIKit from an installed Simulator runtime, and connects Metal
-and IOSurface to a small native host broker. It does not boot a Simulator,
-invoke `simctl`, borrow a Simulator bootstrap namespace, or register launchd
-services.
+This harness loads an installed iOS Simulator runtime in ordinary macOS child
+processes and starts only the selected rendering services. It does not invoke
+`simctl`, boot a Simulator, borrow a Simulator bootstrap namespace, or register
+launchd services. SpringBoard, backboardd, runningboardd, and launchd_sim are not
+started by the harness. Normal macOS system services are still present.
 
-Tested on Apple M4 Pro, macOS 15.7.7, Xcode 26, iOS Simulator runtime 26.0.1.
-This is an experiment using version-sensitive Apple private APIs, separate from
-the production CLI. It requires the installed runtime and Xcode Metal tools.
-Apple executables/frameworks are loaded in place; none are copied into the repo.
+Tested on Apple M4 Pro, macOS 15.7.7, Xcode 26, iOS runtime 26.0.1. This is a
+private-API feasibility experiment, separate from the production CLI. It needs
+an installed runtime and Xcode Metal tools. Apple frameworks and the runtime
+compiler are loaded in place; no Apple or application binaries are included.
 
 ## Run
-
-Find the installed `.simruntime` bundle, then pass its runtime root explicitly:
 
 ```sh
 python3 experiments/simulator-runtime/run.py \
   --runtime-root '/path/to/iOS.simruntime/Contents/Resources/RuntimeRoot'
 ```
 
-Build products, isolated child homes, logs, and the UIKit PNG go into a new
-`$IOS_USE_HOME/artifacts/runtime-probe/run-*` directory (default: repository
-`.ios-use/artifacts/runtime-probe/`). Each case has a 30-second timeout and its
-process group is cleaned up. The runner does not alter Simulator/device state.
+The default cases verify texture clear/readback, shared IOSurface storage,
+source and metallib compute, and UIKit offscreen drawing. Each case uses the
+smallest service list measured for that workload. Add `--audit` to remove each
+selected service in turn and observe the failure or fallback. These are real
+GPU/UI operations, not comparisons of log strings.
 
-Three real execution cases run:
+```sh
+# Empty service list: UIKit software rasterization.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases uikit --services
 
-- Metal source compilation, pipeline creation, render-target clear/readback,
-  and a compute kernel. The render target is backed by an IOSurface. All 16 BGRA
-  pixels must match both Metal texture readback and the CPU-mapped IOSurface,
-  allowing one quantization level. The compute output must equal 42 and both
-  commands must complete.
-- The same GPU operations using an offline-built Simulator metallib.
-- UIKit view-tree rasterization through `UIGraphicsImageRenderer` and
-  `CALayer.renderInContext:`. A UIView contains a UILabel and an iOS 26
-  `UICornerConfiguration` capsule. The 320×180 PNG is saved at
-  `home-uikit/uikit.png`. Exit status checks dimensions, file creation, and
-  enough white text pixels to reject a blank blue image. Inspect the PNG for
-  text and rounded green capsule appearance. This is offscreen drawing, not
-  window presentation; it requires iOS 26 or newer.
+# Choose an explicit service array.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases surface --services metal iosurface
 
-## What is connected
+# Application startup and deletion of each in-process adapter.
+# Currently exits nonzero: window presentation lacks a remote CAContext.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases application --audit
+```
+
+`--services` overrides the case's service array. `--app-adapters display scene`
+selects the application-only adapters; an empty list injects neither. `--audit`
+reports deletion cases as observations, including their nonzero exits. Selected
+cases must succeed for the runner to return zero; an observed dependency
+failure does not become a successful workload.
+
+Artifacts go into a new `$IOS_USE_HOME/artifacts/runtime-probe/run-*` directory
+(default: repository `.ios-use/artifacts/runtime-probe/`). Each case has a fresh
+home, a log, and a 30-second timeout with process-group cleanup. PNGs are stored
+in the corresponding `home-NN-case/` directory. No device or Simulator state is
+modified.
+
+## Measured minimum by workload
+
+| Workload | Service array | Result and deletion evidence |
+| --- | --- | --- |
+| UIKit view-tree rasterization | `[]` | 320×180 PNG, 1,670 white text pixels, iOS 26 green capsule. IOSurface lookup fails and drawing still succeeds. |
+| Metal texture clear | `[metal]` | All 16 BGRA pixels verified. No compiler or IOSurface service. Removing Metal yields no device, exit 10. |
+| Metal clear into shared IOSurface | `[metal, iosurface]` | GPU write, texture readback, and CPU surface mapping agree. Without IOSurface, allocation fails, exit 19. |
+| Source compute | `[metal, compiler]` | GPU result 42. Without compiler, library creation fails, exit 14. No IOSurface needed. |
+| Simulator metallib compute | `[metal, compiler]` | GPU result 42. Without compiler, pipeline creation fails, exit 16. Precompiling AIR does not remove this compiler dependency. |
+| Shared-surface clear plus compute | `[metal, compiler, iosurface]` | Both source and metallib paths pass. Deletions reproduce the component failures above. |
+
+`metal` and `iosurface` are listener objects in the native broker, not separate
+daemon processes. Only `compiler` adds an Apple service child. With no services,
+the native broker launches just the probe child.
+
+The render check requires completed commands and BGRA `191,128,64,255` across
+all 16 pixels (one quantization level allowed). Shared-surface checks also read
+the CPU mapping. Compute checks require a completed command and result `42`.
+UIKit uses real UIView/UILabel, `UICornerConfiguration`,
+`UIGraphicsImageRenderer`, and `CALayer.renderInContext:`. It verifies PNG size,
+file creation, and white text pixels; this does not establish window composition.
+
+## What the host supplies
 
 ```text
 native macOS broker
-  ├─ Metal XPC listener → host MTLSimImplementation → host GPU
-  ├─ IOSurface XPC listener → host IOSurfaceRemoteServer
-  ├─ runtime MTLCompilerService child → compiler XPC listener
-  └─ Simulator-linked probe child
-       ├─ UIKitCore / IOSurface from runtime
-       └─ MTLSimDriver → Metal endpoint / compiler endpoint
+  ├─ [metal] host MTLSimImplementation + anonymous XPC listener
+  ├─ [iosurface] host IOSurfaceRemoteServer + anonymous XPC listener
+  ├─ [compiler] runtime MTLCompilerService child + anonymous XPC listener
+  └─ Simulator-linked client
+       ├─ runtime UIKitCore / MTLSimDriver / IOSurface
+       └─ application-only: local display metadata + local scene endpoint
 ```
 
-`HostBroker.m` starts the runtime's actual compiler service and the probe with
-`DYLD_ROOT_PATH` and Simulator environment variables. A Mach right inherited
-through `mach_ports_register` carries three anonymous XPC endpoints.
-`ServiceEndpoints.c` redirects Metal/compiler/IOSurface service discovery and
-replaces the compiler's `xpc_main` listener setup. It retains Apple's renderer,
-compiler, IOSurface server, request handlers, and shader code. It uses exported
-private endpoint functions without assuming XPC object memory offsets.
+`HostBroker.m` passes selected endpoints through an inherited Mach right using
+`mach_ports_register`. `ServiceEndpoints.c` redirects the three service lookups
+and replaces the compiler's `xpc_main` listener setup. Disabled services return
+a dead anonymous endpoint: callers receive a real connection failure and may
+use their own software fallback. They cannot silently discover a booted
+Simulator's version of these three services.
 
-The native Metal and IOSurface listeners enable Simulator-to-host XPC format
-before activation. The corresponding runtime clients select this format in
-MTLSimDriver and IOSurface. The compiler connection stays Simulator-to-Simulator,
-using the runtime's own compiler; substituting the host compiler failed in an
-exploratory run.
+Apple's renderer, compiler, IOSurface server, request handlers, and shader code
+are retained. Exported private endpoint functions avoid XPC object-layout
+assumptions. Metal and IOSurface use Simulator-to-host XPC format on both ends;
+the compiler uses Simulator-to-Simulator format and the runtime's own compiler.
+Substituting the host compiler failed in an earlier experiment.
 
-The runtime's `com.apple.IOSurface.Remote` connection goes to an instance of the
-host `IOSurfaceRemoteServer`, initialized with its anonymous listener and empty
-options. This follows the locally inspected SimRenderServer initialization.
-IOSurface's purpose as shared framebuffer storage is described in
+The IOSurface listener hosts an actual `IOSurfaceRemoteServer` with empty
+options, following the locally inspected SimRenderServer setup. IOSurface's
+shared-buffer role is described in
 [Apple's documentation](https://developer.apple.com/documentation/iosurface).
 
-## Findings and remaining boundary
+Native iOSSupport on the test machine exposes UIKit 18.7 and an AGX Metal
+device. The newer Simulator runtime exposes UIKit 26.0.1 and `MTLSimDevice`,
+which forwards GPU work to the host. Replacing Simulator Metal with the host
+Metal framework is unnecessary for these measured workloads.
 
-The harness verified BGRA `191,128,64,255` through both texture readback and
-IOSurface mapping, and compute result `42` for both source and metallib modes.
-Disabling only the IOSurface redirect reproduced `IOSurface not available` and
-failed surface allocation with exit 19.
-A device-targeted metallib correctly failed pipeline creation with exit 16
-(incompatible target OS). UIKit produced a blue background, white text, and a
-rounded green capsule using the runtime's iOS 26 API. Logs identify loaded
-frameworks and GPU implementation. The experiment's Simulator was shut down
-for standalone runs; an unrelated booted Simulator was left untouched.
+## Application startup: remove processes, retain required functions
 
-On this machine, native iOSSupport exposes UIKit 18.7 with an AGX Metal device;
-the newer Simulator runtime exposes UIKit 26.0.1 with `MTLSimDevice`. The latter
-forwards GPU work to a native host implementation. Successful standalone GPU
-execution does not require replacing the Simulator Metal driver with the host
-Metal framework.
+The application diagnostic uses the same directly spawned process and empty
+service array. Its two adapters supply narrowly scoped functions:
 
-## Application startup diagnostic
+- `LocalDisplay.m` supplies a fixed 402×874 logical screen at 3× through actual
+  FBS display configuration/mode objects. It initializes GraphicsServices and
+  updates UIKit's initially zero-sized screen through UIKit's implementation.
+  It replaces the two BackBoard screen-information entry points. It does not
+  supply a compositor, physical display, or input server.
+- `LocalSceneHost.m` hosts an anonymous workspace peer inside the app. It accepts
+  BoardServices connection setup, the scene handshake, and client-settings
+  notifications. Unknown operations close the peer. `SceneBootstrap.m` registers
+  this endpoint and delivers one scene through the runtime's
+  `FBSWorkspaceScenesClient`. UIKit invokes the app's launch delegate; no code
+  calls AppDelegate directly.
 
-The default standalone runner still fails at `BKSDisplayServicesStart` when
-entering `UIApplicationMain`: it has no BackBoard display service. A separate
-controlled experiment borrowed an experimental Simulator's bootstrap namespace
-to isolate the subsequent application startup problem.
+These adapters load only in the application, never in MTLCompilerService.
+The scene diagnostic uses private selectors, one named workspace ivar, and a
+one-second scheduling delay. It supports one initially empty scene source,
+not arbitrary applications or multiple scenes.
 
-XPC records and the server's logs established that the scene handshake was
-**received**, not lost. Normally launched apps have an
-`RBSEmbeddedAppProcessIdentity`. A directly executed process has an
-`RBSOpaqueProcessIdentity`, even when its executable is inside the installed
-app container. Its application initialization context lacks the default scene.
-It waits in the UIKit event loop without calling the launch delegate.
+With both adapters, UIKit reaches the real `didFinishLaunching` callback with
+a 402×874 screen. The delegate creates UIWindow and its view tree, saves
+`launch.png` using software rasterization, then requests `makeKeyAndVisible`.
+That request fails with **Failed to create remote render context**, in
+`_UIContextBinder` / CoreAnimation. The diagnostic returns nonzero; reaching the
+callback and saving its view tree are intermediate milestones, not a completed
+application launch. Even an unpresented window can encounter the same context
+requirement when its foreground scene prepares to resume.
 
-`SceneBootstrap.m` supplies that missing local scene through
-`FBSWorkspaceScenesClient.createSceneWithIdentity:parameters:transitionContext:completion:`.
-It uses the runtime's actual application scene specification, display
-configuration, frame, foreground state, and a scene identity in `FBSceneManager`.
-UIKit then calls the real launch delegate and creates UIWindow. It does not
-call AppDelegate directly or replace UIKit's scene implementation.
+Removing display setup traps at `BKSDisplayServicesStart`. Keeping display
+setup but removing scene delivery leaves the UIKit event loop running without
+the launch callback; the probe exits at its 15-second deadline. Thus display
+information and scene delivery are necessary here, while the full SpringBoard
+and backboardd processes are not necessary to reach the callback. The next
+missing function is a usable CoreAnimation rendering context. These findings
+do not prove that Apple's full render-server process is the only way to supply
+one. Keyboard service lookup also fails without preventing the callback;
+keyboard input itself has not been tested.
 
-This is a diagnostic for one initially empty scene source. It relies on private
-selectors, a named workspace ivar (no fixed memory offsets), and a one-second
-delay for endpoint registration. It has not been generalized to arbitrary app
-scene configurations. Keep it separate from the standalone Metal/IOSurface
-runner, and only inject it into a controlled test app.
+## WebKit and full-app boundary
 
-To reproduce scene delivery, use a booted experimental Simulator and an existing
-Simulator-built UIKit app with a launch delegate that creates a window:
+Earlier controlled experiments isolated a separate process-domain dependency.
+They borrowed an experimental Simulator's bootstrap namespace and used the
+same local scene-delivery method, without `LocalSceneHost` or `LocalDisplay`.
 
-```sh
-SCENE_OUT="$PWD/.ios-use/artifacts/runtime-probe/scene"
-mkdir -p "$SCENE_OUT/home"
-xcrun clang -fobjc-arc -fblocks -dynamiclib \
-  -target arm64-apple-ios17.0-simulator \
-  -isysroot "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
-  experiments/simulator-runtime/SceneBootstrap.m \
-  -framework Foundation -framework UIKit -o "$SCENE_OUT/SceneBootstrap.dylib"
-
-# Set UDID and APP_EXECUTABLE to your experimental Simulator and test app.
-SIMCTL_CHILD_CFFIXED_USER_HOME="$SCENE_OUT/home" \
-SIMCTL_CHILD_DYLD_INSERT_LIBRARIES="$SCENE_OUT/SceneBootstrap.dylib" \
-  xcrun simctl spawn "$UDID" "$APP_EXECUTABLE"
-```
-
-Observe the app's launch callback, then terminate the test process explicitly.
-The diagnostic does not start or stop the Simulator. Compare the same `spawn`
-without the injected library to distinguish scene creation from process launch.
-
-Measured with the same small UIKit/MetalKit/WKWebView app:
-
-| Execution path | UIKit launch callback / UIWindow | WebKit |
+| Execution path | UIKit callback / window | WebKit |
 | --- | --- | --- |
 | Normal Simulator app launch | Yes | Loads HTML |
-| Raw `simctl spawn`, no scene bootstrap | No | No window |
-| Raw `simctl spawn` + scene bootstrap | Yes; window snapshot saved | JavaScript returns the expected body text; webpage snapshot saved |
-| Native exec + borrowed bootstrap + scene bootstrap | Yes; window snapshot saved | Extension launch fails: missing launchd domain |
+| Raw `simctl spawn`, no scene delivery | No | No window |
+| Raw `simctl spawn` + scene delivery | Yes; window snapshot | JavaScript body text and webpage snapshot pass |
+| Native exec + borrowed bootstrap + scene delivery | Yes; window snapshot | Extension launch fails: missing launchd domain |
 
-The native process initially hit a LaunchServices environment mismatch. Local
-CoreServices inspection identifies runtime root, runtime version, runtime build
-version, and CPU type as inputs to its database compatibility check. Supplying
-matching `SIMULATOR_ROOT`, `SIMULATOR_RUNTIME_VERSION`, and
-`SIMULATOR_RUNTIME_BUILD_VERSION` passed that check. WebKit then reached
-ExtensionKit/RunningBoard and failed with `OSLaunchdErrorDomain Code=112`,
-"Could not find specified domain". Copying a bootstrap Mach port therefore does
-not establish the launchd process-domain membership needed by this path.
+The directly executed process has `RBSOpaqueProcessIdentity`, even at the
+installed app path; normally launched apps have `RBSEmbeddedAppProcessIdentity`.
+The scene handshake was received, but the initialization context lacked the
+default scene. Local scene delivery supplied it. Matching `SIMULATOR_ROOT`,
+`SIMULATOR_RUNTIME_VERSION`, and `SIMULATOR_RUNTIME_BUILD_VERSION` resolved the
+initial LaunchServices mismatch. WebKit then failed with
+`OSLaunchdErrorDomain Code=112`, "Could not find specified domain". An inherited
+bootstrap Mach port is insufficient to establish process-domain membership.
 
-These results concern an offscreen UIWindow and a WebKit snapshot. They do not
-establish native NSWindow presentation, physical input delivery, or a complete
-converted app. The original Metal compute/readback proof remains independent
-of these borrowed services. Standalone UIKit still emits a duplicate
-`_NoAnimationDelegate` warning, which is not suppressed.
+`SceneBootstrap.m` can still be compiled alone for that diagnostic; without the
+local host/display libraries it uses the existing workspace source and screen.
+The standalone runner does not rely on that borrowed namespace.
 
-Before the IOSurface endpoint was added, whole-view-tree rendering emitted
-`IOSurface not available`. An earlier visual inspection incorrectly concluded
-that label text was absent: decoded pixels in those saved PNGs also contain
-1,670 white text pixels. The warning did not establish software rasterization
-failure. The new evidence is working shared IOSurface allocation and GPU/CPU
-access, and disappearance of that warning with the endpoint connected.
+Native NSWindow presentation, input, standalone WebKit child hosting, and a
+complete converted device app remain unverified. Device-app retargeting also
+involves Mach-O platform metadata, embedded Metal AIR targets, and potentially
+OpenGL ES; the generic probes do not validate those paths. Keep untested app
+services out of the "unnecessary" category until a relevant workload exercises
+them.
 
-Device-app retargeting is additional work: Mach-O platform metadata and embedded
-Metal AIR targets both matter. The generic Simulator-built probe does not
-validate arbitrary device frameworks, OpenGL ES paths, or a complete converted
-app. The next independent-runtime experiment needs BackBoard/display setup and
-process-domain or explicit child-service hosting, while keeping the verified
-Metal/IOSurface connections and local scene delivery reusable.
+Standalone UIKit emits a duplicate `_NoAnimationDelegate` warning. Without the
+IOSurface endpoint, it also emits `IOSurface not available`; the software PNG
+still contains the expected text. An earlier visual interpretation of that
+warning as missing text was corrected by decoded pixel evidence.
