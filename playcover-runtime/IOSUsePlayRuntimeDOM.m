@@ -4051,10 +4051,13 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
         ) ||
         !IOSUseDOMIsBoolean(arguments[@"raw"]) ||
         !IOSUseDOMIsBoolean(arguments[@"fresh"]) ||
-        !IOSUseDOMIsBoolean(arguments[@"waitQuiescence"])) {
+        !IOSUseDOMIsBoolean(arguments[@"waitQuiescence"]) ||
+        (arguments[@"semantic"] != nil && !IOSUseDOMIsBoolean(arguments[@"semantic"])) ||
+        (arguments[@"diff"] != nil && !IOSUseDOMIsBoolean(arguments[@"diff"])) ||
+        (arguments[@"since"] != nil && ![arguments[@"since"] isKindOfClass:NSString.class])) {
         if (commandError != NULL) {
             *commandError = IOSUseDOMValidationError(
-                @"dom arguments must contain raw, fresh, and waitQuiescence booleans",
+                @"dom requires raw/fresh/waitQuiescence booleans; optional semantic/diff are booleans and since is a string",
                 nil
             );
         }

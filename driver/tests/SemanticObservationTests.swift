@@ -35,6 +35,16 @@ final class SemanticObservationTests: XCTestCase {
         }
     }
 
+    func testResizedWindowSignalsGeometryEvenWhenSemanticTextIsIdentical() {
+        let store = SemanticDOM.Store()
+        let elements = [node("Rotate")]
+        let before = store.observe(app: "Fixture", size: [390, 844], elements: elements, diff: false, since: "")
+        let after = store.observe(app: "Fixture", size: [844, 390], elements: elements, diff: true, since: before.revision)
+        XCTAssertTrue(after.layoutChanged)
+        XCTAssertEqual(after.lines, before.lines)
+        XCTAssertTrue(after.added.isEmpty && after.removed.isEmpty)
+    }
+
     func testGeometryIsSeparateAndStaleContinuationOrChangedAppReturnsFull() throws {
         let store = SemanticDOM.Store()
         var elements = (0..<30).map { node("Item \($0)") }

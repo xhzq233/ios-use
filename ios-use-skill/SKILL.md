@@ -32,8 +32,10 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   `--traits` / `--cindex` for observed duplicates. Prefer an offscreen semantic
   target with a visible anchor in the same scroll container; use label-relative
   offsets before absolute coordinates when possible.
-- Prefer `-D` after UI mutations and `dom --diff` for follow-up observations.
-  They reduce repeated output while preserving the full tree for element lookup.
+- Prefer `-D` / `dom --diff` for repeated observations on the same page, such as
+  changing a value or updating a few rows. Use `--dom` / `dom` for a complete
+  semantic view after navigation. Diff returns full output when changes are broad;
+  it is not a promise of faster tasks. Both preserve the full lookup tree.
   Keep the initial DOM and subsequent changes in context. If that context is
   missing (for example after compaction or a handoff), run plain `dom` to recover
   a full view; use `--dom` when an action needs a self-contained full result.
@@ -47,8 +49,8 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   Normal DOM omits rectangles. Use `dom --json` for exact current geometry and
   original label provenance. Layout changes are reported separately and do not
   imply that semantics changed. A detailed/raw read resets the next diff to full.
-- Verify the result using the action's `-D` output; do not immediately request
-  another full DOM unless context is insufficient. Bare `-D` waits for native
+- Verify the result using the action's observation; request another full DOM
+  only when the available context is insufficient. Bare `-D` waits for native
   idle; `-D 300ms` uses a fixed delay. Neither an unchanged DOM nor native idle
   proves App readiness; wait on an observed page/loading condition when needed.
 - After navigation, scrolling or a failed lookup, refresh stale context before

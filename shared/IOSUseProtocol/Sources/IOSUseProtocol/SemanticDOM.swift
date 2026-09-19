@@ -165,10 +165,10 @@ public enum SemanticDOM {
             guard let old, old.revision == since else {
                 full.reason = "observation reset"; return full
             }
+            full.layoutChanged = old.size != size || old.geometry != geometry
             guard old.app == app, old.size == size else {
                 full.reason = "app or window changed"; return full
             }
-            full.layoutChanged = old.geometry != geometry
             var removed: [Edit] = [], added: [Edit] = []
             let beforeContext = Self.contexts(old.lines)
             let afterContext = Self.contexts(lines)
