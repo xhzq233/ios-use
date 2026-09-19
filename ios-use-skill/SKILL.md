@@ -32,6 +32,10 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   `--traits` / `--cindex` for observed duplicates. Prefer an offscreen semantic
   target with a visible anchor in the same scroll container; use label-relative
   offsets before absolute coordinates when possible.
+- For a bounded scroll in one panel, use `swipe --from "<visible-anchor>"
+  --dir forth --distance 150 -D`. The anchor can be the scroll container itself
+  or a point inside it. Nested containers use their own scroll axis; an invalid
+  anchor does not fall back to another panel. Two point endpoints perform a raw drag.
 - `dom`, `--dom` and `-D` default to diff. Append `-D` / `--dom` to actions
   to observe their result; the first observation or broad changes return full.
   Keep the initial tree and subsequent changes in context. If context is missing
