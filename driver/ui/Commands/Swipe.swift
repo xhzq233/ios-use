@@ -80,7 +80,7 @@ enum SwipeCommands {
         // in its scrollable so edge / overlay-adjacent targets become easier to tap.
         if hasInteractionFrame(target, in: cs.appFrame),
            let scrollFrame = interactionFrame(scrollView) {
-            let adjusted = centerTargetInScrollFrame(targetCell: findCellAncestor(target.node),
+            let adjusted = try centerTargetInScrollFrame(targetCell: findCellAncestor(target.node),
                                                      scrollFrame: scrollFrame,
                                                      app: app)
             return try okScroll(target: target, scrolls: adjusted.count, scrollDirection: adjusted.scrollDirection)
@@ -117,7 +117,7 @@ enum SwipeCommands {
         }
 
         // STEP 6: scroll loop.
-        let scrolls = scrollUntilVisible(scrollView: scrollView,
+        let scrolls = try scrollUntilVisible(scrollView: scrollView,
                                             target: toTarget,
                                             vertical: vertical,
                                             scrollUpwards: scrollUpwards,
@@ -186,7 +186,7 @@ enum SwipeCommands {
         let vertical = abs(dy) > abs(dx)
         let scrollUpwards = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
 
-        let result = scrollUntilVisible(scrollView: anchorScrollView,
+        let result = try scrollUntilVisible(scrollView: anchorScrollView,
                                         target: toTarget,
                                         vertical: vertical,
                                         scrollUpwards: scrollUpwards,
@@ -217,7 +217,7 @@ enum SwipeCommands {
         let origin = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
         let start = origin.withOffset(CGVector(dx: from.x, dy: from.y))
         let end = origin.withOffset(CGVector(dx: to.x, dy: to.y))
-        _ = RawPointer.perform(
+        _ = try RawPointer.perform(
             app: app,
             event: .drag(
                 start: start,
@@ -328,7 +328,7 @@ enum SwipeCommands {
                                    target: ForyTarget,
                                    vertical: Bool,
                                    scrollUpwards: Bool,
-                                   app: XCUIApplication) -> ScrollOutcome {
+                                   app: XCUIApplication) throws -> ScrollOutcome {
         var currentScrollView = scrollView
         var currentSnapshot: CleanedSnapshot?
         // Only the current iteration's tree survives into the next gesture.
@@ -339,15 +339,15 @@ enum SwipeCommands {
             guard let scrollFrame = interactionFrame(currentScrollView) else {
                 return .hitBoundary
             }
-            autoreleasepool {
+            try autoreleasepool {
                 if vertical {
                     scrollUpwards
-                        ? scrollUpByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
-                        : scrollDownByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
+                        ? try scrollUpByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
+                        : try scrollDownByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
                 } else {
                     scrollUpwards
-                        ? scrollLeftByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
-                        : scrollRightByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
+                        ? try scrollLeftByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
+                        : try scrollRightByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
                 }
             }
             Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
@@ -392,7 +392,7 @@ enum SwipeCommands {
         }
 
         let prevFrames = collectVisibleCellFrames(scrollView)
-        let segmentCount = dispatchScrollSegments(segments, scrollFrame: scrollFrame, app: app)
+        let segmentCount = try dispatchScrollSegments(segments, scrollFrame: scrollFrame, app: app)
 
         Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
 
@@ -429,10 +429,10 @@ enum SwipeCommands {
     }
 
     /// Time complexity: O(k), where k is the emitted center-scroll segment count.
-    private static func centerTargetInScrollFrame(targetCell: SafeSnapshot, scrollFrame: CGRect, app: XCUIApplication) -> (count: Int, scrollDirection: String) {
+    private static func centerTargetInScrollFrame(targetCell: SafeSnapshot, scrollFrame: CGRect, app: XCUIApplication) throws -> (count: Int, scrollDirection: String) {
         let adjust = centerScrollAdjustment(targetFrame: targetCell.frame, scrollFrame: scrollFrame)
         if abs(adjust.dx) > 1 || abs(adjust.dy) > 1 {
-            let count = scrollByVector(adjust, scrollFrame: scrollFrame, app: app)
+            let count = try scrollByVector(adjust, scrollFrame: scrollFrame, app: app)
             return (count, count > 0 ? scrollDirectionName(vector: adjust) : "")
         }
         return (0, "")

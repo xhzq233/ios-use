@@ -40,6 +40,7 @@ enum InputCommands {
             )
             + args.content
             + (args.enter ? "\n" : "")
+        try CommandDeadline.check()
         guard typeText(effectiveContent) else {
             return try Codec.foryError(
                 "input: failed to type text",
@@ -67,7 +68,7 @@ private func hasTapTarget(_ target: ForyTarget) -> Bool {
 private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -> InputTapResult {
     let summary: ForyElementSummary
     if let point = target.point {
-        guard RawPointer.perform(app: app, event: .tap(CGPoint(x: CGFloat(point.x), y: CGFloat(point.y)))) == nil else {
+        guard try RawPointer.perform(app: app, event: .tap(CGPoint(x: CGFloat(point.x), y: CGFloat(point.y)))) == nil else {
             return .failure(try Codec.foryError(
                 "input: failed to tap point '\(point.x),\(point.y)'",
                 category: IOSUseErrorCategory.action,
@@ -94,7 +95,7 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -
         case .notFound(let s, let rejected):
             return .failure(try notFoundResponse(target, suggestions: s, rejected: rejected))
         }
-        guard tapSnapshotCenter(elem.node, app: app) else {
+        guard try tapSnapshotCenter(elem.node, app: app) else {
             return .failure(try Codec.foryError(
                 "input: failed to tap '\(target.label)'",
                 category: IOSUseErrorCategory.action,
@@ -113,10 +114,10 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -
     return .success(summary)
 }
 
-private func tapSnapshotCenter(_ snapshot: SafeSnapshot, app: XCUIApplication) -> Bool {
+private func tapSnapshotCenter(_ snapshot: SafeSnapshot, app: XCUIApplication) throws -> Bool {
     guard let frame = interactionFrame(snapshot) else { return false }
     let point = CGPoint(x: frame.midX, y: frame.midY)
-    return RawPointer.perform(app: app, event: .tap(point)) == nil
+    return try RawPointer.perform(app: app, event: .tap(point)) == nil
 }
 
 private func typeText(_ text: String) -> Bool {

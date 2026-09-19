@@ -12,7 +12,7 @@ enum DomCommands {
         let app = try args.fresh ? Session.shared.refreshActive() : Session.shared.ensureActive()
 
         if args.waitQuiescence {
-            Quiescence.wait(app: app, command: "dom")
+            try Quiescence.wait(app: app, command: "dom")
         }
 
         // --raw mode: format the pre-clean snapshot as an indented string.

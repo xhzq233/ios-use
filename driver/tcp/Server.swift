@@ -205,6 +205,8 @@ import Foundation
     // MARK: - Main-thread dispatch
 
     private func dispatchOnMainThread(_ invocation: CommandInvocation) throws -> ForyResponseFrame {
+        let watchdogSeconds = invocation.watchdogTimeoutSeconds
+        let deadline = DispatchTime.now() + watchdogSeconds
         let sem = DispatchSemaphore(value: 0)
         var result: ForyResponseFrame?
         var dispatchError: Error?
@@ -227,7 +229,12 @@ import Foundation
                 let startedAt = CFAbsoluteTimeGetCurrent()
                 let startMessage = "[driver] dispatch start command=\(invocation.name.rawValue)"
                 DriverLog.info(startMessage)
-                let response = try self.execute(invocation)
+                let response = try CommandDeadline.withDeadline(deadline) {
+                    try CommandDeadline.check()
+                    let response = try self.execute(invocation)
+                    try CommandDeadline.check()
+                    return response
+                }
                 let finishMessage = "[driver] dispatch finish command=\(invocation.name.rawValue) ok=\(response.ok) elapsed=\(DriverPerf.elapsedMilliseconds(since: startedAt))ms"
                 DriverLog.info(finishMessage)
                 result = response
@@ -238,9 +245,7 @@ import Foundation
             }
             sem.signal()
         }
-        let watchdogSeconds = invocation.watchdogTimeoutSeconds
-        let watchdogMilliseconds = Int(ceil(watchdogSeconds * IOSUseProtocol.millisecondsPerSecond))
-        let waitResult = sem.wait(timeout: .now() + .milliseconds(watchdogMilliseconds))
+        let waitResult = sem.wait(timeout: deadline)
         if waitResult == .timedOut {
             cancelLock.lock()
             let commandStarted = started

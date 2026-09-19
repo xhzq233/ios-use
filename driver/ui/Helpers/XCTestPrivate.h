@@ -7,6 +7,10 @@ void XCPressAndDrag(XCUICoordinate *start, XCUICoordinate *end,
 
 XCUIApplication * _Nullable GetActiveApplication(void);
 
+/// Temporarily bound XCTest's own application-idle waits, including implicit
+/// waits inside native gestures. Restores the process setting even on exception.
+BOOL XCWithApplicationStateTimeout(double timeout, void (NS_NOESCAPE ^ _Nonnull block)(void), NSError * _Nullable * _Nullable error);
+
 /// Takes a raw snapshot of an XCUIElement via `snapshotWithError:`.
 id _Nullable SnapshotOfElement(XCUIElement * _Nonnull element);
 

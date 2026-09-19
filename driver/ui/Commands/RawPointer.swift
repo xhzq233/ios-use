@@ -7,8 +7,8 @@ enum RawPointerEvent {
 }
 
 enum RawPointer {
-    static func perform(app: XCUIApplication, event: RawPointerEvent) -> NSError? {
-        Quiescence.wait(app: app, command: "raw-pointer")
+    static func perform(app: XCUIApplication, event: RawPointerEvent) throws -> NSError? {
+        try Quiescence.wait(app: app, command: "raw-pointer")
 
         switch event {
         case .tap(let point):
@@ -20,12 +20,14 @@ enum RawPointer {
             guard XCSynthesizeLongPressAtPoint(point, duration, &error) else { return error }
 
         case .drag(let start, let end, let pressDuration, let velocity, let holdDuration):
-            start.press(
-                forDuration: pressDuration,
-                thenDragTo: end,
-                withVelocity: XCUIGestureVelocity(rawValue: CGFloat(velocity)),
-                thenHoldForDuration: holdDuration
-            )
+            try Quiescence.bounded {
+                start.press(
+                    forDuration: pressDuration,
+                    thenDragTo: end,
+                    withVelocity: XCUIGestureVelocity(rawValue: CGFloat(velocity)),
+                    thenHoldForDuration: holdDuration
+                )
+            }
         }
         return nil
     }

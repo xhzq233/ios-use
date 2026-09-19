@@ -162,13 +162,13 @@ enum TouchCommands {
     // MARK: - Internals
 
     private static func tapAtPoint(_ p: CGPoint, app: XCUIApplication) throws {
-        if let error = RawPointer.perform(app: app, event: .tap(p)) {
+        if let error = try RawPointer.perform(app: app, event: .tap(p)) {
             throw DriverError.gestureFailed("tap synthesis failed: \(error.localizedDescription)")
         }
     }
 
     private static func pressAtPoint(_ p: CGPoint, duration: Double, app: XCUIApplication) throws {
-        if let error = RawPointer.perform(app: app, event: .longPress(p, duration: duration)) {
+        if let error = try RawPointer.perform(app: app, event: .longPress(p, duration: duration)) {
             throw DriverError.gestureFailed("longPress synthesis failed: \(error.localizedDescription)")
         }
     }
