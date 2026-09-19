@@ -80,6 +80,7 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -
         }
         summary = ForyElementSummary(rect: ForyRect(x: Int32(point.x.rounded()), y: Int32(point.y.rounded()), w: 0, h: 0))
     } else {
+        try Quiescence.wait(app: app, command: "input-focus")
         guard let cs = captureCleanedSnapshot() else {
             return .failure(try Codec.foryError("failed to take snapshot",
                 category: IOSUseErrorCategory.lookup, code: IOSUseErrorCode.snapshotFailed,
@@ -117,7 +118,7 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -
 private func tapSnapshotCenter(_ snapshot: SafeSnapshot, app: XCUIApplication) throws -> Bool {
     guard let frame = interactionFrame(snapshot) else { return false }
     let point = CGPoint(x: frame.midX, y: frame.midY)
-    return try RawPointer.perform(app: app, event: .tap(point)) == nil
+    return try RawPointer.perform(app: app, event: .tap(point), waitForIdle: false) == nil
 }
 
 private func typeText(_ text: String) -> Bool {

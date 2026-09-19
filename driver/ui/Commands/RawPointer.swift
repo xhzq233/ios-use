@@ -7,8 +7,9 @@ enum RawPointerEvent {
 }
 
 enum RawPointer {
-    static func perform(app: XCUIApplication, event: RawPointerEvent) throws -> NSError? {
-        try Quiescence.wait(app: app, command: "raw-pointer")
+    static func perform(app: XCUIApplication, event: RawPointerEvent, waitForIdle: Bool = true) throws -> NSError? {
+        if waitForIdle { try Quiescence.wait(app: app, command: "raw-pointer") }
+        try CommandDeadline.check()
 
         switch event {
         case .tap(let point):
