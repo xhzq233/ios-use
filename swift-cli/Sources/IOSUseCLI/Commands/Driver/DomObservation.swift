@@ -41,16 +41,24 @@ struct DomObservation {
                                                 attributes: [.posixPermissions: 0o700])
         try Data(observation.revision.utf8).write(to: file, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        func edits(_ values: [SemanticDOM.Edit]) -> MachineValue {
-            .array(values.map { .object(["offset": .integer($0.offset), "childIndex": .integer($0.childIndex), "line": .string($0.line),
-                                        "context": .array($0.context.map(MachineValue.string))]) })
+        func rows(_ values: [SemanticDOM.Row]) -> MachineValue {
+            .array(values.map { .object(["offset": .integer($0.offset), "childIndex": .integer($0.childIndex), "line": .string($0.line)]) })
         }
+        let changes: MachineValue = .array(observation.changes.map { group in
+            .object([
+                "context": .array(group.context.map(MachineValue.string)),
+                "removed": .array(group.removed.map { .object([
+                    "offset": .integer($0.offset), "childIndex": .integer($0.childIndex), "label": .string($0.label),
+                ]) }),
+                "added": rows(group.added), "updated": rows(group.updated),
+            ])
+        })
         return Output(text: "App: \(payload.app)\n" + observation.text, value: .object([
             "app": .string(payload.app), "mode": .string(observation.mode),
             "windowSize": .array([.double(payload.windowSize.x), .double(payload.windowSize.y)]), "revision": .string(observation.revision),
             "reason": .string(observation.reason), "layoutChanged": .boolean(observation.layoutChanged),
             "lines": .array(observation.lines.map(MachineValue.string)),
-            "removed": edits(observation.removed), "added": edits(observation.added),
+            "changes": changes,
         ]))
     }
 }

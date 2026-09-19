@@ -322,7 +322,8 @@ enum CLIHelp {
                 dom defaults to diff; the first observation returns full. Use dom --nodiff for a full tree.
                 dom --nodiff --json retains exact geometry and label provenance.
                 Each observation captures the current tree; snapshots are not reused across commands.
-                Diff is computed in the Driver; changes include parent context. Layout-only changes are reported separately.
+                Diff is computed in the Driver: - removed selectors, + added rows, ~ updated rows, with shared parent context.
+                Layout-only changes are reported separately; full output is used when its text is shorter.
                 App/session/size changes reset diff; unchanged semantics do not prove visual readiness.
                 Example: ios-use dom
                 """

@@ -20,12 +20,25 @@ public enum SemanticDOM {
         }
     }
 
-    public struct Edit: Codable, Equatable {
-        /// Removal offsets refer to the previous tree; insertion offsets to the new tree.
+    public struct Row: Codable, Equatable {
+        /// An offset in the resulting tree, not an action ID.
         public let offset: Int
         public let childIndex: Int
         public let line: String
-        public let context: [String]
+    }
+
+    public struct Removal: Codable, Equatable {
+        /// An offset in the previous tree. Its old value is already in context.
+        public let offset: Int
+        public let childIndex: Int
+        public let label: String
+    }
+
+    public struct ChangeGroup: Codable {
+        public var context: [String]
+        public var removed: [Removal] = []
+        public var added: [Row] = []
+        public var updated: [Row] = []
     }
 
     public struct Observation: Codable {
@@ -33,38 +46,52 @@ public enum SemanticDOM {
         public var revision: String
         public var reason: String
         public var lines: [String]
-        public var removed: [Edit]
-        public var added: [Edit]
+        public var changes: [ChangeGroup]
         public var layoutChanged: Bool
+
+        public var removed: [Removal] { changes.flatMap(\.removed) }
+        public var added: [Row] { changes.flatMap(\.added) }
+        public var updated: [Row] { changes.flatMap(\.updated) }
 
         public var text: String {
             if mode == "full" {
-                let layout = layoutChanged ? "\nLayout changed; use dom --json for current coordinates." : ""
+                let layout = layoutChanged ? "\nLayout changed; use dom --nodiff --json for current coordinates." : ""
                 return lines.joined(separator: "\n") + layout + "\n"
             }
-            var result = ["DOM changes (- removed, + added):"]
-            if removed.isEmpty && added.isEmpty { result = ["DOM semantics unchanged"] }
+            var result = ["DOM changes (- removed, + added, ~ updated):"]
+            if changes.isEmpty { result = ["DOM semantics unchanged"] }
             var context: [String] = []
-            for (sign, edits) in [("-", removed), ("+", added)] {
-                for edit in edits.sorted(by: { $0.offset < $1.offset }) {
-                    let shared = zip(context, edit.context).prefix { $0 == $1 }.count
-                    result += edit.context.dropFirst(shared).map { "  " + $0 }
-                    result.append(sign + " " + edit.line + " (child \(edit.childIndex))")
-                    context = edit.context
+            for group in changes {
+                let shared = zip(context, group.context).prefix { $0 == $1 }.count
+                result += group.context.dropFirst(shared).map { "  " + $0 }
+                for row in group.removed {
+                    result.append("- " + atom(row.label) + " (child \(row.childIndex))")
                 }
+                for (sign, rows) in [("~", group.updated), ("+", group.added)] {
+                    for row in rows {
+                        result.append(sign + " " + row.line + " (child \(row.childIndex))")
+                    }
+                }
+                context = group.context
             }
-            if layoutChanged { result.append("Layout changed; use dom --json for current coordinates.") }
+            if layoutChanged { result.append("Layout changed; use dom --nodiff --json for current coordinates.") }
             return result.joined(separator: "\n") + "\n"
         }
 
-        /// Exact ordered reconstruction, including repeated identical rows and moves.
+        /// Reconstruct exactly, including duplicate labels, reparenting and moves.
+        /// Updates replace a row at the same old/new offset; all insertions still
+        /// refer to final offsets, so other edits cannot shift their meaning.
         public func applying(to previous: [String]) -> [String]? {
             if mode == "full" { return lines }
-            var changes: [CollectionDifference<String>.Change] = []
-            changes += removed.map { .remove(offset: $0.offset, element: $0.line, associatedWith: nil) }
-            changes += added.map { .insert(offset: $0.offset, element: $0.line, associatedWith: nil) }
-            guard let delta = CollectionDifference(changes) else { return nil }
-            return previous.applying(delta)
+            var delta: [CollectionDifference<String>.Change] = []
+            let removals = removed.map(\.offset) + updated.map(\.offset)
+            for offset in removals {
+                guard previous.indices.contains(offset) else { return nil }
+                delta.append(.remove(offset: offset, element: previous[offset], associatedWith: nil))
+            }
+            delta += (added + updated).map { .insert(offset: $0.offset, element: $0.line, associatedWith: nil) }
+            guard let difference = CollectionDifference(delta) else { return nil }
+            return previous.applying(difference)
         }
     }
 
@@ -141,7 +168,7 @@ public enum SemanticDOM {
         private let lock = NSLock()
         private let epoch = UUID().uuidString
         private var sequence = 0
-        private var previous: (app: String, size: [Double], lines: [String], geometry: [[Double]], revision: String)?
+        private var previous: (app: String, size: [Double], lines: [String], labels: [String], geometry: [[Double]], revision: String)?
 
         public init() {}
 
@@ -152,15 +179,21 @@ public enum SemanticDOM {
 
         public func observe(app: String, size: [Double], elements: [Element], diff: Bool,
                             since: String) -> Observation {
+            observe(app: app, size: size, lines: SemanticDOM.lines(elements),
+                    labels: elements.map(\.label), geometry: elements.map(\.rect), diff: diff, since: since)
+        }
+
+        // Also used by offline trajectory replay, without inventing native AX data
+        // from already-rendered observations.
+        func observe(app: String, size: [Double], lines: [String], labels: [String],
+                     geometry: [[Double]], diff: Bool, since: String) -> Observation {
             lock.lock(); defer { lock.unlock() }
-            let lines = SemanticDOM.lines(elements)
-            let geometry = elements.map(\.rect)
             sequence += 1
             let revision = "\(epoch):\(sequence)"
             let old = previous
-            previous = (app, size, lines, geometry, revision)
+            previous = (app, size, lines, labels, geometry, revision)
             var full = Observation(mode: "full", revision: revision, reason: "requested",
-                                   lines: lines, removed: [], added: [], layoutChanged: false)
+                                   lines: lines, changes: [], layoutChanged: false)
             guard diff else { return full }
             guard let old, old.revision == since else {
                 full.reason = "observation reset"; return full
@@ -169,24 +202,56 @@ public enum SemanticDOM {
             guard old.app == app, old.size == size else {
                 full.reason = "app or window changed"; return full
             }
-            var removed: [Edit] = [], added: [Edit] = []
+            var removed: Set<Int> = [], added: Set<Int> = []
             let beforeContext = Self.contexts(old.lines)
             let afterContext = Self.contexts(lines)
             for change in lines.difference(from: old.lines) {
                 switch change {
-                case .remove(let offset, let line, _):
-                    removed.append(Edit(offset: offset, childIndex: beforeContext[offset].index, line: line, context: beforeContext[offset].parents))
-                case .insert(let offset, let line, _):
-                    added.append(Edit(offset: offset, childIndex: afterContext[offset].index, line: line, context: afterContext[offset].parents))
+                case .remove(let offset, _, _): removed.insert(offset)
+                case .insert(let offset, _, _): added.insert(offset)
                 }
             }
+            let oldCounts = Dictionary(old.labels.map { ($0, 1) }, uniquingKeysWith: +)
+            let newCounts = Dictionary(labels.map { ($0, 1) }, uniquingKeysWith: +)
+            // Coalesce only unambiguous same-position, same-selector replacements.
+            // This is a compact representation of exact edits, not native identity
+            // tracking. Generated/duplicate/moved selectors need no special cache.
+            let updated = removed.intersection(added).filter { offset in
+                let label = labels[offset]
+                return !label.isEmpty && old.labels[offset] == label
+                    && oldCounts[label] == 1 && newCounts[label] == 1
+                    && beforeContext[offset].parents == afterContext[offset].parents
+            }
+            removed.subtract(updated); added.subtract(updated)
+            var groups: [ChangeGroup] = []
+            var groupIndices: [[String]: Int] = [:]
+            func groupIndex(_ context: [String]) -> Int {
+                if let index = groupIndices[context] { return index }
+                let index = groups.count
+                groupIndices[context] = index
+                groups.append(ChangeGroup(context: context))
+                return index
+            }
+            for offset in removed.sorted() {
+                let context = beforeContext[offset]
+                let index = groupIndex(context.parents)
+                groups[index].removed.append(Removal(offset: offset, childIndex: context.index, label: old.labels[offset]))
+            }
+            for offset in updated.sorted() {
+                let context = afterContext[offset]
+                let index = groupIndex(context.parents)
+                groups[index].updated.append(Row(offset: offset, childIndex: context.index, line: lines[offset]))
+            }
+            for offset in added.sorted() {
+                let context = afterContext[offset]
+                let index = groupIndex(context.parents)
+                groups[index].added.append(Row(offset: offset, childIndex: context.index, line: lines[offset]))
+            }
             let delta = Observation(mode: "diff", revision: revision, reason: "",
-                                    lines: [], removed: removed, added: added,
-                                    layoutChanged: old.geometry != geometry)
-            // Both model output and transport must benefit; otherwise send full.
-            let encoder = JSONEncoder()
-            if delta.text.utf8.count >= full.text.utf8.count ||
-                (try? encoder.encode(delta).count) ?? Int.max >= (try? encoder.encode(full).count) ?? 0 {
+                                    lines: [], changes: groups, layoutChanged: old.geometry != geometry)
+            // Prefer the shorter model-facing representation. Transport is measured
+            // separately; repeated JSON metadata must not veto a useful text diff.
+            if delta.text.utf8.count >= full.text.utf8.count {
                 full.reason = "broad changes"; return full
             }
             return delta

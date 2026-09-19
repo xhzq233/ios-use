@@ -42,7 +42,9 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   just to display those already-observed results together.
 - First diff use, changed App/session/size, or broad changes returns full
   automatically. The Driver keeps the last semantic observation across CLI calls.
-  Changes show removed/added rows with parent context and zero-based child position;
+  Changes show `-` removals, `+` additions and `~` updated rows under shared
+  parent context. Removals name the selector; `~` supplies its current state.
+  Rows include zero-based child position;
   the position describes tree order, not screen coordinates. Labels remain action targets.
   Normal DOM omits rectangles. Use `dom --nodiff --json` for exact current geometry and
   original label provenance. Layout changes are reported separately and do not

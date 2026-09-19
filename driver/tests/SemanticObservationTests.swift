@@ -35,6 +35,61 @@ final class SemanticObservationTests: XCTestCase {
         }
     }
 
+    func testCoalescesUniqueReplacementAndSharesParentContext() throws {
+        let store = SemanticDOM.Store()
+        var elements = [node("Root", 80)] + (0..<80).map { node("Item \($0)") }
+        let before = store.observe(app: "Fixture", size: [390, 844], elements: elements, diff: false, since: "")
+        elements[3].value = "new value"
+        elements[4].traits += ["disabled"]
+        elements.removeSubrange(20..<26)
+        elements[0].children -= 6
+        let after = store.observe(app: "Fixture", size: [390, 844], elements: elements, diff: true, since: before.revision)
+        XCTAssertEqual(after.changes.count, 1)
+        XCTAssertEqual(after.updated.count, 2)
+        XCTAssertEqual(after.removed.count, 6)
+        XCTAssertEqual(after.added.count, 0)
+        let decoded = try JSONDecoder().decode(SemanticDOM.Observation.self, from: JSONEncoder().encode(after))
+        XCTAssertEqual(decoded.applying(to: before.lines), SemanticDOM.lines(elements))
+    }
+
+    func testDuplicateSelectorsDoNotBecomeUpdates() throws {
+        let store = SemanticDOM.Store()
+        var elements = (0..<60).map { node("Item \($0)") }
+        elements[2].label = "Duplicate"; elements[5].label = "Duplicate"
+        let before = store.observe(app: "Fixture", size: [390, 844], elements: elements, diff: false, since: "")
+        elements[2].value = "changed"
+        let after = store.observe(app: "Fixture", size: [390, 844], elements: elements, diff: true, since: before.revision)
+        XCTAssertTrue(after.updated.isEmpty)
+        XCTAssertEqual(after.removed.count, 1)
+        XCTAssertEqual(after.added.count, 1)
+        XCTAssertEqual(after.applying(to: before.lines), SemanticDOM.lines(elements))
+    }
+
+    func testRepeatedStructuralEditsReconstructWithoutLosingRows() throws {
+        let store = SemanticDOM.Store()
+        var elements = [node("Root", 80)] + (0..<80).map { node("Item \($0)") }
+        var previous = store.observe(app: "Fixture", size: [390, 844], elements: elements, diff: false, since: "")
+        var reconstructed = previous.lines
+        var deltaCount = 0
+        for step in 0..<120 {
+            let index = 1 + (step * 17) % (elements.count - 1)
+            switch step % 4 {
+            case 0: elements[index].value = "State \(step)"
+            case 1: elements.swapAt(index, elements.count - 1)
+            case 2: elements.insert(node("New \(step)"), at: index)
+            default: elements.remove(at: index)
+            }
+            elements[0].children = elements.count - 1
+            let current = store.observe(app: "Fixture", size: [390, 844], elements: elements, diff: true, since: previous.revision)
+            if current.mode == "diff" { deltaCount += 1 }
+            let wire = try JSONDecoder().decode(SemanticDOM.Observation.self, from: JSONEncoder().encode(current))
+            reconstructed = try XCTUnwrap(wire.applying(to: reconstructed))
+            XCTAssertEqual(reconstructed, SemanticDOM.lines(elements))
+            previous = current
+        }
+        XCTAssertGreaterThan(deltaCount, 100)
+    }
+
     func testResizedWindowSignalsGeometryEvenWhenSemanticTextIsIdentical() {
         let store = SemanticDOM.Store()
         let elements = [node("Rotate")]
