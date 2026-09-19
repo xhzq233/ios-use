@@ -12,7 +12,16 @@ int main(void) {
         label.numberOfLines = 2;
         label.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
         label.textColor = UIColor.whiteColor;
-
+        [view addSubview:label];
+        UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(20, 130, 280, 36)];
+        capsule.backgroundColor = UIColor.systemGreenColor;
+        if (@available(iOS 26.0, *)) {
+            capsule.cornerConfiguration = UICornerConfiguration.capsuleConfiguration;
+        } else {
+            return 34;
+        }
+        [view addSubview:capsule];
+        [view layoutIfNeeded];
 
         UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
         format.scale = 1;
@@ -20,10 +29,6 @@ int main(void) {
             initWithSize:view.bounds.size format:format];
         UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
             [view.layer renderInContext:context.CGContext];
-            // UILabel's cached layer contents need IOSurface in this environment.
-            // Exercise its immediate drawing path explicitly, without that cache.
-            CGContextTranslateCTM(context.CGContext, label.frame.origin.x, label.frame.origin.y);
-            [label drawTextInRect:label.bounds];
         }];
         if (!image.CGImage || CGImageGetWidth(image.CGImage) != 320 || CGImageGetHeight(image.CGImage) != 180) return 30;
         NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"uikit.png"];

@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <Metal/Metal.h>
+#import <IOSurface/IOSurfaceRef.h>
 #import <objc/runtime.h>
 
 int main(int argc, char **argv) {
@@ -17,7 +18,13 @@ int main(int argc, char **argv) {
             texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:4 height:4 mipmapped:NO];
         descriptor.storageMode = MTLStorageModeShared;
         descriptor.usage = MTLTextureUsageRenderTarget;
-        id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
+        IOSurfaceRef surface = IOSurfaceCreate((__bridge CFDictionaryRef)@{
+            (id)kIOSurfaceWidth: @4, (id)kIOSurfaceHeight: @4,
+            (id)kIOSurfaceBytesPerElement: @4, (id)kIOSurfaceBytesPerRow: @64,
+            (id)kIOSurfacePixelFormat: @((uint32_t)'BGRA')
+        });
+        if (!surface) return 19;
+        id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor iosurface:surface plane:0];
         if (!queue || !texture) return 11;
         MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
         pass.colorAttachments[0].texture = texture;
@@ -40,6 +47,19 @@ int main(int argc, char **argv) {
         for (int i = 0; i < 64; ++i) {
             if (abs((int)pixels[i] - expected[i % 4]) > 1) return 13;
         }
+        if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL)) return 19;
+        const uint8_t *sharedPixels = IOSurfaceGetBaseAddress(surface);
+        size_t stride = IOSurfaceGetBytesPerRow(surface);
+        BOOL surfaceMatches = sharedPixels != NULL;
+        for (int y = 0; sharedPixels && y < 4; ++y) {
+            for (int x = 0; x < 16; ++x) {
+                if (abs((int)sharedPixels[y * stride + x] - expected[x % 4]) > 1) surfaceMatches = NO;
+            }
+        }
+        IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+        CFRelease(surface);
+        if (!surfaceMatches) return 19;
+        printf("[probe] IOSurface: GPU write and CPU mapping verified\n");
         printf("[probe] render: 16 pixels verified, BGRA=%u,%u,%u,%u\n",
                pixels[0], pixels[1], pixels[2], pixels[3]);
 

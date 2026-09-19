@@ -31,7 +31,7 @@ build("xcrun", "clang", "-arch", "arm64", "-fobjc-arc", "-fblocks", str(SOURCE /
 build("xcrun", "clang", *sim_flags, "-fblocks", "-dynamiclib", str(SOURCE / "ServiceEndpoints.c"),
       "-o", str(output / "endpoints.dylib"))
 build("xcrun", "clang", *sim_flags, "-fobjc-arc", str(SOURCE / "GPUProbe.m"),
-      "-framework", "Foundation", "-framework", "UIKit", "-framework", "Metal", "-o", str(output / "probe"))
+      "-framework", "Foundation", "-framework", "UIKit", "-framework", "Metal", "-framework", "IOSurface", "-o", str(output / "probe"))
 build("xcrun", "clang", *sim_flags, "-fobjc-arc", str(SOURCE / "UIKitProbe.m"),
       "-framework", "Foundation", "-framework", "UIKit", "-framework", "QuartzCore", "-framework", "CoreGraphics", "-o", str(output / "uikit-probe"))
 build("xcrun", "-sdk", "iphonesimulator", "metal", "-std=metal3.0", "-target", "air64-apple-ios17.0-simulator",

@@ -1,4 +1,4 @@
-// Redirect only Metal's service discovery; retain Apple's compiler and renderer.
+// Redirect GPU and IOSurface service discovery; retain Apple's implementations.
 #include <mach/mach.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -15,7 +15,7 @@ extern void original_xpc_main(void (*)(xpc_connection_t)) __asm__("_xpc_main");
 extern xpc_endpoint_t xpc_endpoint_create_mach_port_4sim(mach_port_t);
 extern mach_port_t xpc_endpoint_copy_listener_port_4sim(xpc_endpoint_t);
 
-static xpc_endpoint_t metalEndpoint, compilerEndpoint;
+static xpc_endpoint_t metalEndpoint, compilerEndpoint, surfaceEndpoint;
 static pthread_once_t endpointsOnce = PTHREAD_ONCE_INIT;
 
 static mach_port_t inheritedRendezvous(void) {
@@ -40,14 +40,15 @@ static void loadEndpoints(void) {
     struct {
         mach_msg_header_t header;
         mach_msg_body_t body;
-        mach_msg_port_descriptor_t ports[2];
+        mach_msg_port_descriptor_t ports[3];
         char trailer[512];
     } reply = {0};
     kern_return_t kr = mach_msg(&reply.header, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0,
                                sizeof(reply), replyPort, 5000, 0);
-    if (kr || reply.header.msgh_id != 201 || reply.body.msgh_descriptor_count != 2) exit(20);
+    if (kr || reply.header.msgh_id != 201 || reply.body.msgh_descriptor_count != 3) exit(20);
     metalEndpoint = xpc_endpoint_create_mach_port_4sim(reply.ports[0].name);
     compilerEndpoint = xpc_endpoint_create_mach_port_4sim(reply.ports[1].name);
+    surfaceEndpoint = xpc_endpoint_create_mach_port_4sim(reply.ports[2].name);
     mach_port_mod_refs(mach_task_self(), replyPort, MACH_PORT_RIGHT_RECEIVE, -1);
     mach_port_deallocate(mach_task_self(), rendezvous);
 }
@@ -58,7 +59,7 @@ static xpc_connection_t connectEndpoint(xpc_endpoint_t endpoint, dispatch_queue_
     return connection;
 }
 
-static xpc_connection_t routeMetal(const char *name, dispatch_queue_t queue, uint64_t flags) {
+static xpc_connection_t routeMachService(const char *name, dispatch_queue_t queue, uint64_t flags) {
     const char *prefix = "com.apple.metal.simulator";
     size_t length = strlen(prefix);
     if (name && strncmp(name, prefix, length) == 0 && (name[length] == 0 || name[length] == '.')) {
@@ -66,6 +67,11 @@ static xpc_connection_t routeMetal(const char *name, dispatch_queue_t queue, uin
         fprintf(stderr, "[endpoint] Metal -> standalone host\n");
         // MTLSimDriver itself selects the sim-to-host wire format on this connection.
         return connectEndpoint(metalEndpoint, queue);
+    }
+    if (name && strcmp(name, "com.apple.IOSurface.Remote") == 0) {
+        pthread_once(&endpointsOnce, loadEndpoints);
+        fprintf(stderr, "[endpoint] IOSurface -> standalone host\n");
+        return connectEndpoint(surfaceEndpoint, queue);
     }
     return original_mach_service(name, queue, flags);
 }
@@ -109,7 +115,7 @@ __attribute__((used, section("__DATA,__interpose"))) static const struct {
     const void *replacement;
     const void *original;
 } replacements[] = {
-    {(void *)routeMetal, (void *)original_mach_service},
+    {(void *)routeMachService, (void *)original_mach_service},
     {(void *)routeCompiler, (void *)original_service},
     {(void *)standaloneXPCMain, (void *)original_xpc_main}
 };

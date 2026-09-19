@@ -12,12 +12,16 @@
 extern void xpc_connection_enable_sim2host_4sim(xpc_connection_t);
 extern mach_port_t xpc_endpoint_copy_listener_port_4sim(xpc_endpoint_t);
 
+@interface NSObject (IOSurfaceRemoteServerAPI)
+- (instancetype)initWithListener:(xpc_connection_t)listener options:(NSDictionary *)options;
+@end
+
 static void stopCompiler(pid_t pid) {
     kill(pid, SIGTERM);
     while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
 }
 
-static void serveEndpoints(mach_port_t rendezvous, mach_port_t metal, mach_port_t compiler) {
+static void serveEndpoints(mach_port_t rendezvous, mach_port_t metal, mach_port_t compiler, mach_port_t surface) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         for (;;) {
             struct { mach_msg_header_t header; char trailer[512]; } request = {0};
@@ -27,16 +31,17 @@ static void serveEndpoints(mach_port_t rendezvous, mach_port_t metal, mach_port_
             struct {
                 mach_msg_header_t header;
                 mach_msg_body_t body;
-                mach_msg_port_descriptor_t ports[2];
+                mach_msg_port_descriptor_t ports[3];
             } reply = {0};
             reply.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE, 0)
                 | MACH_MSGH_BITS_COMPLEX;
             reply.header.msgh_size = sizeof(reply);
             reply.header.msgh_remote_port = request.header.msgh_remote_port;
             reply.header.msgh_id = 201;
-            reply.body.msgh_descriptor_count = 2;
-            for (int i = 0; i < 2; ++i) {
-                reply.ports[i].name = i ? compiler : metal;
+            reply.body.msgh_descriptor_count = 3;
+            mach_port_t endpoints[] = {metal, compiler, surface};
+            for (int i = 0; i < 3; ++i) {
+                reply.ports[i].name = endpoints[i];
                 reply.ports[i].disposition = MACH_MSG_TYPE_COPY_SEND;
                 reply.ports[i].type = MACH_MSG_PORT_DESCRIPTOR;
             }
@@ -69,6 +74,16 @@ int main(int argc, char **argv) {
         initialize(listener, device.registryID, NULL);
         xpc_endpoint_t endpoint = xpc_endpoint_create(listener);
         mach_port_t metalPort = xpc_endpoint_copy_listener_port_4sim(endpoint);
+
+        dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_NOW);
+        xpc_connection_t surfaceListener = xpc_connection_create(NULL, NULL);
+        xpc_connection_enable_sim2host_4sim(surfaceListener);
+        __attribute__((objc_precise_lifetime)) id surfaceServer =
+            [[NSClassFromString(@"IOSurfaceRemoteServer") alloc] initWithListener:surfaceListener options:@{}];
+        if (!surfaceServer) return 3;
+        xpc_endpoint_t surfaceEndpoint = xpc_endpoint_create(surfaceListener);
+        mach_port_t surfacePort = xpc_endpoint_copy_listener_port_4sim(surfaceEndpoint);
+        printf("[broker] IOSurface remote server ready\n");
 
         mach_port_t rendezvous = MACH_PORT_NULL;
         kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &rendezvous);
@@ -118,7 +133,7 @@ int main(int argc, char **argv) {
             stopCompiler(compilerPID);
             return 6;
         }
-        serveEndpoints(rendezvous, metalPort, registration.port.name);
+        serveEndpoints(rendezvous, metalPort, registration.port.name, surfacePort);
         char *clientArguments[] = {argv[2], argc == 6 ? argv[5] : NULL, NULL};
         pid_t clientPID = 0;
         rc = posix_spawn(&clientPID, argv[2], NULL, NULL, clientArguments, childEnvironment);
