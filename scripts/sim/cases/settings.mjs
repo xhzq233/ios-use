@@ -127,7 +127,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
       console.log('[sim-test] RUN AA-1: ios-use home && sleep 1s && dom --fresh');
       const home = runCliToFiles(['home'], path.join(artifactDir, 'AA-1-home.out'), path.join(artifactDir, 'AA-1-home.err'));
       await ctx.sleep(1000);
-      const dom = runCliToFiles(['dom', '--fresh'], path.join(artifactDir, 'AA-1.out'), path.join(artifactDir, 'AA-1.err'));
+      const dom = runCliToFiles(['dom', '--nodiff', '--fresh'], path.join(artifactDir, 'AA-1.out'), path.join(artifactDir, 'AA-1.err'));
       if (home.code === 0 && dom.code === 0 && dom.stdout.includes('App: com.apple.springboard')) recordPass('AA-1');
       else recordFail('AA-1', home.stdout + home.stderr + dom.stdout + dom.stderr, home.code === 0 && dom.code === 0 ? 'assertion' : 'command');
     } },
@@ -138,13 +138,13 @@ export function buildSettingsBeforeContactsCases(ctx) {
         runCliToFiles(['activateApp', 'com.apple.mobilesafari'], path.join(artifactDir, 'AA-3-safari.out'), path.join(artifactDir, 'AA-3-safari.err'));
       });
     } },
-    { id: 'DOM-1', run: () => runCaseContains('DOM-1', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
+    { id: 'DOM-1', run: () => runCaseContains('DOM-1', 'App: com.apple.Preferences', ['dom', '--nodiff', '--fresh'], settingsHome) },
     { id: 'DOM-2', run: () => runCaseContains('DOM-2', '[App]', ['dom', '--raw'], settingsHome) },
-    { id: 'DOM-5', run: () => runCaseContains('DOM-5', 'Settings', ['dom', '--fresh'], settingsHome) },
+    { id: 'DOM-5', run: () => runCaseContains('DOM-5', 'Settings', ['dom', '--nodiff', '--fresh'], settingsHome) },
     { id: 'DOM-6', run: runDomNoWindowHeaderCase },
     { id: 'DOM-7', run: runDomPerfCase },
-    { id: 'DOM-8', run: () => runCaseContains('DOM-8', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
-    { id: 'DOM-13', run: () => runCaseContains('DOM-13', 'App: com.apple.Preferences', ['dom', '--wait-quiescence'], settingsHome) },
+    { id: 'DOM-8', run: () => runCaseContains('DOM-8', 'App: com.apple.Preferences', ['dom', '--nodiff', '--fresh'], settingsHome) },
+    { id: 'DOM-13', run: () => runCaseContains('DOM-13', 'App: com.apple.Preferences', ['dom', '--nodiff', '--wait-quiescence'], settingsHome) },
     { id: 'WF-1', run: () => runCaseContains('WF-1', 'waited=', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--timeout', '2'], settingsHome) },
     { id: 'WF-2', run: () => runCaseFailsMatches('WF-2', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.3'], settingsHome) },
     { id: 'WF-4', run: () => runCaseFailsMatches('WF-4', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.2'], settingsHome) },
@@ -218,8 +218,8 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'LP-4', run: () => runCaseContains('LP-4', 'Longpress', ['longpress', 'About', '--duration', '500', '--traits', 'Cell'], generalPage) },
     { id: 'LP-5', run: () => runCaseContains('LP-5', 'Longpress', ['longpress', 'About', '--traits', 'Cell'], generalPage) },
     { id: 'LP-6', run: () => runCaseContains('LP-6', 'Longpress', ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900'], openHomeScreenWithSafariIcon) },
-    { id: 'DOM-5B', run: () => runCaseContains('DOM-5B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh'], () => ctx.openSpringboardIconMenu('DOM-5B')) },
-    { id: 'SW-16B', run: () => runCaseContains('SW-16B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh'], () => ctx.openSpringboardIconMenu('SW-16B')) },
+    { id: 'DOM-5B', run: () => runCaseContains('DOM-5B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--nodiff', '--fresh'], () => ctx.openSpringboardIconMenu('DOM-5B')) },
+    { id: 'SW-16B', run: () => runCaseContains('SW-16B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--nodiff', '--fresh'], () => ctx.openSpringboardIconMenu('SW-16B')) },
   ];
 }
 
@@ -292,18 +292,18 @@ export function buildSettingsAfterContactsCases(ctx) {
       const home = await runCommand(id, ['home'], out, err);
       if (!home) return;
       await sleep(1000);
-      const dom = await runCommand(id, ['dom', '--fresh'], domOut, domErr);
+      const dom = await runCommand(id, ['dom', '--nodiff', '--fresh'], domOut, domErr);
       if (!dom) return;
       if (home.code === 0 && home.stdout.includes('Home') && dom.code === 0 && dom.stdout.includes('App: com.apple.springboard')) recordPass(id);
       else recordFail(id, home.stdout + home.stderr + dom.stdout + dom.stderr, home.code === 0 && dom.code === 0 ? 'assertion' : 'command');
     } },
-    { id: 'DOM-3', run: () => runCaseContains('DOM-3', 'App:', ['dom', '--fresh'], async () => { runCli(['home']); await sleep(1000); }) },
-    { id: 'HOME-2', run: () => runCaseContains('HOME-2', 'App: com.apple.springboard', ['dom', '--fresh'], async () => { runCli(['home']); await sleep(1000); }) },
+    { id: 'DOM-3', run: () => runCaseContains('DOM-3', 'App:', ['dom', '--nodiff', '--fresh'], async () => { runCli(['home']); await sleep(1000); }) },
+    { id: 'HOME-2', run: () => runCaseContains('HOME-2', 'App: com.apple.springboard', ['dom', '--nodiff', '--fresh'], async () => { runCli(['home']); await sleep(1000); }) },
     { id: 'AA-4', run: () => runCaseContainsAndDomContains('AA-4', 'activated', ['activateApp', 'com.apple.Preferences'], 'App: com.apple.Preferences') },
     { id: 'AA-5', run: () => runCaseFailsMatches('AA-5', invalidBundleLaunchErrorPattern, ['activateApp', 'com.iosuse.invalid.bundle']) },
-    { id: 'AS-1', run: async () => { if (!selected('AS-1')) return recordSkip('AS-1'); stopDriverIfLocked('AS-1'); await runCaseFailsContains('AS-1', 'No active driver', ['dom', '--fresh']); } },
-    { id: 'AS-2', run: () => runCaseFailsMatches('AS-2', /unknown option '--udid'/i, ['dom', '--fresh', '--udid', '00000000-0000-0000-0000-000000000000']) },
-    { id: 'AS-3', run: () => runCaseContains('AS-3', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
+    { id: 'AS-1', run: async () => { if (!selected('AS-1')) return recordSkip('AS-1'); stopDriverIfLocked('AS-1'); await runCaseFailsContains('AS-1', 'No active driver', ['dom', '--nodiff', '--fresh']); } },
+    { id: 'AS-2', run: () => runCaseFailsMatches('AS-2', /unknown option '--udid'/i, ['dom', '--nodiff', '--fresh', '--udid', '00000000-0000-0000-0000-000000000000']) },
+    { id: 'AS-3', run: () => runCaseContains('AS-3', 'App: com.apple.Preferences', ['dom', '--nodiff', '--fresh'], settingsHome) },
     { id: 'AS-4', run: () => unsupportedCase('AS-4') },
     { id: 'AS-5', run: () => unsupportedCase('AS-5') },
     { id: 'AS-6', run: () => unsupportedCase('AS-6') },

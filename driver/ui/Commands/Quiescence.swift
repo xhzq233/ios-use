@@ -1,6 +1,18 @@
 import XCTest
 
 enum Quiescence {
+    // Normal animations finish early; missing idle notifications cannot consume
+    // the 10s command watchdog. This also bounds native gesture-internal waits.
+    static let timeoutSeconds = 2.0
+
+    static func bounded<T>(_ body: () throws -> T) throws -> T {
+        var result: Result<T, Error>?
+        var error: NSError?
+        guard XCWithApplicationStateTimeout(timeoutSeconds, { result = Result { try body() } }, &error) else {
+            throw DriverError.serverError(error?.localizedDescription ?? "Could not bound XCTest idle waiting")
+        }
+        return try result!.get()
+    }
     private static let applicationImplSelector = NSSelectorFromString("applicationImpl")
     private static let currentProcessSelector = NSSelectorFromString("currentProcess")
     private static let waitForQuiescenceSelector = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:")
@@ -9,7 +21,13 @@ enum Quiescence {
     private typealias WaitForQuiescenceFn = @convention(c) (AnyObject, Selector, Bool) -> Void
     private typealias WaitForQuiescencePreEventFn = @convention(c) (AnyObject, Selector, Bool, Bool) -> Void
 
-    static func wait(app: XCUIApplication, command: String) {
+    static func wait(app: XCUIApplication, command: String) throws {
+        try CommandDeadline.check()
+        try bounded { waitForIdle(app: app, command: command) }
+        try CommandDeadline.check()
+    }
+
+    private static func waitForIdle(app: XCUIApplication, command: String) {
         guard let appImpl = performObjectSelector(on: app, selector: applicationImplSelector),
               let currentProcess = performObjectSelector(on: appImpl, selector: currentProcessSelector) else {
             log("wait skipped command=\(command) reason=no-current-process")
@@ -39,7 +57,7 @@ enum Quiescence {
 
     private static func runWait(command: String, selectorName: String, _ wait: () -> Void) {
         let startedAt = CFAbsoluteTimeGetCurrent()
-        log("wait start command=\(command) selector=\(selectorName)")
+        log("wait start command=\(command) limit=\(timeoutSeconds)s selector=\(selectorName)")
         wait()
         let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
         log("wait finish command=\(command) elapsed=\(elapsedMs)ms selector=\(selectorName)")

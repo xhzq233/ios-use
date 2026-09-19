@@ -205,15 +205,6 @@ private func contentMatches(
     }
 }
 
-/// Unified label search: exact(label/value) → contains(label/value) → fuzzy → trait filter.
-/// Used by all label-based commands (find, tap, longPress, input, swipe, waitFor).
-func rawFind(_ target: ForyTarget, visibility: RawFindVisibility = .only) -> FindResult {
-    guard let cs = getCleanedSnapshot() else {
-        return .notFound(suggestions: [], rejected: [])
-    }
-    return rawFindInSnapshot(target, cs: cs, visibility: visibility)
-}
-
 private func searchCandidates(from entries: [SearchEntry]) -> [SearchCandidate] {
     entries.flatMap { entry in
         entry.rawTexts.compactMap { text -> SearchCandidate? in

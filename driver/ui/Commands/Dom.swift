@@ -4,6 +4,7 @@ import Fory
 // MARK: - Dom command (doc 2)
 
 enum DomCommands {
+    private static let observations = SemanticDOM.Store()
     /// doc 2.2 — nested tree with rule 1-6 applied (or raw if --raw).
     static func dom(_ args: ForyDomArgs) throws -> ForyResponseFrame {
         // External device services can switch Apps without a Driver mutation.
@@ -11,12 +12,12 @@ enum DomCommands {
         let app = try args.fresh ? Session.shared.refreshActive() : Session.shared.ensureActive()
 
         if args.waitQuiescence {
-            Quiescence.wait(app: app, command: "dom")
+            try Quiescence.wait(app: app, command: "dom")
         }
 
         // --raw mode: format the pre-clean snapshot as an indented string.
         if args.raw {
-            invalidateSnapshot()
+            observations.reset()
             guard let root = SafeSnapshot(ofApp: app) else {
                 return try Codec.foryError(
                     "failed to take snapshot",
@@ -39,12 +40,7 @@ enum DomCommands {
             return try Codec.foryOK(payload)
         }
 
-        // --fresh mode: invalidate cache before taking snapshot.
-        if args.fresh || args.waitQuiescence {
-            invalidateSnapshot()
-        }
-
-        guard let cs = getCleanedSnapshot() else {
+        guard let cs = captureCleanedSnapshot() else {
             return try Codec.foryError(
                 "failed to take snapshot",
                 category: IOSUseErrorCategory.lookup,
@@ -52,6 +48,21 @@ enum DomCommands {
                 phase: IOSUseErrorPhase.snapshot,
                 retryable: true
             )
+        }
+        if args.semantic {
+            let observation = observations.observe(
+                app: cs.bundleId,
+                size: [Double(cs.appFrame.width), Double(cs.appFrame.height)],
+                elements: cs.elements.map { element in
+                    let node = element.node
+                    return SemanticDOM.Element(label: displayName(for: node) ?? "",
+                        accessibilityLabel: node.label ?? "", value: displayValue(for: node) ?? "",
+                        traits: element.traits, children: element.childCount,
+                        rect: [Double(node.frame.minX), Double(node.frame.minY), Double(node.frame.width), Double(node.frame.height)])
+                }, diff: args.diff, since: args.since)
+            let json = String(decoding: try JSONEncoder().encode(observation), as: UTF8.self)
+            return try Codec.foryOK(ForyDomPayload(app: cs.bundleId, observation: json,
+                windowSize: ForyPoint(x: Double(cs.appFrame.width), y: Double(cs.appFrame.height))))
         }
         let flatElements = serializeDomFlat(from: cs.elements)
         let payload = ForyDomPayload(
@@ -77,6 +88,10 @@ func serializeDomFlat(from elements: [SnapshotElement]) -> [ForyDomElement] {
         fEl.childCount = Int32(element.childCount)
         if let l = displayName(for: node), !l.isEmpty { fEl.label = l }
         if let value = displayValue(for: node) { fEl.value = value }
+        fEl.identifier = node.identifier ?? ""
+        fEl.accessibilityLabel = node.label ?? ""
+        fEl.labelSource = node.identifier?.isEmpty == false ? "identifier" : node.label?.isEmpty == false ? "label" : "generated"
+        if let base = node.identifier ?? node.label, base != fEl.label { fEl.labelSource += "+alias" }
         fEl.rect = makeForyRect(node.frame)
         return fEl
     }

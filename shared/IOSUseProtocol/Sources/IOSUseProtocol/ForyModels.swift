@@ -260,6 +260,8 @@ public struct ForyDomElement {
     public var traits: [String] = []
     public var childCount: Int32 = 0
     public var label: String = ""
+    public var accessibilityLabel: String = ""
+    public var labelSource: String = ""
     public var value: String = ""
     public var identifier: String = ""
     public var hint: String = ""
@@ -278,6 +280,8 @@ public struct ForyDomElement {
         traits: [String] = [],
         childCount: Int32 = 0,
         label: String = "",
+        accessibilityLabel: String = "",
+        labelSource: String = "",
         value: String = "",
         identifier: String = "",
         hint: String = "",
@@ -295,6 +299,8 @@ public struct ForyDomElement {
         self.traits = traits
         self.childCount = childCount
         self.label = label
+        self.accessibilityLabel = accessibilityLabel
+        self.labelSource = labelSource
         self.value = value
         self.identifier = identifier
         self.hint = hint
@@ -311,6 +317,7 @@ public struct ForyDomElement {
 @ForyStruct
 public struct ForyDomPayload {
     public var app: String = ""
+    public var observation: String = ""
     public var windowSize: ForyPoint = ForyPoint()
     public var raw: String = ""
     public var snapshotGeneration: Int64 = 0
@@ -318,12 +325,14 @@ public struct ForyDomPayload {
 
     public init(
         app: String = "",
+        observation: String = "",
         windowSize: ForyPoint = ForyPoint(),
         raw: String = "",
         snapshotGeneration: Int64 = 0,
         elements: [ForyDomElement] = []
     ) {
         self.app = app
+        self.observation = observation
         self.windowSize = windowSize
         self.raw = raw
         self.snapshotGeneration = snapshotGeneration
@@ -639,8 +648,14 @@ public struct ForyDomArgs {
     public var raw: Bool = false
     public var fresh: Bool = false
     public var waitQuiescence: Bool = false
+    public var semantic: Bool = false
+    public var diff: Bool = false
+    public var since: String = ""
 
-    public init(raw: Bool = false, fresh: Bool = false, waitQuiescence: Bool = false) {
+    public init(raw: Bool = false, fresh: Bool = false, waitQuiescence: Bool = false, semantic: Bool = false, diff: Bool = false, since: String = "") {
+        self.semantic = semantic
+        self.diff = diff
+        self.since = since
         self.raw = raw
         self.fresh = fresh
         self.waitQuiescence = waitQuiescence

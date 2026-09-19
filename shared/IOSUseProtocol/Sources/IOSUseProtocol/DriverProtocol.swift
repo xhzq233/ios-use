@@ -156,8 +156,6 @@ public enum IOSUseProtocol {
     public static let proxyCAPort: UInt16 = 9088
     /// Driver-side HTTP path for proxy CA certificate download.
     public static let proxyCAPath = "/ca.cer"
-    /// Shared cleaned DOM snapshot cache TTL.
-    public static let snapshotCacheTTLSeconds = 1.0
     /// Same-rect merge tolerance for clean tree rule 4.
     public static let rectApproxEqualEpsilon = 0.5
     /// Maximum fuzzy suggestions returned by rawFind diagnostics.

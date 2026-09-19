@@ -1,6 +1,7 @@
 #import "XCTestPrivate.h"
 #import <objc/message.h>
 #import <objc/runtime.h>
+#import <dlfcn.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static const NSUInteger XCMaxTextAbbrLen = 12;
@@ -13,6 +14,28 @@ static const double XCDefaultLongPressDuration = 0.5;
 static const CGFloat XCDetectionPointScreenRatio = 0.2;
 static const int64_t XCSynthesizeEventTimeoutSeconds = 5;
 static const int64_t XCScreenshotTimeoutSeconds = 20;
+
+BOOL XCWithApplicationStateTimeout(double timeout, void (^block)(void), NSError **error) {
+    double (*getTimeout)(void) = dlsym(RTLD_DEFAULT, "_XCTApplicationStateTimeout");
+    void (*setTimeout)(double) = dlsym(RTLD_DEFAULT, "_XCTSetApplicationStateTimeout");
+    if (!getTimeout || !setTimeout) {
+        if (error) *error = [NSError errorWithDomain:@"IOSUseXCTest" code:1
+            userInfo:@{NSLocalizedDescriptionKey: @"XCTest does not expose bounded application-state waits"}];
+        return NO;
+    }
+    double previous = getTimeout();
+    @try {
+        setTimeout(timeout);
+        block();
+        return YES;
+    } @catch (NSException *exception) {
+        if (error) *error = [NSError errorWithDomain:@"IOSUseXCTest" code:2
+            userInfo:@{NSLocalizedDescriptionKey: exception.reason ?: exception.name}];
+        return NO;
+    } @finally {
+        setTimeout(previous);
+    }
+}
 
 static id XCFirstNonEmptyValue(id primary, id fallback) {
     if ([primary isKindOfClass:[NSString class]] && [((NSString *)primary) length] > 0) {
