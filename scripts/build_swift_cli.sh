@@ -85,6 +85,7 @@ if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
       done < <(
         rg --files \
           "$ROOT_DIR/playcover-runtime" \
+          "$ROOT_DIR/shared/IOSUseProtocol/Sources/IOSUseProtocol/SemanticDOM.swift" \
           "$ROOT_DIR/swift-cli/Sources/IOSUsePlayDevice" \
           "$ROOT_DIR/scripts/build_playcover_runtime.sh"
       )

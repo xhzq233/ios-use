@@ -318,7 +318,9 @@ enum CLIHelp {
                 ],
                 footer: """
                 Use labels/values as action targets, not entire DOM lines. --dom on an action already returns an updated tree.
-                Use plain dom for a full tree. App/session/size changes reset diff; unchanged is explicit.
+                Use plain dom for the full semantic tree; dom --json retains exact geometry and label provenance.
+                Diff is computed in the Driver; changes include parent context. Layout-only changes are reported separately.
+                App/session/size changes reset diff; unchanged semantics do not prove visual readiness.
                 Leading numeric IDs identify observed nodes, not tap targets. Updates give new values; removed IDs are ranges.
                 Use current labels/values for actions; frame updates replace old coordinates.
                 Example: ios-use dom --diff

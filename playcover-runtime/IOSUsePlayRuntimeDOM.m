@@ -1,3 +1,4 @@
+#import "IOSUsePlaySwiftBridge.h"
 #import "IOSUsePlayDeviceConfiguration.h"
 #import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayRuntimeDOM.h"
@@ -34,6 +35,7 @@ typedef unsigned long long (*IOSUseDOMSendUnsignedLongLong)(id, SEL);
 typedef CGRect (*IOSUseDOMSendRect)(id, SEL);
 
 @interface IOSUseDOMNode : NSObject
+@property(nonatomic, copy, nullable) NSString *accessibilityLabel;
 @property(nonatomic, weak, nullable) id object;
 @property(nonatomic, copy) NSString *nodeID;
 @property(nonatomic) unsigned long long generation;
@@ -2824,6 +2826,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     node.generation = context.generation;
     node.elementType = IOSUseDOMElementType(object, accessibilityTraits);
     node.typeName = IOSUseDOMElementTypeName(node.elementType);
+    node.accessibilityLabel = label;
     node.label = label.length > 0 ? label : identifier;
     node.value = value;
     node.identifier = identifier;
@@ -3679,6 +3682,10 @@ static NSDictionary<NSString *, id> *IOSUseDOMElementJSON(
         @"elementType": @(node.source.elementType),
         @"elemType": @(node.source.elementType),
         @"label": node.displayLabel ?: @"",
+        @"accessibilityLabel": node.source.accessibilityLabel ?: @"",
+        @"labelSource": [NSString stringWithFormat:@"%@%@",
+            node.source.accessibilityLabel.length > 0 ? @"label" : node.source.identifier.length > 0 ? @"identifier" : @"generated",
+            node.source.label.length > 0 && ![node.source.label isEqualToString:node.displayLabel] ? @"+alias" : @""],
         @"value": node.source.value ?: @"",
         @"identifier": node.source.identifier ?: @"",
         @"hint": node.source.hint ?: @"",
@@ -4040,7 +4047,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
         !IOSUseDOMDictionaryHasExactlyKeys(
             arguments,
             keys,
-            [NSSet set]
+            [NSSet setWithArray:@[@"semantic", @"diff", @"since"]]
         ) ||
         !IOSUseDOMIsBoolean(arguments[@"raw"]) ||
         !IOSUseDOMIsBoolean(arguments[@"fresh"]) ||
@@ -4125,7 +4132,24 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
     BOOL rawRequested = [arguments[@"raw"] boolValue];
     NSString *rawString = @"";
     NSArray<NSDictionary<NSString *, id> *> *elements = @[];
-    if (rawRequested) {
+    NSString *observation = @"";
+    if (!rawRequested && [arguments[@"semantic"] boolValue]) {
+        NSMutableArray *semantic = [NSMutableArray arrayWithCapacity:snapshot.elements.count];
+        for (IOSUseCleanNode *element in snapshot.elements) {
+            CGRect rect = element.source.rect;
+            [semantic addObject:@{
+                @"label": element.displayLabel ?: @"",
+                @"accessibilityLabel": element.source.accessibilityLabel ?: @"",
+                @"value": element.source.value ?: @"", @"hint": element.source.hint ?: @"",
+                @"traits": element.traits, @"children": @(element.children.count),
+                @"rect": element.source.hasRect ? @[@(rect.origin.x), @(rect.origin.y), @(rect.size.width), @(rect.size.height)] : @[]
+            }];
+        }
+        observation = [IOSUseDOMObservationBridge observe:semantic app:snapshot.application
+            width:snapshot.windowSize.width height:snapshot.windowSize.height
+            diff:[arguments[@"diff"] boolValue] since:arguments[@"since"] ?: @""];
+    } else if (rawRequested) {
+        [IOSUseDOMObservationBridge reset];
         NSMutableString *raw = [NSMutableString string];
         NSUInteger rawBytes = 0;
         for (IOSUseDOMNode *root in snapshot.rawRoots) {
@@ -4163,6 +4187,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
             @"y": @(snapshot.windowSize.height),
         },
         @"raw": rawString,
+        @"observation": observation,
         @"snapshotGeneration": @(snapshot.generation),
         @"elements": elements,
     };

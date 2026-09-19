@@ -239,7 +239,7 @@ enum OpenURLService {
     /// Dispatch the URL, wait for a registered handler when one is known, then
     /// obtain one fresh DOM. This is observation convenience, not proof that the
     /// deep-link destination finished loading.
-    static func openWithDom(url: String, bundleID: String? = nil, session: SessionOptions, paths: IOSUsePaths, postDom: PostDomMode? = nil) throws -> OpenResult {
+    static func openWithDom(url: String, bundleID: String? = nil, session: SessionOptions, paths: IOSUsePaths, postDom: PostDomMode? = nil, detailedDom: Bool = false) throws -> OpenResult {
         let activeDriver = try SessionService.requireDriverLock(paths: paths)
         let targetUdid = try SessionService.resolveTargetUdid(
             explicitUdid: session.udid,
@@ -266,7 +266,7 @@ enum OpenURLService {
             do {
                 let dom: ForyDomPayload
                 if let postDom {
-                    dom = try DriverCommandExecutor.collectPostDom(mode: postDom, paths: paths)
+                    dom = try DriverCommandExecutor.collectPostDom(mode: postDom, paths: paths, detailed: detailedDom)
                 } else {
                     dom = try DriverCommandExecution.withLockedClient(paths: paths, verbose: session.verbose) {
                         try $0.dom(raw: false, fresh: true, waitQuiescence: false)
@@ -311,7 +311,7 @@ enum OpenURLService {
                 )
             }
             if let postDom, readiness.snapshotReady {
-                readiness.dom = try DriverCommandExecutor.collectPostDom(mode: postDom, paths: paths)
+                readiness.dom = try DriverCommandExecutor.collectPostDom(mode: postDom, paths: paths, detailed: detailedDom)
             }
         } catch {
             throw ReadinessError(hostResult: base, underlying: error)

@@ -23,7 +23,8 @@ extension IOSUseCLI {
                         bundleID: options.bundleID,
                         session: options.session,
                         paths: paths,
-                        postDom: options.postDom
+                        postDom: options.postDom,
+                        detailedDom: json
                     )
                     if let dom = result.dom {
                         do { observation = try observer.observe(dom, diff: options.postDom?.diff == true) }
@@ -95,7 +96,8 @@ extension IOSUseCLI {
             ) {
                 return try DriverCommandExecutor.execute(
                     action: action,
-                    paths: paths
+                    paths: paths,
+                    detailedDom: json
                 ) { body in
                     try session.run(body)
                 }
@@ -133,7 +135,8 @@ extension IOSUseCLI {
                 let observer = options.dom || options.postDom != nil ? try DomObservation(paths: paths) : nil
                 let result = try AppLifecycleService.runWithReadiness(
                     options: options,
-                    paths: paths
+                    paths: paths,
+                    detailedDom: json
                 )
                 if let dom = result.dom {
                     do { observation = try observer!.observe(dom, diff: options.postDom?.diff == true) }

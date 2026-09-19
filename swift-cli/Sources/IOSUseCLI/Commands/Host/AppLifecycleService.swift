@@ -90,12 +90,12 @@ enum AppLifecycleService {
     /// Compose a host-side lifecycle mutation with the shared driver
     /// `waitAppForeground` readiness command. Returns L2 by default; with
     /// `--no-wait` it returns at L0 without contacting the driver.
-    static func runWithReadiness(options: AppLifecycleOptions, paths: IOSUsePaths) throws -> Result {
+    static func runWithReadiness(options: AppLifecycleOptions, paths: IOSUsePaths, detailedDom: Bool = false) throws -> Result {
         guard options.action == .activate else {
             if options.postDom != nil { _ = try SessionService.requireDriverLock(paths: paths) }
             var result = try run(options: options, paths: paths)
             if let mode = options.postDom {
-                do { result.dom = try DriverCommandExecutor.collectPostDom(mode: mode, paths: paths) }
+                do { result.dom = try DriverCommandExecutor.collectPostDom(mode: mode, paths: paths, detailed: detailedDom) }
                 catch { throw ReadinessError(hostResult: result, underlying: error) }
             }
             return result
@@ -128,7 +128,7 @@ enum AppLifecycleService {
                 )
             }
             if let mode = options.postDom, readiness.snapshotReady {
-                readiness.dom = try DriverCommandExecutor.collectPostDom(mode: mode, paths: paths)
+                readiness.dom = try DriverCommandExecutor.collectPostDom(mode: mode, paths: paths, detailed: detailedDom)
             }
         } catch {
             throw ReadinessError(hostResult: hostResult, underlying: error)

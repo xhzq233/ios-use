@@ -41,9 +41,12 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   with subsequent changes to verify multiple results; a full DOM is not needed
   just to display those already-observed results together.
 - First diff use, changed App/session/size, or broad changes returns full
-  automatically. Each Device session keeps one history. Leading numbers identify
-  observed nodes, not tap targets. Changes give new values; removed IDs are listed
-  as ranges. Use the latest labels/values and coordinates for actions.
+  automatically. The Driver keeps the last semantic observation across CLI calls.
+  Changes show removed/added rows with parent context and zero-based child position;
+  the position describes tree order, not screen coordinates. Labels remain action targets.
+  Normal DOM omits rectangles. Use `dom --json` for exact current geometry and
+  original label provenance. Layout changes are reported separately and do not
+  imply that semantics changed. A detailed/raw read resets the next diff to full.
 - Verify the result using the action's `-D` output; do not immediately request
   another full DOM unless context is insufficient. Bare `-D` waits for native
   idle; `-D 300ms` uses a fixed delay. Neither an unchanged DOM nor native idle

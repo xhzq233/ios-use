@@ -25,29 +25,40 @@ ios-use tap "Continue" -D
 ios-use input --tap "Search" --content "photos" -D 300ms
 ```
 
-The first observation is full; subsequent output shows added nodes, removed ID
-ranges and updated values, or `DOM unchanged`. Unmentioned nodes keep their last
-observed state. Coordinate-only changes give new `frame.x`, `frame.y`, `frame.w` or `frame.h`
-values without repeating the label or unchanged coordinates. Plain `dom` and `--dom` always return full output and also update the Device's previous observation. Session,
-App or window-size changes reset to full; broad changes may also return full when
-that is shorter. `--raw` clears the previous structured observation. Each Device
-session keeps one observation history under `IOS_USE_HOME`; no extra configuration
-is needed.
+Normal DOM is an indented semantic tree: labels, roles, values, state, hints and
+hierarchy. Existing selector labels are retained, including generated names and
+aliases. `dom --json` returns the detailed tree with rectangles, identifiers,
+original `accessibilityLabel` and `labelSource`; it does not guess provenance
+from a label's spelling.
+
+The first diff observation is full. Later observations show removed/added rows
+with parent context and zero-based child positions, or `DOM semantics unchanged`.
+Positions describe tree order, not visual direction or new tap IDs. Pure geometry
+changes are reported as `Layout changed`; request `dom --json` when exact current
+coordinates are needed. Plain `dom` and `--dom` return full semantics. An App or
+window-size change, lost continuation, restarted Driver, or broad change returns
+full automatically. Raw and detailed reads clear the CLI continuation.
+
+XCTest and Mac Runtime own the last semantic observation in memory, separate
+from their current lookup snapshots. Internal action lookups do not advance or
+clear this history. The CLI stores only a continuation token per Device under
+`IOS_USE_HOME`; no per-agent configuration is needed. Diff reduces observation
+bytes and model output. It still captures a fresh tree after mutations, so it
+does not avoid the native work needed to observe asynchronous UI changes.
 
 Bare `-D` waits for DOM quiescence; `-D 300ms` uses a fixed delay (ms by default,
-minimum 100ms). Neither proves that rendering or asynchronous loading has
-finished. Diff always reads a fresh full tree and leaves element lookup intact;
-it saves output/context, not tree capture work or transport. Observation
-IDs follow matched nodes within this history; they are not native IDs or tap
-targets. Use the latest labels/values and `--cindex` for actions. Matching uses
-unique identifier/label and role anchors across containers; otherwise duplicate
-siblings match in order within a matched parent. All properties and hierarchy
-are still compared.
-With `--json`, diff requests use `mode: full` with `nodes`, or `mode: diff` with
-`added`, `removed` (IDs) and `changed` (new nodes). Each node contains `id`,
-`parent`, sibling `index` and `element`. Apply removals then upsert added/changed
-nodes by ID. Plain full JSON retains `elements` and adds `observationID` to each.
-`open` returns its observation once at `data.dom`; `data.readiness` contains readiness metadata.
+minimum 100ms). Neither unchanged semantics nor quiescence proves that rendering
+or asynchronous loading has finished. Use current labels/values for actions;
+the Driver resolves them against its complete current tree.
+
+`dom --diff --json` returns `mode: full` with `lines`, or `mode: diff` with
+`removed` and `added` edits. Removal offsets refer to the previous semantic lines;
+insertion offsets refer to the resulting lines. Apply removals in descending
+order, then insertions in ascending order. Edits include their line, parent
+context and child position. The result reconstructs the complete ordered semantic
+text; geometry is deliberately separate. Plain `dom --json` retains `elements`.
+`open` returns its observation once at `data.dom`; `data.readiness` holds readiness
+metadata. This experimental protocol requires the matching CLI and Driver/Runtime.
 
 ## Install
 

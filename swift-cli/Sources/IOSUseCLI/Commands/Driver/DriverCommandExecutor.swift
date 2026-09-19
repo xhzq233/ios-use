@@ -35,8 +35,8 @@ enum DriverCommandExecutionError: Error, CustomStringConvertible {
 enum DriverCommandExecutor {
     typealias ClientRunner = ((DriverCommandClient) throws -> DriverCommandPayload?) throws -> DriverCommandPayload?
 
-    static func execute(action: DriverAction, paths: IOSUsePaths, hostDeviceTypeHint: String? = nil, clientRunner: ClientRunner) throws -> DriverCommandResult {
-        let observer = action.observesDom ? try DomObservation(paths: paths) : nil
+    static func execute(action: DriverAction, paths: IOSUsePaths, hostDeviceTypeHint: String? = nil, detailedDom: Bool = false, clientRunner: ClientRunner) throws -> DriverCommandResult {
+        let observer = action.observesDom ? try DomObservation(paths: paths, detailed: detailedDom) : nil
         let startedAt = CFAbsoluteTimeGetCurrent()
         var ok = false
         defer {
@@ -49,7 +49,7 @@ enum DriverCommandExecutor {
         }
         switch action {
         case .dom(let raw, let fresh, let waitQuiescence, let diff):
-            let payload = try requiredPayload(clientRunner { .dom(try $0.dom(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence)) }, as: ForyDomPayload.self)
+            let payload = try requiredPayload(clientRunner { .dom(try $0.observeDOM(observer!.arguments(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence, diff: diff))) }, as: ForyDomPayload.self)
             let observation = try observer!.observe(payload, diff: diff)
             ok = true
             return DriverCommandResult(stdout: observation.text, payload: .dom(payload), observation: observation)
@@ -285,7 +285,7 @@ enum DriverCommandExecutor {
         guard let postDom else { return result }
         let title = postDom.milliseconds.map { "DOM after \($0)ms" } ?? "DOM after quiescence"
         do {
-            let payload = try collectPostDom(mode: postDom, clientRunner: clientRunner)
+            let payload = try collectPostDom(mode: postDom, observer: observer, clientRunner: clientRunner)
             let observation = try observer!.observe(payload, diff: postDom.diff)
             var result = result
             if !result.stdout.hasSuffix("\n") { result.stdout += "\n" }
@@ -298,21 +298,21 @@ enum DriverCommandExecutor {
         }
     }
 
-    static func collectPostDom(mode: PostDomMode, clientRunner: ClientRunner) throws -> ForyDomPayload {
+    static func collectPostDom(mode: PostDomMode, observer: DomObservation? = nil, clientRunner: ClientRunner) throws -> ForyDomPayload {
         if let milliseconds = mode.milliseconds {
             Thread.sleep(forTimeInterval: Double(milliseconds) / 1000)
         }
-        return try postMutationDom(waitQuiescence: mode.milliseconds == nil, clientRunner: clientRunner)
+        return try postMutationDom(args: observer?.arguments(fresh: true, waitQuiescence: mode.milliseconds == nil, diff: mode.diff) ?? ForyDomArgs(fresh: true, waitQuiescence: mode.milliseconds == nil), clientRunner: clientRunner)
     }
 
-    static func collectPostDom(mode: PostDomMode, paths: IOSUsePaths) throws -> ForyDomPayload {
-        try collectPostDom(mode: mode) { body in
+    static func collectPostDom(mode: PostDomMode, paths: IOSUsePaths, detailed: Bool = false) throws -> ForyDomPayload {
+        try collectPostDom(mode: mode, observer: DomObservation(paths: paths, detailed: detailed)) { body in
             try DriverCommandExecution.withLockedClient(paths: paths, body)
         }
     }
 
     private static func postMutationDom(
-        waitQuiescence: Bool,
+        args: ForyDomArgs,
         clientRunner: ClientRunner
     ) throws -> ForyDomPayload {
         let deadline = CFAbsoluteTimeGetCurrent() + IOSUseProtocol.postMutationSnapshotRetrySeconds
@@ -320,7 +320,7 @@ enum DriverCommandExecutor {
             do {
                 return try requiredPayload(
                     clientRunner {
-                        .dom(try $0.dom(raw: false, fresh: true, waitQuiescence: waitQuiescence))
+                        .dom(try $0.observeDOM(args))
                     },
                     as: ForyDomPayload.self
                 )

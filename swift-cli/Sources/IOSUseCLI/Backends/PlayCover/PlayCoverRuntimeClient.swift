@@ -154,6 +154,9 @@ struct PlayCoverRuntimeTarget: Codable, Equatable, Sendable {
 struct PlayCoverRuntimeEmptyArguments: Codable, Equatable, Sendable {}
 
 struct PlayCoverRuntimeDOMArguments: Codable, Equatable, Sendable {
+    var semantic: Bool = false
+    var diff: Bool = false
+    var since: String = ""
     let raw: Bool
     let fresh: Bool
     let waitQuiescence: Bool
@@ -338,6 +341,8 @@ struct PlayCoverRuntimeDOMHierarchy: Codable, Equatable, Sendable {
 }
 
 struct PlayCoverRuntimeDOMElement: Codable, Equatable, Sendable {
+    var accessibilityLabel: String? = nil
+    var labelSource: String? = nil
     let nodeID: String
     let type: String
     let elementType: Int32
@@ -362,6 +367,7 @@ struct PlayCoverRuntimeDOMElement: Codable, Equatable, Sendable {
 }
 
 struct PlayCoverRuntimeDOMPayload: Codable, Equatable, Sendable {
+    var observation: String? = nil
     var windowMode: String? = nil
     var deviceState: PlayCoverRuntimeDeviceState? = nil
     let app: String

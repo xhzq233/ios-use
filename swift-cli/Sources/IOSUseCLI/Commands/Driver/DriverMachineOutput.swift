@@ -236,6 +236,8 @@ func machineDomElement(_ element: ForyDomElement) -> MachineValue {
         "elementType": .integer(Int(element.elementType)),
         "childCount": .integer(Int(element.childCount)),
         "label": .string(element.label),
+        "accessibilityLabel": .string(element.accessibilityLabel),
+        "labelSource": .string(element.labelSource),
         "value": .string(element.value),
         "identifier": .string(element.identifier),
         "hint": .string(element.hint),

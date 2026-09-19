@@ -48,6 +48,7 @@ enum DriverClientError: Error, CustomStringConvertible {
 
 protocol DriverCommandClient: AnyObject {
     func close()
+    func observeDOM(_ args: ForyDomArgs) throws -> ForyDomPayload
     func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool) throws -> ForyWaitForPayload
@@ -135,6 +136,10 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
+    func observeDOM(_ args: ForyDomArgs) throws -> ForyDomPayload {
+        try dom(raw: args.raw, fresh: args.fresh, waitQuiescence: args.waitQuiescence)
+    }
+
     func rotate(orientation: IOSUseDeviceOrientation) throws -> ForyRotatePayload {
         throw CLIParseError.invalidValue("rotate is not supported by this driver client")
     }
@@ -403,6 +408,10 @@ final class DriverClient: DriverCommandClient {
             self.fd = nil
             self.connectionID = nil
         }
+    }
+
+    func observeDOM(_ args: ForyDomArgs) throws -> ForyDomPayload {
+        try send(DomCommand.self, args: args)
     }
 
     func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool = false) throws -> ForyDomPayload {
