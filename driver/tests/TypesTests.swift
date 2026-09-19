@@ -525,6 +525,33 @@ final class TypesTests: XCTestCase {
 
     // MARK: - serializeDomFlat (ForyDomElement)
 
+    func testDetailedDOMAndActionSummaryCarryNativeState() throws {
+        let raw = FakeRawSnapshot(label: "Name", identifier: "name.field", value: "Value",
+                                  elementType: .textField, isSelected: true, hasKeyboardFocus: true)
+        let node = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let elements = [
+            SnapshotElement(node: node, traits: snapshotTraits(for: node, disabled: false, invisible: false),
+                            disabled: false, invisible: false, childCount: 0),
+            SnapshotElement(node: node, traits: snapshotTraits(for: node, disabled: true, invisible: true),
+                            disabled: true, invisible: true, childCount: 0),
+        ]
+        let fory = createFory()
+        let payload = ForyDomPayload(elements: serializeDomFlat(from: elements))
+        let decoded = try fory.deserialize(fory.serialize(payload), as: ForyDomPayload.self)
+        XCTAssertTrue(decoded.elements[0].state.visible)
+        XCTAssertTrue(decoded.elements[0].state.enabled)
+        XCTAssertTrue(decoded.elements[0].state.selected)
+        XCTAssertTrue(decoded.elements[0].state.focused)
+        XCTAssertEqual(decoded.elements[0].elementType, Int32(XCUIElement.ElementType.textField.rawValue))
+        XCTAssertFalse(decoded.elements[1].state.visible)
+        XCTAssertFalse(decoded.elements[1].state.enabled)
+        let summary = makeForyElementSummary(node)
+        XCTAssertTrue(summary.state.visible)
+        XCTAssertTrue(summary.state.enabled)
+        XCTAssertTrue(summary.state.selected)
+        XCTAssertTrue(summary.state.focused)
+    }
+
     func testSerializeDomFlat_SerializesPreorderElements() {
         let root = makeElement(label: "Root", type: .other)
         let child1 = makeElement(label: "Child 1", type: .button)

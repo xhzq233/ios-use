@@ -412,8 +412,14 @@ func makeForyFindMatch(_ elem: SnapshotElement, includeAncestors: Bool = false) 
 
 func makeForyElementSummary(_ node: SafeSnapshot, includeAncestors: Bool = false) -> ForyElementSummary {
     ForyElementSummary(
+        type: elementTypeName(XCUIElement.ElementType(rawValue: UInt(node.elementType)) ?? .other),
         elemType: Int32(truncatingIfNeeded: node.elementType),
         label: displayName(for: node) ?? "",
+        value: displayValue(for: node) ?? "",
+        identifier: node.identifier ?? "",
+        traits: snapshotTraits(for: node, disabled: !node.isEnabled, invisible: !node.isVisible),
+        state: ForyElementState(enabled: node.isEnabled, visible: node.isVisible,
+                                selected: node.isSelected, focused: node.hasFocus || node.hasKeyboardFocus),
         rect: makeForyRect(node.frame),
         ancestors: includeAncestors ? ancestorChainNames(node) : []
     )

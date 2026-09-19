@@ -85,6 +85,10 @@ func serializeDomFlat(from elements: [SnapshotElement]) -> [ForyDomElement] {
         let node = element.node
         var fEl = ForyDomElement()
         fEl.traits = element.traits
+        fEl.elementType = Int32(truncatingIfNeeded: node.elementType)
+        fEl.type = element.traits.first ?? ""
+        fEl.state = ForyElementState(enabled: !element.disabled, visible: !element.invisible,
+                                    selected: node.isSelected, focused: node.hasFocus || node.hasKeyboardFocus)
         fEl.childCount = Int32(element.childCount)
         if let l = displayName(for: node), !l.isEmpty { fEl.label = l }
         if let value = displayValue(for: node) { fEl.value = value }

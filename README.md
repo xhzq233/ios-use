@@ -44,8 +44,8 @@ full automatically. Raw and detailed reads clear the CLI continuation.
 XCTest and Mac Runtime own the last semantic observation in memory, separate
 from their current lookup snapshots. Internal action lookups do not advance or
 clear this history. The CLI stores only a continuation token per Device under
-`IOS_USE_HOME`; no per-agent configuration is needed. Diff reduces observation
-bytes and model output. It still captures a fresh tree after mutations, so it
+`IOS_USE_HOME`; no per-agent configuration is needed. Diff avoids repeating
+unchanged semantic rows. It still captures a fresh tree after mutations, so it
 does not avoid the native work needed to observe asynchronous UI changes.
 
 Bare `-D` / `--dom` waits briefly for DOM quiescence; `-D 300ms` uses a fixed delay (ms by default,
