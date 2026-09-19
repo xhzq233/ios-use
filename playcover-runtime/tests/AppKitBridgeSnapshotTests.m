@@ -7,6 +7,9 @@
 #import <stdint.h>
 #import <unistd.h>
 
+// This executable links the bridge without the Runtime socket/service loop.
+BOOL IOSUsePlayRuntimePublishUIReadiness(void) { return YES; }
+
 typedef CFArrayRef _Nullable
     (*IOSUseBridgeTestCopyWindowInfo)(
         CGWindowListOption,

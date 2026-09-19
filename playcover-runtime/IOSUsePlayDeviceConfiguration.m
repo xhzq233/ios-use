@@ -3,8 +3,8 @@
 #import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayDeviceChrome.h"
 #import "IOSUsePlayAppKitBridge.h"
+#import "IOSUsePlayRuntimeSocket.h"
 #import <UIKit/UIKit.h>
-#import <objc/message.h>
 
 NSDictionary *IOSUsePlayDeviceState(void) {
     NSString *variant = @(IOSUsePlayDeviceCurrent()->name);
@@ -27,6 +27,8 @@ NSDictionary *IOSUsePlayDeviceState(void) {
 
 static void updateTraits(UIView *view) {
     if (@available(iOS 17.0, *)) {
+        // Override the environment, not UITraitCollection getters: retained
+        // previous collections must keep their old idiom after model changes.
         id<UITraitOverrides> traits = view.traitOverrides;
         // Reading an unset UITraitOverrides value raises an exception. Setters
         // already coalesce unchanged overrides; do not use it as a collection.
@@ -58,7 +60,7 @@ static NSDictionary *invalidConfiguration(NSError **error) {
     return nil;
 }
 
-NSDictionary *IOSUsePlayConfigureDevice(NSDictionary *changes, NSError **error) {
+static NSDictionary *applyDeviceConfiguration(NSDictionary *changes, NSError **error) {
     NSCParameterAssert(NSThread.isMainThread);
     NSMutableDictionary *selection = [IOSUsePlayDeviceState() mutableCopy];
     NSSet *keys = [NSSet setWithArray:@[@"preset", @"expanded", @"orientation", @"physicalOrientation", @"chrome", @"windowMode"]];
@@ -83,9 +85,8 @@ NSDictionary *IOSUsePlayConfigureDevice(NSDictionary *changes, NSError **error) 
             @"Rotate requires a fixed device canvas. Use config --mac --window-mode fixed first."}];
         return nil;
     }
-    BOOL foldChanged = [selection[@"preset"] isEqual:@"iphone-duo"] && changes[@"expanded"] &&
-        [selection[@"expanded"] boolValue] != [IOSUsePlayDeviceState()[@"expanded"] boolValue];
-    if (changes[@"physicalOrientation"] || (foldChanged && !changes[@"orientation"])) {
+    if (changes[@"physicalOrientation"] ||
+        ((changes[@"preset"] || changes[@"expanded"]) && !changes[@"orientation"])) {
         int physicalTurns = IOSUsePlayDevicePhysicalQuarterTurns();
         if (changes[@"physicalOrientation"]) {
             for (int i = 0; i < 4; i++)
@@ -94,23 +95,103 @@ NSDictionary *IOSUsePlayConfigureDevice(NSDictionary *changes, NSError **error) 
         BOOL inner = [selection[@"preset"] isEqual:@"iphone-duo"] && [selection[@"expanded"] boolValue];
         selection[@"orientation"] = @(IOSUsePlayDeviceInterfaceName((physicalTurns + (inner ? 1 : 0)) % 4));
     }
-    [IOSUsePlayAppKitBridge prepareDeviceConfiguration];
     setenv("IOS_USE_MAC_DEVICE", [selection[@"preset"] UTF8String], 1);
     setenv("IOS_USE_MAC_EXPANDED", [selection[@"expanded"] boolValue] ? "1" : "0", 1);
     setenv("IOS_USE_MAC_ORIENTATION", [selection[@"orientation"] UTF8String], 1);
     setenv("IOS_USE_MAC_CHROME", [selection[@"chrome"] UTF8String], 1);
     setenv("IOS_USE_MAC_WINDOW_MODE", [selection[@"windowMode"] UTF8String], 1);
     IOSUsePlayDeviceChromeReset();
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if (![scene isKindOfClass:UIWindowScene.class]) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            IOSUsePlayRefreshDeviceTraits(window);
-            [window setNeedsLayout];
-            SEL invalidate = NSSelectorFromString(@"_sceneSettingsSafeAreaInsetsDidChange");
-            if ([window respondsToSelector:invalidate]) ((void (*)(id, SEL))objc_msgSend)(window, invalidate);
+    // Ask Catalyst for the native size transition. Trait/safe-area propagation
+    // must wait for that geometry; even unforced overrides can flush too early.
+    [IOSUsePlayAppKitBridge configureFixedWindow:NULL];
+    return IOSUsePlayDeviceState();
+}
+
+@interface IOSUsePlayDeviceTransition : NSObject
+@property(nonatomic, copy) void (^completion)(NSDictionary *, NSError *);
+@property(nonatomic, strong) UIWindow *window;
+@property(nonatomic) NSTimeInterval deadline;
+@property(nonatomic) int previousOrientation;
+@property(nonatomic) BOOL traitsApplied;
+- (void)check;
+@end
+
+static IOSUsePlayDeviceTransition *activeTransition;
+
+BOOL IOSUsePlayDeviceConfigurationInProgress(void) {
+    NSCParameterAssert(NSThread.isMainThread);
+    return activeTransition != nil;
+}
+
+void IOSUsePlayDeviceGeometryWillLayout(UIWindow *window) {
+    if (!activeTransition || activeTransition.traitsApplied || activeTransition.window != window) return;
+    CGSize target = CGSizeMake(IOSUsePlayDeviceLogicalWidth, IOSUsePlayDeviceLogicalHeight);
+    if (!IOSUsePlayCanvasIsResizable() && !CGSizeEqualToSize(window.bounds.size, target)) return;
+    activeTransition.traitsApplied = YES;
+    IOSUsePlayRefreshDeviceTraits(window);
+}
+
+@implementation IOSUsePlayDeviceTransition
+- (void)finish:(NSError *)error {
+    activeTransition = nil;
+    [IOSUsePlayAppKitBridge finishDeviceConfiguration];
+    IOSUsePlayDeviceChromeSetConfigurationPending(NO);
+    IOSUsePlayRuntimePublishUIReadiness();
+    self.completion(error ? nil : IOSUsePlayDeviceState(), error);
+}
+
+- (void)check {
+    // UIKit clears the active coordinator after native completion callbacks.
+    // Also inspect presented controllers, whose transition can outlive the root.
+    BOOL transitioning = NO;
+    for (UIViewController *vc = self.window.rootViewController; vc; vc = vc.presentedViewController) {
+        transitioning |= vc.transitionCoordinator != nil;
+    }
+    BOOL ready = [IOSUsePlayAppKitBridge configureFixedWindow:NULL];
+    if (ready && !transitioning) {
+        // Geometry-only changes (including folding and replacing a model) keep
+        // the physical pose. A device notification is not a resize callback.
+        if (self.previousOrientation != IOSUsePlayDevicePhysicalOrientation()) {
+            self.previousOrientation = IOSUsePlayDevicePhysicalOrientation();
+            [NSNotificationCenter.defaultCenter postNotificationName:UIDeviceOrientationDidChangeNotification object:UIDevice.currentDevice];
+            // Let notification-driven App layout run before reporting done.
+            dispatch_async(dispatch_get_main_queue(), ^{ [self check]; });
+            return;
+        }
+        BOOL uiReady = IOSUsePlayRuntimePublishUIReadiness();
+        if (uiReady) {
+            [self finish:nil];
+            return;
         }
     }
-    [IOSUsePlayAppKitBridge configureFixedWindow:NULL];
-    [NSNotificationCenter.defaultCenter postNotificationName:UIDeviceOrientationDidChangeNotification object:UIDevice.currentDevice];
-    return IOSUsePlayDeviceState();
+    if (NSProcessInfo.processInfo.systemUptime >= self.deadline) {
+        [self finish:[NSError errorWithDomain:@"io.ios-use.device" code:4 userInfo:@{NSLocalizedDescriptionKey:
+            @"Device selection changed, but the App's native size transition has not completed"}]];
+        return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ [self check]; });
+}
+@end
+
+void IOSUsePlayConfigureDevice(NSDictionary *changes, void (^completion)(NSDictionary *, NSError *)) {
+    NSCParameterAssert(NSThread.isMainThread);
+    if (activeTransition) {
+        completion(nil, [NSError errorWithDomain:@"io.ios-use.device" code:3 userInfo:@{NSLocalizedDescriptionKey:
+            @"A Mac device transition is still in progress; retry after it completes"}]);
+        return;
+    }
+    IOSUsePlayDeviceTransition *transition = [IOSUsePlayDeviceTransition new];
+    transition.completion = completion;
+    transition.previousOrientation = IOSUsePlayDevicePhysicalOrientation();
+    transition.window = [IOSUsePlayAppKitBridge prepareDeviceConfiguration];
+    transition.deadline = NSProcessInfo.processInfo.systemUptime + 5;
+    activeTransition = transition;
+    IOSUsePlayDeviceChromeSetConfigurationPending(YES);
+    NSError *error = nil;
+    if (!applyDeviceConfiguration(changes, &error)) {
+        [transition finish:error];
+        return;
+    }
+    IOSUsePlayRuntimePublishUIReadiness();
+    dispatch_async(dispatch_get_main_queue(), ^{ [transition check]; });
 }

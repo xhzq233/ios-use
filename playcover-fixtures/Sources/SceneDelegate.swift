@@ -53,7 +53,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     private func replaceWindow(in windowScene: UIWindowScene) {
         generation += 1
         let oldWindow = window
-        let replacement = UIWindow(windowScene: windowScene)
+        let replacement = LifecycleWindow(windowScene: windowScene)
         // Publish the same delegate-window path used by Apps that synchronously
         // read safe area during root viewDidLoad. The replacement must be
         // discoverable before assigning/presenting its root controller.
@@ -67,7 +67,35 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         oldWindow?.isHidden = true
     }
 
+    func windowScene(_ windowScene: UIWindowScene, didUpdate previousCoordinateSpace: UICoordinateSpace,
+                     interfaceOrientation previousInterfaceOrientation: UIInterfaceOrientation,
+                     traitCollection previousTraitCollection: UITraitCollection) {
+        LifecycleTrace.record("scene.updated", extra: [
+            "previousScene": [previousCoordinateSpace.bounds.width, previousCoordinateSpace.bounds.height]
+        ])
+    }
+
     private func postURL(_ url: URL) {
+        if url.host == "lifecycle" {
+            if url.path == "/reset" { LifecycleTrace.reset() }
+            if url.path == "/finish" { LifecycleTrace.finish() }
+            #if targetEnvironment(macCatalyst)
+            if url.path == "/resize", let scene = window?.windowScene,
+               let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                let values = components.queryItems ?? []
+                let width = Double(values.first { $0.name == "width" }?.value ?? "") ?? 800
+                let height = Double(values.first { $0.name == "height" }?.value ?? "") ?? 750
+                if #available(macCatalyst 16.0, *) {
+                    var frame = scene.effectiveGeometry.systemFrame
+                    frame.size = CGSize(width: width, height: height)
+                    scene.requestGeometryUpdate(.Mac(systemFrame: frame)) { error in
+                        LifecycleTrace.record("resize.error", extra: ["message": error.localizedDescription])
+                    }
+                }
+            }
+            #endif
+            return
+        }
         NotificationCenter.default.post(
             name: .fixtureOpenURL,
             object: url.absoluteString

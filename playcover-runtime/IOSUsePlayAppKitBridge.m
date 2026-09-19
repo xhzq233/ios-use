@@ -2349,8 +2349,13 @@ static CGSize IOSUsePlayObservedCanvas;
     }
 }
 
-+ (void)prepareDeviceConfiguration {
++ (UIWindow *)prepareDeviceConfiguration {
     IOSUsePlayDeviceSwitchWindow = IOSUseBridgeAutomationUIKitWindow() ?: IOSUseBridgeKeyUIKitWindow();
+    return IOSUsePlayDeviceSwitchWindow;
+}
+
++ (void)finishDeviceConfiguration {
+    IOSUsePlayDeviceSwitchWindow = nil;
 }
 
 + (BOOL)configureFixedWindow:(NSError **)error {
@@ -2363,9 +2368,6 @@ static CGSize IOSUsePlayObservedCanvas;
     if (uiWindow.bounds.size.width > 0 && uiWindow.bounds.size.height > 0) {
         @synchronized(self) { IOSUsePlayObservedCanvas = uiWindow.bounds.size; }
     }
-    NSError *safeAreaError = nil;
-    BOOL safeAreaReconciled =
-        IOSUsePlaySafeAreaCompatibilityReconcile(&safeAreaError);
     if (uiWindow == nil || window == nil) {
         IOSUsePlayWindowStatus = @"waiting-for-window";
         IOSUsePlayWindowFailure =
@@ -2419,6 +2421,11 @@ static CGSize IOSUsePlayObservedCanvas;
     }
     IOSUseBridgeLayoutIfNeeded(IOSUsePlayHostContentView);
     IOSUsePlayRefreshDeviceTraits(uiWindow);
+    // Reconciliation invalidates safe areas and lays out the root. Only do it
+    // after Catalyst has delivered the requested UIWindow size, never while
+    // size restrictions are still pending at the previous geometry.
+    NSError *safeAreaError = nil;
+    BOOL safeAreaReconciled = IOSUsePlaySafeAreaCompatibilityReconcile(&safeAreaError);
     // Catalyst can create its full-scene text overlay with portrait dimensions
     // on a landscape launch. Keep it aligned with the actual App canvas, just
     // as the main native window is reconciled after a model/orientation change.
@@ -2534,7 +2541,7 @@ static CGSize IOSUsePlayObservedCanvas;
             NSLocalizedDescriptionKey: IOSUsePlayWindowFailure,
         }];
     }
-    if (exact) IOSUsePlayDeviceSwitchWindow = nil;
+    if (exact && !IOSUsePlayDeviceConfigurationInProgress()) IOSUsePlayDeviceSwitchWindow = nil;
     return exact;
 }
 

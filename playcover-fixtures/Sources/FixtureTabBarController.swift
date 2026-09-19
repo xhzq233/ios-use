@@ -89,7 +89,28 @@ final class FixtureTabBarController: UITabBarController {
         )
     }
 
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        LifecycleTrace.transition(self, to: size, coordinator: coordinator)
+        super.viewWillTransition(to: size, with: coordinator)
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        LifecycleTrace.record("traits.changed", controller: self)
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        LifecycleTrace.record("safeArea.changed", controller: self)
+    }
+
+    override func viewWillLayoutSubviews() {
+        LifecycleTrace.record("layout.will", controller: self)
+        super.viewWillLayoutSubviews()
+    }
+
     override func viewDidLayoutSubviews() {
+        LifecycleTrace.record("layout.did", controller: self)
         super.viewDidLayoutSubviews()
         for probe in fullScreenBottomProbes {
             view.bringSubviewToFront(probe)
@@ -335,6 +356,31 @@ final class UIKitFixtureViewController:
     UIViewController,
     UIScrollViewDelegate
 {
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        LifecycleTrace.transition(self, to: size, coordinator: coordinator)
+        super.viewWillTransition(to: size, with: coordinator)
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        LifecycleTrace.record("traits.changed", controller: self)
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        LifecycleTrace.record("safeArea.changed", controller: self)
+    }
+
+    override func viewWillLayoutSubviews() {
+        LifecycleTrace.record("layout.will", controller: self)
+        super.viewWillLayoutSubviews()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        LifecycleTrace.record("layout.did", controller: self)
+    }
+
     let firstReadHeaderLabel = UILabel()
     private let countLabel = UILabel()
     private let incrementButton = UIButton(type: .system)
@@ -1086,6 +1132,7 @@ final class UIKitFixtureViewController:
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        LifecycleTrace.record("scroll.changed", controller: self)
         let value = Int(scrollView.contentOffset.y.rounded())
         scrollStatusLabel.text = "Scroll y \(value)"
         scrollStatusLabel.accessibilityValue = String(value)

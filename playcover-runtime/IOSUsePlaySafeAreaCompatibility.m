@@ -1,5 +1,6 @@
 #import "IOSUsePlaySafeAreaCompatibility.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayDeviceConfiguration.h"
 #import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayHookRegistry.h"
 
@@ -509,6 +510,9 @@ static UIEdgeInsets IOSUsePlaySafeAreaProviderHook(
     SEL selector,
     BOOL includeStatusBar
 ) {
+    // The native window has its new bounds before UIKit asks for its scene
+    // insets. Stage the matching traits in this same pass, before App layout.
+    IOSUsePlayDeviceGeometryWillLayout(window);
     UIEdgeInsets original = UIEdgeInsetsZero;
     if (IOSUsePlaySafeAreaOriginalProvider != NULL) {
         original = IOSUsePlaySafeAreaOriginalProvider(

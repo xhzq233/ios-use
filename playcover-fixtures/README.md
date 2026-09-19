@@ -100,6 +100,32 @@ logical 430x932 scale 3 native 1290x2796
 The fixture pins light appearance so reference surfaces do not change with the
 macOS automatic day/night appearance.
 
+For live resizing, `LifecycleTrace` records actual controller transitions and
+coordinator completions, trait/safe-area/layout callbacks, retained previous
+traits, scene and window geometry, and scroll state. Recording is opt-in and does not synthesize UIKit
+callbacks. With the current Fixture running in an isolated Home:
+
+```bash
+IOS_USE_HOME=/path/to/isolated-fixture-home \
+  python3 playcover-fixtures/exercise_resize_lifecycle.py \
+  --output /path/to/local-callback-traces
+```
+
+This exercises CLI and native toolbar actions, rapid repeated input, folding,
+model changes, a scrolled view, focused text input and a presented controller.
+It checks the observed callback ordering and geometry, and leaves the session
+available for inspection. Traces use only generic Fixture content.
+
+For an independent host reference, build this same Fixture for Mac Catalyst
+without injecting the Runtime. The URL routes `iosusefixture://lifecycle/reset`
+and `iosusefixture://lifecycle/finish` bracket recording; finish writes
+`Documents/lifecycle.json`. Resize its ordinary native window between them.
+`iosusefixture://lifecycle/resize?width=800&height=750` also requests a native
+system frame using the runtime-available Catalyst scene API. Native constraints
+can adjust that request; the trace records actual sizes and each transition.
+The same reset/finish routes can bracket Simulator resizing as a separate
+platform reference.
+
 At launch it writes one session-specific marker to stdout and another to
 stderr. A session started with `start --mac --app <fixture.app> --log` must expose both
 markers in the printed owner-only log while the App is still running, and the

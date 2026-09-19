@@ -19,7 +19,9 @@ FOUNDATION_EXPORT void IOSUsePlayRuntimeSetUIReadiness(
     NSString * _Nullable failure
 );
 
-FOUNDATION_EXPORT void IOSUsePlayRuntimePublishUIReadiness(void);
+// Returns underlying surface readiness. Public UI remains initializing while
+// the common device transition is pending.
+FOUNDATION_EXPORT BOOL IOSUsePlayRuntimePublishUIReadiness(void);
 
 /// Returns nil when a UIKit command may execute. Call this on the main
 /// thread immediately before reading or mutating UIKit state so a scene

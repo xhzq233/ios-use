@@ -1,6 +1,8 @@
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 
+@class UIWindow;
+
 NS_ASSUME_NONNULL_BEGIN
 
 /// AppKit is reached dynamically because this code is built as one Catalyst
@@ -9,7 +11,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (void)captureSceneBackingLaunchEnvironment;
 + (void)scheduleFixedWindowConfiguration;
-+ (void)prepareDeviceConfiguration;
++ (UIWindow * _Nullable)prepareDeviceConfiguration;
++ (void)finishDeviceConfiguration;
 + (BOOL)configureFixedWindow:(NSError * _Nullable * _Nullable)error;
 + (NSInteger)screenCount;
 + (CGPoint)mousePoint;
