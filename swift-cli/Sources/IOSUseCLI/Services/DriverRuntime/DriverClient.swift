@@ -66,14 +66,14 @@ protocol DriverCommandClient: AnyObject {
         traits: String?,
         cindex: Int32?
     ) throws -> ForyElementPayload
-    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload
+    func swipe(to: ForyTarget, from: ForyTarget, find: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload
     func activateApp(bundleId: String) throws
     func terminateApp(bundleId: String) throws
     func home() throws
     func rotate(orientation: IOSUseDeviceOrientation) throws -> ForyRotatePayload
     func dismissAlert(args: ForyDismissAlertArgs) throws -> ForyAlertPayload
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
-    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
+    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool, waitForSnapshot: Bool) throws -> ForyWaitAppForegroundPayload
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload
 }
@@ -170,16 +170,16 @@ extension DriverCommandClient {
         throw CLIParseError.invalidValue("media import is not supported by this driver client")
     }
 
-    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
+    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool, waitForSnapshot: Bool = true) throws -> ForyWaitAppForegroundPayload {
         throw CLIParseError.invalidValue("waitAppForeground is not supported by this driver client")
     }
 
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
         switch acceptedBundleIds.count {
         case 0:
-            return try waitAppForeground(expectedBundleId: "", timeout: timeout, returnDom: returnDom)
+            return try waitAppForeground(expectedBundleId: "", timeout: timeout, returnDom: returnDom, waitForSnapshot: true)
         case 1:
-            return try waitAppForeground(expectedBundleId: acceptedBundleIds[0], timeout: timeout, returnDom: returnDom)
+            return try waitAppForeground(expectedBundleId: acceptedBundleIds[0], timeout: timeout, returnDom: returnDom, waitForSnapshot: true)
         default:
             throw CLIParseError.invalidValue("this driver client does not support multiple accepted foreground apps")
         }
@@ -532,7 +532,7 @@ final class DriverClient: DriverCommandClient {
         )
     }
 
-    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32? = nil) throws -> ForySwipePayload {
+    func swipe(to: ForyTarget, from: ForyTarget, find: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32? = nil) throws -> ForySwipePayload {
         let dirValue: Int32
         switch dir {
         case "forth": dirValue = IOSUseProtocol.XCConstants.swipeDirectionForth
@@ -540,8 +540,9 @@ final class DriverClient: DriverCommandClient {
         default: dirValue = IOSUseProtocol.XCConstants.swipeDirectionUnspecified
         }
         let args = ForySwipeArgs(
-            toTarget: to.withLookup(traits: traits, cindex: cindex),
+            toTarget: to.label.isEmpty ? to : to.withLookup(traits: traits, cindex: cindex),
             fromTarget: from,
+            findTarget: find.label.isEmpty ? find : find.withLookup(traits: traits, cindex: cindex),
             distance: distance ?? 0,
             dir: dirValue
         )
@@ -625,11 +626,12 @@ final class DriverClient: DriverCommandClient {
         try send(ProxyCAPushCommand.self, args: ForyProxyCAPushArgs(caBase64: caBase64))
     }
 
-    func waitAppForeground(expectedBundleId: String, timeout: Double = 0, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
+    func waitAppForeground(expectedBundleId: String, timeout: Double = 0, returnDom: Bool, waitForSnapshot: Bool = true) throws -> ForyWaitAppForegroundPayload {
         let args = ForyWaitAppForegroundArgs(
             expectedBundleId: expectedBundleId,
             timeout: timeout,
-            returnDom: returnDom
+            returnDom: returnDom,
+            waitForSnapshot: waitForSnapshot
         )
         return try waitAppForeground(args: args, timeout: timeout)
     }

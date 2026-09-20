@@ -299,6 +299,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
     func swipe(
         to: ForyTarget,
         from: ForyTarget,
+        find: ForyTarget,
         distance: Double?,
         dir: String?,
         traits: String?,
@@ -325,6 +326,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
                             traits: traits,
                             cindex: cindex
                         ),
+                    findTarget: isEmptyTarget(find) ? nil : mapTarget(find, traits: traits, cindex: cindex),
                     fromTarget: isEmptyTarget(from)
                         ? nil
                         : mapTarget(
@@ -342,6 +344,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
                     ForySwipeArgs(
                         toTarget: to,
                         fromTarget: from,
+                        findTarget: find,
                         distance: distance ?? 0,
                         dir: direction
                     )
@@ -527,7 +530,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
     func waitAppForeground(
         expectedBundleId: String,
         timeout: Double,
-        returnDom: Bool
+        returnDom: Bool,
+        waitForSnapshot: Bool = true
     ) throws -> ForyWaitAppForegroundPayload {
         throw PlayCoverDriverClientError
             .lifecycleCommandUnsupported("waitAppForeground")

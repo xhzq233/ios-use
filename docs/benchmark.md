@@ -1,78 +1,41 @@
 # Benchmark
 
-This benchmark compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same real-device Settings scenario. Lower latency is better.
+2026-09-20 · Release `aca8dc0b`, with activation remeasured after the foreground-only follow-up. Each measurement uses matching CLI and Driver/Runtime. Mean / median CLI wall time in ms; setup and verification are outside the timer. DOM: 20 runs, other commands: 6, session start/stop: 3. WDA reuses the May 30 measurements.
 
-## Setup
+| Operation | USB mean / median | May ios-use mean | WDA mean | Mac mean / median |
+| --- | ---: | ---: | ---: | ---: |
+| Start session | 2,087.8 / 2,100.2 | 1,954.8 | 10,753.6 | 1,834.4 / 1,840.6 |
+| Full DOM | 241.5 / 245.0 | 20.7 (cached) | 965.7 | 28.1 / 26.7 |
+| Unchanged DOM | 253.0 / 252.2 | — | — | 29.6 / 30.2 |
+| Wait for present element | 194.1 / 196.7 | 14.0 | 308.7 | 35.4 / 29.8 |
+| Wait timeout (2s) | 2,208.3 / 2,252.3 | 2,270.2 | 2,365.2 | 2,051.0 / 2,052.0 |
+| Screenshot (no OCR) | 71.1 / 74.8 | 81.2 | 179.0 | 85.5 / 76.4 |
+| Coordinate tap | 367.5 / 363.1 | 424.6 | 556.3 | 90.6 / 91.2 |
+| Label tap | 598.6 / 596.7 | 413.2 | 1,076.3 | 107.6 / 108.5 |
+| Tap with offset ratio | 585.2 / 586.9 | 415.0 | 947.8 | 102.9 / 101.9 |
+| Long press (500ms) | 786.0 / 784.8 | 828.7 | 1,038.8 | 569.5 / 569.8 |
+| Input two characters | 957.3 / 957.2 | 1,630.5 | 1,717.6 | 172.1 / 165.1 |
+| Scroll 200 pt | 2,013.3 / 2,029.4 | 2,170.6 | 2,620.3 | 445.7 / 445.5 |
+| Scroll 150 pt in the selected list | — | — | — | 451.3 / 451.0 |
+| Find offscreen row | 9,471.5 / 9,463.0 | 10,799.2 | 17,050.9 | 270.7 / 270.5 |
+| Find already-visible row | 293.5 / 289.3 | — | — | 35.1 / 34.2 |
+| Coordinate drag | 1,505.8 / 1,283.6 | — | — | 446.6 / 446.0 |
+| Label-to-label drag | 1,244.6 / 1,252.3 | — | — | 446.0 / 446.1 |
+| Activate App | 249.4 / 253.0 | 78.6 | 1,446.7 | — |
+| Terminate App | 260.5 / 253.5 | 1,195.1 | 1,144.0 | — |
+| Stop Mac session | — | — | — | 1,251.3 / 1,246.8 |
 
-- App: `com.apple.Preferences`
-- Device: real iPhone over USB/usbmuxd
-- ios-use side: Swift CLI + custom XCTest TCP driver
-- Baseline side: Appium Server + WebDriverAgent
-- Iterations: `3` for command cases, `1` for cold `start_session`
-- Report date: 2026-05-30
-- Result: both sides completed 17 cases with 0 failures
+- USB: iPhone18,3, iOS 26.5.1, Settings. Mac: macOS 15.7.7 arm64, UIKit Fixture, iPhone 13 layout. They are separate workloads; WDA is the USB comparison.
+- DOM captures a fresh tree on every call. Full/diff alternate on a stable page after two warmups; all diff observations were unchanged. The old 20.7 ms cache-hit result is not a full recapture.
+- USB startup launches a stopped XCTest Driver after a 30-second settle. Mac startup launches an already-prepared Fixture; installation/signing are excluded. Mac App lifecycle uses `start/stop`, so `activateApp/terminateApp` are unsupported.
+- Coordinate tap and long press use an inert area on USB, as in the May workload. Semantic taps open Bluetooth; input inserts “蓝牙” into an empty Settings search field. Mac actions are verified using selected rows, long-press callbacks and edited text. Screenshot files were decoded and visually checked. Timeout is the expected result for the 2-second missing-element case.
+- `activateApp` now confirms foreground without capturing a snapshot. A same-device follow-up (six cold launches per mode/version) measured 517.1 → 249.4 ms mean; medians 516.5 → 253.0 ms. With `-D`, mean was 817.9 → 575.0 ms and median 683.0 → 578.5 ms. The old `-D` mean includes a retained 1528 ms sample. May activation measured less readiness work, so it is not an equivalent completion condition.
+- Cold-launch finding: 11/12 initial semantic taps hit the wrong row while Settings restored its list position. The warm-page rerun waits one second during preparation and passed 12/12. The table uses that complete rerun; the original failures are retained separately and are not claimed as fixed in the product.
+- All reported prepared-page samples passed their checks: USB 63/63 and Mac 54/54 in this completion run, in addition to the separately measured DOM and swipe samples. No slow samples were dropped. One earlier 2754 ms USB coordinate drag remains in its mean.
 
-The benchmark runner only measures. It does not build, sign, install, or run `config`; prepare the device and driver outside the benchmark first.
+Run the USB suite after configuring a matching Driver:
 
 ```bash
-# ios-use
-node scripts/benchmark.js --bench ios-use \
-  --udid <device-udid> \
-  --driver-ipa .ios-use/driver.ipa \
-  --preset full \
-  --iterations 3
-
-# Appium/WDA
-node scripts/benchmark.js --bench wda \
-  --udid <device-udid> \
-  --wda-bundle-id <wda-runner-bundle-id> \
-  --preset full \
-  --iterations 3
+node scripts/benchmark.js --bench ios-use --udid <udid> \
+  --driver-ipa <matching-driver.ipa> --preset full --iterations 6
 ```
-
-The two benches run separately and write separate JSON reports. Compare them by matching the same case id.
-
-## Results
-
-| Case | ios-use Avg (ms) | Appium+WDA Avg (ms) | Reduction |
-| --- | ---: | ---: | ---: |
-| `start_session` | 1954.8 | 10753.6 | 81.8% |
-| `dom_cached` | 20.7 | 965.7 | 97.9% |
-| `wait_for_present` | 14.0 | 308.7 | 95.5% |
-| `wait_for_timeout_2000ms` | 2270.2 | 2365.2 | 4.0% |
-| `screenshot` | 81.2 | 179.0 | 54.6% |
-| `tap_coord` | 424.6 | 556.3 | 23.7% |
-| `tap_label` | 413.2 | 1076.3 | 61.6% |
-| `tap_offset_ratio` | 415.0 | 947.8 | 56.2% |
-| `longpress_coord` | 828.7 | 1038.8 | 20.2% |
-| `input` | 1630.5 | 1717.6 | 5.1% |
-| `scroll_distance_semantic` | 2170.6 | 2620.3 | 17.2% |
-| `scroll_to_visible` | 10799.2 | 17050.9 | 36.7% |
-| `activate_app` | 78.6 | 1446.7 | 94.6% |
-| `terminate_app` | 1195.1 | 1144.0 | -4.5% |
-
-## Case Notes
-
-- `dom_cached` and `wait_for_present` represent the tight AI loop: observe the UI and wait for visible state.
-- `wait_for_timeout_2000ms` is intentionally dominated by a 2-second timeout on both sides.
-- `screenshot` compares pixel capture only: ios-use runs `screenshot --no-ocr`, so host-side Vision OCR is excluded from both sides.
-- `tap_label` and `tap_offset_ratio` are semantic actions: ios-use performs label lookup plus action in one CLI command; the WDA side performs the equivalent find/frame/action sequence.
-- `scroll_to_visible` is an end-to-end workflow case, not a raw gesture primitive.
-- `activate_app` and `terminate_app` are measured as app lifecycle commands after prepare puts the app in the expected state.
-- `terminate_app` is roughly parity in this run, with WDA slightly faster.
-
-The former `find_*` benchmark cases were removed with the public `find` command; use `waitFor` for read-side existence checks and action commands for semantic targeting. Numbers vary by device, iOS version, app state, and whether the target page is already warm. The stable shape is that read-heavy agent operations and semantic actions avoid most of the Appium/WDA HTTP stack overhead.
-
-## Screenshot Backend Probe (2026-07-14)
-
-A focused real-device probe compared the available screenshot paths over one already-open CoreDevice tunnel:
-
-| Path | Warm latency | Result |
-| --- | ---: | --- |
-| XCTest driver `XCRequestScreenshotJPEG` | 28–32 ms | Fastest available path in this run |
-| Instruments screenshot DTX service | 68–74 ms | First request was 208 ms; warm requests remained slower |
-| CoreDevice physical-device screenshot action | N/A | No screenshot service was advertised by Remote Service Discovery |
-
-The direct CoreDevice design would remove the host-to-driver command and the driver's XCTest screenshot request layer, but it would still cross a RemoteXPC/system screenshot service boundary. On the tested iOS 26.5.1 device no physical-device screenshot service was advertised. The installed CoreDevice framework only exposed an Apple-internal `SnapshotFetchScreenshotsAction` whose API targets virtual machines. The DTX alternative added protocol overhead and was slower, so the production command keeps XCTest JPEG capture.
-
-CoreDevice Display Info is queried in parallel for every real-device screenshot. Reusing the holder's tunnel while opening the service's one-request RemoteXPC connection took about 14–20 ms warm. It stayed off the screenshot critical path in the real-device samples; structured timings are written as `[screenshot-perf]` records in the CLI log and per-frame fields in `capture` manifests.

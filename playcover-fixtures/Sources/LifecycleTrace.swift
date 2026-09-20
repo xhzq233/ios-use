@@ -1,6 +1,14 @@
 import UIKit
 
 final class LifecycleWindow: UIWindow {
+    override func sendEvent(_ event: UIEvent) {
+        if let tabs = rootViewController as? UITabBarController,
+           let scroll = tabs.selectedViewController as? ScrollFixtureViewController {
+            scroll.recordTouches(event.allTouches ?? [])
+        }
+        super.sendEvent(event)
+    }
+
     override var bounds: CGRect {
         willSet { LifecycleTrace.record("window.bounds.will", extra: ["target": [newValue.width, newValue.height]]) }
         didSet { LifecycleTrace.record("window.bounds.did") }

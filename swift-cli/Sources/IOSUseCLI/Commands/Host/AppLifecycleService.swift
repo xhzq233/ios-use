@@ -88,8 +88,7 @@ enum AppLifecycleService {
     }
 
     /// Compose a host-side lifecycle mutation with the shared driver
-    /// `waitAppForeground` readiness command. Returns L2 by default; with
-    /// `--no-wait` it returns at L0 without contacting the driver.
+    /// `waitAppForeground` command. Read the UI tree only when -D/--dom is requested.
     static func runWithReadiness(options: AppLifecycleOptions, paths: IOSUsePaths, detailedDom: Bool = false) throws -> Result {
         guard options.action == .activate else {
             if options.postDom != nil { _ = try SessionService.requireDriverLock(paths: paths) }
@@ -100,49 +99,45 @@ enum AppLifecycleService {
             }
             return result
         }
-        if options.noWait {
-            return try run(options: options, paths: paths)
-        }
-        // Preflight: a matching active driver is required for default L2 readiness.
+        // Confirm the target before dispatching the host mutation.
         guard let activeDriver = SessionService.read(paths: paths) else {
-            throw CLIParseError.invalidValue("activateApp requires an active driver for UI readiness. Run `ios-use start`, or use --no-wait for host-only launch.")
+            throw CLIParseError.invalidValue("activateApp requires an active driver to confirm the foreground App. Run `ios-use start`.")
         }
         let udid = try SessionService.resolveTargetUdid(
             explicitUdid: options.session.udid,
             paths: paths,
-            missingMessage: "activateApp requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`. Use --no-wait for host-only launch."
+            missingMessage: "activateApp requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`."
         )
         guard activeDriver.udid == udid else {
-            throw CLIParseError.invalidValue("activateApp target \(udid) does not match active Driver target \(activeDriver.udid). Run `ios-use stop` and `ios-use start \(udid)`, or use --no-wait for host-only launch.")
+            throw CLIParseError.invalidValue("activateApp target \(udid) does not match active Driver target \(activeDriver.udid). Run `ios-use stop` and `ios-use start \(udid)`.")
         }
         // Host mutation first (may start log recording).
         let hostResult = try run(options: options, paths: paths)
-        // Then wait for L2 through the driver.
+        // Foreground confirmation does not capture a snapshot or wait for UI idle.
         var readiness: ForyWaitAppForegroundPayload
         do {
             readiness = try DriverCommandExecution.withLockedClient(paths: paths, verbose: options.session.verbose) { client in
                 try client.waitAppForeground(
                     expectedBundleId: options.bundleID,
                     timeout: 0,
-                    returnDom: options.dom
+                    returnDom: false,
+                    waitForSnapshot: false
                 )
             }
-            if let mode = options.postDom, readiness.snapshotReady {
+            guard readiness.appState == IOSUseAppState.foreground.rawValue else {
+                throw CLIParseError.invalidValue("Driver did not confirm the App is foreground")
+            }
+            if let mode = options.postDom {
                 readiness.dom = try DriverCommandExecutor.collectPostDom(mode: mode, paths: paths, detailed: detailedDom)
+                readiness.snapshotReady = true
             }
         } catch {
             throw ReadinessError(hostResult: hostResult, underlying: error)
         }
-        guard readiness.snapshotReady else {
-            throw ReadinessError(
-                hostResult: hostResult,
-                underlying: CLIParseError.invalidValue("Driver returned readiness without a successful snapshot")
-            )
-        }
         var message = hostResult.message
         if !message.hasSuffix("\n") { message += "\n" }
         message += String(
-            format: "Readiness: UI ready | active: %@ | elapsed: %.4fs",
+            format: "Readiness: App foreground | active: %@ | elapsed: %.4fs",
             locale: Locale(identifier: "en_US_POSIX"),
             readiness.activeBundleId,
             readiness.elapsed

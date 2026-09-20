@@ -21,7 +21,7 @@ options and examples.
 ```bash
 ios-use dom
 ios-use tap "Continue" -D
-ios-use swipe --to "<target>" --from "<visible-anchor>" -D
+ios-use swipe --find "<target>" --from "<visible-anchor>" -D
 ios-use input --tap "Search" --content "<query>" -D
 ios-use waitFor "Loading" --match contains --gone --timeout 20s
 ```
@@ -30,6 +30,9 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   use `"Result"` or `"idle"`. Narrow repeated matches with `--traits`, or name
   a parent and use `--cindex` to select its child. To reach an offscreen item,
   use its label with a visible anchor in the same list.
+- Use `swipe --from <label|x,y> --to <label|x,y>` for a direct drag between
+  visible endpoints. Use `--find <label>` instead of `--to` to scroll until an
+  item is visible in the anchor's list. Finding an item does not tap it.
 - Append `-D` (alias `--dom`) to actions to see the result. `dom` and `-D`
   return a full tree initially, then changes when useful: `+` adds, `-` removes,
   and `~` updates an item. Read changes together with the preceding tree.

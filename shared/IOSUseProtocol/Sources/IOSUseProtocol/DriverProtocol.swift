@@ -207,18 +207,18 @@ public enum IOSUseProtocol {
         Int(ceil(dismissAlertWatchdogTimeoutSeconds(requested) + alertSocketGraceSeconds))
     }
 
-    public static func swipeUsesLabelTarget(_ args: ForySwipeArgs) -> Bool {
-        args.toTarget.point == nil && !args.toTarget.label.isEmpty
+    public static func swipeFindsTarget(_ args: ForySwipeArgs) -> Bool {
+        args.findTarget.point == nil && !args.findTarget.label.isEmpty
     }
 
     public static func swipeWatchdogTimeoutSeconds(_ args: ForySwipeArgs) -> Double {
-        swipeUsesLabelTarget(args)
+        swipeFindsTarget(args)
             ? labelSwipeWatchdogTimeoutSeconds
             : Double(commandTimeoutSeconds)
     }
 
     public static func swipeSocketReadTimeoutSeconds(_ args: ForySwipeArgs) -> Int {
-        swipeUsesLabelTarget(args)
+        swipeFindsTarget(args)
             ? labelSwipeSocketReadTimeoutSeconds
             : commandSocketReadTimeoutSeconds
     }

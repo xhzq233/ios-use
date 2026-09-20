@@ -2,6 +2,31 @@ import XCTest
 import IOSUseCLI
 
 final class CLIParserTests: XCTestCase {
+    func testSwipeSeparatesDragEndpointsFromFindTargets() throws {
+        for from in ["Start", "100,400"] {
+            for to in ["End", "100,200"] {
+                XCTAssertEqual(
+                    try CLIParser.parse(["swipe", "--from", from, "--to", to, "-D"]),
+                    .driver(.swipe(to: to, from: from, dir: nil, distance: nil, traits: nil, cindex: nil, postDom: .diffAfterQuiescence))
+                )
+            }
+            XCTAssertEqual(
+                try CLIParser.parse(["swipe", "--from", from, "--find", "End", "-D"]),
+                .driver(.swipe(to: nil, from: from, find: "End", dir: nil, distance: nil, traits: nil, cindex: nil, postDom: .diffAfterQuiescence))
+            )
+        }
+        for arguments in [
+            ["--to", "End"], ["--find", "End"],
+            ["--from", "Start", "--to", "End", "--find", "End"],
+            ["--from", "Start", "--find", "100,200"],
+            ["--from", "Start", "--to", "End", "--dir", "forth"],
+            ["--from", "Start", "--to", "End", "--distance", "100"],
+            ["--from", "Start", "--find", "End", "--distance", "100"]
+        ] {
+            XCTAssertThrowsError(try CLIParser.parse(["swipe"] + arguments))
+        }
+    }
+
     func testDefaultObservationsAndExplicitFullAcrossMutationEntrypoints() throws {
         let commands = [["tap", "Continue"], ["longpress", "Item"], ["input", "--content", "--nodiff"],
                         ["swipe", "--dir", "forth"], ["rotate", "--to", "portrait"], ["home"],
@@ -542,8 +567,8 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["swipe", "--to", "General", "--from", "Settings", "--dir", "forth", "--distance", "200", "--traits", "Cell", "--cindex", "-1"]),
-            .driver(.swipe(to: "General", from: "Settings", dir: "forth", distance: 200, traits: "Cell", cindex: -1, postDom: nil))
+            try CLIParser.parse(["swipe", "--find", "General", "--from", "Settings", "--dir", "forth", "--traits", "Cell", "--cindex", "-1"]),
+            .driver(.swipe(to: nil, from: "Settings", find: "General", dir: "forth", distance: nil, traits: "Cell", cindex: -1, postDom: nil))
         )
 
         XCTAssertEqual(
@@ -582,8 +607,8 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["swipe", "--dir", "forth", "--distance", "200", "--dom", "--traits", "Cell"]),
-            .driver(.swipe(to: nil, from: nil, dir: "forth", distance: 200, traits: "Cell", cindex: nil, postDom: .diffAfterQuiescence))
+            try CLIParser.parse(["swipe", "--dir", "forth", "--distance", "200", "--dom"]),
+            .driver(.swipe(to: nil, from: nil, dir: "forth", distance: 200, traits: nil, cindex: nil, postDom: .diffAfterQuiescence))
         )
     }
 
@@ -626,10 +651,9 @@ final class CLIParserTests: XCTestCase {
         activation.postDom = .diffAfterQuiescence
         XCTAssertEqual(try CLIParser.parse(["activateApp", "com.apple.Preferences", "--dom", "--udid", "REAL-1"]), .appLifecycle(activation))
 
-        XCTAssertEqual(
-            try CLIParser.parse(["activateApp", "com.apple.Preferences", "--no-wait"]),
-            .appLifecycle(AppLifecycleOptions(action: .activate, bundleID: "com.apple.Preferences", noWait: true))
-        )
+        XCTAssertThrowsError(try CLIParser.parse(["activateApp", "com.apple.Preferences", "--no-wait"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--no-wait"))
+        }
 
         XCTAssertEqual(
             try CLIParser.parse(["terminateApp", "com.apple.Preferences", "--udid", "REAL-1"]),
@@ -952,7 +976,7 @@ final class CLIParserTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["activateApp", "com.example", "--dom", "--no-wait"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("activateApp --dom/-D cannot be combined with --no-wait"))
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--no-wait"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["tap", "67", "269", "270"])) { error in

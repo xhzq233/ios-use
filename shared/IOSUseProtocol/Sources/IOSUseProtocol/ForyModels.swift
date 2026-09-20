@@ -730,11 +730,13 @@ public struct ForyLongPressArgs {
 public struct ForySwipeArgs {
     public var toTarget: ForyTarget = ForyTarget()
     public var fromTarget: ForyTarget = ForyTarget()
+    public var findTarget: ForyTarget = ForyTarget()
     public var distance: Double = 0
     public var dir: Int32 = IOSUseProtocol.XCConstants.swipeDirectionUnspecified
 
-    public init(toTarget: ForyTarget = ForyTarget(), fromTarget: ForyTarget = ForyTarget(), distance: Double = 0, dir: Int32 = IOSUseProtocol.XCConstants.swipeDirectionUnspecified) {
+    public init(toTarget: ForyTarget = ForyTarget(), fromTarget: ForyTarget = ForyTarget(), findTarget: ForyTarget = ForyTarget(), distance: Double = 0, dir: Int32 = IOSUseProtocol.XCConstants.swipeDirectionUnspecified) {
         self.toTarget = toTarget
+        self.findTarget = findTarget
         self.fromTarget = fromTarget
         self.distance = distance
         self.dir = dir
@@ -793,17 +795,22 @@ public struct ForyWaitAppForegroundArgs {
     public var timeout: Double = 0
     /// Include the successful readiness snapshot in the response.
     public var returnDom: Bool = false
+    /// Wait for a snapshot even without returning it (used by URL readiness).
+    /// False with returnDom=false confirms foreground without reading the UI tree.
+    public var waitForSnapshot: Bool = true
 
     public init(
         expectedBundleId: String = "",
         acceptedBundleIds: [String] = [],
         timeout: Double = 0,
-        returnDom: Bool = false
+        returnDom: Bool = false,
+        waitForSnapshot: Bool = true
     ) {
         self.expectedBundleId = expectedBundleId
         self.acceptedBundleIds = acceptedBundleIds
         self.timeout = timeout
         self.returnDom = returnDom
+        self.waitForSnapshot = waitForSnapshot
     }
 }
 

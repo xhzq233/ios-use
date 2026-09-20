@@ -235,26 +235,20 @@ public struct AppLifecycleOptions: Equatable, Sendable {
     public var session: SessionOptions
     public var terminateExisting: Bool
     public var log: Bool
-    public var dom: Bool
     public var postDom: PostDomMode? = nil
-    public var noWait: Bool
 
     public init(
         action: Action,
         bundleID: String,
         session: SessionOptions = SessionOptions(),
         terminateExisting: Bool = false,
-        log: Bool = false,
-        dom: Bool = false,
-        noWait: Bool = false
+        log: Bool = false
     ) {
         self.action = action
         self.bundleID = bundleID
         self.session = session
         self.terminateExisting = terminateExisting
         self.log = log
-        self.dom = dom
-        self.noWait = noWait
     }
 }
 
@@ -361,7 +355,7 @@ public enum DriverAction: Equatable, Sendable {
     case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case input(tap: String?, content: String, delete: Int, enter: Bool, traits: String?, cindex: Int32?, postDom: PostDomMode?)
-    case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
+    case swipe(to: String?, from: String?, find: String? = nil, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool, diff: Bool = false)
     case screenshot(name: String?, ocr: Bool)
     case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode)
@@ -375,7 +369,7 @@ public enum DriverAction: Equatable, Sendable {
         switch self {
         case .dom: return true
         case .tap(_, _, _, _, _, let mode), .longPress(_, _, _, _, let mode),
-             .input(_, _, _, _, _, _, let mode), .swipe(_, _, _, _, _, _, let mode),
+             .input(_, _, _, _, _, _, let mode), .swipe(_, _, _, _, _, _, _, let mode),
              .rotate(_, let mode), .home(let mode): return mode != nil
         case .dismissAlert(let options): return options.postDom != nil
         default: return false

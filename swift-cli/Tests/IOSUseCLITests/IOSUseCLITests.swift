@@ -999,38 +999,37 @@ final class IOSUseCLITests: XCTestCase {
     }
 
 
-    func testActivateAppWaitsForReadinessBeforePostDomObservation() throws {
+    func testActivateAppOnlyObservesDOMWhenRequested() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ios-use-activate-ready-\(UUID().uuidString)")
-            .path
+            .appendingPathComponent("ios-use-activate-ready-\(UUID().uuidString)").path
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try writeDriverLock(udid: "REAL-ACTIVE", deviceType: "real", paths: paths)
-        var events: [String] = []
-        AppLifecycleService.realDeviceRunnerForTesting = { options, udid in
-            events.append("host:\(udid)")
+        var hostCalls = 0
+        var foregroundCalls = 0
+        var domCalls = 0
+        var waitForIdle = false
+        AppLifecycleService.realDeviceRunnerForTesting = { options, _ in
+            hostCalls += 1
             return AppLifecycleService.Result(message: "App \(options.bundleID) activated")
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             FakeDriverCommandClient(domHandler: { raw, fresh, wait in
                 XCTAssertFalse(raw)
                 XCTAssertTrue(fresh)
-                XCTAssertTrue(wait)
+                XCTAssertEqual(hostCalls, foregroundCalls)
+                domCalls += 1
+                waitForIdle = wait
                 return ForyDomPayload(app: "com.example.app", elements: [ForyDomElement(traits: ["Button"], label: "Ready")])
-            }, waitAppForegroundHandler: { expected, timeout, returnDom in
-                events.append("driver:\(expected)")
+            }, waitAppForegroundHandler: { expected, timeout, returnDom, waitForSnapshot in
+                foregroundCalls += 1
+                XCTAssertEqual(hostCalls, foregroundCalls)
                 XCTAssertEqual(timeout, 0)
                 XCTAssertFalse(returnDom)
+                XCTAssertFalse(waitForSnapshot)
                 return ForyWaitAppForegroundPayload(
-                    expectedBundleId: expected,
-                    activeBundleId: expected,
+                    expectedBundleId: expected, activeBundleId: expected,
                     appState: IOSUseAppState.foreground.rawValue,
-                    snapshotReady: true,
-                    elapsed: 0.125,
-                    dom: ForyDomPayload(
-                        app: expected,
-                        windowSize: ForyPoint(x: 402, y: 874),
-                        elements: [ForyDomElement(traits: ["Button"], label: "Ready")]
-                    )
+                    snapshotReady: false, elapsed: 0.125
                 )
             })
         }
@@ -1040,14 +1039,22 @@ final class IOSUseCLITests: XCTestCase {
             try? FileManager.default.removeItem(atPath: root)
         }
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
-            "activateApp", "com.example.app", "--dom"
-        ])
-
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(events, ["host:REAL-ACTIVE", "driver:com.example.app"])
-        XCTAssertTrue(result.stdout.contains("Readiness: UI ready | active: com.example.app | elapsed: 0.1250s"))
-        XCTAssertTrue(result.stdout.contains("Ready [Button]"))
+        for flags in [[], ["-D"], ["--dom"], ["-D", "100ms"]] {
+            domCalls = 0
+            let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments:
+                ["activateApp", "com.example.app"] + flags + ["--json"])
+            XCTAssertEqual(result.exitCode, 0)
+            XCTAssertEqual(domCalls, flags.isEmpty ? 0 : 1)
+            if !flags.isEmpty { XCTAssertEqual(waitForIdle, flags.count == 1) }
+            let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+            let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+            let readiness = try XCTUnwrap(data["readiness"] as? [String: Any])
+            XCTAssertEqual(readiness["appStateCode"] as? Int, Int(IOSUseAppState.foreground.rawValue))
+            XCTAssertEqual(readiness["snapshotReady"] as? Bool, !flags.isEmpty)
+            XCTAssertEqual(readiness["dom"] is [String: Any], !flags.isEmpty)
+        }
+        XCTAssertEqual(hostCalls, 4)
+        XCTAssertEqual(foregroundCalls, 4)
     }
 
     func testActivateAppTargetMismatchFailsBeforeHostMutation() throws {
@@ -1172,7 +1179,7 @@ final class IOSUseCLITests: XCTestCase {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["activateApp", "com.apple.Preferences"])
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("activateApp requires an active driver for UI readiness"))
+        XCTAssertTrue(result.stderr.contains("activateApp requires an active driver to confirm the foreground App"))
     }
 
     func testDriverCommandWithoutLockFailsBeforeClientOrDiscovery() throws {
@@ -1263,10 +1270,11 @@ final class IOSUseCLITests: XCTestCase {
                 XCTAssertTrue(fresh)
                 XCTAssertTrue(wait)
                 return ForyDomPayload(app: "com.apple.mobilesafari", elements: [ForyDomElement(traits: ["Button"], label: "Ready")])
-            }, waitAppForegroundHandler: { expected, timeout, returnDom in
+            }, waitAppForegroundHandler: { expected, timeout, returnDom, waitForSnapshot in
                 events.append("readiness:\(expected)")
                 XCTAssertEqual(timeout, 0)
                 XCTAssertFalse(returnDom)
+                XCTAssertTrue(waitForSnapshot)
                 return ForyWaitAppForegroundPayload(
                     expectedBundleId: expected,
                     activeBundleId: expected,
@@ -1320,7 +1328,7 @@ final class IOSUseCLITests: XCTestCase {
                 XCTAssertTrue(fresh)
                 XCTAssertTrue(wait)
                 return ForyDomPayload(app: "com.example.b", elements: [ForyDomElement(traits: ["Button"], label: "Ready")])
-            }, waitAppForegroundHandler: { expected, _, _ in
+            }, waitAppForegroundHandler: { expected, _, _, _ in
                 XCTAssertEqual(expected, "com.example.b")
                 readinessCount += 1
                 return ForyWaitAppForegroundPayload(
@@ -2126,7 +2134,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     private let activateHandler: (String) throws -> Void
     private let terminateHandler: (String) throws -> Void
     private let screenshotHandler: () throws -> ScreenshotCapture
-    private let waitAppForegroundHandler: (String, Double, Bool) throws -> ForyWaitAppForegroundPayload
+    private let waitAppForegroundHandler: (String, Double, Bool, Bool) throws -> ForyWaitAppForegroundPayload
     private let mediaImportHandler: (ForyMediaImportArgs) throws -> ForyMediaImportPayload
     private let dismissAlertHandler: (ForyDismissAlertArgs) throws -> ForyAlertPayload
 
@@ -2146,7 +2154,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         screenshotHandler: @escaping () throws -> ScreenshotCapture = {
             throw CLIParseError.invalidValue("unexpected screenshot")
         },
-        waitAppForegroundHandler: @escaping (String, Double, Bool) throws -> ForyWaitAppForegroundPayload = { _, _, _ in
+        waitAppForegroundHandler: @escaping (String, Double, Bool, Bool) throws -> ForyWaitAppForegroundPayload = { _, _, _, _ in
             throw CLIParseError.invalidValue("unexpected waitAppForeground")
         },
         mediaImportHandler: @escaping (ForyMediaImportArgs) throws -> ForyMediaImportPayload = { _ in
@@ -2199,7 +2207,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         throw CLIParseError.invalidValue("unexpected input")
     }
 
-    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload {
+    func swipe(to: ForyTarget, from: ForyTarget, find: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload {
         throw CLIParseError.invalidValue("unexpected swipe")
     }
 
@@ -2223,8 +2231,8 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         throw CLIParseError.invalidValue("unexpected proxyCAPush")
     }
 
-    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
-        try waitAppForegroundHandler(expectedBundleId, timeout, returnDom)
+    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool, waitForSnapshot: Bool) throws -> ForyWaitAppForegroundPayload {
+        try waitAppForegroundHandler(expectedBundleId, timeout, returnDom, waitForSnapshot)
     }
 
     func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload {

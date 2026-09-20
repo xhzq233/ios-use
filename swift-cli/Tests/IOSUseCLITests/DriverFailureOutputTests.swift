@@ -340,6 +340,7 @@ private final class FailureDriverClient: DriverCommandClient {
     func swipe(
         to: ForyTarget,
         from: ForyTarget,
+        find: ForyTarget,
         distance: Double?,
         dir: String?,
         traits: String?,

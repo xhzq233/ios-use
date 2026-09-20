@@ -59,7 +59,8 @@ final class ServerTests: XCTestCase {
         let args = ForyWaitAppForegroundArgs(
             expectedBundleId: "com.example.app",
             timeout: 12,
-            returnDom: true
+            returnDom: false,
+            waitForSnapshot: false
         )
         let payload = try ForyRegistry.create().serialize(args)
         let invocation = try CommandInvocation(
@@ -68,6 +69,9 @@ final class ServerTests: XCTestCase {
             codec: Codec.Context()
         )
 
+        let decoded = try ForyRegistry.create().deserialize(payload, as: ForyWaitAppForegroundArgs.self)
+        XCTAssertFalse(decoded.waitForSnapshot)
+        XCTAssertFalse(decoded.returnDom)
         XCTAssertEqual(invocation.watchdogTimeoutSeconds, 22)
         XCTAssertEqual(IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(args.timeout), 24)
     }
@@ -107,15 +111,15 @@ final class ServerTests: XCTestCase {
         }
     }
 
-    func testLabelSwipeInvocationUsesLongCommandDeadline() throws {
+    func testFindSwipeInvocationUsesLongCommandDeadline() throws {
         let args = ForySwipeArgs(
-            toTarget: ForyTarget(label: "Developer"),
-            fromTarget: ForyTarget(label: "Bluetooth")
+            fromTarget: ForyTarget(label: "Bluetooth"),
+            findTarget: ForyTarget(label: "Developer")
         )
         let payload = try ForyRegistry.create().serialize(args)
         let invocation = try CommandInvocation(name: .swipe, payload: payload, codec: Codec.Context())
 
-        XCTAssertTrue(IOSUseProtocol.swipeUsesLabelTarget(args))
+        XCTAssertTrue(IOSUseProtocol.swipeFindsTarget(args))
         XCTAssertEqual(invocation.watchdogTimeoutSeconds, 60)
         XCTAssertEqual(IOSUseProtocol.swipeSocketReadTimeoutSeconds(args), 62)
     }
@@ -127,11 +131,11 @@ final class ServerTests: XCTestCase {
             dir: IOSUseProtocol.XCConstants.swipeDirectionForth
         )
 
-        for args in [pointArgs, distanceArgs] {
+        for args in [pointArgs, distanceArgs, ForySwipeArgs(toTarget: ForyTarget(label: "End"), fromTarget: ForyTarget(label: "Start"))] {
             let payload = try ForyRegistry.create().serialize(args)
             let invocation = try CommandInvocation(name: .swipe, payload: payload, codec: Codec.Context())
 
-            XCTAssertFalse(IOSUseProtocol.swipeUsesLabelTarget(args))
+            XCTAssertFalse(IOSUseProtocol.swipeFindsTarget(args))
             XCTAssertEqual(invocation.watchdogTimeoutSeconds, 10)
             XCTAssertEqual(IOSUseProtocol.swipeSocketReadTimeoutSeconds(args), 12)
         }

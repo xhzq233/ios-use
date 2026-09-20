@@ -2104,11 +2104,11 @@ swipe_anchor_stderr="$RUN_DIR/swipe_anchor_required.stderr"
 printf '%s\t%s\t%s\t%s\t%s\n' \
   "$MATRIX_VERSION" \
   "swipe_anchor_required" \
-  'swipe --to Missing Semantic Target --json (expected anchor-required failure)' \
+  'swipe --find Missing Semantic Target --json (expected anchor-required failure)' \
   "$swipe_anchor_stdout" \
   "$swipe_anchor_stderr" >>"$MANIFEST"
 if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
-    swipe --to "Missing Semantic Target" --json \
+    swipe --find "Missing Semantic Target" --json \
     >"$swipe_anchor_stdout" 2>"$swipe_anchor_stderr"; then
   echo \
     "[playcover-fixture-live] FAIL: missing semantic target guessed a scroll container" \
@@ -2117,14 +2117,12 @@ if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
 fi
 assert_failure_json swipe_anchor_required '
   .ok == false and
-  .error.category == "precondition" and
-  .error.code == "scroll_anchor_required" and
-  .error.phase == "lookup" and
+  .error.code == "invalid_value" and
   .error.mutationMayHaveApplied == false
 '
 
 record_case swipe_semantic_to_end swipe \
-  --to "Scroll Target End" --from "Increment" --dom --json
+  --find "Scroll Target End" --from "Increment" --dom --json
 assert_evidence swipe_semantic_to_end 'Scroll Target End'
 assert_evidence swipe_semantic_to_end \
   '"scrolls"[[:space:]]*:[[:space:]]*[1-9][0-9]*'
@@ -2134,11 +2132,11 @@ swipe_boundary_stderr="$RUN_DIR/swipe_boundary.stderr"
 printf '%s\t%s\t%s\t%s\t%s\n' \
   "$MATRIX_VERSION" \
   "swipe_boundary" \
-  'swipe --to Missing Semantic Target --from Scroll Target End --dir forth --json (expected boundary failure)' \
+  'swipe --find Missing Semantic Target --from Scroll Target End --dir forth --json (expected boundary failure)' \
   "$swipe_boundary_stdout" \
   "$swipe_boundary_stderr" >>"$MANIFEST"
 if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
-    swipe --to "Missing Semantic Target" --from "Scroll Target End" \
+    swipe --find "Missing Semantic Target" --from "Scroll Target End" \
     --dir forth --json \
     >"$swipe_boundary_stdout" 2>"$swipe_boundary_stderr"; then
   echo \
