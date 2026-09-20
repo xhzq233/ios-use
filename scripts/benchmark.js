@@ -35,15 +35,14 @@ const DRIVER_STOP_SETTLE_MS = Number(process.env.IOS_USE_BENCHMARK_DRIVER_STOP_S
 const BENCHES = new Set(['ios-use', 'wda']);
 const PRESETS = {
   full: null,
-  read: ['dom_cached', 'wait_for_present', 'wait_for_timeout_2000ms', 'screenshot'],
+  read: ['dom_full', 'wait_for_present', 'wait_for_timeout_2000ms', 'screenshot'],
   lifecycle: ['start_session', 'activate_app', 'terminate_app'],
   mutate: ['tap_coord', 'tap_label', 'tap_offset_ratio', 'longpress_coord', 'input', 'scroll_distance_semantic', 'scroll_to_visible'],
   app: ['activate_app', 'terminate_app'],
-  smoke: ['start_session', 'dom_cached', 'wait_for_present', 'screenshot', 'tap_coord', 'activate_app'],
+  smoke: ['start_session', 'dom_full', 'wait_for_present', 'screenshot', 'tap_coord', 'activate_app'],
 };
 
 const BASELINE_CASE_ALIASES = new Map([
-  ['dom_vs_source', 'dom_cached'],
   ['wait_for', 'wait_for_present'],
   ['swipe_distance', 'scroll_distance_semantic'],
 ]);
@@ -1144,16 +1143,16 @@ function buildCases(ctx) {
       wdaRun: async () => { await ctx.appium.createSession(); },
     },
     {
-      id: 'dom_cached',
+      id: 'dom_full',
       group: 'read',
       kind: 'read',
       prepareState: 'settingsRootWarm',
       stateReusable: true,
       invalidatesState: false,
       runs: ctx.iterations,
-      mapping: '`ios-use dom` / WDA `GET /source`',
-      notes: 'Warm Settings root state; this is the default user-facing DOM path, not a cold snapshot profiling case.',
-      iosRun: async () => { cli(['dom', '--udid', ctx.udid]); },
+      mapping: '`ios-use dom --nodiff` / WDA `GET /source`',
+      notes: 'Warm Settings root, freshly captured full semantic DOM on every call. No cross-command snapshot cache or diff response.',
+      iosRun: async () => { cli(['dom', '--nodiff', '--udid', ctx.udid]); },
       wdaRun: async () => { await ctx.appium.source(); },
     },
     {

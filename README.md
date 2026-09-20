@@ -375,40 +375,20 @@ Existing single-Device state is still read and moves to the new layout after its
 
 ## Performance Snapshot
 
-Latest swipe measurements: **2026-09-20**, development commit `aca8dc0b`
-([PR #27](https://github.com/xhzq233/ios-use/pull/27)), using matching Release
-CLI and Driver/Runtime builds. Each row below has six measured commands, all
-with verified effects. These measurements are not for the published v2.1.0 binary.
+2026-09-20 · Release development build `aca8dc0b`. Mean command latency in ms.
+USB: iPhone Settings; Mac: UIKit Fixture. DOM: 20 runs; swipe/drag: 6 runs.
 
-**USB real iPhone — Settings**, iOS 26.5.1:
+| Operation | USB iPhone | Mac Backend |
+| --- | ---: | ---: |
+| Full DOM (`dom --nodiff`) | 241.5 | 28.1 |
+| Unchanged DOM (`dom`) | 253.0 | 29.6 |
+| Scroll 200 pt | 2,013.3 | 445.7 |
+| Find offscreen row | 9,471.5 | 270.7 |
+| Find already-visible row | 293.5 | 35.1 |
+| Coordinate drag | 1,505.8 | 446.6 |
+| Label-to-label drag | 1,244.6 | 446.0 |
 
-| Operation | Mean (ms) | Median (ms) | Verified |
-| --- | ---: | ---: | ---: |
-| Scroll 200 pt | 2,013.3 | 2,029.4 | 6/6 |
-| Find offscreen Developer row | 9,471.5 | 9,463.0 | 6/6 |
-| Find already-visible row | 293.5 | 289.3 | 6/6 |
-| Coordinate drag | 1,505.8 | 1,283.6 | 6/6 |
-| Label-to-label drag | 1,244.6 | 1,252.3 | 6/6 |
-
-**Mac Backend — UIKit Fixture**, macOS 15.7.7 arm64, iPhone 13 layout:
-
-| Operation | Mean (ms) | Median (ms) | Verified |
-| --- | ---: | ---: | ---: |
-| Scroll 200 pt | 445.7 | 445.5 | 6/6 |
-| Scroll 150 pt in the selected list | 451.3 | 451.0 | 6/6 |
-| Find offscreen row 15 | 270.7 | 270.5 | 6/6 |
-| Find already-visible row | 35.1 | 34.2 | 6/6 |
-| Coordinate drag | 446.6 | 446.0 | 6/6 |
-| Label-to-label drag | 446.0 | 446.1 | 6/6 |
-
-Timings cover the command only, without `-D`; setup, page reset and observations
-are outside the timer. Slow samples are retained. The two backends use different
-Apps and workloads, so these tables do not establish a cross-backend speedup.
-These are tool timings, not Agent success/token benchmarks.
-
-This update covers swipe/drag only. Other commands and Appium/WDA were not
-remeasured. See the [controlled before/after results, methodology and dated
-historical results](docs/benchmark.md).
+Each backend is measured separately. [Methodology and medians](docs/benchmark.md).
 
 ## Commands
 
