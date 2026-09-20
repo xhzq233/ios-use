@@ -33,7 +33,7 @@ def debug(body):
 def scroll_to(label):
     # A resize can leave every label in the scroll view offscreen. Derive the
     # fallback gesture point from its current DOM frame, never an old anchor.
-    dom = cli("dom", "-d", "mac")
+    dom = cli("dom", "--nodiff", "-d", "mac")
     frame = next(e["frame"] for e in dom["elements"] if e.get("identifier") == "fixture.uikit.scroll")
     point = f"{frame[0] + frame[2] / 2},{frame[1] + frame[3] / 2}"
     cli("swipe", "--to", label, "--from", point, "--dom", "-d", "mac")
