@@ -18,9 +18,8 @@ ios-use dismissAlert --only-button
 ios-use dismissAlert --label "Allow Full Access"
 ```
 
-- Normal `activateApp` waits for the App to reach the foreground and for one fresh
-  UI snapshot. Add `-D` to return its changes (full on first use/App change),
-  or use `--no-wait` only when host launch acknowledgement is sufficient.
+- `activateApp` waits for the App to open in the foreground. Add `-D` to inspect
+  the resulting page, or `--no-wait` to return without waiting for the UI.
 - `open` only dispatches the URL by default. Add `-D` for immediate foreground
   UI evidence, then use `waitFor` for the destination condition that matters.
   Use `--bundle-id` to select an App on a local or remote real device without
