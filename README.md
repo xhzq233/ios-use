@@ -287,15 +287,19 @@ resizable Mac window. These are preview poses, not the App's full iOS rotation
 policy or a replacement for device/Simulator validation.
 
 `ios-use config --mac --device-model iphone-duo` switches a running Mac App
-immediately and saves the selection for future starts. The same applies to
-`--device-chrome on|off` and `--window-mode fixed|resizable`. With no running Mac
+and waits for the native size transition before saving the selection for future starts.
+Model changes and folding retain physical orientation. Toolbar controls are disabled
+until the same transition completes; a concurrent CLI request reports a retryable busy
+error. Completion covers UIKit layout, not GPU presentation or App data loading.
+The same applies to `--device-chrome on|off` and `--window-mode fixed|resizable`. With no running Mac
 session, config saves the choice for the next start. Toolbar changes affect the
 current session; use config to save it. The legacy Duo inner/outer names remain
 accepted, but selecting `iphone-duo` and using Expand/Collapse is sufficient.
 
 A live switch updates the Runtime's screen identity, viewport, traits, safe areas,
-and capture scale while preserving the App process and navigation. Apps that
-cache device-dependent layouts in their own startup code may still need a restart.
+and capture scale while preserving the App process and navigation. This is
+broader than a native window resize: replacing a model also changes identity
+and scale. App adaptation must be verified for the resulting layout.
 
 The full-screen iPad preset uses iPadOS 26 Simulator safe-area metrics (top 32,
 bottom 25, left/right 0 in both orientations). Duo applies the documented size

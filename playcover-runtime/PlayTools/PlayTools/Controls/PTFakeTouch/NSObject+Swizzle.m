@@ -281,11 +281,8 @@ static void IOSUsePlayInstallRequiredIdentityHook(
 }
 
 - (UIUserInterfaceIdiom)iosUsePlayUserInterfaceIdiom {
-    NSString *identifier = [self isKindOfClass:UIDevice.class]
-        ? @"playtools.device.idiom"
-        : @"playtools.trait.idiom";
     IOSUsePlayHookRegistryRecordFirstUse(
-        identifier,
+        @"playtools.device.idiom",
         self.class
     );
     return (UIUserInterfaceIdiom)IOSUsePlayDeviceUserInterfaceIdiom;
@@ -548,15 +545,6 @@ bool menuWasCreated = false;
         UIDevice.class,
         @selector(localizedModel),
         @selector(iosUsePlayDeviceLocalizedModel),
-        YES,
-        YES,
-        NULL
-    );
-    IOSUsePlayInstallRequiredIdentityHook(
-        @"playtools.trait.idiom",
-        UITraitCollection.class,
-        @selector(userInterfaceIdiom),
-        @selector(iosUsePlayUserInterfaceIdiom),
         YES,
         YES,
         NULL

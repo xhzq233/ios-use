@@ -1060,7 +1060,7 @@ static NSDictionary<NSString *, id> *IOSUseInitialUISnapshot(void) {
     };
 }
 
-void IOSUsePlayRuntimePublishUIReadiness(void) {
+BOOL IOSUsePlayRuntimePublishUIReadiness(void) {
     NSCAssert(
         NSThread.isMainThread,
         @"UI readiness publication is main-only"
@@ -1100,6 +1100,11 @@ void IOSUsePlayRuntimePublishUIReadiness(void) {
     NSString *failure = [rawFailure isKindOfClass:NSString.class]
         ? rawFailure
         : nil;
+    BOOL surfaceReady = [state isEqualToString:@"ready"];
+    if (IOSUsePlayDeviceConfigurationInProgress() && ![state isEqualToString:@"failed"]) {
+        state = @"initializing";
+        stage = @"device-transition";
+    }
     IOSUsePlayRuntimeSetUIReadiness(state, stage, failure);
     NSDictionary<NSString *, id> *uiState =
         IOSUseCurrentUIReadiness();
@@ -1112,6 +1117,7 @@ void IOSUsePlayRuntimePublishUIReadiness(void) {
     os_unfair_lock_lock(&IOSUseRuntimeUIStateLock);
     IOSUseRuntimeUISnapshot = [published copy];
     os_unfair_lock_unlock(&IOSUseRuntimeUIStateLock);
+    return surfaceReady;
 }
 
 static NSDictionary<NSString *, id> *IOSUseCachedUISnapshot(void) {
@@ -2055,31 +2061,25 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             @"playChain": snapshot[@"playChain"],
         };
     } else if ([command isEqualToString:@"configureDevice"]) {
+        // Socket requests run on the command queue. Only that queue waits;
+        // UIKit and toolbar actions use the same asynchronous main-queue path.
+        NSCAssert(!NSThread.isMainThread, @"configuration dispatch must leave the main queue free");
         __block NSDictionary *state;
         __block NSError *configurationError;
-        void (^apply)(void) = ^{ state = IOSUsePlayConfigureDevice(arguments, &configurationError); };
-        if (NSThread.isMainThread) apply(); else dispatch_sync(dispatch_get_main_queue(), apply);
-        if (!state) return IOSUseBasicErrorEnvelope(requestID, @"device_configuration_failed",
-            configurationError.localizedDescription ?: @"Could not change the Mac device", @"configuration", @"device", NO);
-        // Allow Catalyst to deliver its native resize/layout events, checking
-        // actual canvas readiness rather than treating a fixed delay as proof.
-        __block BOOL ready = NO;
-        NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 5;
-        do {
-            void (^check)(void) = ^{
-                ready = [IOSUsePlayAppKitBridge configureFixedWindow:NULL];
-                IOSUsePlayRuntimePublishUIReadiness();
-                // UIWindow bounds can settle before the host view and safe-area
-                // layout used by the next DOM request. Check the same readiness
-                // that UI commands require before reporting configuration done.
-                ready = ready && [IOSUseCurrentUIReadiness()[@"state"] isEqualToString:@"ready"];
-            };
-            if (NSThread.isMainThread) { check(); break; }
-            dispatch_sync(dispatch_get_main_queue(), check);
-            if (!ready) [NSThread sleepForTimeInterval:0.02];
-        } while (!ready && NSProcessInfo.processInfo.systemUptime < deadline);
-        if (!ready) return IOSUseBasicErrorEnvelope(requestID, @"device_configuration_pending",
-            @"Device selection changed, but the App window has not settled to the requested geometry", @"configuration", @"layout", YES);
+        dispatch_semaphore_t completed = dispatch_semaphore_create(0);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            IOSUsePlayConfigureDevice(arguments, ^(NSDictionary *result, NSError *error) {
+                state = result;
+                configurationError = error;
+                dispatch_semaphore_signal(completed);
+            });
+        });
+        dispatch_semaphore_wait(completed, DISPATCH_TIME_FOREVER);
+        if (!state) return IOSUseBasicErrorEnvelope(requestID,
+            configurationError.code == 3 ? @"device_configuration_busy" :
+                (configurationError.code == 4 ? @"device_configuration_pending" : @"device_configuration_failed"),
+            configurationError.localizedDescription ?: @"Could not change the Mac device",
+            @"configuration", @"device", configurationError.code == 3 || configurationError.code == 4);
         payload = [state mutableCopy];
     } else if ([command isEqualToString:@"debug"]) {
         NSDictionary<NSString *, id> *commandError = nil;

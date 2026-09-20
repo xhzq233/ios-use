@@ -278,6 +278,11 @@ static void resetHost(void) {
     for (id observer in observers) [NSNotificationCenter.defaultCenter removeObserver:observer];
     observers=nil; nativeToolbar=nil; modelPicker=nil; modelSubtitle=nil; rotateButton=nil; expandButton=nil;hideButton=nil;host=nil;
 }
+void IOSUsePlayDeviceChromeSetConfigurationPending(BOOL pending) {
+    for (id control in @[modelPicker ?: NSNull.null, rotateButton ?: NSNull.null, expandButton ?: NSNull.null]) {
+        if (control != NSNull.null) boolean(control, @"setEnabled:", !pending);
+    }
+}
 void IOSUsePlayDeviceChromeReset(void) {
     imageKey=nil;frameImage=nil;
     // Preserve the child-window identity during model/rotation changes. A new
@@ -382,6 +387,7 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     for (NSUInteger i=0;i<items.count;i++) if ([get(items[i],@"itemIdentifier") isEqual:@"expand"]) expandIndex=i;
     if (duo && expandIndex==NSNotFound) ((void (*)(id,SEL,id,NSUInteger))objc_msgSend)(nativeToolbar,NSSelectorFromString(@"insertItemWithItemIdentifier:atIndex:"),@"expand",items.count);
     if (!duo && expandIndex!=NSNotFound) integer(nativeToolbar,@"removeItemAtIndex:",expandIndex);
+    IOSUsePlayDeviceChromeSetConfigurationPending(IOSUsePlayDeviceConfigurationInProgress());
     CGFloat pickerWidth=ceil(titleWidth+22);
     ((void (*)(id,SEL,CGSize))objc_msgSend)(modelPicker,NSSelectorFromString(@"setFrameSize:"),CGSizeMake(pickerWidth,21));
     modelChevron.position=CGPointMake(titleWidth+9,8);
@@ -529,8 +535,9 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     return item;
 }
 - (void)apply:(NSDictionary *)changes {
-    NSError *error=nil;
-    if (!IOSUsePlayConfigureDevice(changes,&error)) NSLog(@"[ios-use] Device configuration failed: %@",error.localizedDescription);
+    IOSUsePlayConfigureDevice(changes, ^(__unused NSDictionary *state, NSError *error) {
+        if (error) NSLog(@"[ios-use] Device configuration failed: %@", error.localizedDescription);
+    });
 }
 - (void)selectModel:(id)sender { [self apply:@{@"preset":get(get(sender,@"selectedItem"),@"representedObject")}]; }
 - (void)rotate:(__unused id)sender { [self apply:@{@"physicalOrientation":@(IOSUsePlayDevicePhysicalName((IOSUsePlayDevicePhysicalQuarterTurns()+1)%4))}]; }

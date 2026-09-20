@@ -5,6 +5,9 @@
 #import "IOSUsePlayDevice.h"
 #import "IOSUsePlaySafeAreaCompatibility.h"
 
+// These provider tests do not run a live device configuration transaction.
+void IOSUsePlayDeviceGeometryWillLayout(__unused UIWindow *window) {}
+
 extern UIEdgeInsets IOSUsePlaySafeAreaMaximumInsetsForTesting(
     UIEdgeInsets left,
     UIEdgeInsets right

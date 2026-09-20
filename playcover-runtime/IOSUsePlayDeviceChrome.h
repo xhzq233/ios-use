@@ -4,3 +4,5 @@
 void IOSUsePlayDeviceChromeUpdate(id hostWindow);
 void IOSUsePlayDeviceChromeReset(void);
 void IOSUsePlayDeviceChromeRefreshAppearance(void);
+
+void IOSUsePlayDeviceChromeSetConfigurationPending(BOOL pending);

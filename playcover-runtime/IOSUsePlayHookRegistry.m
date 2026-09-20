@@ -81,7 +81,6 @@ IOSUsePlayHookRegistryExpectedRequiredIdentifiers(void) {
             @"playtools.device.idiom",
             @"playtools.device.model",
             @"playtools.device.localized-model",
-            @"playtools.trait.idiom",
             @"fake-touch.runloop-source",
             @"fake-touch.application-event",
             @"fake-touch.event-clear",

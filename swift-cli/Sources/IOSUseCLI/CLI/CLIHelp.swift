@@ -121,11 +121,13 @@ enum CLIHelp {
             Configure a device or Simulator, or explicitly initialize the
             dedicated stable Mac-backend signing identity.
             Run `config --mac` once before the first Mac backend start.
-            `config --mac --device-model <preset>` changes the running Mac App immediately
-            and saves the selection for future launches. Without a running App it only saves.
+            `config --mac --device-model <preset>` changes the running Mac App, waits for
+            its native size transition, and saves the selection for future launches.
+            Without a running App it only saves. Model changes retain physical orientation.
             Presets: iphone-se, iphone-13, iphone-15-pro, iphone-15-pro-max (default),
             ipad-pro-11, iphone-duo. The native title bar also provides a model selector,
-            Rotate, and a Duo Expand/Collapse button.
+            Rotate, and a Duo Expand/Collapse button. These controls wait for the same
+            transition and are disabled while it is in progress.
             Device chrome is on by default and is omitted from screenshots.
             `--window-mode resizable` preserves App scene size constraints and uses
             the current window size for DOM, touches and screenshots. Device screen
