@@ -27,7 +27,6 @@ enum SwipeCommands {
             return try handleAbsolutePointSwipe(from: from, to: to, app: app)
         }
 
-        try Quiescence.wait(app: app, command: "swipe")
         guard let cs = captureCleanedSnapshot() else {
             return try snapshotFailure("swipe: failed to take snapshot", target: toTarget.label.isEmpty ? nil : toTarget)
         }
@@ -72,26 +71,15 @@ enum SwipeCommands {
             return try notFoundResponse(toTarget, suggestions: suggestions, rejected: rejected)
         }
 
-        // An explicit anchor must never silently select another panel, even
-        // when the destination is already present in the snapshot.
-        let targetScrollView = findScrollableAncestor(target.node)
-        if !fromTarget.label.isEmpty || fromTarget.point != nil {
-            switch try resolveAnchor(fromTarget, cs: cs) {
-            case .found(let anchor):
-                guard let targetScrollView, SnapshotMatchesElement(anchor.raw, targetScrollView.raw) else {
-                    return try scrollUnavailable("target and anchor are in different scrollables", target: toTarget)
-                }
-            case .failure(let response): return response
-            }
-        }
-        guard let scrollView = targetScrollView else {
+        // STEP 3: find scrollable ancestor.
+        guard let scrollView = findScrollableAncestor(target.node) else {
             return try okScroll(target: target, scrolls: 0, scrollDirection: "")
         }
 
         // STEP 4: already visible in app frame. Still try centering the target
         // in its scrollable so edge / overlay-adjacent targets become easier to tap.
-        if let scrollFrame = interactionFrame(scrollView),
-           hasInteractionFrame(target, in: scrollFrame) {
+        if hasInteractionFrame(target, in: cs.appFrame),
+           let scrollFrame = interactionFrame(scrollView) {
             let adjusted = try centerTargetInScrollFrame(targetCell: findCellAncestor(target.node),
                                                      scrollFrame: scrollFrame,
                                                      app: app)
@@ -142,8 +130,6 @@ enum SwipeCommands {
             return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
         case .snapshotFailed:
             return try snapshotFailure("scroll: failed to rebuild snapshot", target: toTarget)
-        case .outsideAnchor:
-            return try scrollUnavailable("target and anchor are in different scrollables", target: toTarget)
         case .ambiguous(let lbl, let matches, let snapshot):
             return try withExtendedLifetime(snapshot) {
                 try ambiguityResponse(ForyTarget(label: lbl), matches: matches)
@@ -159,48 +145,45 @@ enum SwipeCommands {
 
     // MARK: - Anchor scroll (doc 5.3)
 
-    private enum AnchorResolution {
-        case found(SafeSnapshot)
-        case failure(ForyResponseFrame)
-    }
-
-    private static func resolveAnchor(_ fromTarget: ForyTarget,
-                                      cs: CleanedSnapshot) throws -> AnchorResolution {
-        if let point = fromTarget.point {
-            guard let scrollView = findScrollableAtPoint(CGPoint(x: point.x, y: point.y), cs.root) else {
-                return .failure(try scrollUnavailable("no scrollable found at from point", target: fromTarget))
-            }
-            return .found(scrollView)
-        }
-        switch rawFindInSnapshot(fromTarget, cs: cs, visibility: .only) {
-        case .found(let anchor):
-            guard let scrollView = findScrollableAncestor(anchor.node) else {
-                return .failure(try scrollUnavailable("anchor is not inside a scrollable", target: fromTarget))
-            }
-            return .found(scrollView)
-        case .ambiguous(let matches):
-            return .failure(try ambiguityResponse(fromTarget, matches: matches))
-        case .fuzzy(let suggestions):
-            return .failure(try notFoundResponse(fromTarget, suggestions: suggestions))
-        case .notFound(let suggestions, let rejected):
-            return .failure(try notFoundResponse(fromTarget, suggestions: suggestions, rejected: rejected))
-        }
-    }
-
     private static func handleAnchorScroll(target toTarget: ForyTarget,
                                            args: ForySwipeArgs,
                                            fromTarget: ForyTarget,
                                            cs: CleanedSnapshot,
                                            app: XCUIApplication) throws -> ForyResponseFrame {
         let anchorScrollView: SafeSnapshot
-        switch try resolveAnchor(fromTarget, cs: cs) {
-        case .found(let scrollView): anchorScrollView = scrollView
-        case .failure(let response): return response
+        if let pt = fromTarget.point {
+            guard let scrollView = findScrollableAtPoint(CGPoint(x: pt.x, y: pt.y), cs.root) else {
+                return try scrollUnavailable("no scrollable found at from point", target: fromTarget)
+            }
+            anchorScrollView = scrollView
+        } else if !fromTarget.label.isEmpty {
+            let anchor: SnapshotElement
+            let anchorTarget = ForyTarget(label: fromTarget.label)
+            switch rawFindInSnapshot(anchorTarget, cs: cs, visibility: .only) {
+            case .found(let elem):
+                anchor = elem
+            case .ambiguous(let matches):
+                return try ambiguityResponse(anchorTarget, matches: matches)
+            case .fuzzy(let suggestions):
+                return try notFoundResponse(anchorTarget, suggestions: suggestions)
+            case .notFound(let suggestions, let rejected):
+                return try notFoundResponse(anchorTarget, suggestions: suggestions, rejected: rejected)
+            }
+            guard let scrollView = findScrollableAncestor(anchor.node) else {
+                return try scrollUnavailable("anchor is not inside a scrollable", target: anchorTarget)
+            }
+            anchorScrollView = scrollView
+        } else {
+            return try invalidArguments("anchor scroll requires 'from'", target: toTarget)
         }
-        guard let frame = interactionFrame(anchorScrollView) else {
-            return try scrollUnavailable("anchor's scrollable has no interaction frame", target: fromTarget)
+        let cells = collectCellSnapshots(anchorScrollView)
+        let visibleCells = cells.filter { $0.isVisible }
+        guard visibleCells.count >= 2 else {
+            return try scrollUnavailable("less than 2 visible cells in anchor's scrollable", target: fromTarget)
         }
-        let vertical = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(anchorScrollView, limit: nil), scrollFrame: frame) == .vertical
+        let dx = visibleCells.first!.frame.minX - visibleCells.last!.frame.minX
+        let dy = visibleCells.first!.frame.minY - visibleCells.last!.frame.minY
+        let vertical = abs(dy) > abs(dx)
         let scrollUpwards = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
 
         let result = try scrollUntilVisible(scrollView: anchorScrollView,
@@ -221,8 +204,6 @@ enum SwipeCommands {
             return try scrollLimitReached("anchor scroll: max scroll count reached", target: toTarget)
         case .snapshotFailed:
             return try snapshotFailure("anchor scroll: failed to rebuild snapshot", target: toTarget)
-        case .outsideAnchor:
-            return try scrollUnavailable("target and anchor are in different scrollables", target: toTarget)
         case .ambiguous(let lbl, let matches, let snapshot):
             return try withExtendedLifetime(snapshot) {
                 try ambiguityResponse(ForyTarget(label: lbl), matches: matches)
@@ -305,15 +286,7 @@ enum SwipeCommands {
     private static func handleDistanceSwipe(args: ForySwipeArgs,
                                             cs: CleanedSnapshot,
                                             app: XCUIApplication) throws -> ForyResponseFrame {
-        let scrollNode: SafeSnapshot?
-        if !args.fromTarget.label.isEmpty || args.fromTarget.point != nil {
-            switch try resolveAnchor(args.fromTarget, cs: cs) {
-            case .found(let scrollView): scrollNode = scrollView
-            case .failure(let response): return response
-            }
-        } else {
-            scrollNode = findLargestScrollable(cs.root)
-        }
+        let scrollNode = findLargestScrollable(cs.root)
         let scrollFrame = scrollNode.flatMap(interactionFrame) ?? cs.appFrame
         let isBack = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
         let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root, limit: nil), scrollFrame: scrollFrame)
@@ -348,7 +321,6 @@ enum SwipeCommands {
         case hitBoundary
         case reachedMax
         case snapshotFailed
-        case outsideAnchor
         case ambiguous(label: String, matches: [SnapshotElement], snapshot: CleanedSnapshot)
     }
 
@@ -388,13 +360,7 @@ enum SwipeCommands {
 
             switch rawFindInSnapshot(target, cs: freshCS, enableFuzzy: false, visibility: .only) {
             case .found(let elem):
-                guard let container = findScrollableAncestor(elem.node),
-                      SnapshotMatchesElement(container.raw, freshScrollView.raw) else { return .outsideAnchor }
-                if let viewport = interactionFrame(freshScrollView),
-                   viewport.contains(CGPoint(x: elem.node.frame.midX, y: elem.node.frame.midY)),
-                   hasInteractionFrame(elem, in: viewport) {
-                    return .found(count: i + 1, target: elem.node, snapshot: freshCS)
-                }
+                return .found(count: i + 1, target: elem.node, snapshot: freshCS)
             case .ambiguous(let matches):
                 return .ambiguous(label: target.label, matches: matches, snapshot: freshCS)
             default:
