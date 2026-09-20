@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="790" viewBox="0 0 900 790" role="img" aria-labelledby="title desc">
 <title id="title">ios-use vs Appium + WDA: historical latency benchmark</title>
-<desc id="desc">Real iPhone Settings, May 30 2026. Two zero-based linear scales separate short operations from startup and scrolling. Exact values and methodology are in the README table.</desc>
+<desc id="desc">Real iPhone Settings, May 30 2026. Two zero-based linear scales separate short operations from startup and scrolling. Exact values and methodology are in the historical section of docs/benchmark.md.</desc>
 <style>text{font-family:system-ui,-apple-system,Segoe UI,sans-serif;fill:#1f2937;font-size:15px}.small{font-size:13px;fill:#475569}.heading{font-size:18px;font-weight:600}.ios{fill:#047857}.wda{fill:#6366f1}.grid{stroke:#e2e8f0;stroke-width:1}</style>
 <rect width="900" height="790" rx="12" fill="#ffffff"/>
 <text x="30" y="38" font-size="24" style="font-size:24px;font-weight:600">Less waiting between actions</text>

@@ -375,25 +375,40 @@ Existing single-Device state is still read and moves to the new layout after its
 
 ## Performance Snapshot
 
-Historical real-iPhone Settings benchmark (2026-05-30), comparing the native CLI
-with the full Appium Server → WebDriverAgent stack. Lower latency is better.
+Latest swipe measurements: **2026-09-20**, development commit `aca8dc0b`
+([PR #27](https://github.com/xhzq233/ios-use/pull/27)), using matching Release
+CLI and Driver/Runtime builds. Each row below has six measured commands, all
+with verified effects. These measurements are not for the published v2.1.0 binary.
 
-![Historical ios-use and Appium + WDA latency comparison, with separate scales for short and long operations](docs/benchmark.svg)
+**USB real iPhone — Settings**, iOS 26.5.1:
 
-| Operation | ios-use (ms) | Appium + WDA (ms) | Latency reduction |
+| Operation | Mean (ms) | Median (ms) | Verified |
 | --- | ---: | ---: | ---: |
-| Start session | 1,954.8 | 10,753.6 | 81.8% |
-| Cached UI tree | 20.7 | 965.7 | 97.9% |
-| Wait for element | 14.0 | 308.7 | 95.5% |
-| Screenshot (no OCR) | 81.2 | 179.0 | 54.6% |
-| Tap by label | 413.2 | 1,076.3 | 61.6% |
-| Scroll to element | 10,799.2 | 17,050.9 | 36.7% |
-| Terminate app | 1,195.1 | 1,144.0 | −4.5% |
+| Scroll 200 pt | 2,013.3 | 2,029.4 | 6/6 |
+| Find offscreen Developer row | 9,471.5 | 9,463.0 | 6/6 |
+| Find already-visible row | 293.5 | 289.3 | 6/6 |
+| Coordinate drag | 1,505.8 | 1,283.6 | 6/6 |
+| Label-to-label drag | 1,244.6 | 1,252.3 | 6/6 |
 
-Command cases are means of three iterations; cold session start is one sample.
-These are tool timings, not Agent success/token benchmarks,
-and have not been rerun for the current development version. See the
-[full results and methodology](docs/benchmark.md).
+**Mac Backend — UIKit Fixture**, macOS 15.7.7 arm64, iPhone 13 layout:
+
+| Operation | Mean (ms) | Median (ms) | Verified |
+| --- | ---: | ---: | ---: |
+| Scroll 200 pt | 445.7 | 445.5 | 6/6 |
+| Scroll 150 pt in the selected list | 451.3 | 451.0 | 6/6 |
+| Find offscreen row 15 | 270.7 | 270.5 | 6/6 |
+| Find already-visible row | 35.1 | 34.2 | 6/6 |
+| Coordinate drag | 446.6 | 446.0 | 6/6 |
+| Label-to-label drag | 446.0 | 446.1 | 6/6 |
+
+Timings cover the command only, without `-D`; setup, page reset and observations
+are outside the timer. Slow samples are retained. The two backends use different
+Apps and workloads, so these tables do not establish a cross-backend speedup.
+These are tool timings, not Agent success/token benchmarks.
+
+This update covers swipe/drag only. Other commands and Appium/WDA were not
+remeasured. See the [controlled before/after results, methodology and dated
+historical results](docs/benchmark.md).
 
 ## Commands
 
