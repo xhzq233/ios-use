@@ -578,7 +578,7 @@ async function customPrepareAppSession(ctx, appBundle = ctx.bundleId, label = ct
   }
   const initialWait = cli(['waitFor', '--label', label, '--timeout', '2', '--udid', ctx.udid], { allowFailure: true });
   if (initialWait.exitCode !== 0 && appBundle === ctx.bundleId) {
-    cli(['swipe', '--to', label, '--from', ctx.scrollToLabel, '--udid', ctx.udid], { allowFailure: true });
+    cli(['swipe', '--find', label, '--from', ctx.scrollToLabel, '--udid', ctx.udid], { allowFailure: true });
     for (let i = 0; i < 4; i += 1) {
       const recovered = cli(['waitFor', '--label', label, '--timeout', '1', '--udid', ctx.udid], { allowFailure: true });
       if (recovered.exitCode === 0) break;
@@ -1314,9 +1314,9 @@ function buildCases(ctx) {
       stateReusable: false,
       invalidatesState: true,
       runs: ctx.iterations,
-      mapping: '`ios-use swipe --to <label> --from <label>` / WDA mobile scroll loop',
+      mapping: '`ios-use swipe --find <label> --from <label>` / WDA mobile scroll loop',
       notes: 'End-to-end scroll-until-visible workflow; not a primitive gesture benchmark.',
-      iosRun: async () => { cli(['swipe', '--to', ctx.scrollToLabel, '--from', ctx.label, '--udid', ctx.udid]); },
+      iosRun: async () => { cli(['swipe', '--find', ctx.scrollToLabel, '--from', ctx.label, '--udid', ctx.udid]); },
       wdaRun: async () => {
         const maxScrolls = 10;
         const collectionViewId = await ctx.appium.findElementByPredicate(`type == 'XCUIElementTypeCollectionView'`);

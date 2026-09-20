@@ -215,6 +215,7 @@ struct PlayCoverRuntimeLongPressArguments: Codable, Equatable, Sendable {
 
 struct PlayCoverRuntimeSwipeArguments: Codable, Equatable, Sendable {
     let toTarget: PlayCoverRuntimeTarget?
+    var findTarget: PlayCoverRuntimeTarget? = nil
     let fromTarget: PlayCoverRuntimeTarget?
     let distance: Double
     let direction: Int32

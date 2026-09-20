@@ -149,10 +149,10 @@ enum DriverCommandExecutor {
             ok = true
             return result
 
-        case .swipe(let to, let from, let dir, let distance, let traits, let cindex, let postDom):
-            let params = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
+        case .swipe(let to, let from, let find, let dir, let distance, let traits, let cindex, let postDom):
+            let params = try resolveSwipeParams(to: to, from: from, find: find, traits: traits, cindex: cindex)
             let payload = try requiredPayload(clientRunner {
-                .swipe(try $0.swipe(to: params.to, from: params.from, distance: distance, dir: dir, traits: traits, cindex: cindex))
+                .swipe(try $0.swipe(to: params.to, from: params.from, find: params.find, distance: distance, dir: dir, traits: traits, cindex: cindex))
             }, as: ForySwipePayload.self)
             let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: DriverOutput.formatSwipe(payload), payload: .swipe(payload)),
@@ -237,8 +237,8 @@ enum DriverCommandExecutor {
             _ = try resolveTarget(target, traits: traits, cindex: cindex)
         case .input(let tap, _, _, _, let traits, let cindex, _):
             _ = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
-        case .swipe(let to, let from, _, _, let traits, let cindex, _):
-            _ = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
+        case .swipe(let to, let from, let find, _, _, let traits, let cindex, _):
+            _ = try resolveSwipeParams(to: to, from: from, find: find, traits: traits, cindex: cindex)
         default:
             break
         }
@@ -363,10 +363,24 @@ enum DriverCommandExecutor {
         return (foryTarget, offsetPoint, ratioPoint)
     }
 
-    static func resolveSwipeParams(to: String?, from: String?, traits: String?, cindex: Int32?) throws -> (to: ForyTarget, from: ForyTarget) {
-        let toTarget = try resolveTarget(to, traits: traits, cindex: cindex)
-        let fromTarget = try resolveTarget(from)
-        return (toTarget, fromTarget)
+    static func resolveSwipeParams(to: String?, from: String?, find: String?, traits: String?, cindex: Int32?) throws -> (to: ForyTarget, from: ForyTarget, find: ForyTarget) {
+        guard to == nil || find == nil else {
+            throw CLIParseError.invalidValue("Use only one of --to or --find")
+        }
+        if to != nil || find != nil {
+            guard let from, !from.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw CLIParseError.invalidValue("--to and --find require --from <label|x,y>")
+            }
+        }
+        let toTarget = try resolveTarget(to, traits: find == nil ? traits : nil, cindex: find == nil ? cindex : nil)
+        let findTarget = try resolveTarget(find, traits: find != nil ? traits : nil, cindex: find != nil ? cindex : nil)
+        if find != nil && (findTarget.point != nil || findTarget.label.isEmpty) {
+            throw CLIParseError.invalidValue("--find requires a label")
+        }
+        if to != nil && toTarget.point == nil && toTarget.label.isEmpty {
+            throw CLIParseError.invalidValue("--to requires a label or x,y")
+        }
+        return (toTarget, try resolveTarget(from), findTarget)
     }
 
     static func resolveInputTapTarget(_ tap: String?, traits: String?, cindex: Int32?) throws -> ForyTarget? {

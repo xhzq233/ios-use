@@ -119,8 +119,9 @@ final class PlayCoverDriverClientTests: XCTestCase {
             cindex: nil
         )
         let swipe = try client.swipe(
-            to: ForyTarget(label: "Developer"),
+            to: ForyTarget(),
             from: ForyTarget(label: "Bluetooth"),
+            find: ForyTarget(label: "Developer"),
             distance: 300,
             dir: "forth",
             traits: "StaticText",
@@ -199,7 +200,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
         guard case .swipe(let swipeArgs) = requests[4].1 else {
             return XCTFail("missing swipe arguments")
         }
-        XCTAssertEqual(swipeArgs.toTarget?.label, "Developer")
+        XCTAssertEqual(swipeArgs.findTarget?.label, "Developer")
         XCTAssertEqual(swipeArgs.fromTarget?.label, "Bluetooth")
         XCTAssertEqual(swipeArgs.distance, 300)
         XCTAssertEqual(

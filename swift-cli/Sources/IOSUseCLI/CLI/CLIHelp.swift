@@ -444,25 +444,28 @@ enum CLIHelp {
             )
         case "swipe":
             return driverHelp(
-                usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [duration] | -D [duration]] [--nodiff]",
-                summary: "Scroll to a DOM label, or use a fixed distance when no label is available.",
+                usage: "ios-use swipe [--from <label|x,y>] [--to <label|x,y> | --find <label>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [duration] | -D [duration]] [--nodiff]",
+                summary: "Drag between two visible endpoints with --to, or scroll within a container to find a label with --find.",
                 options: [
-                    "--to <label>       Target element",
-                    "--from <label|x,y> Select the scroll container using a visible element, container label or point",
-                    "--dir forth|back   Fixed-distance direction",
-                    "--distance <px>    Fixed distance in pixels",
-                    "--traits <traits>  Comma-separated trait filter for --to",
-                    "--cindex <index>   Select the Nth child under a matched --to parent",
+                    "--from <label|x,y> Gesture start, or a visible anchor selecting the scroll container; required with --to/--find",
+                    "--to <label|x,y>   Gesture end; both endpoints must be visible; does not search or scroll into view",
+                    "--find <label>     Scroll until the label is visible in the anchor's container; mutually exclusive with --to",
+                    "--dir forth|back   Search or fixed-distance direction; omitted search direction is inferred when possible",
+                    "--distance <px>    Fixed-distance scroll without --to/--find",
+                    "--traits <traits>  Comma-separated trait filter for --to or --find",
+                    "--cindex <index>   Select the Nth child under the --to or --find parent",
                     postDOMOption,
                     diffDOMOption,
                 ],
                 footer: """
-                Use the target's exact label and a visible anchor in the same list or panel:
-                  ios-use swipe --to "开发者" --from "蓝牙" --dom
-                Without a labeled target:
-                  ios-use swipe --from "<visible-anchor>" --dir forth --distance 300 --dom
-                Omit --from to use the backend's default scroll region:
-                  ios-use swipe --dir forth --distance 300 --dom
+                Drag from a visible label or coordinate to another visible endpoint:
+                  ios-use swipe --from "<start>" --to "<end>" -D
+                  ios-use swipe --from 300,500 --to 300,200 -D
+                Find a label in the same list as a visible anchor:
+                  ios-use swipe --from "蓝牙" --find "开发者" -D
+                For a fixed-distance scroll, omit --to and --find:
+                  ios-use swipe --from "<visible-anchor>" --dir forth --distance 300 -D
+                Existing scroll-to-label scripts must use --find instead of --to.
                 """
             )
         case "activateApp":

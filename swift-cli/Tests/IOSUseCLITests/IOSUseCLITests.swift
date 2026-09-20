@@ -2199,7 +2199,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         throw CLIParseError.invalidValue("unexpected input")
     }
 
-    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload {
+    func swipe(to: ForyTarget, from: ForyTarget, find: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload {
         throw CLIParseError.invalidValue("unexpected swipe")
     }
 

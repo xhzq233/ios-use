@@ -37,7 +37,9 @@ Generated projects and build products stay untracked under this directory.
 
 With an isolated Simulator or Mac session already showing the Scroll tab,
 verify anchor selection, nested axes, long distances and the reached row's
-actual selection callback:
+actual selection callback. The same script checks all label/coordinate drag
+combinations against `Documents/gesture-state.json`, recorded by the Fixture
+window from delivered touches:
 
 ```bash
 IOS_USE_HOME=/path/to/test-home python3 playcover-fixtures/test_swipe_anchor.py \

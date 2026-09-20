@@ -10,7 +10,7 @@ sleep 1
 "$IOS_USE_BIN" tap "com.apple.settings.wifi"
 "$IOS_USE_BIN" waitFor --label "信号强度" --traits "Cell,selected" --timeout 5
 "$IOS_USE_BIN" tap "信号强度" --traits "Cell,selected" --offset-ratio "0.9,0.5"
-"$IOS_USE_BIN" swipe --to "配置代理"
+"$IOS_USE_BIN" swipe --from "自动加入" --find "配置代理"
 "$IOS_USE_BIN" waitFor --label "配置代理" --timeout 3
 "$IOS_USE_BIN" tap "配置代理"
 sleep 0.5

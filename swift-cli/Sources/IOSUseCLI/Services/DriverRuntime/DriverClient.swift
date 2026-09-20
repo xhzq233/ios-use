@@ -66,7 +66,7 @@ protocol DriverCommandClient: AnyObject {
         traits: String?,
         cindex: Int32?
     ) throws -> ForyElementPayload
-    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload
+    func swipe(to: ForyTarget, from: ForyTarget, find: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload
     func activateApp(bundleId: String) throws
     func terminateApp(bundleId: String) throws
     func home() throws
@@ -532,7 +532,7 @@ final class DriverClient: DriverCommandClient {
         )
     }
 
-    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32? = nil) throws -> ForySwipePayload {
+    func swipe(to: ForyTarget, from: ForyTarget, find: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32? = nil) throws -> ForySwipePayload {
         let dirValue: Int32
         switch dir {
         case "forth": dirValue = IOSUseProtocol.XCConstants.swipeDirectionForth
@@ -540,8 +540,9 @@ final class DriverClient: DriverCommandClient {
         default: dirValue = IOSUseProtocol.XCConstants.swipeDirectionUnspecified
         }
         let args = ForySwipeArgs(
-            toTarget: to.withLookup(traits: traits, cindex: cindex),
+            toTarget: to.label.isEmpty ? to : to.withLookup(traits: traits, cindex: cindex),
             fromTarget: from,
+            findTarget: find.label.isEmpty ? find : find.withLookup(traits: traits, cindex: cindex),
             distance: distance ?? 0,
             dir: dirValue
         )

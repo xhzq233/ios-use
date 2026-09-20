@@ -107,7 +107,7 @@ public enum CLIParser {
             "--udid", "--path", "--name", "--pattern",
             "--flags", "--timeout", "--last", "--filter", "--interface",
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
-            "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
+            "--label", "--content", "--delete", "--to", "--find", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
             "--app", "--target", "--depth", "--device", "--connection", "--device-model", "--device-chrome", "--window-mode", "--bundle-id", "-d", "-i"
         ]
@@ -140,7 +140,7 @@ public enum CLIParser {
             "--flags", "--timeout", "--last",
             "--filter", "--interface", "--offset", "--offset-ratio",
             "--traits", "--cindex", "--duration", "--tap", "--label",
-            "--content", "--delete", "--to", "--from", "--dir",
+            "--content", "--delete", "--to", "--find", "--from", "--dir",
             "--distance", "--match", "--fps", "--index", "--process",
             "--pid", "--output", "--runtime", "--app", "--target",
             "--depth", "--connection", "--device-model", "--device-chrome", "--window-mode", "--bundle-id", "-i",
@@ -622,6 +622,7 @@ public enum CLIParser {
     private static func parseSwipe(_ parser: inout ArgumentParser) throws -> DriverAction {
         var to: String?
         var from: String?
+        var find: String?
         var dir: String?
         var distance: Double?
         var traits: String?
@@ -630,6 +631,7 @@ public enum CLIParser {
         var noDiff = false
         while let arg = parser.consume() {
             switch arg {
+            case "--find": find = try parser.value(for: arg)
             case "--to": to = try parser.value(for: arg)
             case "--from": from = try parser.value(for: arg)
             case "--dir":
@@ -644,7 +646,14 @@ public enum CLIParser {
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, cindex: cindex, postDom: try resolvedPostDom(postDom, noDiff: noDiff))
+        _ = try DriverCommandExecutor.resolveSwipeParams(to: to, from: from, find: find, traits: traits, cindex: cindex)
+        if to != nil && (dir != nil || distance != nil) {
+            throw CLIParseError.invalidValue("--to defines the gesture endpoint; use --find for scrolling to a label")
+        }
+        if find != nil && distance != nil {
+            throw CLIParseError.invalidValue("--find cannot be combined with --distance")
+        }
+        return .swipe(to: to, from: from, find: find, dir: dir, distance: distance, traits: traits, cindex: cindex, postDom: try resolvedPostDom(postDom, noDiff: noDiff))
     }
 
     private static func parseDom(_ parser: inout ArgumentParser) throws -> DriverAction {

@@ -22,12 +22,16 @@ args.output.mkdir(parents=True, exist_ok=True)
 cli = str(args.cli.resolve())
 sequence = 0
 results = []
+timings = []
 
 
 def call(name, *command, success=True):
     global sequence
     sequence += 1
-    response = subprocess.run([cli, *command, '--json'], capture_output=True, text=True, timeout=45)
+    started = time.monotonic()
+    response = subprocess.run([cli, *command, '--json'], capture_output=True, text=True, timeout=75)
+    timings.append(dict(case=name, command=list(command), seconds=time.monotonic() - started,
+                        success=response.returncode == 0))
     prefix = args.output / f'{sequence:02}-{name}'
     prefix.with_suffix('.out').write_text(response.stdout)
     prefix.with_suffix('.err').write_text(response.stderr)
@@ -113,14 +117,55 @@ for name, anchor in [
 ]:
     check(name, ['swipe', '--from', anchor, '--dir', 'forth', '--distance', '100'], None, success=False)
 
-check('different-container', ['swipe', '--from', 'fixture.left.row.0', '--to', 'fixture.right.row.3'], None, success=False)
-check('recycled-target', ['swipe', '--from', 'fixture.scroll.left', '--to', 'fixture.left.row.15'], 'left')
+check('different-container', ['swipe', '--from', 'fixture.left.row.0', '--find', 'fixture.right.row.3'], None, success=False)
+check('recycled-target', ['swipe', '--from', 'fixture.scroll.left', '--find', 'fixture.left.row.15'], 'left')
 call('tap-reached-target', 'tap', 'fixture.left.row.15')
 time.sleep(.2)
 assert state()['selected'] == 'left.15', state()
 results.append(dict(case='tap-reached-target', state=state()))
+check('find-back', ['swipe', '--from', 'fixture.scroll.left', '--find', 'fixture.left.row.0', '--dir', 'back'], 'left')
+call('tap-found-back', 'tap', 'fixture.left.row.0')
+time.sleep(.2)
+assert state()['selected'] == 'left.0', state()
+results.append(dict(case='tap-found-back', state=state()))
 reset()
 check('default-region', ['swipe', '--dir', 'forth', '--distance', '120'], 'right')
 reset()
+check('find-visible-no-movement', ['swipe', '--from', 'fixture.scroll.left', '--find', 'fixture.left.row.2'], None)
+check('drag-offscreen-end', ['swipe', '--from', 'fixture.left.row.0', '--to', 'fixture.left.row.15'], None, success=False)
+check('drag-offscreen-start', ['swipe', '--from', 'fixture.left.row.15', '--to', 'fixture.left.row.0'], None, success=False)
+check('mixed-intents', ['swipe', '--from', 'fixture.left.row.0', '--to', 'fixture.left.row.2', '--find', 'fixture.left.row.15'], None, success=False)
+
+
+def assert_gesture(start, end):
+    delivered = json.loads(args.state.with_name('gesture-state.json').read_text())
+    points = delivered['points']
+    for actual, expected in [(points[0], start), (points[-1], end)]:
+        assert all(abs(a - b) < 5 for a, b in zip(actual, expected)), (delivered, start, end)
+    assert len(points) > 2, delivered
+    return delivered
+
+
+for start_mode, end_mode in [('label', 'label'), ('label', 'point'), ('point', 'label'), ('point', 'point')]:
+    reset()
+    nodes = elements()
+    start = find(nodes, 'fixture.left.row.2')
+    end = find(nodes, 'fixture.left.row.0')
+    command = ['swipe', '--from', start['label'] if start_mode == 'label' else point(start),
+               '--to', end['label'] if end_mode == 'label' else point(end)]
+    check(f'drag-{start_mode}-{end_mode}', command, 'left')
+    results[-1]['gesture'] = assert_gesture(list(map(float, point(start).split(','))),
+                                          list(map(float, point(end).split(','))))
+
+reset()
+nodes = elements()
+start = find(nodes, 'fixture.left.row.0')
+end = find(nodes, 'fixture.right.row.0')
+call('drag-across-panels', 'swipe', '--from', start['label'], '--to', end['label'])
+time.sleep(.2)
+results.append(dict(case='drag-across-panels', gesture=assert_gesture(
+    list(map(float, point(start).split(','))), list(map(float, point(end).split(','))))))
+reset()
 (args.output / 'results.json').write_text(json.dumps(results, indent=2))
+(args.output / 'timings.json').write_text(json.dumps(timings, indent=2))
 print(f'{len(results)} live swipe checks passed', flush=True)

@@ -5,45 +5,75 @@ import Fory
 
 enum SwipeCommands {
 
-    /// doc 5 — unified swipe with to/from/distance/dir/traits.
+    /// Drag between endpoints, find within a scroll container, or scroll a distance.
     static func swipe(_ args: ForySwipeArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
-
-        let toTarget = args.toTarget
-        let fromTarget = args.fromTarget
-
-        if toTarget.point != nil, (!toTarget.traits.isEmpty || toTarget.cindex != nil) {
-            return try invalidArguments("swipe: traits/cindex require a label to target", target: toTarget)
+        let to = args.toTarget
+        let from = args.fromTarget
+        let find = args.findTarget
+        let hasTo = to.point != nil || !to.label.isEmpty
+        let hasFind = find.point != nil || !find.label.isEmpty
+        let hasFrom = from.point != nil || !from.label.isEmpty
+        guard !(hasTo && hasFind) else {
+            return try invalidArguments("swipe: use either to or find", target: to)
         }
-        if fromTarget.point != nil, (!fromTarget.traits.isEmpty || fromTarget.cindex != nil) {
-            return try invalidArguments("swipe: traits/cindex require a label from target", target: fromTarget)
+        guard !(hasTo || hasFind) || hasFrom else {
+            return try invalidArguments("swipe: to and find require from", target: from)
         }
-        if !fromTarget.traits.isEmpty || fromTarget.cindex != nil {
-            return try invalidArguments("swipe: traits/cindex are only supported for the to target", target: fromTarget)
+        guard find.point == nil else {
+            return try invalidArguments("swipe: find requires a label", target: find)
         }
-
-        // Path A0: from/to are both absolute points -> direct drag.
-        if let from = fromTarget.point, let to = toTarget.point {
-            return try handleAbsolutePointSwipe(from: from, to: to, app: app)
+        guard from.traits.isEmpty, from.cindex == nil else {
+            return try invalidArguments("swipe: traits/cindex apply to the destination", target: from)
+        }
+        if let start = from.point, let end = to.point {
+            return try handleAbsolutePointSwipe(from: start, to: end, app: app)
         }
 
         try Quiescence.wait(app: app, command: "swipe")
         guard let cs = captureCleanedSnapshot() else {
-            return try snapshotFailure("swipe: failed to take snapshot", target: toTarget.label.isEmpty ? nil : toTarget)
+            return try snapshotFailure("swipe: failed to take snapshot", target: hasFind ? find : to)
         }
-        // Response ancestors still use this tree after the gesture.
         defer { withExtendedLifetime(cs) {} }
+        if hasFind {
+            return try handleLabelSwipe(target: find, args: args, fromTarget: from, cs: cs, app: app)
+        }
+        if hasTo {
+            let start: ForyPoint
+            switch try resolveEndpoint(from, cs: cs) {
+            case .point(let point): start = point
+            case .failure(let response): return response
+            }
+            let end: ForyPoint
+            switch try resolveEndpoint(to, cs: cs) {
+            case .point(let point): end = point
+            case .failure(let response): return response
+            }
+            return try handleAbsolutePointSwipe(from: start, to: end, app: app, waitForIdle: false)
+        }
+        return try handleDistanceSwipe(args: args, cs: cs, app: app)
+    }
 
-        // Path B: `to` is a point → STEP_POINT
-        if let point = toTarget.point {
-            return try handlePointSwipe(point, cs: cs, app: app)
+    private enum EndpointResolution {
+        case point(ForyPoint)
+        case failure(ForyResponseFrame)
+    }
+
+    private static func resolveEndpoint(_ target: ForyTarget, cs: CleanedSnapshot) throws -> EndpointResolution {
+        if let point = target.point { return .point(point) }
+        switch rawFindInSnapshot(target, cs: cs, visibility: .only) {
+        case .found(let element):
+            guard let frame = interactionFrame(element.node) else {
+                return .failure(try notFoundResponse(target, suggestions: []))
+            }
+            return .point(ForyPoint(x: Double(frame.midX), y: Double(frame.midY)))
+        case .ambiguous(let matches):
+            return .failure(try ambiguityResponse(target, matches: matches))
+        case .fuzzy(let suggestions):
+            return .failure(try notFoundResponse(target, suggestions: suggestions))
+        case .notFound(let suggestions, let rejected):
+            return .failure(try notFoundResponse(target, suggestions: suggestions, rejected: rejected))
         }
-        // Path C: no `to` label → STEP_DISTANCE
-        if toTarget.label.isEmpty && toTarget.point == nil {
-            return try handleDistanceSwipe(args: args, cs: cs, app: app)
-        }
-        // Path A: `to` is a label → STEP 2+
-        return try handleLabelSwipe(target: toTarget, args: args, fromTarget: fromTarget, cs: cs, app: app)
     }
 
     // MARK: - STEP 2-8 (label path)
@@ -88,14 +118,11 @@ enum SwipeCommands {
             return try okScroll(target: target, scrolls: 0, scrollDirection: "")
         }
 
-        // STEP 4: already visible in app frame. Still try centering the target
-        // in its scrollable so edge / overlay-adjacent targets become easier to tap.
+        // Finding an already-visible target does not reposition the list.
         if let scrollFrame = interactionFrame(scrollView),
+           scrollFrame.contains(CGPoint(x: target.node.frame.midX, y: target.node.frame.midY)),
            hasInteractionFrame(target, in: scrollFrame) {
-            let adjusted = try centerTargetInScrollFrame(targetCell: findCellAncestor(target.node),
-                                                     scrollFrame: scrollFrame,
-                                                     app: app)
-            return try okScroll(target: target, scrolls: adjusted.count, scrollDirection: adjusted.scrollDirection)
+            return try okScroll(target: target, scrolls: 0, scrollDirection: "")
         }
 
         // STEP 5: infer the axis from visible content; prefer target geometry
@@ -232,7 +259,8 @@ enum SwipeCommands {
 
     private static func handleAbsolutePointSwipe(from: ForyPoint,
                                                  to: ForyPoint,
-                                                 app: XCUIApplication) throws -> ForyResponseFrame {
+                                                 app: XCUIApplication,
+                                                 waitForIdle: Bool = true) throws -> ForyResponseFrame {
         let origin = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
         let start = origin.withOffset(CGVector(dx: from.x, dy: from.y))
         let end = origin.withOffset(CGVector(dx: to.x, dy: to.y))
@@ -244,7 +272,8 @@ enum SwipeCommands {
                 pressDuration: IOSUseProtocol.touchPressDuration,
                 velocity: IOSUseProtocol.touchVelocity,
                 holdDuration: IOSUseProtocol.touchHoldDuration
-            )
+            ),
+            waitForIdle: waitForIdle
         )
         let payload = ForySwipePayload(
             ancestors: [],
@@ -260,44 +289,6 @@ enum SwipeCommands {
             scrollDirection: scrollDirectionName(vector: CGVector(dx: to.x - from.x, dy: to.y - from.y))
         )
         return try Codec.foryOK(payload)
-    }
-
-    // MARK: - Point swipe (doc 5.2)
-
-    private static func handlePointSwipe(_ point: ForyPoint,
-                                         cs: CleanedSnapshot,
-                                         app: XCUIApplication) throws -> ForyResponseFrame {
-        let p = CGPoint(x: point.x, y: point.y)
-        guard let scrollView = findScrollableAtPoint(p, cs.root) else {
-            return try scrollUnavailable("no scrollable at point", target: ForyTarget(point: point))
-        }
-        guard let frame = interactionFrame(scrollView) else {
-            return try scrollUnavailable("scrollable has no interaction frame", target: ForyTarget(point: point))
-        }
-        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollView, limit: nil), scrollFrame: frame)
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        let rawVector = CGVector(dx: center.x - p.x, dy: center.y - p.y)
-        let vector = projectVectorToPrimaryAxis(rawVector, axis: axis)
-        let vertical = axis == .vertical
-        let scrollUpwards = vertical ? vector.dy > 0 : vector.dx > 0
-        let axisName = vertical ? "vertical" : "horizontal"
-        DriverLog.info(String(
-            format: "[point-swipe] to=(%.1f,%.1f) axis=%@ rawVector=(%.1f,%.1f) vector=(%.1f,%.1f)",
-            p.x,
-            p.y,
-            axisName,
-            rawVector.dx,
-            rawVector.dy,
-            vector.dx,
-            vector.dy
-        ))
-        return try performDirectScroll(scrollView: scrollView,
-                                   responseNode: scrollView,
-                                   scrollFrame: frame,
-                                   vector: vector,
-                                   vertical: vertical,
-                                   scrollUpwards: scrollUpwards,
-                                   app: app)
     }
 
     // MARK: - Distance-only swipe (doc 5.3)

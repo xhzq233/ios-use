@@ -2265,7 +2265,7 @@ IOSUseAutomationSemanticSwipe(
     if (handled != NULL) {
         *handled = NO;
     }
-    NSDictionary<NSString *, id> *toTarget = arguments[@"toTarget"];
+    NSDictionary<NSString *, id> *toTarget = arguments[@"findTarget"];
     NSDictionary<NSString *, id> *fromTarget = arguments[@"fromTarget"];
     NSString *toLabel = [toTarget[@"label"]
         isKindOfClass:NSString.class]
@@ -2601,6 +2601,25 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
     NSDictionary<NSString *, id> **commandError
 ) {
     BOOL isSwipe = [command isEqualToString:@"swipe"];
+    if (isSwipe) {
+        BOOL hasTo = [arguments[@"toTarget"] isKindOfClass:NSDictionary.class];
+        BOOL hasFind = [arguments[@"findTarget"] isKindOfClass:NSDictionary.class];
+        BOOL hasFrom = [arguments[@"fromTarget"] isKindOfClass:NSDictionary.class];
+        NSDictionary *find = arguments[@"findTarget"];
+        BOOL invalidFind = hasFind &&
+            (![find[@"label"] isKindOfClass:NSString.class] ||
+             [find[@"label"] length] == 0 || find[@"point"] != nil);
+        if ((hasTo && hasFind) || ((hasTo || hasFind) && !hasFrom) || invalidFind) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"invalid_arguments",
+                    @"swipe requires from and exactly one of to or find; find must be a label",
+                    @"validation", @"validation", NO, nil, @[]
+                );
+            }
+            return nil;
+        }
+    }
     NSDictionary *target = isSwipe
         ? arguments[@"fromTarget"]
         : arguments[@"target"];

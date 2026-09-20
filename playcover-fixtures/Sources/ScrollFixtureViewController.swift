@@ -11,6 +11,21 @@ final class ScrollFixtureViewController: UIViewController, UITableViewDataSource
     private let status = UILabel()
     private var reversed = false
     private var selected = ""
+    private var gesturePoints: [[Double]] = []
+
+    func recordTouches(_ touches: Set<UITouch>) {
+        for touch in touches {
+            let point = touch.location(in: view.window)
+            if touch.phase == .began { gesturePoints = [] }
+            gesturePoints.append([Double(point.x), Double(point.y)])
+            if touch.phase == .ended || touch.phase == .cancelled {
+                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("gesture-state.json")
+                let data = try? JSONSerialization.data(withJSONObject: ["points": gesturePoints, "phase": touch.phase.rawValue])
+                try? data?.write(to: url, options: .atomic)
+            }
+        }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()

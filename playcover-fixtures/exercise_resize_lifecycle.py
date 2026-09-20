@@ -36,7 +36,7 @@ def scroll_to(label):
     dom = cli("dom", "--nodiff", "-d", "mac")
     frame = next(e["frame"] for e in dom["elements"] if e.get("identifier") == "fixture.uikit.scroll")
     point = f"{frame[0] + frame[2] / 2},{frame[1] + frame[3] / 2}"
-    cli("swipe", "--to", label, "--from", point, "--dom", "-d", "mac")
+    cli("swipe", "--find", label, "--from", point, "--dom", "-d", "mac")
 
 
 toolbar = """

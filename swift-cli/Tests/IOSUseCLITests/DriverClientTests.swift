@@ -137,8 +137,9 @@ final class DriverClientTests: XCTestCase {
         defer { client.close() }
 
         _ = try client.swipe(
-            to: ForyTarget(label: "Developer"),
+            to: ForyTarget(),
             from: ForyTarget(label: "Bluetooth"),
+            find: ForyTarget(label: "Developer"),
             distance: nil,
             dir: nil,
             traits: nil,
@@ -148,7 +149,7 @@ final class DriverClientTests: XCTestCase {
         let request = try XCTUnwrap(server.requestFrames.first)
         XCTAssertEqual(request.command, DriverCommand.swipe.rawValue)
         let args = try fory.deserialize(request.payload, as: ForySwipeArgs.self)
-        XCTAssertTrue(IOSUseProtocol.swipeUsesLabelTarget(args))
+        XCTAssertTrue(IOSUseProtocol.swipeFindsTarget(args))
         XCTAssertEqual(IOSUseProtocol.swipeSocketReadTimeoutSeconds(args), 62)
     }
 
