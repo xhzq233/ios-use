@@ -132,7 +132,7 @@ extension IOSUseCLI {
             let result = try DeviceCommandLock.withExclusiveLock(
                 paths: paths
             ) {
-                let observer = options.dom || options.postDom != nil ? try DomObservation(paths: paths) : nil
+                let observer = options.postDom != nil ? try DomObservation(paths: paths) : nil
                 let result = try AppLifecycleService.runWithReadiness(
                     options: options,
                     paths: paths,

@@ -375,7 +375,7 @@ Existing single-Device state is still read and moves to the new layout after its
 
 ## Performance Snapshot
 
-Mean latency in ms. ios-use: 2026-09-20, Release `aca8dc0b`; Appium + WDA: May 30 baseline.
+Mean latency in ms. ios-use: 2026-09-20, Release `aca8dc0b` with the foreground-only activation follow-up; Appium + WDA: May 30 baseline.
 USB uses iPhone Settings; Mac uses UIKit Fixture.
 
 | Operation | USB ios-use | Appium + WDA | Mac ios-use |
@@ -397,7 +397,7 @@ USB uses iPhone Settings; Mac uses UIKit Fixture.
 | Find already-visible row | 293.5 | — | 35.1 |
 | Coordinate drag | 1,505.8 | — | 446.6 |
 | Label-to-label drag | 1,244.6 | — | 446.0 |
-| Activate App | 606.3 | 1,446.7 | — |
+| Activate App | 249.4 | 1,446.7 | — |
 | Terminate App | 260.5 | 1,144.0 | — |
 | Stop Mac session | — | — | 1,251.3 |
 

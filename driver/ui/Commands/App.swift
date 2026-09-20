@@ -108,8 +108,8 @@ enum AppCommands {
         return Codec.foryOK()
     }
 
-    /// Wait for the requested app (or any foreground UI when empty) and one
-    /// fresh cleaned snapshot. Snapshot success is point-in-time readiness, not
+    /// Wait for the requested app (or any foreground UI when empty), optionally
+    /// capturing a fresh snapshot. Snapshot success is point-in-time readiness, not
     /// a stability or business-screen assertion.
     static func waitAppForeground(_ args: ForyWaitAppForegroundArgs) throws -> ForyResponseFrame {
         let startedAt = CFAbsoluteTimeGetCurrent()
@@ -143,7 +143,7 @@ enum AppCommands {
         var lastState = IOSUseAppState.unknown
         var lastSnapshotFailure = "snapshot unavailable"
 
-        DriverLog.info("[app] waitAppForeground expected=\(expectedDescription) timeout=\(formatSeconds(timeout))s returnDom=\(args.returnDom)")
+        DriverLog.info("[app] waitAppForeground expected=\(expectedDescription) timeout=\(formatSeconds(timeout))s returnDom=\(args.returnDom) waitForSnapshot=\(args.waitForSnapshot)")
 
         while CFAbsoluteTimeGetCurrent() <= deadline {
             if let requestedApp {
@@ -183,6 +183,16 @@ enum AppCommands {
                 phase: IOSUseErrorPhase.wait,
                 retryable: true
             )
+        }
+
+        if !args.waitForSnapshot && !args.returnDom {
+            return try Codec.foryOK(ForyWaitAppForegroundPayload(
+                expectedBundleId: reportedExpected,
+                activeBundleId: lastBundleId,
+                appState: lastState.rawValue,
+                snapshotReady: false,
+                elapsed: (CFAbsoluteTimeGetCurrent() - startedAt).sanitized
+            ))
         }
 
         while CFAbsoluteTimeGetCurrent() <= deadline {

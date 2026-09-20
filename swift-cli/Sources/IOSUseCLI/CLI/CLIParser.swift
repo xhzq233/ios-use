@@ -873,7 +873,6 @@ public enum CLIParser {
         var log = false
         var postDom: PostDomMode?
         var noDiff = false
-        var noWait = false
         while let arg = parser.consume() {
             switch arg {
             case "--terminateExisting":
@@ -885,9 +884,6 @@ public enum CLIParser {
             case "--nodiff": noDiff = true
             case "--dom", "-D":
                 postDom = try parsePostDomMode(&parser, option: arg, existing: postDom)
-            case "--no-wait":
-                guard action == .activate else { throw CLIParseError.unknownOption(arg) }
-                noWait = true
             default:
                 try parseSession(arg, parser: &parser, session: &session)
             }
@@ -895,16 +891,12 @@ public enum CLIParser {
         if log && !terminateExisting {
             throw CLIParseError.invalidValue("activateApp --log requires --terminateExisting so the app starts with a fresh stdio pipe")
         }
-        if postDom != nil && noWait {
-            throw CLIParseError.invalidValue("activateApp --dom/-D cannot be combined with --no-wait")
-        }
         var options = AppLifecycleOptions(
             action: action,
             bundleID: bundleID,
             session: session,
             terminateExisting: terminateExisting,
-            log: log,
-            noWait: noWait
+            log: log
         )
         options.postDom = try resolvedPostDom(postDom, noDiff: noDiff)
         return options

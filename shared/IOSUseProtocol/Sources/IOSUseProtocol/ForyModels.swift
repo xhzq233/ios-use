@@ -795,17 +795,22 @@ public struct ForyWaitAppForegroundArgs {
     public var timeout: Double = 0
     /// Include the successful readiness snapshot in the response.
     public var returnDom: Bool = false
+    /// Wait for a snapshot even without returning it (used by URL readiness).
+    /// False with returnDom=false confirms foreground without reading the UI tree.
+    public var waitForSnapshot: Bool = true
 
     public init(
         expectedBundleId: String = "",
         acceptedBundleIds: [String] = [],
         timeout: Double = 0,
-        returnDom: Bool = false
+        returnDom: Bool = false,
+        waitForSnapshot: Bool = true
     ) {
         self.expectedBundleId = expectedBundleId
         self.acceptedBundleIds = acceptedBundleIds
         self.timeout = timeout
         self.returnDom = returnDom
+        self.waitForSnapshot = waitForSnapshot
     }
 }
 

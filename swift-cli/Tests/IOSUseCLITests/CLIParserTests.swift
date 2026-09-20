@@ -651,10 +651,9 @@ final class CLIParserTests: XCTestCase {
         activation.postDom = .diffAfterQuiescence
         XCTAssertEqual(try CLIParser.parse(["activateApp", "com.apple.Preferences", "--dom", "--udid", "REAL-1"]), .appLifecycle(activation))
 
-        XCTAssertEqual(
-            try CLIParser.parse(["activateApp", "com.apple.Preferences", "--no-wait"]),
-            .appLifecycle(AppLifecycleOptions(action: .activate, bundleID: "com.apple.Preferences", noWait: true))
-        )
+        XCTAssertThrowsError(try CLIParser.parse(["activateApp", "com.apple.Preferences", "--no-wait"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--no-wait"))
+        }
 
         XCTAssertEqual(
             try CLIParser.parse(["terminateApp", "com.apple.Preferences", "--udid", "REAL-1"]),
@@ -977,7 +976,7 @@ final class CLIParserTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["activateApp", "com.example", "--dom", "--no-wait"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("activateApp --dom/-D cannot be combined with --no-wait"))
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--no-wait"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["tap", "67", "269", "270"])) { error in

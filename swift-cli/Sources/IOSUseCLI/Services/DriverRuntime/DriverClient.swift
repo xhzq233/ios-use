@@ -73,7 +73,7 @@ protocol DriverCommandClient: AnyObject {
     func rotate(orientation: IOSUseDeviceOrientation) throws -> ForyRotatePayload
     func dismissAlert(args: ForyDismissAlertArgs) throws -> ForyAlertPayload
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
-    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
+    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool, waitForSnapshot: Bool) throws -> ForyWaitAppForegroundPayload
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload
 }
@@ -170,16 +170,16 @@ extension DriverCommandClient {
         throw CLIParseError.invalidValue("media import is not supported by this driver client")
     }
 
-    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
+    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool, waitForSnapshot: Bool = true) throws -> ForyWaitAppForegroundPayload {
         throw CLIParseError.invalidValue("waitAppForeground is not supported by this driver client")
     }
 
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
         switch acceptedBundleIds.count {
         case 0:
-            return try waitAppForeground(expectedBundleId: "", timeout: timeout, returnDom: returnDom)
+            return try waitAppForeground(expectedBundleId: "", timeout: timeout, returnDom: returnDom, waitForSnapshot: true)
         case 1:
-            return try waitAppForeground(expectedBundleId: acceptedBundleIds[0], timeout: timeout, returnDom: returnDom)
+            return try waitAppForeground(expectedBundleId: acceptedBundleIds[0], timeout: timeout, returnDom: returnDom, waitForSnapshot: true)
         default:
             throw CLIParseError.invalidValue("this driver client does not support multiple accepted foreground apps")
         }
@@ -626,11 +626,12 @@ final class DriverClient: DriverCommandClient {
         try send(ProxyCAPushCommand.self, args: ForyProxyCAPushArgs(caBase64: caBase64))
     }
 
-    func waitAppForeground(expectedBundleId: String, timeout: Double = 0, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
+    func waitAppForeground(expectedBundleId: String, timeout: Double = 0, returnDom: Bool, waitForSnapshot: Bool = true) throws -> ForyWaitAppForegroundPayload {
         let args = ForyWaitAppForegroundArgs(
             expectedBundleId: expectedBundleId,
             timeout: timeout,
-            returnDom: returnDom
+            returnDom: returnDom,
+            waitForSnapshot: waitForSnapshot
         )
         return try waitAppForeground(args: args, timeout: timeout)
     }

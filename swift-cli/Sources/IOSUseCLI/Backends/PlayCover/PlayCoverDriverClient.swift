@@ -530,7 +530,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
     func waitAppForeground(
         expectedBundleId: String,
         timeout: Double,
-        returnDom: Bool
+        returnDom: Bool,
+        waitForSnapshot: Bool = true
     ) throws -> ForyWaitAppForegroundPayload {
         throw PlayCoverDriverClientError
             .lifecycleCommandUnsupported("waitAppForeground")

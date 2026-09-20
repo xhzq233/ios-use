@@ -470,10 +470,10 @@ enum CLIHelp {
             )
         case "activateApp":
             return """
-            Usage: ios-use activateApp <bundleId> [--udid <udid>] [--terminateExisting] [--log] [--dom [duration] | -D [duration] | --no-wait] [--nodiff] [--verbose] [--json]
+            Usage: ios-use activateApp <bundleId> [--udid <udid>] [--terminateExisting] [--log] [--dom [duration] | -D [duration]] [--nodiff] [--verbose] [--json]
 
             Activate an app by bundle ID using host-side device services.
-            By default, waits for the app to reach foreground and for one fresh UI snapshot.
+            By default, waits only for the app to reach foreground, without taking a UI snapshot.
             With --log, starts background App stdout/stderr capture on the CLI host.
             Files are retained under IOS_USE_HOME/logs/devices/<device-id>/;
             --json returns data.logFile and data.logCapturePid.
@@ -484,10 +484,9 @@ enum CLIHelp {
               --udid <udid>          Target USB real device or booted Simulator UDID; overrides active driver.lock
               --terminateExisting    Relaunch the app instead of activating an existing process
               --log                  Capture stdout/stderr; requires --terminateExisting
-              --dom [duration]       Alias for -D; observe changes after readiness
+              --dom [duration]       Alias for -D; observe changes after foreground confirmation
               --nodiff               Return the full DOM with --dom/-D
               -D [duration]          Return DOM changes after idle, or a fixed delay (ms/s; default ms; min 100ms)
-              --no-wait              Return after host launch dispatch without contacting the Driver
               --verbose              Enable verbose output
               --json                 Print the common machine-readable envelope
 

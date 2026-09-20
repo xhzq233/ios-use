@@ -289,7 +289,7 @@ final class DriverClientTests: XCTestCase {
             expectedBundleId: "com.example.app",
             activeBundleId: "com.example.app",
             appState: IOSUseAppState.foreground.rawValue,
-            snapshotReady: true,
+            snapshotReady: false,
             elapsed: 0.2
         ))
         let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true, payload: responsePayload)])
@@ -300,16 +300,18 @@ final class DriverClientTests: XCTestCase {
         let result = try client.waitAppForeground(
             expectedBundleId: "com.example.app",
             timeout: 12,
-            returnDom: false
+            returnDom: false,
+            waitForSnapshot: false
         )
 
-        XCTAssertTrue(result.snapshotReady)
+        XCTAssertFalse(result.snapshotReady)
         let request = try XCTUnwrap(server.requestFrames.first)
         XCTAssertEqual(request.command, DriverCommand.waitAppForeground.rawValue)
         let args = try fory.deserialize(request.payload, as: ForyWaitAppForegroundArgs.self)
         XCTAssertEqual(args.expectedBundleId, "com.example.app")
         XCTAssertEqual(args.timeout, 12)
         XCTAssertFalse(args.returnDom)
+        XCTAssertFalse(args.waitForSnapshot)
         XCTAssertEqual(IOSUseProtocol.appForegroundWatchdogTimeoutSeconds(args.timeout), 22)
         XCTAssertEqual(IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(args.timeout), 24)
     }

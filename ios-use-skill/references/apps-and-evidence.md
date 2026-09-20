@@ -8,7 +8,6 @@ backend, use only `start`, `status`, and `stop` for lifecycle.
 ```bash
 ios-use activateApp com.example.app
 ios-use activateApp com.example.app -D
-ios-use activateApp com.example.app --no-wait
 ios-use activateApp com.example.app --terminateExisting --log
 ios-use terminateApp com.example.app
 ios-use open "https://example.com"
@@ -18,8 +17,8 @@ ios-use dismissAlert --only-button
 ios-use dismissAlert --label "Allow Full Access"
 ```
 
-- `activateApp` waits for the App to open in the foreground. Add `-D` to inspect
-  the resulting page, or `--no-wait` to return without waiting for the UI.
+- `activateApp` waits only for the App to reach the foreground. Add `-D` to
+  observe the resulting page after idle; use `waitFor` for a specific loaded state.
 - `open` only dispatches the URL by default. Add `-D` for immediate foreground
   UI evidence, then use `waitFor` for the destination condition that matters.
   Use `--bundle-id` to select an App on a local or remote real device without

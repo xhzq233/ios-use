@@ -59,7 +59,8 @@ final class ServerTests: XCTestCase {
         let args = ForyWaitAppForegroundArgs(
             expectedBundleId: "com.example.app",
             timeout: 12,
-            returnDom: true
+            returnDom: false,
+            waitForSnapshot: false
         )
         let payload = try ForyRegistry.create().serialize(args)
         let invocation = try CommandInvocation(
@@ -68,6 +69,9 @@ final class ServerTests: XCTestCase {
             codec: Codec.Context()
         )
 
+        let decoded = try ForyRegistry.create().deserialize(payload, as: ForyWaitAppForegroundArgs.self)
+        XCTAssertFalse(decoded.waitForSnapshot)
+        XCTAssertFalse(decoded.returnDom)
         XCTAssertEqual(invocation.watchdogTimeoutSeconds, 22)
         XCTAssertEqual(IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(args.timeout), 24)
     }
