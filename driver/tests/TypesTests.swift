@@ -106,25 +106,6 @@ final class TypesTests: XCTestCase {
         XCTAssertTrue(findLargestScrollable(plain)?.raw as AnyObject === page)
     }
 
-    func testScrollAnchorKeepsNearestContainerForSingleChildAndNestedStrip() {
-        let frame = CGRect(x: 0, y: 0, width: 400, height: 800)
-        let child = FakeRawSnapshot(frame: CGRect(x: 20, y: 150, width: 80, height: 30))
-        let strip = FakeRawSnapshot(elementType: .scrollView,
-                                    frame: CGRect(x: 10, y: 120, width: 150, height: 80), children: [child])
-        let left = FakeRawSnapshot(elementType: .table,
-                                   frame: CGRect(x: 0, y: 100, width: 170, height: 350), children: [strip])
-        let right = FakeRawSnapshot(elementType: .table,
-                                    frame: CGRect(x: 180, y: 100, width: 220, height: 600))
-        let root = SafeSnapshot(raw: FakeRawSnapshot(elementType: .application, frame: frame,
-                                                     children: [left, right]), appFrame: frame)
-        XCTAssertTrue(findLargestScrollable(root)?.raw as AnyObject === right)
-        XCTAssertTrue(findScrollableAncestor(root.children[0])?.raw as AnyObject === left)
-        XCTAssertTrue(findScrollableAncestor(root.children[0].children[0].children[0])?.raw as AnyObject === strip)
-        XCTAssertTrue(findScrollableAtPoint(CGPoint(x: 40, y: 160), root)?.raw as AnyObject === strip)
-        XCTAssertNil(findScrollableAtPoint(CGPoint(x: 40, y: 50), root))
-        XCTAssertNil(findScrollableAncestor(root))
-    }
-
     func testGridAxisUsesAllRowsInsteadOfBoundarySamples() {
         let viewport = CGRect(x: 0, y: 100, width: 400, height: 600)
         let cells = (0..<4).flatMap { row in

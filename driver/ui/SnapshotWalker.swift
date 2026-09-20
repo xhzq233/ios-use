@@ -505,15 +505,16 @@ func findLargestScrollable(_ root: SafeSnapshot) -> SafeSnapshot? {
 
 // MARK: - findScrollableAncestor (doc 5.1 STEP 4)
 
-/// Finds the nearest visible scroll container, including an explicitly named
-/// container itself. A scroll view may contain only one large child.
-/// Time complexity: O(h), where h is the ancestor depth.
+/// Walks the parent chain and validates candidate containers by visible cells.
+/// Time complexity: O(h * n_sub) in the worst case, where h is ancestor depth
+/// and n_sub is the size of each checked ancestor subtree.
 func findScrollableAncestor(_ node: SafeSnapshot) -> SafeSnapshot? {
-    var cur: SafeSnapshot? = node
+    var cur: SafeSnapshot? = node.parent
     while let p = cur {
         if scrollableElementTypes.contains(UInt(p.elementType))
             && interactionFrame(p) != nil {
-            return p
+            let frames = collectVisibleCellFrames(p, limit: 2)
+            if frames.count > 1 { return p }
         }
         cur = p.parent
     }
