@@ -2117,7 +2117,7 @@ if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
 fi
 assert_failure_json swipe_anchor_required '
   .ok == false and
-  .error.code == "invalid_arguments" and
+  .error.code == "invalid_value" and
   .error.mutationMayHaveApplied == false
 '
 
