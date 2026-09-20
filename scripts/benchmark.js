@@ -585,6 +585,9 @@ async function customPrepareAppSession(ctx, appBundle = ctx.bundleId, label = ct
     }
   }
   cli(['waitFor', '--label', label, '--timeout', '8', '--udid', ctx.udid]);
+  // Settings restores its list offset after launch. Warm the page before timing
+  // actions; the anchor can already exist while its frame is still moving.
+  await sleep(1000);
 }
 
 async function customPrepareInputSession(ctx) {

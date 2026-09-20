@@ -375,20 +375,34 @@ Existing single-Device state is still read and moves to the new layout after its
 
 ## Performance Snapshot
 
-2026-09-20 · Release development build `aca8dc0b`. Mean command latency in ms.
-USB: iPhone Settings; Mac: UIKit Fixture. DOM: 20 runs; swipe/drag: 6 runs.
+Mean latency in ms. ios-use: 2026-09-20, Release `aca8dc0b`; Appium + WDA: May 30 baseline.
+USB uses iPhone Settings; Mac uses UIKit Fixture.
 
-| Operation | USB iPhone | Mac Backend |
-| --- | ---: | ---: |
-| Full DOM (`dom --nodiff`) | 241.5 | 28.1 |
-| Unchanged DOM (`dom`) | 253.0 | 29.6 |
-| Scroll 200 pt | 2,013.3 | 445.7 |
-| Find offscreen row | 9,471.5 | 270.7 |
-| Find already-visible row | 293.5 | 35.1 |
-| Coordinate drag | 1,505.8 | 446.6 |
-| Label-to-label drag | 1,244.6 | 446.0 |
+| Operation | USB ios-use | Appium + WDA | Mac ios-use |
+| --- | ---: | ---: | ---: |
+| Start session | 2,087.8 | 10,753.6 | 1,834.4 |
+| Full DOM | 241.5 | 965.7 | 28.1 |
+| Unchanged DOM | 253.0 | — | 29.6 |
+| Wait for present element | 194.1 | 308.7 | 35.4 |
+| Wait timeout (2s) | 2,208.3 | 2,365.2 | 2,051.0 |
+| Screenshot (no OCR) | 71.1 | 179.0 | 85.5 |
+| Coordinate tap | 367.5 | 556.3 | 90.6 |
+| Label tap | 598.6 | 1,076.3 | 107.6 |
+| Tap with offset ratio | 585.2 | 947.8 | 102.9 |
+| Long press (500ms) | 786.0 | 1,038.8 | 569.5 |
+| Input two characters | 957.3 | 1,717.6 | 172.1 |
+| Scroll 200 pt | 2,013.3 | 2,620.3 | 445.7 |
+| Scroll 150 pt in the selected list | — | — | 451.3 |
+| Find offscreen row | 9,471.5 | 17,050.9 | 270.7 |
+| Find already-visible row | 293.5 | — | 35.1 |
+| Coordinate drag | 1,505.8 | — | 446.6 |
+| Label-to-label drag | 1,244.6 | — | 446.0 |
+| Activate App | 606.3 | 1,446.7 | — |
+| Terminate App | 260.5 | 1,144.0 | — |
+| Stop Mac session | — | — | 1,251.3 |
 
-Each backend is measured separately. [Methodology and medians](docs/benchmark.md).
+DOM: 20 runs; other commands: 6; session start/stop: 3. Mac uses `start/stop` for App lifecycle.
+[Medians, before/after comparison and validation notes](docs/benchmark.md).
 
 ## Commands
 
