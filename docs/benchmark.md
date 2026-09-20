@@ -76,3 +76,34 @@ A focused real-device probe compared the available screenshot paths over one alr
 The direct CoreDevice design would remove the host-to-driver command and the driver's XCTest screenshot request layer, but it would still cross a RemoteXPC/system screenshot service boundary. On the tested iOS 26.5.1 device no physical-device screenshot service was advertised. The installed CoreDevice framework only exposed an Apple-internal `SnapshotFetchScreenshotsAction` whose API targets virtual machines. The DTX alternative added protocol overhead and was slower, so the production command keeps XCTest JPEG capture.
 
 CoreDevice Display Info is queried in parallel for every real-device screenshot. Reusing the holder's tunnel while opening the service's one-request RemoteXPC connection took about 14–20 ms warm. It stayed off the screenshot critical path in the real-device samples; structured timings are written as `[screenshot-perf]` records in the CLI log and per-frame fields in `capture` manifests.
+
+## Swipe interface comparison (2026-09-20, PR #27)
+
+Before: main `815132ff`. After: `aca8dc0b`. Both are Release builds with matching CLI and XCTest Driver or Mac Runtime. The before group is the immediate pre-PR main, **not the published v2.1.0 binary**. This comparison does not rerun Appium/WDA or update the historical DOM numbers above.
+
+Each existing case has six samples per group, split into blocks of three: after/before/before/after on USB, before/after/after/before on Mac. Only CLI process wall time is measured, without `-D`. Installation, startup, identical page reset, full DOM reads and effect verification are outside the timer. All measured commands and slow samples are retained. Old semantic `--to` is compared with new `--find`; new label-to-label dragging is a separate case.
+
+USB Settings: iPhone18,3, iOS 26.5.1, 402×874 logical canvas. The two original swipe workloads use a 200-point default scroll and Bluetooth → Developer search. Every trial starts at the same top offset. Search checks target visibility and then actually opens the reached row; scroll/drag checks row movement. Coordinates are identical between groups. One preparation attempt paused because AX changed a text frame without moving its row; the harness resumed using the enclosing row's position, without replacing any timing sample.
+
+| USB case | Before mean / median (ms) | After mean / median (ms) | Verified before → after |
+| --- | ---: | ---: | ---: |
+| Default scroll, 200 pt | 1932.2 / 1927.4 | 2013.3 / 2029.4 | 6/6 → 6/6 |
+| Find offscreen Developer row | 9518.7 / 9518.7 | 9471.5 / 9463.0 | 6/6 → 6/6 |
+| Find already-visible Bluetooth row | 1585.6 / 1585.2 | 293.5 / 289.3 | 6/6 → 6/6 |
+| Coordinate drag | 1281.1 / 1289.2 | 1505.8 / 1283.6 | 6/6 → 6/6 |
+| Label-to-label drag (new) | — | 1244.6 / 1252.3 | — → 6/6 |
+
+The visible-target case is 81.5% faster on average because it avoids an unnecessary scroll; the old implementation moved the row about 160 points while the new one left it in place. Offscreen search is nearly unchanged. Fixed-distance scroll averages 4.2% slower (+81 ms). Coordinate drag has nearly unchanged median, but one 2754 ms sample raises the new mean by 17.5%; that sample is not discarded. Six samples cannot establish a fleet-wide latency or tail-latency conclusion.
+
+Mac: macOS 15.7.7 arm64, the same Release UIKit Fixture and iPhone 13 layout (390×844) for both groups. App-written offsets, selected rows and delivered touch endpoints verify effects independently of command success. All trials reset the three scroll containers first.
+
+| Mac case | Before mean / median (ms) | After mean / median (ms) | Verified before → after |
+| --- | ---: | ---: | ---: |
+| Default scroll, 200 pt | 441.3 / 445.4 | 445.7 / 445.5 | 6/6 → 6/6 |
+| Anchored left-list scroll, 150 pt | 444.5 / 442.6 | 451.3 / 451.0 | 6/6 → 6/6 |
+| Find offscreen left row 15 | 272.1 / 275.8 | 270.7 / 270.5 | 6/6 → 6/6 |
+| Find already-visible row | 30.4 / 31.1 | 35.1 / 34.2 | 6/6 → 6/6 |
+| Coordinate drag | 443.1 / 445.0 | 446.6 / 446.0 | 6/6 → 6/6 |
+| Label-to-label drag (new) | — | 446.0 / 446.1 | — → 6/6 |
+
+The tested Mac operations remain close in latency. Across USB and Mac, all 120 measured commands passed their effect checks. This supplements the separate correctness regression suite; it is not a claim that every swipe scenario became faster.
