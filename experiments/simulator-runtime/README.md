@@ -296,6 +296,75 @@ device. The newer Simulator runtime exposes UIKit 26.0.1 and `MTLSimDevice`,
 which forwards GPU work to the host. Replacing Simulator Metal with the host
 Metal framework is unnecessary for these measured workloads.
 
+## Reusing the installed Mac Catalyst libraries
+
+A local inspection on macOS 15.7.7 with the installed iOS 26.0.1 runtime
+distinguished the nine selectable services from the application adapters:
+
+| Service | Current implementation | Host reuse evidence |
+| --- | --- | --- |
+| `metal` | Host `MTLSimImplementation`, in the broker | Already forwards to the host GPU. |
+| `iosurface` | Host `IOSurfaceRemoteServer`, in the broker | Already uses the host implementation. |
+| `compiler` | Runtime `MTLCompilerService` child | Keep the matching runtime compiler; the earlier host substitution failed. |
+| `notify` | Runtime `notifyd` child | A new Simulator-to-host Mach-port experiment passed registration, cross-process delivery, and shared state `42` using the existing host daemon. |
+| `trust` | Runtime `trustd` child | Native and Catalyst clients resolve to the same host Security library. Replacing the runtime connection or adding a host API proxy remains unverified. |
+| `keychain` | Runtime `securityd` child | Host Security is available, but using it changes the caller identity and storage boundary. The isolated runtime keychain remains the tested implementation. |
+| `tcc` | Runtime `tccd` child | Both host targets load the same TCC library. This does not establish equivalent authorization for a runtime child. |
+| `photos` | Runtime `assetsd` child | Both host targets resolve `PHPhotoLibrary` to the same Photos library. Host photo-library access is a separate data/permission decision, not an isolated-library replacement. |
+| `launchservices` | Runtime `lsd` child | Both host targets resolve `LSApplicationWorkspace` to the same host library. Runtime containers and application registration still need an explicit mapping. |
+
+`notify` above means Darwin interprocess notifications. The optional
+`HostUserNotifications.m` bridge separately presents runtime CFUserNotification
+requests as AppKit alerts. Display metadata, the scene peer/bootstrap, local
+CoreAnimation composition, frame delivery, and input are application adapters;
+they are not additional copies of those nine daemons. ANGLE and the shared
+Metal-buffer adapter are optional compatibility paths.
+
+`dyld_info` reports the host UIKitCore as Mac Catalyst 18.7. UIKitMacHelper,
+UIKitServices, FuseBoardServices, QuartzCore, Metal, IOSurface, Security, Photos,
+TCC, and LaunchServices have combined macOS/Catalyst platform support. Separate
+native and Catalyst metadata probes confirmed the same loaded images for the
+selected host APIs. This allows host-side reuse without changing the broker's
+build target to Catalyst.
+
+The installed UIKitMacHelper exposes several different hosting boundaries:
+
+- `UINSSceneHostingView` has `initWithUIView:` and retains a UIView/UIWindow.
+- `UINSSceneHostingViewController` retains a UIWindowScene; UINSWorkspace holds
+  an FBSWorkspace. UINSApplicationDelegate uses numerous UIKit callbacks.
+- `UINSSceneViewController` exposes `setHostedContextID:`; UINSSceneView exposes
+  `setContextId:`. `USSLayerHost.layerHostForContextID:` returned a native
+  CALayerHost in the probe.
+
+The first group is coupled to host UIKit objects. The context-ID interfaces are
+smaller candidates, but their existence does not establish a cross-runtime
+rendering protocol. In a synthetic pixel experiment, the helper displayed a
+host CAContext with 9,216 white pixels, both from its own process and from a
+separate native producer; context ID zero produced none. A separate
+Simulator process rendered its own 96-by-96 white context correctly through the
+existing IOSurface broker: CARenderServerSnapshot succeeded and all 9,216 source
+pixels were white. Passing that live context ID to the same host layer produced
+zero white pixels. Merely forwarding the numeric ID does not bridge these
+render-server contexts. This does not rule out a different context transport;
+the existing IOSurface frame path remains the demonstrated cross-runtime path.
+
+A Simulator metadata probe could not dlopen the installed UIKitMacHelper: its
+runtime path did not contain the image and its active dyld cache did not expose
+the host image. Native and Catalyst probes both loaded it. Loading it directly
+into the Simulator process is therefore not an established replacement path.
+
+For the host-notify experiment, a native launcher obtained the normal host
+notification-center send right and inherited it in slot 1, as expected by
+`NotifyTransport.c`. The existing `NotifyProbe.c` then ran as a Simulator binary
+with that adapter and without an owned notifyd or a shared-memory-name override.
+The unadapted standalone Simulator probe failed registration with status 9;
+native, Catalyst, and adapted Simulator probes passed. Only the probe's own
+process-specific notification name was used, and registrations were cancelled
+after the probe. A production replacement still
+needs a deliberate notification-namespace policy; the default runner continues
+to use the isolated runtime daemon. Host Photos, TCC, and Keychain inspection
+was limited to library/class metadata; their API behavior was not tested.
+
 ## Keychain and Simulator entitlement metadata
 
 `keychain` runs the installed runtime's securityd and exposes only its main
