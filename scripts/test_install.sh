@@ -264,8 +264,8 @@ if [[ ! -x "$BUILD_HOME/.ios-use/altsign-cli/altsign-cli" ]]; then
   echo "[install-test] ERROR: install did not download altsign-cli" >&2
   exit 1
 fi
-if [[ "$(cat "$BUILD_HOME/.ios-use/altsign-cli/version")" != "v0.2.0" ]]; then
-  echo "[install-test] ERROR: install did not pair ios-use with altsign-cli v0.2.0" >&2
+if [[ "$(cat "$BUILD_HOME/.ios-use/altsign-cli/version")" != "v0.3.0" ]]; then
+  echo "[install-test] ERROR: install did not pair ios-use with altsign-cli v0.3.0" >&2
   exit 1
 fi
 if [[ ! -x "$BUILD_HOME/share/ios-use/mac/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" ]]; then
