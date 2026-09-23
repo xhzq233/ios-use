@@ -1,101 +1,76 @@
 # ios-use
 
-## 1. Project overview
+`ios-use` is a Swift CLI for automating real iOS devices and Simulators. The
+host CLI handles arguments, device and session state, logs, proxying, and local
+artifacts. The XCTest driver handles UI actions, DOM snapshots, Fory encoding,
+and its TCP server.
 
-`ios-use` is a Swift CLI for automating iOS real devices and Simulators. The
-host CLI owns argument parsing, device/session state, logs, proxying, and local
-artifacts. The XCTest driver owns UI actions, DOM snapshots, Fory encoding, and
-the TCP server.
+## Repository map
 
-Key paths:
+- `swift-cli/`: host CLI, state, services, and Swift Package tests.
+- `shared/IOSUseProtocol/`: commands, Fory frames, and payloads shared by host and driver.
+- `driver/tcp/` and `driver/ui/`: driver transport and XCTest UI behavior; driver tests are in `driver/tests/`.
+- `scripts/`: build, install, test, Simulator, and benchmark entry points.
+- `ios-use-skill/`: user-facing command workflows and recovery guidance.
 
-- `swift-cli/`: host CLI, parsers, sessions, device/config state, logs, proxy, and host services.
-- `shared/IOSUseProtocol/`: command, Fory frame, and payload types shared by host and driver.
-- `driver/tcp/`: TCP server and Fory codec.
-- `driver/ui/`: XCTest UI actions, DOM, element lookup, waits, screenshots, and driver-side commands.
-- `scripts/`: build, install, test, Simulator matrix, and benchmark entry points.
-- `swift-cli/Tests/` and `driver/tests/`: host and driver unit tests.
-- `ios-use-skill/`: user-facing CLI usage guidance. Keep leaf implementation context in this repository, cross-project coordination context in ContextShell, and the installed skill strictly user-facing.
+Read relevant source and owning tests for current behavior. README and command
+help describe the public CLI. Design notes are useful for historical intent,
+but may describe earlier versions. Keep implementation context in this repo;
+keep the installed skill focused on actions a CLI user can take.
 
-The current implementation and internal behavior are defined by source and
-tests. Use this evidence order:
+## Working approach
 
-1. Read the relevant source under `swift-cli/`, `driver/`, and `shared/IOSUseProtocol/`.
-2. Read the owning unit tests and validation scripts for acceptance behavior.
-3. Use README and command help for the public CLI contract. Use `ios-use-skill/`
-   only for operational workflows and recovery guidance.
-4. Use design and historical documents to understand boundaries and historical intent; do not copy early-version instructions as current behavior.
+Favor focused changes and real end-to-end checks on the affected platform. Add
+unit tests where they catch a meaningful protocol, algorithm, state, or error
+boundary; avoid tests that only compare wording or repeat the implementation.
+Do not add hashes, frozen contracts, baselines, or new gates without a concrete
+need. Keep planning and handoff notes proportional to the work.
 
-## 2. Documentation rules
+When CLI behavior changes, update command help or the smallest relevant public
+document. Update `ios-use-skill/` when command choice, order, or a user-executable
+recovery path changes; it does not need internal schemas or test matrices.
 
-- Pure internal refactors and test-only changes usually do not require design updates.
-- User-visible CLI arguments, defaults, output, errors, or state side effects require a focused update to command help or the smallest owning public document, plus tests.
-- Shared protocol or driver lifecycle changes require updates to the shared models and owning tests. Update a design note only when a durable cross-file invariant changes.
-- Test cases and case IDs belong in the owning executable tests or scripts, not in a parallel Markdown matrix. Update verification guidance only when gate selection changes.
-- Keep `ios-use-skill/SKILL.md` and its references strictly actionable for CLI users. Update them only when command choice, invocation order, or a user-executable recovery path changes. Do not mirror schemas, implementation details, benchmarks, test matrices, or release notes there.
-- Keep planning and handoff notes proportional to the work. Small fixes can be explained in the commit and response; do not create a plan or completion report for every change. For work spanning sessions or repositories, update an existing ContextShell note only when useful context needs to survive. For user-requested implementation work, commit completed coherent stages locally. Do not push unless the user asks.
+## Build and validation
 
-## 3. Development commands
-
-Run commands from the repository root. Detailed script contracts live in
-[`scripts/README.md`](scripts/README.md).
+Run from the repository root. See [`scripts/README.md`](scripts/README.md) for
+script details.
 
 ```bash
-bash scripts/build_swift_cli.sh --debug   # build the local CLI at ./ios-use
+bash scripts/build_swift_cli.sh --debug   # local CLI at ./ios-use
 ./ios-use --help
-
-bash scripts/build_driver.sh               # build the device driver
-bash scripts/build_driver.sh --release
-
-bash scripts/ci_test.sh                    # Swift CLI + driver unit gate
-bash scripts/ci_test.sh --skip-builds      # fast local gate
+bash scripts/build_driver.sh
+bash scripts/test_swift_cli.sh
+bash scripts/test_driver_unit.sh
+bash scripts/ci_test.sh
 bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa
 ```
 
-`driver/project.yml` is the XcodeGen source of truth; do not edit generated
-`driver/IOSUseDriver.xcodeproj` files. Use `./ios-use` or the local build script
-when validating workspace changes, never an unrelated globally installed binary.
-The driver uses Swift 5.9 and an iOS 17.0 deployment target. Keep test state in
-an isolated `IOS_USE_HOME`; do not write real device, signing, proxy, or user
-artifact state from tests.
+Use the workspace's `./ios-use` when validating CLI changes. Choose the owning
+test script for code changes and a real device or Simulator check when behavior
+depends on the platform. UI commands sharing page state run serially. Test
+state belongs in an isolated `IOS_USE_HOME`; tests and new scripts should not
+overwrite a user's device, signing, proxy, Apple ID, or artifact state.
 
-For Simulator development, use a booted Simulator UDID and the repository's
-Simulator scripts. Simulator driver artifacts are Xcode-version-sensitive and
-must be rebuilt when the local Xcode/runtime changes. For real-device DDI
-issues, use the current `ddi-mount` resolver and a matching `Restore/`,
-`iOS_DDI/`, or `.dmg` path. If the local cache has no matching image, keep the
-user-facing fallback download documented in `ios-use-skill/SKILL.md`; the CLI
-does not silently download or mount an unverified image.
+`driver/project.yml` is the XcodeGen source of truth, not the generated Xcode
+project. The driver uses Swift 5.9 and targets iOS 17.0. Simulator driver
+artifacts depend on the local Xcode and runtime and may need rebuilding after
+either changes.
 
-## 4. Code style
+## Implementation notes
 
-- Keep strict argument validation in the CLI parser (`parseIntStrict`, `parseDoubleStrict`, and related helpers).
-- Keep command parsing in `swift-cli/Sources/IOSUseCLI/CLI/CLIParser.swift` and keep `swift-cli/Sources/IOSUseCLI/CLI/IOSUseCLI.swift` as a clear execution dispatcher.
-- Keep socket, usbmux, and Fory protocol logic in `swift-cli/Sources/IOSUseCLI/Services/DriverRuntime/DriverClient.swift` and the shared protocol layer.
-- Resolve state, logs, and artifacts through `IOSUsePaths` under `~/.ios-use/`; do not add a new `/tmp/ios-use` or `/tmp/WebDriverAgent` path convention.
-- Driver logs use `NSLog()`, not `print()`; preserve the existing `[driver]`, `[session]`, and `[source]` prefixes.
+- Argument parsing and strict numeric validation live in `CLIParser.swift`; `IOSUseCLI.swift` dispatches commands.
+- Socket, usbmux, and Fory transport live in `DriverClient.swift` and the shared protocol layer.
+- `IOSUsePaths` owns state, logs, and artifacts under `~/.ios-use/` or `IOS_USE_HOME`; avoid another temporary-path convention.
+- Driver logs use `NSLog()` with the existing `[driver]`, `[session]`, and `[source]` prefixes.
+- Real devices use USB and iOS 17.4 or later; Simulator use needs Xcode and a booted runtime. For DDI issues, use the current `ddi-mount` resolver and a matching image.
+- Driver artifacts are `driver.ipa` and `driver-sim.ipa`. Debug builds read them from `IOS_USE_HOME` or `.ios-use/`; release packaging stages them under `release/`.
 
-## 5. Testing requirements
+Do not commit credentials, `.env` files, signing material, private docs, logs,
+real UDIDs, or build output. Apple ID and developer passwords belong in secure
+interactive prompts, never command arguments or fixtures.
 
-- Host tests use Swift Package XCTest under `swift-cli/Tests/`; driver tests live under `driver/tests/`.
-- After Swift CLI, shared protocol, or driver changes, run `bash scripts/ci_test.sh` or the owning test script explicitly. Run the full Simulator matrix for UI-facing changes when practical.
-- Cover boundary and error behavior, not only happy paths. Driver-side changes need an algorithm, protocol, error, or state-boundary test under `driver/tests/`.
-- Tests must use temporary HOME/artifact/state directories and restore injected fakes or global overrides after each test.
-- UI commands that depend on page state are serialized. Only independent read-only observations may run concurrently; on TCP or page-state races, return to a serial reproduction.
-- New scripts must not overwrite real Apple ID, signing, device session, proxy, or artifact state.
+## Release
 
-## 6. Security and configuration
-
-- Never commit `.env` files, signing artifacts, private docs, logs, credentials, UDIDs, certificates, or build output. Check tracked content and history before public release.
-- Apple ID and developer-account passwords must be entered through the secure interactive prompt. Do not put real passwords in command arguments, logs, docs, or fixtures.
-- Real devices require USB and iOS 17.4 or later. Simulator use requires Xcode and a booted runtime.
-- The local CLI binary is `./ios-use`; the local host directory is `~/.ios-use/` (or `IOS_USE_HOME` when set), containing config, session state, logs, and artifacts.
-- Real-device and Simulator driver artifacts are `driver.ipa` and `driver-sim.ipa`. Debug builds read them from `IOS_USE_HOME` or `.ios-use/`; release packaging stages them under `release/`, while installed releases use their installed artifact location.
-
-## 7. Release
-
-Follow [`docs/how-to-release.md`](docs/how-to-release.md) for release builds,
-version stamping, checksums, and publishing. Before release, synchronize code,
-tests, user docs, examples, and release notes. Audit the skill for stale workflows,
-but change it only when operational guidance changed. Verify that no private local
-context is included.
+Follow [`docs/how-to-release.md`](docs/how-to-release.md) for builds, version
+stamping, checksums, and publishing. Keep code, help, user docs, examples, and
+release notes aligned; check the package for private local context.
