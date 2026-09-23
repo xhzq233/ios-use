@@ -284,6 +284,30 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root]).driverLock))
     }
 
+    func testInstallExplicitUdidIgnoresUnrelatedMacSession() throws {
+        let fixture = try makeMacOpenFixture()
+        let ipaPath = fixture.root.appendingPathComponent("app.ipa").path
+        try makeMinimalIpa(path: ipaPath, bundleID: "com.example.app")
+        var installedUDIDs: [String] = []
+        AppManagementService.installerForTesting = { _, udid, bundleID in
+            installedUDIDs.append(udid)
+            return self.installResult(bundleID: bundleID ?? "com.example.app")
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.root)
+        }
+
+        let cli = IOSUseCLI(pathsForTesting: fixture.paths)
+        let implicit = cli.run(arguments: ["install", ipaPath])
+        XCTAssertEqual(implicit.exitCode, 1)
+        XCTAssertTrue(installedUDIDs.isEmpty)
+
+        let explicit = cli.run(arguments: ["install", ipaPath, "--udid", "REAL-1", "--json"])
+        XCTAssertEqual(explicit.exitCode, 0)
+        XCTAssertEqual(installedUDIDs, ["REAL-1"])
+        XCTAssertEqual(try SessionService.readDriverLockInfo(paths: fixture.paths)?.deviceType, "mac")
+    }
+
     func testInstallStopsRunningAppLogCaptureForSameBundleBeforeInstalling() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-install-stops-log-\(UUID().uuidString)")
