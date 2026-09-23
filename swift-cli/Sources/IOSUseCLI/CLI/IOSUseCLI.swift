@@ -991,6 +991,13 @@ public struct IOSUseCLI: Sendable {
         paths: IOSUsePaths,
         json: Bool
     ) -> CLIResult? {
+        // An explicit real-device UDID is handled by the host installer even
+        // when the root paths expose an unrelated active Mac session.
+        if case .install(let options) = command,
+           let udid = options.udid,
+           !udid.isEmpty {
+            return nil
+        }
         let active: SessionService.Info?
         do {
             active = try SessionService.readDriverLockInfo(

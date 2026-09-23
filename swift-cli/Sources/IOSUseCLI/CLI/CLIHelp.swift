@@ -264,6 +264,8 @@ enum CLIHelp {
             connections use native AFC and installation_proxy; local macOS uses
             devicectl when available, with native fallback.
             Defaults to the active driver.lock UDID when --udid is omitted.
+            An explicit --udid does not require an active driver and is not
+            affected by other active sessions.
 
             Options:
               --udid <udid>  Target USB real device UDID; overrides active driver.lock
