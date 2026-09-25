@@ -59,6 +59,10 @@ python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
   --cases notify photo-status --audit
 
+# Reuse host notifyd with per-run names; compare two runtimes with a native peer.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases notify notify-isolation photo-roundtrip --notify-backend host
+
 # Create a generated image, fetch it, and read its original bytes through PhotoKit.
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
   --cases photo-roundtrip --audit
@@ -117,7 +121,9 @@ python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
 `metal compiler iosurface trust keychain`; the built-in offline application probe omits
 `trust` and `keychain`. The `keychain` entry starts runtime securityd with an
 isolated database. The optional `tcc`, `photos`, `notify`, and `launchservices` entries start
-runtime tccd, assetsd, notifyd, and lsd respectively. `--photo-fixture` requires
+runtime tccd, assetsd, notifyd, and lsd respectively. `--notify-backend host`
+reuses the existing Mac notifyd instead of starting a runtime notification daemon;
+`runtime` remains the default. `--photo-fixture` requires
 `--app`, adds these four services to its default array, creates and verifies the
 generated image through PhotoKit. Only the seeding probe gets a fixture grant;
 the supplied app must request its own access. Use `--present` to display its
@@ -188,7 +194,7 @@ The installed cache is a runtime artifact, not a connection to Simulator service
 | ANGLE GLES shaders and shared pixel buffer | `[metal, compiler, iosurface]` | The installed runtime ANGLE Metal backend reads red BGRA pixels from an IOSurface, compiles/draws a green GLSL triangle, and writes green pixels back across the whole buffer. |
 | EAGL/GLKit/CoreVideo through ANGLE | `[metal, compiler, iosurface]` | ES 2/3 callers upload a GLKit image, share a texture between contexts, release its cache, change pixels from CPU and GPU, and verify the whole buffer. Removing Metal fails context creation; removing compiler fails compilation-dependent GPU work; removing IOSurface fails pixel-buffer allocation. |
 | EAGL drawable presentation | `[metal, compiler, iosurface]` | A long-lived render thread without a RunLoop draws four colored quadrants, then moves/resizes the view and changes the colors. Read-only snapshots of the published CA display verify position, orientation, size, GL state restoration, and layer release after deleting the renderbuffer. |
-| Cross-process Darwin notification | `[notify]` | A spawned sender sets state 42 and posts; the other process receives the callback and reads 42. Removing notify fails registration (exit 73). |
+| Cross-process Darwin notification | `[notify]` | Dispatch, polling/plain, Mach-port, file-descriptor, and signal registrations receive a child process's post and state 42. Cancelled tokens reject subsequent state reads; self notifications remain process-local. Both notification backends pass. Removing notify fails registration (exit 73). |
 | PhotoKit authorization state | `[tcc]` | A fresh database reports not determined; explicit allow/deny fixtures for our probe report authorized/denied. Removing tcc fails the initial state check (exit 61). This does not exercise permission UI or photo storage. |
 | PhotoKit consent via native host | `[tcc]` | With `--present`, native clicks return authorized/denied through the real PhotoKit callback; fresh processes confirm persistence. No SpringBoard or additional child is needed. Limited selection is unavailable. |
 | Certificate-chain validation | `[trust]` | Correct chain accepted; wrong host, expired leaf, and untrusted root rejected with the corresponding Security errors. Removing trust fails the valid-chain check (exit 51). |
@@ -206,7 +212,8 @@ The installed cache is a runtime artifact, not a connection to Simulator service
 
 `metal` and `iosurface` are listener objects in the native broker, not separate
 daemon processes. `compiler`, `trust`, `keychain`, `tcc`, `photos`, `notify`, and `launchservices` each add one
-Apple service child when selected. With
+Apple service child when selected with the default backend. With
+`--notify-backend host`, `notify` adds no owned daemon. With
 no services, the native broker launches just the probe child. Certificate trust
 is a separate network dependency; it is not needed for the rendering-only cases.
 
@@ -228,7 +235,7 @@ native macOS broker (+ optional AppKit window)
   ├─ [keychain] runtime securityd child + anonymous XPC listener, isolated keychain
   ├─ [tcc] runtime tccd child + anonymous XPC listener, isolated TCC database
   ├─ [photos] runtime assetsd child + anonymous Photos XPC listener
-  ├─ [notify] runtime notifyd child + inherited Mach port, isolated shared memory
+  ├─ [notify] runtime notifyd child, or host notifyd with per-run names
   ├─ [launchservices] runtime lsd child + anonymous mapdb listener, isolated containers
   └─ Simulator-linked client
        ├─ runtime UIKitCore / MTLSimDriver / IOSurface
@@ -245,7 +252,26 @@ Simulator's version of these services. `NotifyTransport.c` routes libnotify's
 Mach lookup through a second inherited right, available before other daemons
 finish starting. With notify disabled, lookup fails.
 
-The notify daemon receives only the C transport adapter. It uses a separate
+`--notify-backend host` looks up the ordinary Mac notification-center port and
+inherits it in the same slot, without creating or stopping a host service. Every
+runtime child receives the broker's `io.iosuse.runtime.<pid>.` name prefix.
+`NotifyTransport.c` maps posting and registration names once at the libnotify
+entry points. Tokens, callbacks, state storage, and cancellation remain Apple's
+implementation. `self.*` names retain their process-local behavior described in
+[Apple's libnotify client](https://github.com/apple-oss-distributions/Libnotify/blob/main/notify_client.c).
+The host backend removes one owned daemon process; it still supplies the logical
+`notify` service, and disabling that service does not fall back to the host.
+
+The namespace workload holds the same logical name simultaneously in a native
+Mac client and two standalone runtimes. They store and retain independent values
+7, 42, and 84. The synthetic PhotoKit create/fetch/original-byte workload also
+passes with host notifyd while its photo library and authorization database stay
+in the run directory. This is compatibility name mapping for the intercepted
+libnotify APIs, not a security sandbox: direct Mach requests or unadapted private
+APIs are outside that boundary. Host system notifications are not automatically
+forwarded into a runtime's namespace.
+
+The default runtime notify daemon receives only the C transport adapter. It uses a separate
 shared-memory name, passed explicitly with `-shm` and also used by its clients.
 The harness supplies an empty initial list of launchd-triggered subscriptions;
 it does not schedule background jobs. Direct notification registration, shared
@@ -306,7 +332,7 @@ distinguished the nine selectable services from the application adapters:
 | `metal` | Host `MTLSimImplementation`, in the broker | Already forwards to the host GPU. |
 | `iosurface` | Host `IOSurfaceRemoteServer`, in the broker | Already uses the host implementation. |
 | `compiler` | Runtime `MTLCompilerService` child | Keep the matching runtime compiler; the earlier host substitution failed. |
-| `notify` | Runtime `notifyd` child | A new Simulator-to-host Mach-port experiment passed registration, cross-process delivery, and shared state `42` using the existing host daemon. |
+| `notify` | Runtime child by default; optional host daemon | `--notify-backend host` passes notification delivery, independent runtime namespaces, and the synthetic PhotoKit workload without a runtime notifyd. |
 | `trust` | Runtime `trustd` child | Native and Catalyst clients resolve to the same host Security library. Replacing the runtime connection or adding a host API proxy remains unverified. |
 | `keychain` | Runtime `securityd` child | Host Security is available, but using it changes the caller identity and storage boundary. The isolated runtime keychain remains the tested implementation. |
 | `tcc` | Runtime `tccd` child | Both host targets load the same TCC library. This does not establish equivalent authorization for a runtime child. |
@@ -360,9 +386,9 @@ with that adapter and without an owned notifyd or a shared-memory-name override.
 The unadapted standalone Simulator probe failed registration with status 9;
 native, Catalyst, and adapted Simulator probes passed. Only the probe's own
 process-specific notification name was used, and registrations were cancelled
-after the probe. A production replacement still
-needs a deliberate notification-namespace policy; the default runner continues
-to use the isolated runtime daemon. Host Photos, TCC, and Keychain inspection
+after the probe. The optional host backend now makes this reproducible with
+the per-run namespace described above; the default runner continues to use the
+isolated runtime daemon. Host Photos, TCC, and Keychain inspection
 was limited to library/class metadata; their API behavior was not tested.
 
 ## Keychain and Simulator entitlement metadata

@@ -1,5 +1,6 @@
-// Route libnotify to an owned runtime notifyd, without a launchd namespace.
+// Route libnotify to an owned runtime daemon or a namespaced host connection.
 #include <mach/mach.h>
+#include <notify.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -65,6 +66,51 @@ static int sharedMemory(const char *name, int flags, mode_t mode) {
     return original_shm(name, flags, mode);
 }
 
+// Host notifyd is shared with ordinary Mac applications. Map name-taking APIs
+// at the client boundary; keep Apple's tokens, delivery, and state operations.
+// self.* must remain process-local. Internal libnotify calls can pass an
+// already-mapped name through another entry point, so map it only once.
+static char *scopedName(const char *name) {
+    const char *prefix = getenv("IOS_USE_RUNTIME_NOTIFY_PREFIX");
+    if (!prefix || !name || !*name || !strncmp(name, "self.", 5) ||
+        !strncmp(name, prefix, strlen(prefix))) return NULL;
+    char *result = NULL;
+    if (asprintf(&result, "%s%s", prefix, name) < 0) abort();
+    return result;
+}
+
+extern uint32_t original_post(const char *) __asm__("_notify_post");
+extern uint32_t original_simple_post(const char *) __asm__("_notify_simple_post");
+extern uint32_t original_register_check(const char *, int *) __asm__("_notify_register_check");
+extern uint32_t original_register_plain(const char *, int *) __asm__("_notify_register_plain");
+extern uint32_t original_register_dispatch(const char *, int *, dispatch_queue_t, notify_handler_t) __asm__("_notify_register_dispatch");
+extern uint32_t original_register_signal(const char *, int, int *) __asm__("_notify_register_signal");
+extern uint32_t original_register_mach_port(const char *, mach_port_t *, int, int *) __asm__("_notify_register_mach_port");
+extern uint32_t original_register_file_descriptor(const char *, int *, int, int *) __asm__("_notify_register_file_descriptor");
+
+#define SCOPED_CALL(function, ...) \
+    char *mapped = scopedName(name); \
+    uint32_t status = function(mapped ?: name, ##__VA_ARGS__); \
+    free(mapped); \
+    return status
+
+static uint32_t post(const char *name) { SCOPED_CALL(original_post); }
+static uint32_t simplePost(const char *name) { SCOPED_CALL(original_simple_post); }
+static uint32_t registerCheck(const char *name, int *token) { SCOPED_CALL(original_register_check, token); }
+static uint32_t registerPlain(const char *name, int *token) { SCOPED_CALL(original_register_plain, token); }
+static uint32_t registerDispatch(const char *name, int *token, dispatch_queue_t queue, notify_handler_t handler) {
+    SCOPED_CALL(original_register_dispatch, token, queue, handler);
+}
+static uint32_t registerSignal(const char *name, int signal, int *token) {
+    SCOPED_CALL(original_register_signal, signal, token);
+}
+static uint32_t registerMachPort(const char *name, mach_port_t *port, int flags, int *token) {
+    SCOPED_CALL(original_register_mach_port, port, flags, token);
+}
+static uint32_t registerFileDescriptor(const char *name, int *fd, int flags, int *token) {
+    SCOPED_CALL(original_register_file_descriptor, fd, flags, token);
+}
+
 // There are no launchd-triggered subscriptions in this harness. Deliver the
 // empty initial list so notifyd starts its actual Mach server. Direct client
 // registrations, posting, shared state, and callbacks remain Apple's code.
@@ -110,5 +156,13 @@ __attribute__((used, section("__DATA,__interpose"))) static const struct {
     {(void *)activatePublisher, (void *)original_publisher_activate},
     {(void *)checkin, (void *)original_checkin},
     {(void *)lookup, (void *)original_lookup},
-    {(void *)sharedMemory, (void *)original_shm}
+    {(void *)sharedMemory, (void *)original_shm},
+    {(void *)post, (void *)original_post},
+    {(void *)simplePost, (void *)original_simple_post},
+    {(void *)registerCheck, (void *)original_register_check},
+    {(void *)registerPlain, (void *)original_register_plain},
+    {(void *)registerDispatch, (void *)original_register_dispatch},
+    {(void *)registerSignal, (void *)original_register_signal},
+    {(void *)registerMachPort, (void *)original_register_mach_port},
+    {(void *)registerFileDescriptor, (void *)original_register_file_descriptor}
 };

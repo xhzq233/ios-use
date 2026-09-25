@@ -5,6 +5,7 @@ import ctypes
 import math
 import os
 import plistlib
+import select
 import shutil
 import sqlite3
 from pathlib import Path
@@ -32,6 +33,7 @@ CASES = {
     "keychain": ["keychain"],
     "network": ["trust"],
     "notify": ["notify"],
+    "notify-isolation": ["notify"],
     "photo-status": ["tcc"],
     "photo-prompt": ["tcc"],
     "photo-roundtrip": ["tcc", "photos", "notify", "launchservices"],
@@ -45,6 +47,8 @@ CASES = {
 parser.add_argument("--cases", nargs="+", choices=CASES, default=[case for case in CASES if case not in ("application", "network", "photo-prompt", "gles-surface", "gles-window", "text-input")])
 parser.add_argument("--services", nargs="*", choices=["metal", "compiler", "iosurface", "trust", "tcc", "photos", "notify", "launchservices", "keychain"],
                     help="Override each case's service list; an empty list starts none")
+parser.add_argument("--notify-backend", choices=["runtime", "host"], default="runtime",
+                    help="Use isolated runtime notifyd (default), or host notifyd with per-run notification names")
 parser.add_argument("--audit", action="store_true", help="Also run service deletion experiments (failures are observations)")
 parser.add_argument("--app-adapters", nargs="*", choices=["display", "scene", "compositor", "input", "angle", "metal-buffer"],
                     default=["display", "scene", "compositor", "input"],
@@ -134,8 +138,10 @@ if any(case in args.cases for case in ("gles-angle", "gles-window")) or ("applic
 if "angle" in args.cases:
     build("xcrun", "clang", *sim_flags, "-fobjc-arc", str(SOURCE / "ANGLEProbe.m"),
           "-framework", "Foundation", "-framework", "CoreVideo", "-o", str(output / "angle-probe"))
-if "notify" in args.cases:
+if any(case in args.cases for case in ("notify", "notify-isolation")):
     build("xcrun", "clang", *sim_flags, "-fblocks", str(SOURCE / "NotifyProbe.c"), "-o", str(output / "notify-probe"))
+if "notify-isolation" in args.cases:
+    build("xcrun", "clang", "-arch", "arm64", "-fblocks", str(SOURCE / "NotifyProbe.c"), "-o", str(output / "native-notify-probe"))
 if args.photo_fixture or any(case.startswith("photo-") for case in args.cases):
     photo_app = output / "PhotoProbe.app"
     photo_app.mkdir()
@@ -261,6 +267,15 @@ if "gles-window" in args.cases:
           "-framework", "Foundation", "-framework", "UIKit", "-framework", "QuartzCore", "-framework", "OpenGLES",
           "-framework", "IOSurface", "-framework", "CoreGraphics", "-o", str(gles_app / "GLESWindowProbe"))
 
+def reclaim(process):
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+    # Only the owned runtime daemon uses this shared-memory name.
+    ctypes.CDLL(None).shm_unlink(f"iosuse.notify.{process.pid}".encode())
+
 def execute(command, environment, log, present=False):
     process = subprocess.Popen(command, env=environment, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     try:
@@ -269,13 +284,52 @@ def execute(command, environment, log, present=False):
         return 124
     finally:
         # Reclaim the entire owned group on normal exit, failure, or interruption.
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
-        # notifyd's backing object outlives the process unless explicitly unlinked.
-        ctypes.CDLL(None).shm_unlink(f"iosuse.notify.{process.pid}".encode())
+        reclaim(process)
+
+def execute_notify_isolation(command, environment, log):
+    home = Path(command[4])
+    name = f"io.iosuse.runtime-probe.scope.{os.getpid()}.{home.name}"
+    holders = []
+    try:
+        for index, value in enumerate((7, 42, 84)):
+            owned_home = home / f"holder-{index}"
+            (owned_home / "tmp").mkdir(parents=True)
+            if index == 0:
+                launch = [str(output / "native-notify-probe")]
+                child_environment = {"PATH": "/usr/bin:/bin", "HOME": str(owned_home),
+                                     "CFFIXED_USER_HOME": str(owned_home), "TMPDIR": str(owned_home / "tmp")}
+            else:
+                launch = command[:6]
+                launch[4] = str(owned_home)
+                child_environment = environment
+            ready_read, ready_write = os.pipe()
+            release_read, release_write = os.pipe()
+            launch.extend(["--scope", name, str(value), str(ready_write), str(release_read)])
+            process = subprocess.Popen(launch, env=child_environment, stdout=log, stderr=subprocess.STDOUT,
+                                       pass_fds=(ready_write, release_read), start_new_session=True)
+            holders.append((process, release_write))
+            os.close(ready_write)
+            os.close(release_read)
+            with os.fdopen(ready_read, "rb") as ready:
+                if not select.select([ready], [], [], 10)[0]:
+                    return 124
+                message = ready.read(4)
+            if len(message) != 4 or int.from_bytes(message, sys.byteorder):
+                return 76
+        # All three values now coexist. Each process reads its own value only
+        # after both other processes have written the same logical name.
+        for process, release in holders:
+            os.write(release, b"1")
+        statuses = [process.wait(timeout=10) for process, _ in holders]
+        log.write(f"[notify-isolation] host/runtime-A/runtime-B exits={statuses}\n")
+        log.flush()
+        return 0 if all(status == 0 for status in statuses) else 76
+    except subprocess.TimeoutExpired:
+        return 124
+    finally:
+        for process, release in holders:
+            os.close(release)
+            reclaim(process)
 
 def configure_photo_fixture(home, value):
     # Only the synthetic probe gets a fixture grant. The supplied app requests
@@ -302,6 +356,7 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
     home.mkdir()
     client = output / ("uikit-probe" if mode == "uikit" else "probe")
     environment = os.environ.copy()
+    environment["IOS_USE_RUNTIME_NOTIFY_BACKEND"] = args.notify_backend
     environment.pop("IOS_USE_RUNTIME_CLIENT_LIBRARIES", None)
     environment.pop("IOS_USE_RUNTIME_PRESENT", None)
     environment.pop("IOS_USE_RUNTIME_TAP", None)
@@ -328,8 +383,8 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
             command.extend([str(certificates / "root.der"), str(certificates / "leaf.der")])
         else:
             command.append(args.network_url)
-    elif mode in ("notify", "angle", "gles-surface"):
-        command[2] = str(output / f"{mode}-probe")
+    elif mode in ("notify", "notify-isolation", "angle", "gles-surface"):
+        command[2] = str(output / ("notify-probe" if mode == "notify-isolation" else f"{mode}-probe"))
     elif mode == "gles-angle":
         command[2] = str(output / "gles-surface-probe")
         environment["IOS_USE_RUNTIME_CLIENT_LIBRARIES"] = str(output / "angle.dylib")
@@ -349,7 +404,9 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
     if args.present and os.isatty(0):
         print(f"Window commands: tap X Y, text TEXT, backspace, capture, quit. Diagnostics: {log_path}", flush=True)
     with log_path.open("w") as log:
-        if mode == "application" and args.photo_fixture:
+        if mode == "notify-isolation":
+            status = execute_notify_isolation(command, environment, log)
+        elif mode == "application" and args.photo_fixture:
             fixture_environment = environment.copy()
             for key in ("IOS_USE_RUNTIME_CLIENT_LIBRARIES", "IOS_USE_RUNTIME_PRESENT", "IOS_USE_RUNTIME_TAP"):
                 fixture_environment.pop(key, None)

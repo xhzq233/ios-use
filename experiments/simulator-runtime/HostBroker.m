@@ -5,6 +5,7 @@
 #import <errno.h>
 #import <signal.h>
 #import <mach/mach.h>
+#import <servers/bootstrap.h>
 #import <spawn.h>
 #import <sys/mman.h>
 #import <sys/wait.h>
@@ -244,9 +245,22 @@ int main(int argc, char **argv) {
         environment[@"TMPDIR"] = [temporary stringByAppendingString:@"/"];
         pid_t notifyPID = 0;
         if ([services containsObject:@"notify"]) {
-            atexit(removeNotifyStorage);
-            NSString *path = [@(argv[1]) stringByAppendingPathComponent:@"usr/sbin/notifyd"];
-            mach_port_t port = startService(@"notify", path, environment, rendezvous, RuntimeNotifyReady, &notifyPID);
+            mach_port_t port = MACH_PORT_NULL;
+            const char *backend = getenv("IOS_USE_RUNTIME_NOTIFY_BACKEND");
+            if (backend && !strcmp(backend, "host")) {
+                kern_return_t lookup = bootstrap_look_up(bootstrap_port,
+                    "com.apple.system.notification_center", &port);
+                if (lookup) { fprintf(stderr, "[broker] host notify lookup=%d\n", lookup); return 6; }
+                [environment removeObjectForKey:@"IOS_USE_RUNTIME_NOTIFY_SHM"];
+                environment[@"IOS_USE_RUNTIME_NOTIFY_PREFIX"] =
+                    [NSString stringWithFormat:@"io.iosuse.runtime.%d.", getpid()];
+                printf("[broker] notify backend=host namespace=%s\n",
+                       [environment[@"IOS_USE_RUNTIME_NOTIFY_PREFIX"] UTF8String]);
+            } else {
+                atexit(removeNotifyStorage);
+                NSString *path = [@(argv[1]) stringByAppendingPathComponent:@"usr/sbin/notifyd"];
+                port = startService(@"notify", path, environment, rendezvous, RuntimeNotifyReady, &notifyPID);
+            }
             if (!port) { stopService(notifyPID, "notify"); return 6; }
             // libnotify uses Mach IPC rather than XPC endpoints. Hand its send
             // right directly to later children, including runtime services that
