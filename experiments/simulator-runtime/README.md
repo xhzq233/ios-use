@@ -391,6 +391,51 @@ the per-run namespace described above; the default runner continues to use the
 isolated runtime daemon. Host Photos, TCC, and Keychain inspection
 was limited to library/class metadata; their API behavior was not tested.
 
+### AppKit bridge alternatives
+
+Further inspection of the installed macOS 15.7.7/Xcode 26 libraries considered
+whether a ready-made host view could replace more of the standalone adapters.
+UIKitMacHelper, ViewBridge, and SimulatorKit all loaded in a native metadata
+probe. This investigation inspected interfaces; the context-ID pixel results
+above are the earlier rendering experiment.
+
+| Candidate | Installed interface | Consequence for this runtime |
+| --- | --- | --- |
+| UIKitMacHelper `UINSSceneHostingView` | `initWithUIView:`, local UIView/UIWindow fields | Hosts objects from the host UIKit environment; no demonstrated interface for an object in a separate Simulator runtime. |
+| UIKitMacHelper context hosting | `setHostedContextID:`, `USSLayerHost` | Numeric context forwarding alone failed the earlier controlled rendering experiment. |
+| ViewBridge `NSRemoteView` | NSXPC listener/service endpoints, service view-controller proxy, service context ID | Requires a matching view-service peer and rendering context; it does not provide a UIKit-object translation API. |
+| SimulatorKit `SimDisplayView` | `connect(device:display:options:completion:)` or `connect(screen:inputs:)` | Integrates with Simulator device/display objects. |
+| SimulatorKit `SimDisplayRenderableView` | `connect(io:display:completionQueue:completion:)`, where IO is `SimDeviceIOProtocol` | A potential reusable AppKit display consumer, but needs an IO provider and display/port descriptors; it does not create the app's UIKit scene or compositor. |
+
+The smaller SimulatorKit IO protocol exposes `ioPorts` and `ioPortForUUID:`.
+The port interface carries its descriptor, UUID, class, and connect/disconnect
+operations. A custom provider might be feasible; interface inspection alone
+does not establish that a booted Simulator is mandatory, or that such a provider
+would be simpler than the existing IOSurface consumer. No device was booted and
+no new view-service connection was established for this inspection.
+
+The current AppKit presentation already consists of NSWindow/NSView/CALayer and
+assigning the received IOSurface to `surfaceLayer.contents` in `HostWindow.m`.
+Most remaining compatibility work is upstream: Scene lifecycle, display metadata,
+CoreAnimation context hosting, and frame ownership. Replacing the receiving
+NSView does not by itself remove those requirements.
+
+Apple's [Catalyst architecture explanation](https://developer.apple.com/videos/play/wwdc2019/205/)
+distinguishes the Simulator's separate framework/service stack from the Mac's
+unified lower frameworks and services. UIKit and AppKit retain distinct view
+types. [Apple DTS](https://developer.apple.com/forums/thread/129796) also explains
+that sharing a CPU architecture does not make Simulator and Catalyst binaries
+interchangeable. These establish platform boundaries, not a proof that custom
+private-API adapters are impossible.
+
+Public [NSHostingView](https://developer.apple.com/documentation/swiftui/nshostingview)
+hosts SwiftUI content. [Chameleon](https://github.com/BigZaphod/Chameleon) supplies
+its own UIKit implementation, primarily targeting iOS 3.2. Neither preserves an
+arbitrary app's existing Simulator UIKit 26 implementation through a drop-in
+AppKit bridge. The supported conclusion is to reject unmodified NSUI/UINS reuse
+as an established shortcut, while leaving custom IO/context bridging as an
+unproven research option. Existing IOSurface presentation remains demonstrated.
+
 ## Keychain and Simulator entitlement metadata
 
 `keychain` runs the installed runtime's securityd and exposes only its main
