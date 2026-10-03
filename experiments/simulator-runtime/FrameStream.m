@@ -60,6 +60,14 @@ void IOSUseStreamContext(id context) {
                     packet.message.header.msgh_size == sizeof(packet.message) &&
                     !(packet.message.header.msgh_bits & MACH_MSGH_BITS_COMPLEX)) {
                     IOSUseReleaseFrame(packet.message.surfaceID);
+                } else if (packet.message.header.msgh_id == IOSUseWindowSceneState &&
+                           packet.message.header.msgh_size == sizeof(IOSUseWindowSceneStateMessage) &&
+                           !(packet.message.header.msgh_bits & MACH_MSGH_BITS_COMPLEX)) {
+                    BOOL foreground = ((IOSUseWindowSceneStateMessage *)&packet.message)->foreground != 0;
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        void (*setForeground)(BOOL) = dlsym(RTLD_DEFAULT, "IOSUseSetSceneForeground");
+                        if (setForeground) setForeground(foreground);
+                    });
                 } else {
                     mach_msg_destroy(&packet.message.header);
                 }
@@ -79,10 +87,14 @@ void IOSUseStreamContext(id context) {
         [CATransaction flush];
         dispatch_async(streamQueue, ^{
             uint32_t identifier = [context contextId];
-            if (![context layer] || ![context waitForRenderingWithTimeout:2]) {
-                fprintf(stderr, "[stream] initial context has not rendered\n");
+            if (![context layer]) {
+                fprintf(stderr, "[stream] initial context has no layer\n");
                 exit(46);
             }
+            // A static solid-color tree need not acknowledge display rendering.
+            // Give the submitted tree time to render, but let CAContentStream
+            // produce its first frame even when this optional wait times out.
+            [context waitForRenderingWithTimeout:2];
             NSError *error = nil;
             id options = [NSClassFromString(@"CAContentStreamOptions") new];
             [options setValue:@([IOSUseVirtualDisplay() displayId]) forKey:@"targetDisplayId"];

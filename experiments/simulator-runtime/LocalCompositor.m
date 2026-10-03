@@ -37,9 +37,20 @@ static id presentationContext;
 static CALayer *canvas;
 static dispatch_queue_t renderQueue;
 static id (*originalContext)(id, SEL, NSDictionary *);
+static void (*originalInvalidate)(id, SEL);
+static char hostingLayerKey;
 extern void IOSUseStreamContext(id context);
 id IOSUseVirtualDisplay(void) { return virtualDisplay; }
 dispatch_queue_t IOSUseRenderQueue(void) { return renderQueue; }
+NSUInteger IOSUseHostedContextCount(void) { return canvas.sublayers.count; }
+
+static void invalidateContext(id context, SEL selector) {
+    CALayer *host = objc_getAssociatedObject(context, &hostingLayerKey);
+    fprintf(stderr, "[local-compositor] invalidate=%u hosted=%d\n", [context contextId], host != nil);
+    [host removeFromSuperlayer];
+    objc_setAssociatedObject(context, &hostingLayerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    originalInvalidate(context, selector);
+}
 
 static id createContext(id cls, SEL selector, NSDictionary *options) {
     NSMutableDictionary *local = [options mutableCopy] ?: [NSMutableDictionary new];
@@ -66,6 +77,7 @@ static id createContext(id cls, SEL selector, NSDictionary *options) {
     host.bounds = CGRectMake(0, 0, 402, 874);
     host.transform = CATransform3DMakeScale(3, 3, 1);
     [canvas addSublayer:host];
+    objc_setAssociatedObject(context, &hostingLayerKey, host, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     NSLog(@"[local-compositor] context=%u", [context contextId]);
     if (first) IOSUseStreamContext(presentationContext);
     return context;
@@ -93,6 +105,8 @@ __attribute__((constructor)) static void initializeCompositor(void) {
     NSLog(@"[local-compositor] virtual display=%@", virtualDisplay);
     Method method = class_getClassMethod(NSClassFromString(@"CAContext"), @selector(remoteContextWithOptions:));
     originalContext = (void *)method_setImplementation(method, (IMP)createContext);
+    Method invalidate = class_getInstanceMethod(NSClassFromString(@"CAContext"), @selector(invalidate));
+    originalInvalidate = (void *)method_setImplementation(invalidate, (IMP)invalidateContext);
 }
 
 // One-shot diagnostic, not a presentation loop. The caller owns the surface.

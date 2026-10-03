@@ -50,7 +50,8 @@ void IOSUseObserveHostFrame(NSWindow *window, BOOL hasInput) {
             previous = color;
         }
         // More transitions than the three-buffer pool can hold without returns.
-        if (frames >= 18 && transitions >= 12 && colors == 7) {
+        BOOL staticProbe = getenv("IOS_USE_RUNTIME_STATIC_PROBE") != NULL;
+        if (staticProbe ? color == 0 : (frames >= 18 && transitions >= 12 && colors == 7)) {
             [timer invalidate];
             completed = YES;
             fprintf(stderr, "[presentation-probe] native RGB colors=%u transitions=%u frames=%u input=absent; closing window\n",

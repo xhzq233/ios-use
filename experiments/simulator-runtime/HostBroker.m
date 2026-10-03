@@ -342,7 +342,8 @@ int main(int argc, char **argv) {
         for (int i = childCount - 1; i >= 0; --i) stopService(childPIDs[i], children[i].name);
         stopService(notifyPID, "notify");
         printf("[broker] client status=%d\n", status);
-        if (present && IOSUseHostWindowClosedNormally() && WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM) return 0;
+        if (present && IOSUseHostWindowClosedNormally() && WIFSIGNALED(status) &&
+            (WTERMSIG(status) == SIGTERM || WTERMSIG(status) == SIGKILL)) return 0;
         return waited > 0 && WIFEXITED(status) ? WEXITSTATUS(status) : 8;
     }
 }

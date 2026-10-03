@@ -117,9 +117,20 @@ python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
   --cases application --audit
 
 # Display without input: checks changing pixels in its own native window,
-# closes the window, and checks normal/error app exits. Exits automatically.
+# a static first frame, normal/error exits, and a client ignoring SIGTERM.
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
   --cases presentation
+
+# Minimize/restore, repeatedly create/destroy UIKit windows, and report memory.
+# Uses one Scene and one native display window; exits automatically.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases lifecycle --duration 300
+
+# Known-failing WebKit diagnostics, excluded from the default passing cases.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases webkit --webkit-launcher system
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases webkit --webkit-launcher standalone
 
 # Native keyboard events, Unicode deletion, focus switching, and editing delegates.
 # Opens a test window and exits automatically; retains the 30-second case timeout.
@@ -204,7 +215,8 @@ failure does not become a successful workload.
 Artifacts go into a new `$IOS_USE_HOME/artifacts/runtime-probe/run-*` directory
 (default: repository `.ios-use/artifacts/runtime-probe/`). Each case has a fresh
 home and `TMPDIR`, a log, and process-group cleanup. Headless cases have a
-30-second timeout; `--present` runs until the window closes, the app exits, or
+30-second timeout, except `lifecycle`, which allows `--duration` plus 30 seconds;
+`--present` runs until the window closes, the app exits, or
 Ctrl-C. On exit, the broker gives each owned service two seconds to finish after
 SIGTERM, then kills and reaps it if needed; trustd can retain background XPC
 transactions. The runner also reclaims the whole owned process group and unlinks
@@ -218,6 +230,17 @@ that window. It needs an unlocked graphical session and never captures other
 windows. No device or Simulator state is modified. Once a
 run has stopped, its `run-*` directory can be deleted to remove its home, caches,
 temporary files, logs, and build products.
+
+Minimizing/restoring the native window delivers a foreground settings diff to
+the real FrontBoard scene client; UIKit produces the corresponding application
+callbacks. This does not implement process suspension, multiple independent
+Scenes, or multiple Mac display windows. Invalidating an app CA context removes
+its host layer from the compositor. The lifecycle workload checks overlay and
+underlying pixels, repeated context retirement, real foreground/background
+callbacks, and reports process memory rather than claiming constant allocation.
+Closing the host allows two seconds for the owned app to exit before SIGKILL;
+the child PID remains unreaped until the main thread handles termination, so
+the delayed signal cannot target a reused PID.
 
 The broker looks for an existing arm64 Simulator dyld cache under
 `/Library/Developer/CoreSimulator/Caches/dyld/<host-build>/<runtime-id>.<runtime-build>`.
@@ -730,8 +753,11 @@ and the bounded acknowledgement wait; they are not frame-rate measurements.
 
 `FrameStream.m` uses the runtime's `CAContentStream`, with the stable parent
 context as its filter. An active stream rejects context-list updates. Streaming
-starts after UIKit has assigned its child roots and the parent has rendered;
-starting earlier crashed the virtual display's render thread. The virtual display
+starts after UIKit has assigned its child roots and a bounded rendering wait;
+starting before layer assignment crashed the virtual display's render thread.
+A static solid-color window can time out that wait while still producing a valid
+first stream frame, so the wait result is not a startup failure. The native pixel
+workload covers both changing content and a static first frame. The virtual display
 already owns a refresh loop, so there is no additional `renderForTime:` timer.
 
 The stream caps delivery at 30 Hz, downscales the 3× display to 804×1748 for a
@@ -951,6 +977,37 @@ Private touch signatures were cross-checked against the runtime and
 and [IOHID construction](https://github.com/kif-framework/KIF/blob/master/Sources/KIF/Classes/IOHIDEvent%2BKIF.m).
 
 ## WebKit and full-app boundary
+
+The executable `webkit` workload checks JavaScript arithmetic and actual green
+snapshot pixels. It currently fails with both launchers and remains excluded
+from passing default workloads:
+
+- `system` uses the runtime's ordinary BrowserEngineKit launcher. The standalone
+  application has no Simulator-managed launchd process domain, and extension
+  launching fails before page execution.
+- `standalone` uses diagnostic-only ordinary child processes and anonymous XPC
+  endpoints. It reaches the installed WebKit's WebContent, Networking, and GPU
+  initializers via its exported `ExtensionEventHandler`. Endpoint exchange is
+  then denied because the child audit token lacks
+  `com.apple.private.webkit.use-xpc-endpoint`; JavaScript and snapshot completion
+  still do not pass. The probe does not override entitlement checks or grant
+  ExtensionKit capabilities. Its children stay in the runner's owned process
+  group and are reclaimed even on failure.
+
+The installed Apple WebKit extension binaries contain that Simulator entitlement
+in their Mach-O metadata, but directly executing an unchanged extension reports
+`An XPC Service cannot be run directly.` Having the libraries on disk therefore
+does not supply a working standalone service-launch identity. The diagnostic
+launcher is not injected into supplied apps and is not a working WebKit backend.
+This establishes a specific authorization/startup boundary for the tested paths,
+not an impossibility result for every possible bridge. WebKit's upstream
+[process launcher](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/Launcher/cocoa/ProcessLauncherCocoa.mm)
+and [XPC entry point](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/Shared/EntryPointUtilities/Cocoa/XPCService/XPCServiceMain.mm)
+describe the corresponding launch and bootstrap stages.
+
+The lifecycle and import changes have been exercised on the installed macOS
+15.7.7 / iOS runtime 26.0.1 combination. Independent multi-Scene hosting and
+compatibility across other macOS/runtime versions remain unverified.
 
 Earlier controlled experiments isolated a separate process-domain dependency.
 They borrowed an experimental Simulator's bootstrap namespace and used the

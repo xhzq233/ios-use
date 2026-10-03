@@ -3,7 +3,7 @@
 
 // Only the inherited, private broker port carries these experimental messages.
 enum { IOSUseWindowFrame = 400, IOSUseWindowPointer = 401, IOSUseWindowRelease = 402,
-       IOSUseWindowText = 403 };
+       IOSUseWindowText = 403, IOSUseWindowSceneState = 404 };
 typedef struct {
     mach_msg_header_t header;
     mach_msg_body_t body;
@@ -17,6 +17,11 @@ typedef struct {
     mach_msg_header_t header;
     uint32_t surfaceID;
 } IOSUseWindowReleaseMessage;
+
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t foreground;
+} IOSUseWindowSceneStateMessage;
 
 typedef struct {
     mach_msg_header_t header;

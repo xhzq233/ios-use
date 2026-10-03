@@ -26,7 +26,7 @@ static void sendHostMessage(const mach_msg_header_t *message) {
         inputQueue = dispatch_queue_create("iosuse.runtime.input", DISPATCH_QUEUE_SERIAL);
         releaseQueue = dispatch_queue_create("iosuse.runtime.frame-release", DISPATCH_QUEUE_SERIAL);
     });
-    dispatch_queue_t queue = message->msgh_id == IOSUseWindowRelease ? releaseQueue : inputQueue;
+    dispatch_queue_t queue = message->msgh_id == IOSUseWindowRelease || message->msgh_id == IOSUseWindowSceneState ? releaseQueue : inputQueue;
     NSMutableData *packet = [NSMutableData dataWithBytes:message length:message->msgh_size];
     dispatch_async(queue, ^{
         kern_return_t sent = mach_msg(packet.mutableBytes, MACH_SEND_MSG, (mach_msg_size_t)packet.length, 0, 0, 0, 0);
@@ -100,13 +100,21 @@ static void releaseSurface(mach_port_t release, uint32_t identifier) {
 @interface RuntimeWindowDelegate : NSObject <NSWindowDelegate>
 @property(nonatomic) pid_t client;
 @property(nonatomic) BOOL closed;
+@property(nonatomic) BOOL exited;
 @end
 static void stopPresentation(void);
+static void sendSceneState(BOOL foreground);
 @implementation RuntimeWindowDelegate
+- (void)windowDidMiniaturize:(NSNotification *)notification { sendSceneState(NO); }
+- (void)windowDidDeminiaturize:(NSNotification *)notification { sendSceneState(YES); }
 - (void)windowWillClose:(NSNotification *)notification {
     self.closed = YES;
     stopPresentation();
     kill(self.client, SIGTERM);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        // waitid below keeps the PID owned until the main thread reaps it.
+        if (!self.exited) kill(self.client, SIGKILL);
+    });
 }
 @end
 
@@ -116,6 +124,16 @@ static RuntimeWindowDelegate *windowDelegate;
 static NSString *artifactDirectory;
 static uint32_t displayedSurface;
 static mach_port_t displayedReleasePort;
+
+static void sendSceneState(BOOL foreground) {
+    IOSUseWindowSceneStateMessage message = {0};
+    message.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
+    message.header.msgh_size = sizeof(message);
+    message.header.msgh_remote_port = displayedReleasePort;
+    message.header.msgh_id = IOSUseWindowSceneState;
+    message.foreground = foreground;
+    sendHostMessage(&message.header);
+}
 
 static void stopPresentation(void) {
     surfaceLayer.contents = nil;
@@ -305,7 +323,7 @@ int IOSUseRunHostWindow(pid_t client, NSString *home) {
                         dispatch_async(dispatch_get_main_queue(), ^{
                             IOSUseStopUserNotifications();
                             if (window) [window performClose:nil];
-                            else { windowDelegate.closed = YES; kill(client, SIGTERM); }
+                            else [windowDelegate windowWillClose:nil];
                         });
                         break;
                     } else {
@@ -318,8 +336,14 @@ int IOSUseRunHostWindow(pid_t client, NSString *home) {
     }
     __block int status = 0;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        while (waitpid(client, &status, 0) < 0 && errno == EINTR) {}
+        siginfo_t info = {0};
+        int rc;
+        do { rc = waitid(P_PID, client, &info, WEXITED | WNOWAIT); } while (rc < 0 && errno == EINTR);
         dispatch_async(dispatch_get_main_queue(), ^{
+            windowDelegate.exited = YES;
+            pid_t reaped;
+            do { reaped = waitpid(client, &status, 0); } while (reaped < 0 && errno == EINTR);
+            if (rc < 0 || reaped != client) status = 8 << 8;
             IOSUseStopUserNotifications();
             stopPresentation();
             [window orderOut:nil];

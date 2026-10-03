@@ -1,5 +1,7 @@
 // A continuously changing UIKit window, with no input or app-specific adapters.
 #import <UIKit/UIKit.h>
+#import <signal.h>
+static BOOL animate = YES;
 
 @interface PresentationDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic, strong) UIWindow *window;
@@ -12,7 +14,7 @@
     self.window.rootViewController.view.backgroundColor = colors[0];
     [self.window makeKeyAndVisible];
     __block unsigned phase = 0;
-    [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *timer) {
+    if (animate) [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *timer) {
         self.window.rootViewController.view.backgroundColor = colors[++phase % colors.count];
     }];
     return YES;
@@ -20,6 +22,8 @@
 @end
 int main(int argc, char **argv) {
     @autoreleasepool {
+        if (argc == 2 && !strcmp(argv[1], "--static")) animate = NO;
+        if (argc == 2 && !strcmp(argv[1], "--ignore-term")) signal(SIGTERM, SIG_IGN);
         // Also support checking host teardown after a normal or failed app exit.
         BOOL exitProbe = argc == 3 && strcmp(argv[1], "--exit-code") == 0;
         int status = exitProbe ? atoi(argv[2]) : 109;

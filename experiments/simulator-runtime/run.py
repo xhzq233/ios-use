@@ -43,9 +43,11 @@ CASES = {
     "gles-window": ["metal", "compiler", "iosurface"],
     "application": ["metal", "compiler", "iosurface"],
     "presentation": ["metal", "compiler", "iosurface"],
+    "lifecycle": ["metal", "compiler", "iosurface"],
+    "webkit": ["metal", "compiler", "iosurface"],
     "text-input": ["metal", "compiler", "iosurface"],
 }
-parser.add_argument("--cases", nargs="+", choices=CASES, default=[case for case in CASES if case not in ("application", "presentation", "network", "photo-prompt", "gles-surface", "gles-window", "text-input")])
+parser.add_argument("--cases", nargs="+", choices=CASES, default=[case for case in CASES if case not in ("application", "presentation", "lifecycle", "webkit", "network", "photo-prompt", "gles-surface", "gles-window", "text-input")])
 parser.add_argument("--services", nargs="*", choices=["metal", "compiler", "iosurface", "trust", "tcc", "photos", "notify", "launchservices", "keychain"],
                     help="Override each case's service list; an empty list starts none")
 parser.add_argument("--notify-backend", choices=["runtime", "host"], default="runtime",
@@ -59,7 +61,12 @@ target.add_argument("--network-url", help="Select network case and issue an HTTP
 parser.add_argument("--photo-fixture", action="store_true", help="With --app, seed a temporary synthetic photo library; use --present for the app's consent dialog")
 parser.add_argument("--present", action="store_true", help="Present the supplied app or photo-prompt consent dialog in a native window")
 parser.add_argument("--tap", nargs=2, type=float, metavar=("X", "Y"), help="Tap after 8 seconds (native mouse events with --present, UIKit otherwise)")
+parser.add_argument("--duration", type=float, default=60, help="Lifecycle workload duration in seconds (minimum 10)")
+parser.add_argument("--webkit-launcher", choices=["system", "standalone"], default="system",
+                    help="Diagnostic only: current paths are blocked by launch domains or endpoint authorization")
 args = parser.parse_args()
+if not math.isfinite(args.duration) or args.duration < 10:
+    parser.error("--duration must be finite and at least 10 seconds")
 external_app = args.app.resolve() if args.app else None
 if args.photo_fixture and not external_app:
     parser.error("--photo-fixture requires --app")
@@ -232,7 +239,7 @@ if "application" in args.cases and not external_app:
                        "CFBundleName": "RuntimeProbe", "CFBundlePackageType": "APPL",
                        "CFBundleVersion": "1", "CFBundleShortVersionString": "1.0",
                        "MinimumOSVersion": "26.0", "UIDeviceFamily": [1]}, info)
-if any(case in args.cases for case in ("application", "presentation", "gles-window", "text-input")):
+if any(case in args.cases for case in ("application", "presentation", "lifecycle", "webkit", "gles-window", "text-input")):
     build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", "-dynamiclib",
           str(SOURCE / "SceneBootstrap.m"), str(SOURCE / "LocalSceneHost.m"), str(SOURCE / "LocalInput.m"),
           "-framework", "Foundation", "-framework", "UIKit", "-o", str(output / "scene.dylib"))
@@ -251,18 +258,33 @@ if any(case in args.cases for case in ("application", "presentation", "gles-wind
               str(runtime / "usr/lib/libMobileGestalt.dylib"),
               "-framework", "Foundation", "-framework", "UIKit", "-o", str(output / "input.dylib"))
 
-if "presentation" in args.cases:
-    presentation_app = output / "PresentationProbe.app"
-    presentation_app.mkdir()
-    with (presentation_app / "Info.plist").open("wb") as info:
-        plistlib.dump({"CFBundleExecutable": "PresentationProbe", "CFBundleIdentifier": "io.iosuse.presentation-probe",
-                      "CFBundleName": "Runtime Presentation Probe", "CFBundlePackageType": "APPL", "MinimumOSVersion": "26.0"}, info)
-    build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", str(SOURCE / "PresentationProbe.m"),
-          "-framework", "Foundation", "-framework", "UIKit", "-o", str(presentation_app / "PresentationProbe"))
+for mode, name in (("presentation", "Presentation"), ("lifecycle", "Lifecycle")):
+    if mode not in args.cases: continue
+    bundle = output / f"{name}Probe.app"
+    bundle.mkdir()
+    with (bundle / "Info.plist").open("wb") as info:
+        plistlib.dump({"CFBundleExecutable": f"{name}Probe", "CFBundleIdentifier": f"io.iosuse.{mode}-probe",
+                      "CFBundleName": f"Runtime {name} Probe", "CFBundlePackageType": "APPL", "MinimumOSVersion": "26.0"}, info)
+    build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", str(SOURCE / f"{name}Probe.m"),
+          "-framework", "Foundation", "-framework", "UIKit", "-framework", "QuartzCore", "-framework", "IOSurface", "-o", str(bundle / f"{name}Probe"))
     build("xcrun", "clang", "-arch", "arm64", "-fobjc-arc", "-fblocks", str(SOURCE / "HostBroker.m"),
-          str(SOURCE / "HostWindow.m"), str(SOURCE / "HostUserNotifications.m"), str(SOURCE / "PresentationProbeHost.m"),
+          str(SOURCE / "HostWindow.m"), str(SOURCE / "HostUserNotifications.m"), str(SOURCE / f"{name}ProbeHost.m"),
           "-framework", "Foundation", "-framework", "CoreFoundation", "-framework", "Metal",
-          "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "IOSurface", "-o", str(output / "presentation-broker"))
+          "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "IOSurface", "-o", str(output / f"{mode}-broker"))
+
+if "webkit" in args.cases:
+    web_app = output / "WebKitProbe.app"
+    web_app.mkdir()
+    with (web_app / "Info.plist").open("wb") as info:
+        plistlib.dump({"CFBundleExecutable": "WebKitProbe", "CFBundleIdentifier": "io.iosuse.webkit-probe",
+                      "CFBundlePackageType": "APPL"}, info)
+    build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", str(SOURCE / "WebKitProbe.m"),
+          "-framework", "Foundation", "-framework", "UIKit", "-framework", "WebKit", "-framework", "CoreGraphics", "-o", str(web_app / "WebKitProbe"))
+    if args.webkit_launcher == "standalone":
+        build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", str(SOURCE / "WebKitChildProbe.m"),
+              "-framework", "Foundation", "-framework", "WebKit", "-o", str(output / "WebKitChild"))
+        build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", "-dynamiclib", str(SOURCE / "WebKitLauncherProbe.m"),
+              "-framework", "Foundation", "-framework", "BrowserEngineKit", "-o", str(output / "webkit-launcher.dylib"))
 
 if "text-input" in args.cases:
     keyboard_app = output / "KeyboardProbe.app"
@@ -296,10 +318,10 @@ def reclaim(process):
     # Only the owned runtime daemon uses this shared-memory name.
     ctypes.CDLL(None).shm_unlink(f"iosuse.notify.{process.pid}".encode())
 
-def execute(command, environment, log, present=False):
+def execute(command, environment, log, present=False, timeout=30):
     process = subprocess.Popen(command, env=environment, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     try:
-        return process.wait(timeout=None if present else 30)
+        return process.wait(timeout=None if present else timeout)
     except subprocess.TimeoutExpired:
         return 124
     finally:
@@ -363,8 +385,10 @@ def adapters_for(mode):
     if mode == "linear-buffer":
         return ["metal-buffer"]
     base = ["display", "scene", "compositor"]
-    if mode == "presentation":
+    if mode in ("presentation", "lifecycle"):
         return base
+    if mode == "webkit":
+        return base + (["webkit-launcher"] if args.webkit_launcher == "standalone" else [])
     if mode == "gles-window":
         return base + ["angle"]
     if args.app_adapters is not None:
@@ -386,20 +410,26 @@ results = []
 for number, (mode, services, adapters, deletion) in enumerate(runs):
     home = output / f"home-{number:02d}-{mode}"
     home.mkdir()
+    (home / "tmp").mkdir()
     client = output / ("uikit-probe" if mode == "uikit" else "probe")
     environment = os.environ.copy()
+    environment.update(HOME=str(home), CFFIXED_USER_HOME=str(home), TMPDIR=str(home / "tmp") + "/")
     environment["IOS_USE_RUNTIME_NOTIFY_BACKEND"] = args.notify_backend
     environment.pop("IOS_USE_RUNTIME_CLIENT_LIBRARIES", None)
     environment.pop("IOS_USE_RUNTIME_PRESENT", None)
     environment.pop("IOS_USE_RUNTIME_TAP", None)
-    if args.present or mode in ("presentation", "text-input"):
+    environment.pop("IOS_USE_RUNTIME_STATIC_PROBE", None)
+    if args.present or mode in ("presentation", "lifecycle", "text-input"):
         environment["IOS_USE_RUNTIME_PRESENT"] = "1"
-    if mode in ("application", "presentation", "gles-window", "text-input", "linear-buffer"):
+    if mode in ("application", "presentation", "lifecycle", "webkit", "gles-window", "text-input", "linear-buffer"):
         client = app_executable if external_app else app / "RuntimeProbe"
         if mode == "gles-window":
             client = gles_app / "GLESWindowProbe"
-        elif mode == "presentation":
-            client = presentation_app / "PresentationProbe"
+        elif mode in ("presentation", "lifecycle"):
+            name = "Presentation" if mode == "presentation" else "Lifecycle"
+            client = output / f"{name}Probe.app/{name}Probe"
+        elif mode == "webkit":
+            client = web_app / "WebKitProbe"
         elif mode == "text-input":
             client = keyboard_app / "KeyboardProbe"
         elif mode == "linear-buffer":
@@ -411,8 +441,8 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
                str(output / "endpoints.dylib"), str(home), ",".join(services)]
     if mode == "text-input":
         command[0] = str(output / "keyboard-broker")
-    elif mode == "presentation":
-        command[0] = str(output / "presentation-broker")
+    elif mode in ("presentation", "lifecycle"):
+        command[0] = str(output / f"{mode}-broker")
     if mode in ("trust", "network"):
         command[2] = str(output / f"{mode}-probe")
         if mode == "trust":
@@ -430,6 +460,8 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
     elif mode == "keychain":
         command[2] = str(keychain_app / "KeychainProbe")
         command.append("write")
+    elif mode == "lifecycle":
+        command.append(str(args.duration))
     elif mode not in ("uikit", "linear-buffer"):
         command.append(mode)
     if mode == "retarget-metallib":
@@ -469,7 +501,7 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
                 log.flush()
                 status = execute(command, environment, log)
         else:
-            status = execute(command, environment, log, args.present)
+            status = execute(command, environment, log, args.present, args.duration + 30 if mode == "lifecycle" else 30)
             if mode == "presentation" and status == 0:
                 # Exercise the ordinary host after both successful and failed
                 # client exits; the window-close path ran in the pixel workload.
@@ -485,6 +517,16 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
                     if actual != expected:
                         status = 112
                         break
+                if status == 0:
+                    for option in ("--static", "--ignore-term"):
+                        close_home = output / f"home-{number:02d}{option}"
+                        close_home.mkdir()
+                        closing = command[:6] + [option]
+                        closing[4] = str(close_home)
+                        close_environment = environment.copy()
+                        if option == "--static": close_environment["IOS_USE_RUNTIME_STATIC_PROBE"] = "1"
+                        status = execute(closing, close_environment, log)
+                        if status: break
             if mode == "keychain" and status == 0:
                 other = command[:]
                 other[2], other[-1] = str(other_keychain_app / "KeychainProbe"), "other"
@@ -499,7 +541,7 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
                     if status: break
     print(log_path.read_text(), end="")
     print(f"{mode}: exit={status}", flush=True)
-    results.append((mode, services, adapters if mode in ("application", "presentation", "gles-window", "text-input", "linear-buffer") else [], status, deletion))
+    results.append((mode, services, adapters if mode in ("application", "presentation", "lifecycle", "webkit", "gles-window", "text-input", "linear-buffer") else [], status, deletion))
     failed |= status != 0 and not deletion
 print("\nCase                 Services                      App adapters    Exit   Experiment")
 for mode, services, adapters, status, deletion in results:

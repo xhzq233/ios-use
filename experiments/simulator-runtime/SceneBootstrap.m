@@ -19,7 +19,28 @@
 + (id)identityForIdentifier:(NSString *)identifier workspaceIdentifier:(NSString *)workspace;
 - (void)createSceneWithIdentity:(id)identity parameters:(id)parameters
              transitionContext:(id)transition completion:(void (^)(id))completion;
++ (id)diffFromSettings:(id)before toSettings:(id)after;
+- (void)sceneID:(id)identifier updateWithSettingsDiff:(id)diff
+    transitionContext:(id)transition completion:(void (^)(id))completion;
 @end
+
+static id localClient, localSettings, localWorkspace;
+static id localIdentity;
+
+// Deliver settings through FrontBoard's scene client; UIKit owns its lifecycle
+// callbacks and activation state. Do not invoke application delegates directly.
+void IOSUseSetSceneForeground(BOOL foreground) {
+    if (!localClient) return;
+    [[localWorkspace machQueue] performAsync:^{
+        id settings = [localSettings mutableCopy];
+        [settings setValue:@(foreground) forKey:@"foreground"];
+        id diff = [NSClassFromString(@"FBSSceneSettingsDiff") diffFromSettings:localSettings toSettings:settings];
+        localSettings = [settings copy];
+        [localClient sceneID:localIdentity updateWithSettingsDiff:diff transitionContext:nil completion:^(id result) {
+            NSLog(@"[scene-bootstrap] foreground=%d completion=%@", foreground, result);
+        }];
+    }];
+}
 
 static void (*originalMakeKeyAndVisible)(UIWindow *, SEL);
 static void showLegacyWindow(UIWindow *window, SEL selector) {
@@ -78,6 +99,8 @@ __attribute__((constructor)) static void installSceneBootstrap(void) {
             // A workspace identifier is required to construct the scene identity token.
             id identity = [NSClassFromString(@"FBSSceneIdentity")
                            identityForIdentifier:identifier workspaceIdentifier:@"FBSceneManager"];
+            localClient = client; localWorkspace = workspace;
+            localIdentity = identity; localSettings = [settings copy];
             NSLog(@"[scene-bootstrap] delivering local scene creation");
             [client createSceneWithIdentity:identity parameters:parameters transitionContext:nil
                                  completion:^(id result) {
