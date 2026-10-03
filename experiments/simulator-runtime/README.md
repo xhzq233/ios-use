@@ -14,6 +14,31 @@ compiler are loaded in place; no Apple or application binaries are included.
 
 ## Run
 
+To import an unencrypted development `.app` or IPA, create a new converted copy:
+
+```sh
+python3 experiments/simulator-runtime/import_app.py /path/to/Development.ipa \
+  /path/to/NewCopy.app --runtime-root "$RUNTIME_ROOT"
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --app /path/to/NewCopy.app --present
+```
+
+The importer selects ordinary arm64 from universal binaries, walks embedded
+Mach-O images, validates bundled dependencies, retargets iOS platform commands
+with Xcode's `vtool`, rebuilds supported uncompressed Metal AIR libraries, and
+ad-hoc signs the copy. It preserves the input and refuses an existing output,
+encrypted code, unsupported platforms/architectures, missing bundled strong
+dependencies, unsafe archive paths, and deployment targets newer than the selected
+runtime. Failed staging is removed. The JSON result distinguishes original and
+converted platforms and records dependency resolution. Apple shared-cache
+dependencies still require dyld validation at launch; retargeting metadata is
+not a guarantee of ABI/API compatibility or app-extension execution support.
+
+`test_import.py --runtime-root "$RUNTIME_ROOT"` builds a synthetic device IPA
+with a universal executable, an embedded framework, and a device Metal library,
+then checks real framework calls, GPU compute, UIKit startup, source preservation,
+and import rejection boundaries. It removes its disposable inputs and outputs.
+
 ```sh
 python3 experiments/simulator-runtime/run.py \
   --runtime-root '/path/to/iOS.simruntime/Contents/Resources/RuntimeRoot'
