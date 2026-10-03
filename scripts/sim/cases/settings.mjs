@@ -42,7 +42,7 @@ export const settingsBeforeContactsCaseMetadata = [
   { id: 'SW-2', group: 'settings', kind: 'swipe-target-dir', setup: 'general page', assertion: 'swipe to Keyboard with dir reports scrolls', coverage: 'simulator' },
   { id: 'SW-3', group: 'settings', kind: 'swipe-target', setup: 'general page', assertion: 'swipe to Keyboard reports scrolls', coverage: 'simulator' },
   { id: 'SW-3B', group: 'settings', kind: 'swipe-cindex', setup: 'settings home', assertion: 'target child selected by cindex', coverage: 'simulator' },
-  { id: 'SW-4', group: 'settings', kind: 'swipe-target-from', setup: 'general page scrolled to Keyboard', assertion: 'back swipe reports up direction', coverage: 'simulator' },
+  { id: 'SW-4', group: 'settings', kind: 'swipe-target-from', setup: 'general page positioned at Keyboard', assertion: 'backward search returns a visible About row, including a valid no-op', coverage: 'simulator' },
   { id: 'SW-5', group: 'settings', kind: 'swipe-coordinate-from', setup: 'general page', assertion: 'coordinate from swipe reports scrolls', coverage: 'simulator' },
   { id: 'SW-6', group: 'settings', kind: 'swipe-coordinate-target', setup: 'general page', assertion: 'coordinate target swipe reports scrolls', coverage: 'simulator' },
   { id: 'SW-7', group: 'settings', kind: 'swipe-distance', setup: 'general page', assertion: 'distance swipe reports scrolls', coverage: 'simulator' },
@@ -205,7 +205,21 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'SW-2', run: () => runCaseContains('SW-2', 'scrolls=', ['swipe', '--from', 'About', '--find', 'Keyboard', '--dir', 'forth', '--traits', 'Cell'], generalPage) },
     { id: 'SW-3', run: () => runCaseContains('SW-3', 'scrolls=', ['swipe', '--from', 'About', '--find', 'Keyboard', '--traits', 'Cell'], generalPage) },
     { id: 'SW-3B', run: () => runCaseContains('SW-3B', 'Text "General"', ['swipe', '--find', 'com.apple.settings.general', '--from', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
-    { id: 'SW-4', run: () => runCaseMatches('SW-4', /scrolls=\d+ direction=up/, ['swipe', '--find', 'About', '--from', 'Keyboard', '--dir', 'back', '--traits', 'Cell'], async () => { await generalPage(); runCliToFiles(['swipe', '--from', 'About', '--find', 'Keyboard', '--traits', 'Cell'], path.join(artifactDir, 'SW-4-setup.out'), path.join(artifactDir, 'SW-4-setup.err')); }) },
+    { id: 'SW-4', run: async () => {
+      if (!selected('SW-4')) return recordSkip('SW-4');
+      await generalPage();
+      console.log('[sim-test] RUN SW-4: backward search from Keyboard makes About visible');
+      const run = (step, args) => runCliToFiles(args, path.join(artifactDir, `SW-4-${step}.out`), path.join(artifactDir, `SW-4-${step}.err`));
+      // Both rows can fit in a tall viewport. A search may validly perform zero
+      // scrolls; verify its visible-target postcondition rather than output text.
+      const setup = run('setup', ['swipe', '--from', 'About', '--find', 'Keyboard', '--traits', 'Cell']);
+      if (setup.code !== 0) return recordFail('SW-4', setup.stdout + setup.stderr, 'setup');
+      const swipe = run('action', ['swipe', '--find', 'About', '--from', 'Keyboard', '--dir', 'back', '--traits', 'Cell', '--json']);
+      const verify = run('verify', ['waitFor', 'About', '--traits', 'Cell', '--timeout', '2']);
+      const reply = swipe.code === 0 ? JSON.parse(swipe.stdout) : null;
+      if (reply?.ok && reply.data.scrolls >= 0 && verify.code === 0) recordPass('SW-4');
+      else recordFail('SW-4', swipe.stdout + swipe.stderr + verify.stdout + verify.stderr, swipe.code === 0 && verify.code === 0 ? 'assertion' : 'command');
+    } },
     { id: 'SW-5', run: () => runCaseContains('SW-5', 'scrolls=', ['swipe', '--find', 'About', '--from', '200,650', '--traits', 'Cell'], generalPage) },
     { id: 'SW-6', run: () => runCaseContains('SW-6', 'scrolls=', ['swipe', '--from', '200,400', '--to', '100,700'], generalPage) },
     { id: 'SW-7', run: () => runCaseContains('SW-7', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth'], generalPage) },

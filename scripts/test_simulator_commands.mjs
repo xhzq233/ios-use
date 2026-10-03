@@ -559,16 +559,19 @@ async function runDomPresentationCase() {
   await resetSettingsHome();
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
-  console.log(`[sim-test] RUN ${id}: ios-use dom presentation shape`);
-  const res = runCliToFiles(['dom', '--nodiff', '--fresh'], out, err);
-  const output = res.stdout;
-  const hasScrollableDirection = /^\s+\S+ \[(?:Scroll|Collection|Table),(?:vertical|horizontal)(?:,[^\]]*)?\] \(\d+,\d+,\d+,\d+\):/m.test(output);
-  const hasLeafRect = /^\s+- .+ \[[^\]]+\] \(\d+,\d+,\d+,\d+\)$/m.test(output);
-  const hasAppHeader = output.includes('App: com.apple.Preferences');
-  if (res.code === 0 && hasAppHeader && hasScrollableDirection && hasLeafRect) {
+  console.log(`[sim-test] RUN ${id}: ios-use dom JSON geometry and scroll axes`);
+  const res = runCliToFiles(['dom', '--nodiff', '--fresh', '--json'], out, err);
+  const reply = res.code === 0 ? JSON.parse(res.stdout) : null;
+  const elements = reply?.data.elements ?? [];
+  const usableFrame = element => Array.isArray(element.frame) && element.frame.length === 4
+    && element.frame.every(Number.isFinite) && element.frame[2] > 0 && element.frame[3] > 0;
+  const hasScrollableDirection = elements.some(element => usableFrame(element) && element.childCount > 0
+    && element.traits.some(trait => trait === 'vertical' || trait === 'horizontal'));
+  const hasLeafRect = elements.some(element => element.childCount === 0 && usableFrame(element));
+  if (reply?.ok && reply.data.app === 'com.apple.Preferences' && hasScrollableDirection && hasLeafRect) {
     recordPass(id);
   } else {
-    recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-12 expected app header, scroll direction container rect, and leaf rect\n`, res.code === 0 ? 'assertion' : 'command');
+    recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-12 expected Settings, a scroll axis and usable container/leaf geometry\n`, res.code === 0 ? 'assertion' : 'command');
   }
 }
 

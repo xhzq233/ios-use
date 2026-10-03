@@ -410,6 +410,9 @@ enum CLIHelp {
                     diffDOMOption,
                 ],
                 footer: """
+                On XCTest targets, label taps briefly check that target geometry is stable.
+                If it keeps moving, no touch is sent; retry after the page settles.
+
                 Examples:
                   ios-use tap "通用" --dom
                   ios-use tap "亮度" --offset-ratio 0.8,0.5 --dom
@@ -426,7 +429,7 @@ enum CLIHelp {
                     postDOMOption,
                     diffDOMOption,
                 ],
-                footer: "Example: ios-use longpress \"照片\" --duration 800ms --dom"
+                footer: "On XCTest targets, moving label targets return a retryable error before touch delivery.\nExample: ios-use longpress \"照片\" --duration 800ms --dom"
             )
         case "input":
             return driverHelp(
@@ -442,7 +445,7 @@ enum CLIHelp {
                     postDOMOption,
                     diffDOMOption,
                 ],
-                footer: "Example: ios-use input --tap \"搜索\" --content \"蓝牙\" --dom"
+                footer: "On XCTest targets, moving --tap label targets return a retryable error before touch delivery.\nExample: ios-use input --tap \"搜索\" --content \"蓝牙\" --dom"
             )
         case "swipe":
             return driverHelp(
