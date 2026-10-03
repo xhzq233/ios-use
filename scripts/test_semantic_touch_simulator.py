@@ -90,7 +90,14 @@ def main():
                     break
             else:
                 raise AssertionError("Native App rotation did not complete")
-            dom = cli("dom", "--nodiff")[1]["data"]
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                dom = cli("dom", "--nodiff", "--fresh")[1]["data"]
+                app_frame = dom["elements"][0]["frame"]
+                if app_frame[2] > app_frame[3]:
+                    break
+            else:
+                raise AssertionError("Landscape App geometry did not reach accessibility")
             target = next(e for e in dom["elements"] if e["identifier"] == "fixture.touch.target")
             x, y, width, height = target["frame"]
             cli("tap", "fixture.touch.target")
@@ -100,7 +107,9 @@ def main():
             observed = state()
             assert observed["targetTaps"] == 3 and observed["presses"] == 1 and observed["otherTaps"] == 0
             shot = cli("screenshot", "--name", orientation, "--ocr")[1]["data"]
-            assert shot["logicalSize"] == dom["elements"][0]["frame"][2:]
+            # XCTest JPEG can round an odd pixel width down by one pixel.
+            assert all(abs(actual - expected) <= 1 for actual, expected in
+                       zip(shot["logicalSize"], app_frame[2:])), (shot["logicalSize"], app_frame)
             assert shot["pixelSize"][0] > shot["pixelSize"][1]
             ocr = json.loads(Path(shot["ocrPath"]).read_text())
             text = next(e for e in ocr["elements"] if "Moving target" in e["text"])
