@@ -23,6 +23,7 @@ func resolveSemanticTouchTarget(
     var stableSince = startedAt
     var previous: TouchGeometry?
     var captures = 0
+    var stableSamples = 0
 
     while true {
         try CommandDeadline.check()
@@ -54,13 +55,18 @@ func resolveSemanticTouchTarget(
         let now = clock()
         let geometry = TouchGeometry(snapshot: snapshot, element: element, frame: frame)
         if let previous, geometry.matches(previous) {
-            if now - stableSince >= 0.1 {
+            stableSamples += 1
+            // A slow AX request can consume the settling interval while still
+            // returning the launch layout. Verify twice after the candidate,
+            // rather than accepting two stale samples merely because IO was slow.
+            if stableSamples >= 3, now - stableSince >= 0.1 {
                 DriverPerf.append("[perf] \(command).geometry captures=\(captures) elapsed=\(Int((now - startedAt) * 1000))ms")
                 return .found(snapshot: snapshot, element: element, frame: frame)
             }
         } else {
             stableSince = now
             previous = geometry
+            stableSamples = 1
         }
         guard now < deadline else {
             return .failure(try Codec.foryError(

@@ -85,6 +85,28 @@ final class TypesTests: XCTestCase {
         XCTAssertLessThan(time, 0.2)
     }
 
+    func testSemanticTouchSlowSnapshotsDoNotAcceptInitialLaunchGeometry() throws {
+        let initial = makeCleanedSnapshot([makeElement(label: "Bluetooth", type: .button,
+            frame: CGRect(x: 30, y: 409, width: 76, height: 29))])
+        let restored = makeCleanedSnapshot([makeElement(label: "Bluetooth", type: .button,
+            frame: CGRect(x: 30, y: 606, width: 76, height: 29))])
+        var time = 0.0
+        var captures = 0
+        let resolution = try resolveSemanticTouchTarget(ForyTarget(label: "Bluetooth"), command: "tap",
+            capture: {
+                captures += 1
+                time += 0.15
+                return captures < 3 ? initial : restored
+            }, clock: { time }, poll: { time += 0.01 })
+        guard case .found(let snapshot, _, let frame) = resolution else {
+            return XCTFail("Expected the restored row after slow launch snapshots")
+        }
+        XCTAssertEqual(frame.minY, 606)
+        XCTAssertTrue(snapshot.root === restored.root)
+        XCTAssertEqual(captures, 5)
+        XCTAssertLessThan(time, 1.0)
+    }
+
     func testSemanticTouchContinuousMotionReturnsRetryableFailureWithinBudget() throws {
         var time = 0.0
         var captures = 0
