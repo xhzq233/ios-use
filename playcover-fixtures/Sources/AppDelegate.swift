@@ -71,7 +71,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             UIApplication.LaunchOptionsKey: Any
         ]?
     ) -> Bool {
-        _ = application
+        // Keep the disposable test App awake while real-device checks run.
+        application.isIdleTimerDisabled = true
         _ = launchOptions
         if let delay = Bundle.main.object(
             forInfoDictionaryKey: "IOSUseFixtureMainThreadDelaySeconds"

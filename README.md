@@ -161,6 +161,8 @@ Screenshots default to JPEG output without OCR on both hosts. On macOS, use
 `screenshot --ocr` to also recognize text and save an OCR sidecar. `--no-ocr`
 remains accepted; Linux has no OCR engine. These defaults apply to local and
 remote targets from Alpha 4; earlier macOS releases default to OCR enabled.
+On macOS, screenshot sizes, OCR boxes, and changed-frame comparisons honor JPEG
+orientation, so their coordinates follow the displayed image after rotation.
 
 ### Remote Apple device services
 

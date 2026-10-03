@@ -410,6 +410,7 @@ enum CLIHelp {
                     diffDOMOption,
                 ],
                 footer: """
+                Coordinates and offsets use the foreground App's interface coordinate space.
                 On XCTest targets, label taps briefly check that target geometry is stable.
                 If it keeps moving, no touch is sent; retry after the page settles.
 
@@ -429,7 +430,7 @@ enum CLIHelp {
                     postDOMOption,
                     diffDOMOption,
                 ],
-                footer: "On XCTest targets, moving label targets return a retryable error before touch delivery.\nExample: ios-use longpress \"照片\" --duration 800ms --dom"
+                footer: "Coordinates use the foreground App's interface coordinate space.\nOn XCTest targets, moving label targets return a retryable error before touch delivery.\nExample: ios-use longpress \"照片\" --duration 800ms --dom"
             )
         case "input":
             return driverHelp(
@@ -445,7 +446,7 @@ enum CLIHelp {
                     postDOMOption,
                     diffDOMOption,
                 ],
-                footer: "On XCTest targets, moving --tap label targets return a retryable error before touch delivery.\nExample: ios-use input --tap \"搜索\" --content \"蓝牙\" --dom"
+                footer: "--tap coordinates use the foreground App's interface coordinate space.\nOn XCTest targets, moving --tap label targets return a retryable error before touch delivery.\nExample: ios-use input --tap \"搜索\" --content \"蓝牙\" --dom"
             )
         case "swipe":
             return driverHelp(

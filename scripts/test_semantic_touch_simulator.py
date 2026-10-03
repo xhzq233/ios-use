@@ -62,18 +62,58 @@ def main():
         observed = state()
         assert observed["targetTaps"] == 1 and observed["otherTaps"] == 0
 
-    cold_open(4)
-    code, reply = cli("tap", "fixture.touch.target", check=False)
-    assert code != 0 and not reply["ok"] and reply["error"]["retryable"], "Continuous motion must report a retryable failure"
-    observed = state()
-    assert observed["targetTaps"] == 0 and observed["otherTaps"] == 0, "Failure dispatched a touch"
+    for command in [("tap", "fixture.touch.target"),
+                    ("longpress", "fixture.touch.target", "--duration", "600ms"),
+                    ("input", "--tap", "fixture.touch.target", "--content", "must-not-type")]:
+        cold_open(10)
+        code, reply = cli(*command, check=False)
+        assert code != 0 and not reply["ok"] and reply["error"]["retryable"], "Continuous motion must report a retryable failure"
+        assert reply["error"]["mutationMayHaveApplied"] is False
+        observed = state()
+        assert observed["targetTaps"] == observed["otherTaps"] == observed["presses"] == 0, "Failure dispatched a touch"
 
     cold_open(0.8)
     cli("longpress", "fixture.touch.target", "--duration", "600ms")
     observed = state()
     assert observed["presses"] == 1 and observed["otherTaps"] == 0
+
+    landscape_passes = []
+    try:
+        for orientation in ["landscape-left", "landscape-right"]:
+            cli("rotate", "--to", "portrait")
+            cold_open(0)
+            cli("rotate", "--to", orientation)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                observed = state()
+                if not observed["rotating"] and observed["orientation"] in (3, 4):
+                    break
+            else:
+                raise AssertionError("Native App rotation did not complete")
+            dom = cli("dom", "--nodiff")[1]["data"]
+            target = next(e for e in dom["elements"] if e["identifier"] == "fixture.touch.target")
+            x, y, width, height = target["frame"]
+            cli("tap", "fixture.touch.target")
+            cli("tap", "fixture.touch.target", "--offset-ratio", "0.8,0.5")
+            cli("tap", f"{x + width / 2},{y + height / 2}")
+            cli("longpress", "fixture.touch.target", "--duration", "600ms")
+            observed = state()
+            assert observed["targetTaps"] == 3 and observed["presses"] == 1 and observed["otherTaps"] == 0
+            shot = cli("screenshot", "--name", orientation, "--ocr")[1]["data"]
+            assert shot["logicalSize"] == dom["elements"][0]["frame"][2:]
+            assert shot["pixelSize"][0] > shot["pixelSize"][1]
+            ocr = json.loads(Path(shot["ocrPath"]).read_text())
+            text = next(e for e in ocr["elements"] if "Moving target" in e["text"])
+            ox, oy, ow, oh = text["frame"]
+            assert x <= ox + ow / 2 <= x + width and y <= oy + oh / 2 <= y + height
+            cli("tap", f"{ox + ow / 2},{oy + oh / 2}")
+            assert state()["targetTaps"] == 4 and state()["otherTaps"] == 0
+            landscape_passes.append(orientation)
+    finally:
+        cli("rotate", "--to", "portrait")
     print(json.dumps({"restoredTargetPasses": args.iterations, "stableTargetPasses": args.iterations,
                       "continuousMotionRejectedWithoutTouch": True, "longPressPasses": 1,
+                      "landscapeTouchAndOCRPasses": landscape_passes,
                       "stableTapMedianSeconds": round(statistics.median(latencies), 3)}))
 
 

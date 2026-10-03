@@ -203,7 +203,10 @@ enum ScreenshotCaptureCoordinator {
               width > 0, height > 0 else {
             return nil
         }
-        return ForyPoint(x: width, y: height)
+        let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        return (5...8).contains(orientation)
+            ? ForyPoint(x: height, y: width)
+            : ForyPoint(x: width, y: height)
     }
 
     private static func log(

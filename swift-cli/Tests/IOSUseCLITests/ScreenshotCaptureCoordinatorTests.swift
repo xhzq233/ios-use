@@ -119,6 +119,27 @@ final class ScreenshotCaptureCoordinatorTests: XCTestCase {
         )
     }
 
+    func testJPEGOrientationDeterminesDisplayedGeometryWithoutReencoding() throws {
+        let (paths, root) = try realDevicePaths()
+        defer { try? FileManager.default.removeItem(at: root) }
+        ScreenshotCaptureCoordinator.displayInfoRequesterForTesting = { _ in
+            ScreenshotCaptureCoordinator.DisplayInfoMeasurement(
+                info: Self.displayInfo(scale: 2), roundTripElapsedMs: 0, serviceElapsedMs: 0)
+        }
+        for orientation in [1, 3, 6, 8] {
+            let jpeg = try makeJPEG(width: 40, height: 80, orientation: orientation)
+            let capture = try ScreenshotCaptureCoordinator.capture(paths: paths) {
+                ScreenshotCapture(jpeg: jpeg, scale: 2)
+            }
+            let swapsAxes = orientation >= 5
+            XCTAssertEqual(capture.pixelSize?.x, swapsAxes ? 80 : 40)
+            XCTAssertEqual(capture.pixelSize?.y, swapsAxes ? 40 : 80)
+            XCTAssertEqual(capture.logicalSize?.x, swapsAxes ? 40 : 20)
+            XCTAssertEqual(capture.logicalSize?.y, swapsAxes ? 20 : 40)
+            XCTAssertEqual(capture.jpeg, jpeg)
+        }
+    }
+
     private func realDevicePaths() throws -> (IOSUsePaths, URL) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-screenshot-coordinator-\(UUID().uuidString)", isDirectory: true)
@@ -162,7 +183,7 @@ final class ScreenshotCaptureCoordinatorTests: XCTestCase {
         )
     }
 
-    private func makeJPEG(width: Int, height: Int) throws -> Data {
+    private func makeJPEG(width: Int, height: Int, orientation: Int = 1) throws -> Data {
         var pixels = [UInt8](repeating: 240, count: width * height * 4)
         guard let context = CGContext(
             data: &pixels,
@@ -181,6 +202,7 @@ final class ScreenshotCaptureCoordinatorTests: XCTestCase {
         }
         CGImageDestinationAddImage(destination, image, [
             kCGImageDestinationLossyCompressionQuality: 0.8,
+            kCGImagePropertyOrientation: orientation,
         ] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             throw XCTSkip("unable to encode JPEG fixture")

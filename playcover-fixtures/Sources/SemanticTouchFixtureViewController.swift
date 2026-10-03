@@ -10,6 +10,7 @@ final class SemanticTouchFixtureViewController: UIViewController {
     private var otherTaps = 0
     private var presses = 0
     private var moving = false
+    private var rotating = false
 
     init(duration: TimeInterval) {
         self.duration = duration
@@ -54,6 +55,16 @@ final class SemanticTouchFixtureViewController: UIViewController {
         }
     }
 
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        rotating = true
+        recordState()
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            self?.rotating = false
+            self?.recordState()
+        }
+    }
+
     @objc private func tappedTarget() { targetTaps += 1; recordState() }
     @objc private func tappedOther() { otherTaps += 1; recordState() }
     @objc private func pressedTarget(_ recognizer: UILongPressGestureRecognizer) {
@@ -62,7 +73,9 @@ final class SemanticTouchFixtureViewController: UIViewController {
 
     private func recordState() {
         let state: [String: Any] = ["targetTaps": targetTaps, "otherTaps": otherTaps,
-                                    "presses": presses, "moving": moving, "targetY": target.frame.minY]
+                                    "presses": presses, "moving": moving, "targetY": target.frame.minY,
+                                    "rotating": rotating,
+                                    "orientation": view.window?.windowScene?.interfaceOrientation.rawValue ?? 0]
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? JSONSerialization.data(withJSONObject: state).write(to: directory.appendingPathComponent("touch-state.json"), options: .atomic)
