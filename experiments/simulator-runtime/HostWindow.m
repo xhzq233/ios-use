@@ -12,22 +12,26 @@ extern NSWindow *IOSUseUserNotificationWindow(void);
 extern void IOSUseStopUserNotifications(void);
 
 static mach_port_t inputPort;
-static void sendInputMessage(const mach_msg_header_t *message) {
+static void sendHostMessage(const mach_msg_header_t *message) {
     mach_port_t destination = message->msgh_remote_port;
     if (!destination) return;
-    // Key bursts can exceed the kernel port's small queue. Serialize pointer,
-    // text, and frame-release messages, waiting off the AppKit thread for space.
+    // Input bursts must not delay returning a frame to the producer. Each
+    // channel waits on its own serial queue, off the AppKit thread.
     // Retain the destination while queued; incoming frames replace its send right.
     kern_return_t retained = mach_port_mod_refs(mach_task_self(), destination, MACH_PORT_RIGHT_SEND, 1);
-    if (retained) { fprintf(stderr, "[host-window] input destination unavailable=%d\n", retained); return; }
-    static dispatch_queue_t queue;
+    if (retained) { fprintf(stderr, "[host-window] message destination unavailable=%d\n", retained); return; }
+    static dispatch_queue_t inputQueue, releaseQueue;
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ queue = dispatch_queue_create("iosuse.runtime.input", DISPATCH_QUEUE_SERIAL); });
+    dispatch_once(&once, ^{
+        inputQueue = dispatch_queue_create("iosuse.runtime.input", DISPATCH_QUEUE_SERIAL);
+        releaseQueue = dispatch_queue_create("iosuse.runtime.frame-release", DISPATCH_QUEUE_SERIAL);
+    });
+    dispatch_queue_t queue = message->msgh_id == IOSUseWindowRelease ? releaseQueue : inputQueue;
     NSMutableData *packet = [NSMutableData dataWithBytes:message length:message->msgh_size];
     dispatch_async(queue, ^{
         kern_return_t sent = mach_msg(packet.mutableBytes, MACH_SEND_MSG, (mach_msg_size_t)packet.length, 0, 0, 0, 0);
         mach_port_deallocate(mach_task_self(), destination);
-        if (sent) fprintf(stderr, "[host-window] input handoff=%d\n", sent);
+        if (sent) fprintf(stderr, "[host-window] message handoff=%d\n", sent);
     });
 }
 
@@ -50,24 +54,24 @@ static void sendText(NSString *text, uint32_t operation) {
     message.operation = operation;
     message.length = (uint32_t)utf8.length;
     [utf8 getBytes:message.utf8 length:utf8.length];
-    sendInputMessage(&message.header);
+    sendHostMessage(&message.header);
 }
-static void releaseSurface(mach_port_t input, uint32_t identifier) {
-    if (!input || !identifier) return;
+static void releaseSurface(mach_port_t release, uint32_t identifier) {
+    if (!release || !identifier) return;
     IOSUseWindowReleaseMessage message = {0};
     message.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
     message.header.msgh_size = sizeof(message);
-    message.header.msgh_remote_port = input;
+    message.header.msgh_remote_port = release;
     message.header.msgh_id = IOSUseWindowRelease;
     message.surfaceID = identifier;
-    sendInputMessage(&message.header);
+    sendHostMessage(&message.header);
 }
 @interface RuntimeSurfaceView : NSView
 @end
 @implementation RuntimeSurfaceView
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
-- (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)acceptsFirstResponder { return inputPort != MACH_PORT_NULL; }
 - (void)keyDown:(NSEvent *)event { [self interpretKeyEvents:@[event]]; }
 - (void)insertText:(id)value {
     NSString *text = [value isKindOfClass:NSAttributedString.class] ? [value string] : value;
@@ -86,7 +90,7 @@ static void releaseSurface(mach_port_t input, uint32_t identifier) {
     message.x = point.x * 402 / self.bounds.size.width;
     message.y = point.y * 874 / self.bounds.size.height;
     message.phase = phase;
-    sendInputMessage(&message.header);
+    sendHostMessage(&message.header);
 }
 - (void)mouseDown:(NSEvent *)event { [self sendPointer:event phase:0]; }
 - (void)mouseDragged:(NSEvent *)event { [self sendPointer:event phase:1]; }
@@ -97,9 +101,11 @@ static void releaseSurface(mach_port_t input, uint32_t identifier) {
 @property(nonatomic) pid_t client;
 @property(nonatomic) BOOL closed;
 @end
+static void stopPresentation(void);
 @implementation RuntimeWindowDelegate
 - (void)windowWillClose:(NSNotification *)notification {
     self.closed = YES;
+    stopPresentation();
     kill(self.client, SIGTERM);
 }
 @end
@@ -109,6 +115,18 @@ static CALayer *surfaceLayer;
 static RuntimeWindowDelegate *windowDelegate;
 static NSString *artifactDirectory;
 static uint32_t displayedSurface;
+static mach_port_t displayedReleasePort;
+
+static void stopPresentation(void) {
+    surfaceLayer.contents = nil;
+    [CATransaction flush];
+    releaseSurface(displayedReleasePort, displayedSurface);
+    if (displayedReleasePort) mach_port_deallocate(mach_task_self(), displayedReleasePort);
+    displayedReleasePort = MACH_PORT_NULL;
+    displayedSurface = 0;
+    if (inputPort) mach_port_deallocate(mach_task_self(), inputPort);
+    inputPort = MACH_PORT_NULL;
+}
 
 BOOL IOSUseHostWindowClosedNormally(void) { return windowDelegate.closed; }
 
@@ -140,7 +158,7 @@ static void sendTap(double x, double y) {
     });
 }
 
-// One diagnostic readback after startup; presentation itself only shares surfaces.
+// Explicit diagnostic readback; presentation itself only shares surfaces.
 static void saveStreamFrame(IOSurfaceRef surface, NSString *filename) {
     if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL)) return;
     CGColorSpaceRef color = CGColorSpaceCreateDeviceRGB();
@@ -161,16 +179,24 @@ static void saveStreamFrame(IOSurfaceRef surface, NSString *filename) {
     IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
 }
 
-void IOSUseShowSurface(mach_port_t port, mach_port_t input, uint32_t identifier) {
+void IOSUseShowSurface(mach_port_t port, mach_port_t release, mach_port_t input, uint32_t identifier) {
     IOSurfaceRef surface = IOSurfaceLookupFromMachPort(port);
     mach_port_deallocate(mach_task_self(), port);
     if (!surface) {
-        releaseSurface(input, identifier);
+        releaseSurface(release, identifier);
+        if (release) mach_port_deallocate(mach_task_self(), release);
         if (input) mach_port_deallocate(mach_task_self(), input);
         fprintf(stderr, "[host-window] surface lookup failed\n");
         return;
     }
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (windowDelegate.closed) {
+            releaseSurface(release, identifier);
+            if (release) mach_port_deallocate(mach_task_self(), release);
+            if (input) mach_port_deallocate(mach_task_self(), input);
+            CFRelease(surface);
+            return;
+        }
         if (inputPort) mach_port_deallocate(mach_task_self(), inputPort);
         inputPort = input;
         if (!window) {
@@ -202,46 +228,26 @@ void IOSUseShowSurface(mach_port_t port, mach_port_t input, uint32_t identifier)
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         uint32_t previous = displayedSurface;
+        mach_port_t previousRelease = displayedReleasePort;
         displayedSurface = identifier;
+        displayedReleasePort = release;
         // Keep the displayed buffer leased. Return its predecessor only after
         // the native transaction replaces it, so the producer cannot overwrite it.
-        [CATransaction setCompletionBlock:^{ releaseSurface(inputPort, previous); }];
+        [CATransaction setCompletionBlock:^{
+            releaseSurface(previousRelease, previous);
+            if (previousRelease) mach_port_deallocate(mach_task_self(), previousRelease);
+        }];
         surfaceLayer.contents = (__bridge id)surface;
         [CATransaction commit];
         [CATransaction flush];
         static unsigned frames;
         if (++frames == 1 || frames % 30 == 0) fprintf(stderr, "[host-window] window=%ld frames=%u size=%zux%zu\n",
             (long)window.windowNumber, frames, IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface));
-        static CFTimeInterval firstFrame;
-        static BOOL streamSaved;
-        if (!firstFrame) firstFrame = CACurrentMediaTime();
-        if (!streamSaved && CACurrentMediaTime() - firstFrame >= 15) {
-            streamSaved = YES;
-            saveStreamFrame(surface, @"streamed-frame.png");
-        }
-        static BOOL captured;
-        if (!captured) {
-            captured = YES;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                if (!(window.occlusionState & NSWindowOcclusionStateVisible)) {
-                    fprintf(stderr, "[host-window] native screenshot unavailable: window occluded\n");
-                    return;
-                }
-                CGImageRef (*capture)(CGRect, CGWindowListOption, CGWindowID, CGWindowImageOption) =
-                    dlsym(RTLD_DEFAULT, "CGWindowListCreateImage");
-                CGImageRef image = capture ? capture(CGRectNull, kCGWindowListOptionIncludingWindow,
-                    (CGWindowID)window.windowNumber, kCGWindowImageBoundsIgnoreFraming) : NULL;
-                if (image) {
-                    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithCGImage:image];
-                    NSData *png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-                    BOOL saved = [png writeToFile:[artifactDirectory stringByAppendingPathComponent:@"native-window.png"] atomically:YES];
-                    fprintf(stderr, "[host-window] native screenshot saved=%d\n", saved);
-                    CGImageRelease(image);
-                } else {
-                    fprintf(stderr, "[host-window] native screenshot unavailable\n");
-                }
-            });
-        }
+        // Linked only into the presentation workload's broker.
+        static void (*observeFrame)(NSWindow *, BOOL);
+        static dispatch_once_t observerOnce;
+        dispatch_once(&observerOnce, ^{ observeFrame = dlsym(RTLD_DEFAULT, "IOSUseObserveHostFrame"); });
+        if (observeFrame) observeFrame(window, inputPort != MACH_PORT_NULL);
         CFRelease(surface);
     });
 }
@@ -315,6 +321,8 @@ int IOSUseRunHostWindow(pid_t client, NSString *home) {
         while (waitpid(client, &status, 0) < 0 && errno == EINTR) {}
         dispatch_async(dispatch_get_main_queue(), ^{
             IOSUseStopUserNotifications();
+            stopPresentation();
+            [window orderOut:nil];
             [NSApp stop:nil];
             [NSApp postEvent:[NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint
                 modifierFlags:0 timestamp:0 windowNumber:0 context:nil subtype:0 data1:0 data2:0] atStart:YES];

@@ -14,7 +14,7 @@
 #import "WindowMessage.h"
 #import "ServicePorts.h"
 
-extern void IOSUseShowSurface(mach_port_t port, mach_port_t input, uint32_t identifier);
+extern void IOSUseShowSurface(mach_port_t port, mach_port_t release, mach_port_t input, uint32_t identifier);
 extern int IOSUseRunHostWindow(pid_t client, NSString *home);
 extern BOOL IOSUseHostWindowClosedNormally(void);
 extern mach_port_t IOSUseCreateUserNotificationPort(void);
@@ -61,7 +61,7 @@ static void serveEndpoints(mach_port_t rendezvous, mach_port_t metal, mach_port_
             if (kr) return;
             if (request.header.msgh_id == IOSUseWindowFrame) {
                 IOSUseWindowFrameMessage *frame = (void *)&request;
-                IOSUseShowSurface(frame->surface.name, frame->input.name, frame->surfaceID);
+                IOSUseShowSurface(frame->surface.name, frame->release.name, frame->input.name, frame->surfaceID);
                 continue;
             }
             struct {

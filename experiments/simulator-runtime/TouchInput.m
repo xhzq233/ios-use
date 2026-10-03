@@ -148,7 +148,6 @@ mach_port_t IOSUseTouchPort(void) {
             struct { union {
                 mach_msg_header_t header;
                 IOSUseWindowPointerMessage pointer;
-                IOSUseWindowReleaseMessage release;
                 IOSUseWindowTextMessage text;
             } message; char trailer[512]; } packet = {0};
             kern_return_t result = mach_msg(&packet.message.header, MACH_RCV_MSG | MACH_RCV_TIMEOUT,
@@ -157,9 +156,6 @@ mach_port_t IOSUseTouchPort(void) {
                 IOSUseWindowPointerMessage *pointer = &packet.message.pointer;
                 BOOL delivered = IOSUseSendTouch(CGPointMake(pointer->x, pointer->y), pointer->phase);
                 fprintf(stderr, "[touch] phase=%u delivered=%d\n", pointer->phase, delivered);
-            } else if (!result && packet.message.header.msgh_id == IOSUseWindowRelease) {
-                void (*releaseFrame)(uint32_t) = dlsym(RTLD_DEFAULT, "IOSUseReleaseFrame");
-                if (releaseFrame) releaseFrame(packet.message.release.surfaceID);
             } else if (!result && packet.message.header.msgh_id == IOSUseWindowText) {
                 IOSUseWindowTextMessage *message = &packet.message.text;
                 if (message->header.msgh_size != sizeof(*message) || message->length > sizeof(message->utf8)) return;

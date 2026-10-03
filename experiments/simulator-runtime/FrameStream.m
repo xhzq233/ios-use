@@ -24,6 +24,8 @@ static dispatch_queue_t streamQueue;
 static id stream;
 static NSMutableDictionary *pendingFrames;
 static mach_port_t brokerPort;
+static mach_port_t releasePort;
+static dispatch_source_t releaseReceiver;
 
 void IOSUseReleaseFrame(uint32_t identifier) {
     if (!streamQueue) return;
@@ -44,6 +46,26 @@ void IOSUseStreamContext(id context) {
         // display owns its refresh loop; we do not add another rendering timer.
         streamQueue = IOSUseRenderQueue();
         pendingFrames = [NSMutableDictionary new];
+        // Buffer ownership belongs to presentation, independently of optional
+        // touch/text delivery. Receive acknowledgements on the render queue.
+        if (mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &releasePort) ||
+            mach_port_insert_right(mach_task_self(), releasePort, releasePort, MACH_MSG_TYPE_MAKE_SEND)) exit(46);
+        releaseReceiver = dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV, releasePort, 0, streamQueue);
+        dispatch_source_set_event_handler(releaseReceiver, ^{
+            struct { IOSUseWindowReleaseMessage message; char trailer[512]; } packet = {0};
+            kern_return_t result = mach_msg(&packet.message.header, MACH_RCV_MSG | MACH_RCV_TIMEOUT,
+                0, sizeof(packet), releasePort, 0, 0);
+            if (!result) {
+                if (packet.message.header.msgh_id == IOSUseWindowRelease &&
+                    packet.message.header.msgh_size == sizeof(packet.message) &&
+                    !(packet.message.header.msgh_bits & MACH_MSGH_BITS_COMPLEX)) {
+                    IOSUseReleaseFrame(packet.message.surfaceID);
+                } else {
+                    mach_msg_destroy(&packet.message.header);
+                }
+            }
+        });
+        dispatch_resume(releaseReceiver);
         mach_port_array_t ports = NULL;
         mach_msg_type_number_t count = 0;
         if (mach_ports_lookup(mach_task_self(), &ports, &count) || !count) exit(46);
@@ -83,10 +105,13 @@ void IOSUseStreamContext(id context) {
                     message.header.msgh_size = sizeof(message);
                     message.header.msgh_remote_port = brokerPort;
                     message.header.msgh_id = IOSUseWindowFrame;
-                    message.body.msgh_descriptor_count = 2;
+                    message.body.msgh_descriptor_count = 3;
                     message.surface.name = IOSurfaceCreateMachPort(surface);
                     message.surface.disposition = MACH_MSG_TYPE_MOVE_SEND;
                     message.surface.type = MACH_MSG_PORT_DESCRIPTOR;
+                    message.release.name = releasePort;
+                    message.release.disposition = MACH_MSG_TYPE_COPY_SEND;
+                    message.release.type = MACH_MSG_PORT_DESCRIPTOR;
                     message.input.name = touchPort ? touchPort() : MACH_PORT_NULL;
                     message.input.disposition = MACH_MSG_TYPE_COPY_SEND;
                     message.input.type = MACH_MSG_PORT_DESCRIPTOR;

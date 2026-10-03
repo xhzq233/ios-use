@@ -91,6 +91,11 @@ python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
   --cases application --audit
 
+# Display without input: checks changing pixels in its own native window,
+# closes the window, and checks normal/error app exits. Exits automatically.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases presentation
+
 # Native keyboard events, Unicode deletion, focus switching, and editing delegates.
 # Opens a test window and exits automatically; retains the 30-second case timeout.
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
@@ -102,9 +107,14 @@ python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
   --app /path/to/Converted.app
 
 # Keep the app running in a native macOS window. Close it or press Ctrl-C to stop.
+# Display needs no touch/keyboard adapter and does not capture screenshots.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --app /path/to/Converted.app --present
+
 # Optional tap exercises native mouse -> Mach message -> UIKit delivery.
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
-  --app /path/to/Converted.app --present --tap 280 840
+  --app /path/to/Converted.app --present \
+  --app-adapters display scene compositor input --tap 280 840
 
 # Give that app a disposable library containing one generated 1024×768 test image.
 # The supplied app requests access through a native consent dialog.
@@ -134,11 +144,15 @@ CoreVideo/GLES interoperation is unfinished. Without `--present`, `photo-prompt`
 still fails because no notification presenter is available.
 `--network-url` selects a live HTTPS HEAD request and is mutually
 exclusive with `--app`. Default cases require no network access.
-`--app-adapters display scene compositor input` selects application-only adapters;
-an empty list injects none. Add `angle` to opt into the EAGL/GLES/BGRA bridge,
+`--app-adapters display scene compositor` is the supplied-app default;
+an empty list injects none. Add `input` for touch/text delivery, `angle` for the EAGL/GLES/BGRA bridge,
 and `metal-buffer` for shared linear Metal textures on the tested Apple GPU path;
-it is never injected into runtime service processes. `--app` selects the application case and captures its
-composited display after 15 seconds. `--tap X Y` sends a single tap after eight
+adapters are never injected into runtime service processes. The built-in
+`application` and `text-input` fixtures additionally enable `input` to exercise it;
+`presentation` deliberately omits it. `--app` selects the application case and,
+without `--present`, captures its composited display after 15 seconds. With
+`--present`, no timed capture or screenshot-based startup check is injected.
+`--tap X Y` requires the `input` adapter and sends a single tap after eight
 seconds in the fixed 402×874 logical coordinate space. With `--present` it uses
 native mouse events; otherwise it delivers UIKit events in the app. Timing and
 coordinates are diagnostic inputs, not app-readiness detection.
@@ -147,6 +161,7 @@ The runner does not install it or alter its platform metadata. In a terminal,
 `--present` also accepts `tap X Y`, `text TEXT`, `backspace`, `capture`, and `quit` on stdin. Taps follow the
 same native mouse path as the window. While a consent dialog is open, `tap`
 coordinates refer to that dialog's content area; its button centers are logged.
+App taps and text require the optional `input` adapter; native consent buttons do not.
 Focus an app input field before `text` or `backspace`. Text preserves spaces after
 the command separator, supports UTF-8, and is limited to 4096 bytes per command;
 longer input is rejected without truncation. These commands use the native view's
@@ -170,9 +185,12 @@ SIGTERM, then kills and reaps it if needed; trustd can retain background XPC
 transactions. The runner also reclaims the whole owned process group and unlinks
 its uniquely named notify shared-memory object, including after a timeout or
 interruption. Both `HOME` and `TMPDIR` point into the case directory. PNGs are
-stored in the corresponding `home-NN-case/` directory. The native host saves one `streamed-frame.png` diagnostic; this proves the received pixels,
-not visibility on the physical display. `native-window.png` is attempted only
-when the window is unoccluded. No device or Simulator state is modified. Once a
+stored in the corresponding `home-NN-case/` directory. The native host reads back
+the displayed buffer only for an explicit `capture` command. The `presentation`
+workload reads pixels from its own synthetic native window in memory, checks
+repeated red/green/blue transitions beyond the frame pool's capacity, and closes
+that window. It needs an unlocked graphical session and never captures other
+windows. No device or Simulator state is modified. Once a
 run has stopped, its `run-*` directory can be deleted to remove its home, caches,
 temporary files, logs, and build products.
 
@@ -240,7 +258,7 @@ native macOS broker (+ optional AppKit window)
   └─ Simulator-linked client
        ├─ runtime UIKitCore / MTLSimDriver / IOSurface
        └─ application-only: display metadata + scene endpoint + CA server/display
-                            + input-registration peer + single-pointer delivery
+                            + input-registration peer; optional touch/text delivery
 ```
 
 `HostBroker.m` passes selected endpoints through an inherited Mach right using
@@ -622,7 +640,8 @@ active editing performance still needs investigation.
 ## Application startup: remove processes, retain required functions
 
 The application diagnostic uses the same directly spawned process with the three
-rendering services. Four small adapters supply the measured startup functions:
+rendering services. Three base adapters supply the measured startup functions;
+touch/text delivery is optional:
 
 - `LocalDisplay.m` supplies a fixed 402×874 logical screen at 3× through actual
   FBS display configuration/mode objects. It initializes GraphicsServices and
@@ -643,6 +662,10 @@ rendering services. Four small adapters supply the measured startup functions:
   scene through the runtime's `FBSWorkspaceScenesClient`; UIKit invokes the app's
   delegate. No code calls AppDelegate directly. A legacy window without a scene
   is assigned the unique connected window scene when it becomes key and visible.
+  The same `scene` library includes `LocalInput.m`: a registration-only
+  BoardServices peer for `BKHIDEventDeliveryManager`, needed even when the app
+  receives no input. It accepts delivery-rule registration and closes the peer
+  for unsupported operations; it does not deliver events or start backboardd.
 - `LocalCompositor.m` starts the runtime's actual CoreAnimation render server and
   a 1206×2622 `CAWindowServerVirtualDisplay`. The server's `local` option avoids
   display discovery and launchd registration. `CA_FORCE_LOCAL_SERVER` is set at
@@ -653,15 +676,14 @@ rendering services. Four small adapters supply the measured startup functions:
   `IOSUseCopyWindowSurface` lays out/displays pending layers, requests a bounded
   rendering wait, then takes a whole-display `CARenderServerSnapshot`. Snapshot
   pixels remain the check when the context does not acknowledge that wait.
-- `LocalInput.m` supplies an actual BoardServices initiating connection for
-  `BKHIDEventDeliveryManager` and accepts delivery-rule registration. Unsupported
-  operations close the peer. `TouchInput.m` separately constructs a single
+- The optional `input` library contains `TouchInput.m` and `KeyboardContext.m`.
+  `TouchInput.m` constructs a single
   IOHID-backed UITouch/UIEvent sequence and calls `UIApplication.sendEvent:`.
   It makes the hit window key before delivery. It does not call app button
-  actions directly or replace a complete backboardd HID dispatcher. Keyboard,
-  multitouch, and general gesture compatibility remain unverified.
+  actions directly or replace a complete backboardd HID dispatcher. Text support
+  is described below; multitouch and general gesture compatibility remain unverified.
 
-All four adapters load only in the application, never in the runtime services.
+All adapters load only in the application, never in the runtime services.
 The scene diagnostic uses private selectors, one named workspace ivar, and a
 one-second scheduling delay. It supports one initially empty scene source.
 
@@ -692,8 +714,12 @@ The stream caps delivery at 30 Hz, downscales the 3× display to 804×1748 for a
 rights to `HostWindow.m`, whose CALayer displays the same shared buffers. The
 currently displayed frame stays leased until a native transaction replaces it;
 the host then acknowledges the old surface so the runtime can reuse it. Apart
-from one-shot diagnostic PNGs, this path does not map pixels or encode images on
-each frame. Idle notifications without a surface are ignored. Mouse down, drag,
+from explicitly requested diagnostic PNGs, this path does not map pixels or encode
+images on each frame. Frame acknowledgements use their own Mach receive port and
+host queue, independent of the optional input port. Each retired frame keeps its
+own acknowledgement right until the native transaction completes. Closing the
+window drops its current frame and rejects frames still queued for presentation.
+Idle notifications without a surface are ignored. With `input` enabled, mouse down, drag,
 and up return through a private Mach port to the app's main thread.
 
 Before network support, a roughly four-minute external application run delivered
@@ -849,9 +875,10 @@ the normal action chain, checks the UIKeyInput contract, and forwards edits thro
 UIKeyboardImpl's input pipeline. Directly calling the responder's insertText:
 rendered characters but bypassed UITextField's shouldChange delegate; the keyboard
 pipeline preserves that validation. The bridge does not assign view text or
-manufacture editing callbacks. The host sends pointer, text, and frame-release
-messages through one serial background
-queue. Kernel queue backpressure waits there; the earlier nonblocking sends lost
+manufacture editing callbacks. The host sends pointer and text messages through
+one serial background queue; frame returns have a separate queue and receive
+port so they work without input and cannot be delayed by input bursts.
+Kernel queue backpressure waits off the main thread; the earlier nonblocking sends lost
 two deletion events in the keyboard burst. AppKit's main thread remains available
 while the app consumes input.
 

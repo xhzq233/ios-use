@@ -42,19 +42,19 @@ CASES = {
     "gles-angle": ["metal", "compiler", "iosurface"],
     "gles-window": ["metal", "compiler", "iosurface"],
     "application": ["metal", "compiler", "iosurface"],
+    "presentation": ["metal", "compiler", "iosurface"],
     "text-input": ["metal", "compiler", "iosurface"],
 }
-parser.add_argument("--cases", nargs="+", choices=CASES, default=[case for case in CASES if case not in ("application", "network", "photo-prompt", "gles-surface", "gles-window", "text-input")])
+parser.add_argument("--cases", nargs="+", choices=CASES, default=[case for case in CASES if case not in ("application", "presentation", "network", "photo-prompt", "gles-surface", "gles-window", "text-input")])
 parser.add_argument("--services", nargs="*", choices=["metal", "compiler", "iosurface", "trust", "tcc", "photos", "notify", "launchservices", "keychain"],
                     help="Override each case's service list; an empty list starts none")
 parser.add_argument("--notify-backend", choices=["runtime", "host"], default="runtime",
                     help="Use isolated runtime notifyd (default), or host notifyd with per-run notification names")
 parser.add_argument("--audit", action="store_true", help="Also run service deletion experiments (failures are observations)")
 parser.add_argument("--app-adapters", nargs="*", choices=["display", "scene", "compositor", "input", "angle", "metal-buffer"],
-                    default=["display", "scene", "compositor", "input"],
-                    help="In-process adapters injected only into the application case")
+                    help="Application adapters (default: display scene compositor; input is optional)")
 target = parser.add_mutually_exclusive_group()
-target.add_argument("--app", type=Path, help="Capture startup of an already Simulator-compatible .app; selects application case")
+target.add_argument("--app", type=Path, help="Run an already Simulator-compatible .app; capture startup unless --present is set")
 target.add_argument("--network-url", help="Select network case and issue an HTTPS HEAD request with normal certificate validation")
 parser.add_argument("--photo-fixture", action="store_true", help="With --app, seed a temporary synthetic photo library; use --present for the app's consent dialog")
 parser.add_argument("--present", action="store_true", help="Present the supplied app or photo-prompt consent dialog in a native window")
@@ -65,6 +65,8 @@ if args.photo_fixture and not external_app:
     parser.error("--photo-fixture requires --app")
 if args.tap and (not external_app or not all(math.isfinite(x) for x in args.tap)):
     parser.error("--tap requires --app and finite coordinates")
+if args.tap and "input" not in (args.app_adapters or []):
+    parser.error("--tap requires --app-adapters display scene compositor input")
 if args.network_url:
     url = urlsplit(args.network_url)
     if url.scheme != "https" or not url.hostname:
@@ -111,25 +113,28 @@ build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-dynamiclib", str(SOURCE / "T
       "-framework", "Foundation", "-o", str(output / "tcc-context.dylib"))
 build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-dynamiclib", str(SOURCE / "LaunchServicesContext.m"),
       "-framework", "Foundation", "-o", str(output / "launchservices-context.dylib"))
-build("xcrun", "clang", *sim_flags, "-fobjc-arc", str(SOURCE / "GPUProbe.m"),
-      "-framework", "Foundation", "-framework", "UIKit", "-framework", "Metal", "-framework", "IOSurface", "-o", str(output / "probe"))
-if "linear-buffer" in args.cases or "metal-buffer" in args.app_adapters:
+if not external_app:
+    build("xcrun", "clang", *sim_flags, "-fobjc-arc", str(SOURCE / "GPUProbe.m"),
+          "-framework", "Foundation", "-framework", "UIKit", "-framework", "Metal", "-framework", "IOSurface", "-o", str(output / "probe"))
+if "linear-buffer" in args.cases or "metal-buffer" in (args.app_adapters or []):
     build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-dynamiclib", str(SOURCE / "MetalBufferContext.m"),
           "-framework", "Foundation", "-framework", "Metal", "-o", str(output / "metal-buffer.dylib"))
 if "linear-buffer" in args.cases:
     build("xcrun", "clang", *sim_flags, "-fobjc-arc", str(SOURCE / "BufferTextureProbe.m"),
           "-framework", "Foundation", "-framework", "Metal", "-o", str(output / "linear-buffer-probe"))
-build("xcrun", "clang", *sim_flags, "-fobjc-arc", str(SOURCE / "UIKitProbe.m"),
-      "-framework", "Foundation", "-framework", "UIKit", "-framework", "QuartzCore", "-framework", "CoreGraphics",
-      "-framework", "IOSurface", "-o", str(output / "uikit-probe"))
-build("xcrun", "-sdk", "iphonesimulator", "metal", "-std=metal3.0", "-target", "air64-apple-ios17.0-simulator",
-      "-c", str(SOURCE / "probe.metal"), "-o", str(output / "probe.air"))
-build("xcrun", "-sdk", "iphonesimulator", "metallib", str(output / "probe.air"), "-o", str(output / "probe.metallib"))
+if not external_app:
+    build("xcrun", "clang", *sim_flags, "-fobjc-arc", str(SOURCE / "UIKitProbe.m"),
+          "-framework", "Foundation", "-framework", "UIKit", "-framework", "QuartzCore", "-framework", "CoreGraphics",
+          "-framework", "IOSurface", "-o", str(output / "uikit-probe"))
+if any(case.endswith("metallib") for case in args.cases):
+    build("xcrun", "-sdk", "iphonesimulator", "metal", "-std=metal3.0", "-target", "air64-apple-ios17.0-simulator",
+          "-c", str(SOURCE / "probe.metal"), "-o", str(output / "probe.air"))
+    build("xcrun", "-sdk", "iphonesimulator", "metallib", str(output / "probe.air"), "-o", str(output / "probe.metallib"))
 if any(case in args.cases for case in ("gles-surface", "gles-angle")):
     build("xcrun", "clang", *sim_flags, "-fobjc-arc", str(SOURCE / "GLESProbe.m"),
           "-framework", "Foundation", "-framework", "CoreVideo", "-framework", "OpenGLES",
           "-framework", "GLKit", "-framework", "CoreGraphics", "-o", str(output / "gles-surface-probe"))
-if any(case in args.cases for case in ("gles-angle", "gles-window")) or ("application" in args.cases and "angle" in args.app_adapters):
+if any(case in args.cases for case in ("gles-angle", "gles-window")) or ("application" in args.cases and "angle" in (args.app_adapters or [])):
     build(sys.executable, str(SOURCE / "generate_gles_forwarders.py"), sdk, str(output / "GLESForwarders.inc"))
     build("xcrun", "clang", *sim_flags, "-fno-objc-arc", "-fblocks", "-dynamiclib",
           "-Wno-deprecated-declarations", "-I", str(output), str(SOURCE / "ANGLEAdapter.m"),
@@ -219,7 +224,7 @@ subjectAltName=DNS:runtime-probe.invalid
             item.unlink()
 
 app = output / "RuntimeProbe.app"
-if any(case in args.cases for case in ("application", "gles-window", "text-input")):
+if "application" in args.cases and not external_app:
     app.mkdir()
     shutil.copy2(output / "uikit-probe", app / "RuntimeProbe")
     with (app / "Info.plist").open("wb") as info:
@@ -227,8 +232,9 @@ if any(case in args.cases for case in ("application", "gles-window", "text-input
                        "CFBundleName": "RuntimeProbe", "CFBundlePackageType": "APPL",
                        "CFBundleVersion": "1", "CFBundleShortVersionString": "1.0",
                        "MinimumOSVersion": "26.0", "UIDeviceFamily": [1]}, info)
+if any(case in args.cases for case in ("application", "presentation", "gles-window", "text-input")):
     build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", "-dynamiclib",
-          str(SOURCE / "SceneBootstrap.m"), str(SOURCE / "LocalSceneHost.m"),
+          str(SOURCE / "SceneBootstrap.m"), str(SOURCE / "LocalSceneHost.m"), str(SOURCE / "LocalInput.m"),
           "-framework", "Foundation", "-framework", "UIKit", "-o", str(output / "scene.dylib"))
     build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", "-dynamiclib",
           str(SOURCE / "LocalDisplay.m"), "-Wl,-F," + str(runtime / "System/Library/PrivateFrameworks"),
@@ -236,13 +242,27 @@ if any(case in args.cases for case in ("application", "gles-window", "text-input
           "-framework", "BackBoardServices", "-o", str(output / "display.dylib"))
     build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", "-dynamiclib",
           str(SOURCE / "LocalCompositor.m"), str(SOURCE / "FrameStream.m"),
-          *([str(SOURCE / "AppCapture.m")] if external_app else []),
+          *([str(SOURCE / "AppCapture.m")] if external_app and not args.present else []),
           "-framework", "Foundation", "-framework", "UIKit", "-framework", "QuartzCore",
           "-framework", "CoreGraphics", "-framework", "IOSurface", "-o", str(output / "compositor.dylib"))
-    build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", "-dynamiclib",
-          str(SOURCE / "LocalInput.m"), str(SOURCE / "TouchInput.m"), str(SOURCE / "KeyboardContext.m"),
-          str(runtime / "usr/lib/libMobileGestalt.dylib"),
-          "-framework", "Foundation", "-framework", "UIKit", "-o", str(output / "input.dylib"))
+    if "input" in (args.app_adapters or []) or (not external_app and any(case in args.cases for case in ("application", "text-input"))):
+        build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", "-dynamiclib",
+              str(SOURCE / "TouchInput.m"), str(SOURCE / "KeyboardContext.m"),
+              str(runtime / "usr/lib/libMobileGestalt.dylib"),
+              "-framework", "Foundation", "-framework", "UIKit", "-o", str(output / "input.dylib"))
+
+if "presentation" in args.cases:
+    presentation_app = output / "PresentationProbe.app"
+    presentation_app.mkdir()
+    with (presentation_app / "Info.plist").open("wb") as info:
+        plistlib.dump({"CFBundleExecutable": "PresentationProbe", "CFBundleIdentifier": "io.iosuse.presentation-probe",
+                      "CFBundleName": "Runtime Presentation Probe", "CFBundlePackageType": "APPL", "MinimumOSVersion": "26.0"}, info)
+    build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", str(SOURCE / "PresentationProbe.m"),
+          "-framework", "Foundation", "-framework", "UIKit", "-o", str(presentation_app / "PresentationProbe"))
+    build("xcrun", "clang", "-arch", "arm64", "-fobjc-arc", "-fblocks", str(SOURCE / "HostBroker.m"),
+          str(SOURCE / "HostWindow.m"), str(SOURCE / "HostUserNotifications.m"), str(SOURCE / "PresentationProbeHost.m"),
+          "-framework", "Foundation", "-framework", "CoreFoundation", "-framework", "Metal",
+          "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "IOSurface", "-o", str(output / "presentation-broker"))
 
 if "text-input" in args.cases:
     keyboard_app = output / "KeyboardProbe.app"
@@ -339,9 +359,21 @@ def configure_photo_fixture(home, value):
                          ("kTCCServicePhotos", "io.iosuse.runtime-photo-probe", 0, value, 2, 2))
 
 failed = False
+def adapters_for(mode):
+    if mode == "linear-buffer":
+        return ["metal-buffer"]
+    base = ["display", "scene", "compositor"]
+    if mode == "presentation":
+        return base
+    if mode == "gles-window":
+        return base + ["angle"]
+    if args.app_adapters is not None:
+        return args.app_adapters
+    # These fixtures exercise touch/text explicitly; supplied apps need neither.
+    return base + (["input"] if not external_app and mode in ("application", "text-input") else [])
+
 runs = [(mode, args.services if args.services is not None else CASES[mode],
-         ["metal-buffer"] if mode == "linear-buffer" else
-         ["display", "scene", "compositor", "input", "angle"] if mode == "gles-window" else args.app_adapters, False)
+         adapters_for(mode), False)
         for mode in args.cases]
 if args.audit:
     for mode, services, adapters, _ in list(runs):
@@ -360,12 +392,14 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
     environment.pop("IOS_USE_RUNTIME_CLIENT_LIBRARIES", None)
     environment.pop("IOS_USE_RUNTIME_PRESENT", None)
     environment.pop("IOS_USE_RUNTIME_TAP", None)
-    if args.present or mode == "text-input":
+    if args.present or mode in ("presentation", "text-input"):
         environment["IOS_USE_RUNTIME_PRESENT"] = "1"
-    if mode in ("application", "gles-window", "text-input", "linear-buffer"):
+    if mode in ("application", "presentation", "gles-window", "text-input", "linear-buffer"):
         client = app_executable if external_app else app / "RuntimeProbe"
         if mode == "gles-window":
             client = gles_app / "GLESWindowProbe"
+        elif mode == "presentation":
+            client = presentation_app / "PresentationProbe"
         elif mode == "text-input":
             client = keyboard_app / "KeyboardProbe"
         elif mode == "linear-buffer":
@@ -377,6 +411,8 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
                str(output / "endpoints.dylib"), str(home), ",".join(services)]
     if mode == "text-input":
         command[0] = str(output / "keyboard-broker")
+    elif mode == "presentation":
+        command[0] = str(output / "presentation-broker")
     if mode in ("trust", "network"):
         command[2] = str(output / f"{mode}-probe")
         if mode == "trust":
@@ -434,6 +470,21 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
                 status = execute(command, environment, log)
         else:
             status = execute(command, environment, log, args.present)
+            if mode == "presentation" and status == 0:
+                # Exercise the ordinary host after both successful and failed
+                # client exits; the window-close path ran in the pixel workload.
+                for expected in (0, 61):
+                    lifecycle = command[:6] + ["--exit-code", str(expected)]
+                    lifecycle[0] = str(output / "broker")
+                    lifecycle_home = output / f"home-{number:02d}-exit-{expected}"
+                    lifecycle_home.mkdir()
+                    lifecycle[4] = str(lifecycle_home)
+                    actual = execute(lifecycle, environment, log)
+                    log.write(f"[presentation-probe] app exit={expected} host exit={actual}\n")
+                    log.flush()
+                    if actual != expected:
+                        status = 112
+                        break
             if mode == "keychain" and status == 0:
                 other = command[:]
                 other[2], other[-1] = str(other_keychain_app / "KeychainProbe"), "other"
@@ -448,7 +499,7 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
                     if status: break
     print(log_path.read_text(), end="")
     print(f"{mode}: exit={status}", flush=True)
-    results.append((mode, services, adapters if mode in ("application", "gles-window", "text-input", "linear-buffer") else [], status, deletion))
+    results.append((mode, services, adapters if mode in ("application", "presentation", "gles-window", "text-input", "linear-buffer") else [], status, deletion))
     failed |= status != 0 and not deletion
 print("\nCase                 Services                      App adapters    Exit   Experiment")
 for mode, services, adapters, status, deletion in results:

@@ -8,7 +8,8 @@ typedef struct {
     mach_msg_header_t header;
     mach_msg_body_t body;
     mach_msg_port_descriptor_t surface;
-    mach_msg_port_descriptor_t input;
+    mach_msg_port_descriptor_t release; // Frame ownership, independent of input.
+    mach_msg_port_descriptor_t input;   // MACH_PORT_NULL when input is disabled.
     uint32_t surfaceID;
 } IOSUseWindowFrameMessage;
 
