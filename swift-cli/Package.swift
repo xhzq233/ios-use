@@ -28,6 +28,7 @@ let linuxSources = [
     "Services/DriverRuntime/DeviceCommandLock.swift",
     "Services/DriverRuntime/SessionOperationLock.swift",
     "Services/Logs/CLILogService.swift",
+    "Services/Updates/UpdateReminderService.swift",
     "Support/ArtifactPaths.swift",
     "Support/IOSUsePaths.swift",
     "Support/RuntimeJSONValue.swift",
@@ -71,7 +72,7 @@ let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("Sources/IOSUseCLI")
 let excludedSources = (FileManager.default.enumerator(atPath: sourceRoot.path)?.allObjects as? [String] ?? [])
     .filter { $0.hasSuffix(".swift") && !linuxSources.contains($0) }
-let linuxTests = ["CoreDeviceChecksumTests.swift", "DomObservationTests.swift", "DeviceStreamLifecycleTests.swift", "RemoteDriverConnectionTests.swift", "FakeDriverServer.swift", "CLIParserTests.swift", "LinuxScreenshotTests.swift", "DeviceArchiveDecodingTests.swift"]
+let linuxTests = ["CoreDeviceChecksumTests.swift", "DomObservationTests.swift", "DeviceStreamLifecycleTests.swift", "RemoteDriverConnectionTests.swift", "FakeDriverServer.swift", "CLIParserTests.swift", "LinuxScreenshotTests.swift", "DeviceArchiveDecodingTests.swift", "UpdateReminderTests.swift"]
 let testRoot = sourceRoot.deletingLastPathComponent().deletingLastPathComponent()
     .appendingPathComponent("Tests/IOSUseCLITests")
 let excludedTests = (FileManager.default.enumerator(atPath: testRoot.path)?.allObjects as? [String] ?? [])
