@@ -154,6 +154,17 @@ struct ImageDiffService {
 
     private static func decode(_ data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        if orientation != 1 {
+            let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
+            let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
+            return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: max(width, height),
+            ] as CFDictionary)
+        }
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 

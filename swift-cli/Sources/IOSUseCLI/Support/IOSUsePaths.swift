@@ -7,6 +7,7 @@ import Darwin
 #endif
 
 public struct IOSUsePaths: Equatable, Sendable {
+    public var updateReminderCache: String { "\(root)/state/update-reminder.json" }
     public let root: String
     public let hasExplicitHome: Bool
     public let deviceID: String?

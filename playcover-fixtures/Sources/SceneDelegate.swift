@@ -60,9 +60,11 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window = replacement
         (UIApplication.shared.delegate as? AppDelegate)?.window =
             replacement
-        replacement.rootViewController = FixtureTabBarController(
-            sceneGeneration: generation
-        )
+        if let duration = ProcessInfo.processInfo.environment["IOS_USE_TOUCH_DURATION"].flatMap(Double.init) {
+            replacement.rootViewController = SemanticTouchFixtureViewController(duration: duration)
+        } else {
+            replacement.rootViewController = FixtureTabBarController(sceneGeneration: generation)
+        }
         replacement.makeKeyAndVisible()
         oldWindow?.isHidden = true
     }

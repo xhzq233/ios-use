@@ -21,8 +21,12 @@ BOOL XCFBTypeText(NSString * _Nonnull text, NSUInteger typingSpeed, NSError * _N
 
 /// WDA-style synthesized tap/long press using XCSynthesizedEventRecord +
 /// XCPointerEventPath(initForTouchAtPoint:offset:) + liftUpAtOffset:.
-BOOL XCSynthesizeTapAtPoint(CGPoint point, NSError * _Nullable * _Nullable error);
-BOOL XCSynthesizeLongPressAtPoint(CGPoint point, double duration, NSError * _Nullable * _Nullable error);
+/// Points are XCTest screen points; the record uses the target App's orientation.
+BOOL XCSynthesizeTapAtPoint(CGPoint point, XCUIApplication * _Nonnull app, NSError * _Nullable * _Nullable error);
+BOOL XCSynthesizeLongPressAtPoint(CGPoint point, double duration, XCUIApplication * _Nonnull app, NSError * _Nullable * _Nullable error);
+/// Build a touch record without dispatching it.
+id _Nullable XCMakeTouchEventRecord(CGPoint point, double holdDuration, NSString * _Nonnull name,
+                                    NSInteger interfaceOrientation, NSError * _Nullable * _Nullable error);
 
 /// Captures a screenshot through XCTest daemon `_XCT_requestScreenshot`
 /// using JPEG encoding with the provided compression quality.

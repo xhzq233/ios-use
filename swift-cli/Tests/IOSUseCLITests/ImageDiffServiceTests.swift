@@ -47,7 +47,16 @@ final class ImageDiffServiceTests: XCTestCase {
         XCTAssertTrue(try detector.compare(current: changed, logicalSize: CGSize(width: 402, height: 874)).changed)
     }
 
-    private func makeJPEG(quality: CGFloat, changedTile: Bool = false) throws -> Data {
+    func testRotatedJPEGWithEquivalentDisplayedPixelsIsUnchanged() throws {
+        let upright = try makeJPEG(quality: 0.95, changedTile: true)
+        let rotated = try makeJPEG(quality: 0.95, changedTile: true, orientation: 3)
+        let result = try ImageDiffService.compare(previous: upright, current: rotated,
+            logicalSize: CGSize(width: 402, height: 874))
+        XCTAssertFalse(result.changed)
+        XCTAssertLessThan(result.score, 0.01)
+    }
+
+    private func makeJPEG(quality: CGFloat, changedTile: Bool = false, orientation: Int = 1) throws -> Data {
         let width = 402
         let height = 874
         var pixels = [UInt8](repeating: 245, count: width * height * 4)
@@ -64,9 +73,13 @@ final class ImageDiffServiceTests: XCTestCase {
         }
         context.setFillColor(CGColor(gray: 0.96, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        if orientation == 3 {
+            context.translateBy(x: CGFloat(width), y: CGFloat(height))
+            context.rotate(by: .pi)
+        }
         if changedTile {
             context.setFillColor(CGColor(gray: 0.05, alpha: 1))
-            context.fill(CGRect(x: 170, y: 410, width: 24, height: 24))
+            context.fill(CGRect(x: 40, y: 100, width: 24, height: 24))
         }
         guard let image = context.makeImage() else {
             throw XCTSkip("unable to create test image")
@@ -76,7 +89,8 @@ final class ImageDiffServiceTests: XCTestCase {
             throw XCTSkip("unable to create JPEG destination")
         }
         CGImageDestinationAddImage(destination, image, [
-            kCGImageDestinationLossyCompressionQuality: quality
+            kCGImageDestinationLossyCompressionQuality: quality,
+            kCGImagePropertyOrientation: orientation,
         ] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             throw XCTSkip("unable to encode test JPEG")

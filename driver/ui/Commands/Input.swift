@@ -81,21 +81,15 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -
         summary = ForyElementSummary(rect: ForyRect(x: Int32(point.x.rounded()), y: Int32(point.y.rounded()), w: 0, h: 0))
     } else {
         try Quiescence.wait(app: app, command: "input-focus")
-        guard let cs = captureCleanedSnapshot() else {
-            return .failure(try Codec.foryError("failed to take snapshot",
-                category: IOSUseErrorCategory.lookup, code: IOSUseErrorCode.snapshotFailed,
-                phase: IOSUseErrorPhase.snapshot, retryable: true, target: target))
-        }
-        defer { withExtendedLifetime(cs) {} }
         let elem: SnapshotElement
-        switch rawFindInSnapshot(target, cs: cs, visibility: .only) {
-        case .found(let e): elem = e
-        case .ambiguous(let matches): return .failure(try ambiguityResponse(target, matches: matches))
-        case .fuzzy(let s):
-            return .failure(try notFoundResponse(target, suggestions: s))
-        case .notFound(let s, let rejected):
-            return .failure(try notFoundResponse(target, suggestions: s, rejected: rejected))
+        let snapshot: CleanedSnapshot
+        switch try resolveSemanticTouchTarget(target, command: "input-focus") {
+        case .found(let cs, let found, _):
+            snapshot = cs
+            elem = found
+        case .failure(let response): return .failure(response)
         }
+        defer { withExtendedLifetime(snapshot) {} }
         guard try tapSnapshotCenter(elem.node, app: app) else {
             return .failure(try Codec.foryError(
                 "input: failed to tap '\(target.label)'",

@@ -56,6 +56,88 @@ private final class FakeRawSnapshot: NSObject {
 
 final class TypesTests: XCTestCase {
 
+    func testSemanticTouchReResolvesRestoredRowAndReturnsLatestSnapshot() throws {
+        var time = 0.0
+        var captures = 0
+        let initial = makeCleanedSnapshot([makeElement(label: "Bluetooth", type: .button, frame: CGRect(x: 30, y: 409, width: 76, height: 29))])
+        let restored = makeCleanedSnapshot([makeElement(label: "Bluetooth", type: .button, frame: CGRect(x: 30, y: 606, width: 76, height: 29))])
+        let resolution = try resolveSemanticTouchTarget(ForyTarget(label: "Bluetooth"), command: "tap",
+            capture: { captures += 1; return captures == 1 ? initial : restored },
+            clock: { time }, poll: { time += 0.06 })
+        guard case .found(let snapshot, let element, let frame) = resolution else {
+            return XCTFail("Expected restored geometry to settle")
+        }
+        XCTAssertEqual(frame.minY, 606)
+        XCTAssertTrue(snapshot.root === restored.root)
+        XCTAssertTrue(element.node === restored.elements[0].node)
+        XCTAssertEqual(captures, 4)
+        XCTAssertLessThan(time, 0.25)
+    }
+
+    func testSemanticTouchStablePageFinishesWithoutOneSecondDelay() throws {
+        let snapshot = makeCleanedSnapshot([makeElement(label: "Save", type: .button)])
+        var time = 0.0
+        var captures = 0
+        let resolution = try resolveSemanticTouchTarget(ForyTarget(label: "Save"), command: "tap",
+            capture: { captures += 1; return snapshot }, clock: { time }, poll: { time += 0.06 })
+        guard case .found = resolution else { return XCTFail("Expected stable target") }
+        XCTAssertEqual(captures, 3)
+        XCTAssertLessThan(time, 0.2)
+    }
+
+    func testSemanticTouchSlowSnapshotsDoNotAcceptInitialLaunchGeometry() throws {
+        let initial = makeCleanedSnapshot([makeElement(label: "Bluetooth", type: .button,
+            frame: CGRect(x: 30, y: 409, width: 76, height: 29))])
+        let restored = makeCleanedSnapshot([makeElement(label: "Bluetooth", type: .button,
+            frame: CGRect(x: 30, y: 606, width: 76, height: 29))])
+        var time = 0.0
+        var captures = 0
+        let resolution = try resolveSemanticTouchTarget(ForyTarget(label: "Bluetooth"), command: "tap",
+            capture: {
+                captures += 1
+                time += 0.15
+                return captures < 3 ? initial : restored
+            }, clock: { time }, poll: { time += 0.01 })
+        guard case .found(let snapshot, _, let frame) = resolution else {
+            return XCTFail("Expected the restored row after slow launch snapshots")
+        }
+        XCTAssertEqual(frame.minY, 606)
+        XCTAssertTrue(snapshot.root === restored.root)
+        XCTAssertEqual(captures, 5)
+        XCTAssertLessThan(time, 1.0)
+    }
+
+    func testSemanticTouchContinuousMotionReturnsRetryableFailureWithinBudget() throws {
+        var time = 0.0
+        var captures = 0
+        let resolution = try resolveSemanticTouchTarget(ForyTarget(label: "Save"), command: "tap",
+            capture: {
+                captures += 1
+                return self.makeCleanedSnapshot([self.makeElement(label: "Save", type: .button,
+                    frame: CGRect(x: 30, y: 100 + captures * 10, width: 76, height: 29))])
+            }, clock: { time }, poll: { time += 0.06 })
+        guard case .failure(let response) = resolution else { return XCTFail("Moving target must not be accepted") }
+        XCTAssertFalse(response.ok)
+        let payload = try createFory().deserialize(response.payload, as: ForyErrorPayload.self)
+        XCTAssertTrue(payload.retryable)
+        XCTAssertEqual(payload.candidateCount, 1)
+        XCTAssertGreaterThanOrEqual(time, 1.0)
+        XCTAssertLessThan(time, 1.1)
+    }
+
+    func testSemanticTouchTargetDisappearingBetweenCapturesFailsInsteadOfUsingOldFrame() throws {
+        var time = 0.0
+        var captures = 0
+        let target = makeCleanedSnapshot([makeElement(label: "Save", type: .button)])
+        let nextPage = makeCleanedSnapshot([makeElement(label: "Cancel", type: .button)])
+        let resolution = try resolveSemanticTouchTarget(ForyTarget(label: "Save"), command: "tap",
+            capture: { captures += 1; return captures == 1 ? target : nextPage },
+            clock: { time }, poll: { time += 0.06 })
+        guard case .failure(let response) = resolution else { return XCTFail("Missing target must not be accepted") }
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(captures, 2)
+    }
+
     func testCommandOwnedSnapshotKeepsUnindexedAncestorsAliveUntilLookupFinishes() {
         weak var releasedRoot: SafeSnapshot?
         weak var releasedWindow: SafeSnapshot?

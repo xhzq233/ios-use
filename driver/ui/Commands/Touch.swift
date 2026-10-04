@@ -44,44 +44,16 @@ enum TouchCommands {
         // Resolve the semantic target after settling, so asynchronous layout during
         // the idle wait cannot leave us tapping an old coordinate.
         try Quiescence.wait(app: app, command: "tap")
-        guard let cs = captureCleanedSnapshot() else {
-            return try Codec.foryError("failed to take snapshot",
-                category: IOSUseErrorCategory.lookup, code: IOSUseErrorCode.snapshotFailed,
-                phase: IOSUseErrorPhase.snapshot, retryable: true, target: target)
-        }
-        defer { withExtendedLifetime(cs) {} }
-        switch rawFindInSnapshot(target, cs: cs, visibility: .only) {
-        case .found(let elem):
-            guard let frame = interactionFrame(elem.node) else {
-                return try Codec.foryError(
-                    "tap: element '\(target.label)' has no interaction frame",
-                    category: IOSUseErrorCategory.lookup,
-                    code: IOSUseErrorCode.elementNotActionable,
-                    phase: IOSUseErrorPhase.lookup,
-                    retryable: true,
-                    target: target,
-                    candidates: [makeErrorCandidate(
-                        elem,
-                        rejectedBy: [
-                            interactionFrameRejectionReason(elem.node, in: elem.node.appFrame)
-                                ?? IOSUseCandidateRejection.zeroAreaFrame
-                        ]
-                    )],
-                    candidateCount: 1
-                )
-            }
+        switch try resolveSemanticTouchTarget(target, command: "tap") {
+        case .found(let snapshot, let elem, let frame):
+            defer { withExtendedLifetime(snapshot) {} }
             let point = resolveTapPoint(frame: frame, offset: args.offset, ratio: args.ratio)
             try tapAtPoint(point, app: app, waitForIdle: false)
             let payload = ForyElementPayload(
                 element: makeForyElementSummary(elem.node)
             )
             return try Codec.foryOK(payload)
-        case .ambiguous(let matches):
-            return try ambiguityResponse(target, matches: matches)
-        case .fuzzy(let s):
-            return try notFoundResponse(target, suggestions: s)
-        case .notFound(let s, let rejected):
-            return try notFoundResponse(target, suggestions: s, rejected: rejected)
+        case .failure(let response): return response
         }
     }
 
@@ -123,43 +95,15 @@ enum TouchCommands {
             )
         }
         try Quiescence.wait(app: app, command: "longpress")
-        guard let cs = captureCleanedSnapshot() else {
-            return try Codec.foryError("failed to take snapshot",
-                category: IOSUseErrorCategory.lookup, code: IOSUseErrorCode.snapshotFailed,
-                phase: IOSUseErrorPhase.snapshot, retryable: true, target: target)
-        }
-        defer { withExtendedLifetime(cs) {} }
-        switch rawFindInSnapshot(target, cs: cs, visibility: .only) {
-        case .found(let elem):
-            guard let frame = interactionFrame(elem.node) else {
-                return try Codec.foryError(
-                    "longPress: element '\(target.label)' has no interaction frame",
-                    category: IOSUseErrorCategory.lookup,
-                    code: IOSUseErrorCode.elementNotActionable,
-                    phase: IOSUseErrorPhase.lookup,
-                    retryable: true,
-                    target: target,
-                    candidates: [makeErrorCandidate(
-                        elem,
-                        rejectedBy: [
-                            interactionFrameRejectionReason(elem.node, in: elem.node.appFrame)
-                                ?? IOSUseCandidateRejection.zeroAreaFrame
-                        ]
-                    )],
-                    candidateCount: 1
-                )
-            }
+        switch try resolveSemanticTouchTarget(target, command: "longPress") {
+        case .found(let snapshot, let elem, let frame):
+            defer { withExtendedLifetime(snapshot) {} }
             try pressAtPoint(CGPoint(x: frame.midX, y: frame.midY), duration: duration, app: app, waitForIdle: false)
             let payload = ForyElementPayload(
                 element: makeForyElementSummary(elem.node)
             )
             return try Codec.foryOK(payload)
-        case .ambiguous(let matches):
-            return try ambiguityResponse(target, matches: matches)
-        case .fuzzy(let s):
-            return try notFoundResponse(target, suggestions: s)
-        case .notFound(let s, let rejected):
-            return try notFoundResponse(target, suggestions: s, rejected: rejected)
+        case .failure(let response): return response
         }
     }
 

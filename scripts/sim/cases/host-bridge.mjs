@@ -29,7 +29,7 @@ export const hostBridgeCaseMetadata = [
   { id: 'RAWFIND-13', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to driver unit tests', coverage: 'driver-unit', requiresPrerequisite: false },
   { id: 'SW-9B', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to driver unit tests', coverage: 'driver-unit', requiresPrerequisite: false },
   { id: 'SW-16', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to driver unit tests', coverage: 'driver-unit', requiresPrerequisite: false },
-  { id: 'DOM-12', group: 'host-bridge', kind: 'dom-presentation', setup: 'settings home', assertion: 'presentation shape has app, direction and rects', coverage: 'simulator' },
+  { id: 'DOM-12', group: 'host-bridge', kind: 'dom-presentation', setup: 'settings home', assertion: 'JSON tree identifies the App and contains scroll axes and usable frames', coverage: 'simulator' },
   { id: 'PROXY-1', group: 'host-bridge', kind: 'proxy-doctor', setup: 'none', assertion: 'doctor reports LAN IP and not running without SSID', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'PROXY-2', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
   { id: 'PROXY-3', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },

@@ -479,7 +479,8 @@ static BOOL XCSynthesizeEventRecord(id record, NSError **error) {
     return YES;
 }
 
-static BOOL XCSynthesizeTouchPath(CGPoint point, double holdDuration, NSString *name, NSError **error) {
+id XCMakeTouchEventRecord(CGPoint point, double holdDuration, NSString *name,
+                          NSInteger interfaceOrientation, NSError **error) {
     Class recordClass = NSClassFromString(@"XCSynthesizedEventRecord");
     Class pathClass = NSClassFromString(@"XCPointerEventPath");
     if (!recordClass || !pathClass) {
@@ -488,14 +489,19 @@ static BOOL XCSynthesizeTouchPath(CGPoint point, double holdDuration, NSString *
                                          code:6
                                      userInfo:@{NSLocalizedDescriptionKey: @"Touch input private classes are unavailable"}];
         }
-        return NO;
+        return nil;
     }
 
-    id record = [[recordClass alloc] init];
-    SEL initSel = NSSelectorFromString(@"initWithName:");
-    if ([record respondsToSelector:initSel]) {
-        record = ((id (*)(id, SEL, id))objc_msgSend)(record, initSel, name);
+    id allocatedRecord = [recordClass alloc];
+    SEL initSel = NSSelectorFromString(@"initWithName:interfaceOrientation:");
+    if (![allocatedRecord respondsToSelector:initSel]) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"ios-use" code:6
+                userInfo:@{NSLocalizedDescriptionKey: @"Oriented touch event initialization is unavailable"}];
+        }
+        return nil;
     }
+    id record = ((id (*)(id, SEL, id, NSInteger))objc_msgSend)(allocatedRecord, initSel, name, interfaceOrientation);
 
     SEL pathInitSel = NSSelectorFromString(@"initForTouchAtPoint:offset:");
     id path = [[pathClass alloc] init];
@@ -505,7 +511,7 @@ static BOOL XCSynthesizeTouchPath(CGPoint point, double holdDuration, NSString *
                                          code:7
                                      userInfo:@{NSLocalizedDescriptionKey: @"initForTouchAtPoint:offset: is unavailable"}];
         }
-        return NO;
+        return nil;
     }
     path = ((id (*)(id, SEL, CGPoint, double))objc_msgSend)(path, pathInitSel, point, 0.0);
 
@@ -516,7 +522,7 @@ static BOOL XCSynthesizeTouchPath(CGPoint point, double holdDuration, NSString *
                                          code:8
                                      userInfo:@{NSLocalizedDescriptionKey: @"liftUpAtOffset: is unavailable"}];
         }
-        return NO;
+        return nil;
     }
     NSMethodSignature *liftSig = [path methodSignatureForSelector:liftSel];
     NSInvocation *liftInv = [NSInvocation invocationWithMethodSignature:liftSig];
@@ -532,19 +538,33 @@ static BOOL XCSynthesizeTouchPath(CGPoint point, double holdDuration, NSString *
                                          code:9
                                      userInfo:@{NSLocalizedDescriptionKey: @"addPointerEventPath: is unavailable"}];
         }
-        return NO;
+        return nil;
     }
     ((void (*)(id, SEL, id))objc_msgSend)(record, addPathSel, path);
-    return XCSynthesizeEventRecord(record, error);
+    return record;
 }
 
-BOOL XCSynthesizeTapAtPoint(CGPoint point, NSError **error) {
-    return XCSynthesizeTouchPath(point, XCTapLiftUpDelay, @"Tap", error);
+static BOOL XCSynthesizeTouchPath(CGPoint point, double holdDuration, NSString *name,
+                                  XCUIApplication *app, NSError **error) {
+    NSNumber *orientation = XCValueForKeySafely(app, @"interfaceOrientation");
+    if (![orientation isKindOfClass:[NSNumber class]]) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"ios-use" code:6
+                userInfo:@{NSLocalizedDescriptionKey: @"App interface orientation is unavailable"}];
+        }
+        return NO;
+    }
+    id record = XCMakeTouchEventRecord(point, holdDuration, name, orientation.integerValue, error);
+    return record != nil && XCSynthesizeEventRecord(record, error);
 }
 
-BOOL XCSynthesizeLongPressAtPoint(CGPoint point, double duration, NSError **error) {
+BOOL XCSynthesizeTapAtPoint(CGPoint point, XCUIApplication *app, NSError **error) {
+    return XCSynthesizeTouchPath(point, XCTapLiftUpDelay, @"Tap", app, error);
+}
+
+BOOL XCSynthesizeLongPressAtPoint(CGPoint point, double duration, XCUIApplication *app, NSError **error) {
     double effectiveDuration = duration > 0 ? duration : XCDefaultLongPressDuration;
-    return XCSynthesizeTouchPath(point, effectiveDuration, @"Long Press", error);
+    return XCSynthesizeTouchPath(point, effectiveDuration, @"Long Press", app, error);
 }
 
 NSData *XCRequestScreenshotJPEG(double compressionQuality, NSError **error) {

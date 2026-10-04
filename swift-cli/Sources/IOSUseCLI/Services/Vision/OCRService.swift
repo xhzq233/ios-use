@@ -86,7 +86,11 @@ struct OCRService {
         request.recognitionLanguages = ["zh-Hans", "en-US"]
         request.minimumTextHeight = 0.01
 
-        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let rawOrientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value ?? 1
+        let orientation = CGImagePropertyOrientation(rawValue: rawOrientation) ?? .up
+        let swapsAxes = (5...8).contains(rawOrientation)
+        let handler = VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:])
         do {
             try handler.perform([request])
         } catch {
@@ -113,8 +117,8 @@ struct OCRService {
             return $0.boundingBox.minX < $1.boundingBox.minX
         }
         return Result(
-            imageWidth: image.width,
-            imageHeight: image.height,
+            imageWidth: swapsAxes ? image.height : image.width,
+            imageHeight: swapsAxes ? image.width : image.height,
             logicalSize: logicalSize,
             scale: scale,
             recognitionLevel: recognitionLevel,

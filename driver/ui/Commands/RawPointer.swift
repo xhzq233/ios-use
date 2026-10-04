@@ -14,11 +14,15 @@ enum RawPointer {
         switch event {
         case .tap(let point):
             var error: NSError?
-            guard XCSynthesizeTapAtPoint(point, &error) else { return error }
+            let screenPoint = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: point.x, dy: point.y)).screenPoint
+            guard XCSynthesizeTapAtPoint(screenPoint, app, &error) else { return error }
 
         case .longPress(let point, let duration):
             var error: NSError?
-            guard XCSynthesizeLongPressAtPoint(point, duration, &error) else { return error }
+            let screenPoint = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: point.x, dy: point.y)).screenPoint
+            guard XCSynthesizeLongPressAtPoint(screenPoint, duration, app, &error) else { return error }
 
         case .drag(let start, let end, let pressDuration, let velocity, let holdDuration):
             try Quiescence.bounded {

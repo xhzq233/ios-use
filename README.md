@@ -79,6 +79,11 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 
 The CLI and Skill come from the same release, including when installing latest.
 
+Successful interactive `start` and `status` commands check for a newer stable
+release at most once per day and print an update reminder to stderr. Run the
+suggested installer command after your automation session finishes. JSON, CI,
+and non-interactive invocations skip the check; network failures are ignored.
+
 By default, the installer links `~/.agents/skills/ios-use` to
 `~/.ios-use/skill`. Add `--no-skill` to skip creating the default link; existing
 Skill paths are left unchanged. Skill files still update with the CLI, so you
@@ -156,6 +161,8 @@ Screenshots default to JPEG output without OCR on both hosts. On macOS, use
 `screenshot --ocr` to also recognize text and save an OCR sidecar. `--no-ocr`
 remains accepted; Linux has no OCR engine. These defaults apply to local and
 remote targets from Alpha 4; earlier macOS releases default to OCR enabled.
+On macOS, screenshot sizes, OCR boxes, and changed-frame comparisons honor JPEG
+orientation, so their coordinates follow the displayed image after rotation.
 
 ### Remote Apple device services
 
