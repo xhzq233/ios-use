@@ -44,10 +44,12 @@ CASES = {
     "application": ["metal", "compiler", "iosurface"],
     "presentation": ["metal", "compiler", "iosurface"],
     "lifecycle": ["metal", "compiler", "iosurface"],
+    "multi-scene": ["metal", "compiler", "iosurface"],
+    "native-webkit": [],
     "webkit": ["metal", "compiler", "iosurface"],
     "text-input": ["metal", "compiler", "iosurface"],
 }
-parser.add_argument("--cases", nargs="+", choices=CASES, default=[case for case in CASES if case not in ("application", "presentation", "lifecycle", "webkit", "network", "photo-prompt", "gles-surface", "gles-window", "text-input")])
+parser.add_argument("--cases", nargs="+", choices=CASES, default=[case for case in CASES if case not in ("application", "presentation", "lifecycle", "multi-scene", "webkit", "network", "photo-prompt", "gles-surface", "gles-window", "text-input", "native-webkit")])
 parser.add_argument("--services", nargs="*", choices=["metal", "compiler", "iosurface", "trust", "tcc", "photos", "notify", "launchservices", "keychain"],
                     help="Override each case's service list; an empty list starts none")
 parser.add_argument("--notify-backend", choices=["runtime", "host"], default="runtime",
@@ -239,7 +241,7 @@ if "application" in args.cases and not external_app:
                        "CFBundleName": "RuntimeProbe", "CFBundlePackageType": "APPL",
                        "CFBundleVersion": "1", "CFBundleShortVersionString": "1.0",
                        "MinimumOSVersion": "26.0", "UIDeviceFamily": [1]}, info)
-if any(case in args.cases for case in ("application", "presentation", "lifecycle", "webkit", "gles-window", "text-input")):
+if any(case in args.cases for case in ("application", "presentation", "lifecycle", "multi-scene", "webkit", "gles-window", "text-input")):
     build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", "-dynamiclib",
           str(SOURCE / "SceneBootstrap.m"), str(SOURCE / "LocalSceneHost.m"), str(SOURCE / "LocalInput.m"),
           "-framework", "Foundation", "-framework", "UIKit", "-o", str(output / "scene.dylib"))
@@ -258,19 +260,32 @@ if any(case in args.cases for case in ("application", "presentation", "lifecycle
               str(runtime / "usr/lib/libMobileGestalt.dylib"),
               "-framework", "Foundation", "-framework", "UIKit", "-o", str(output / "input.dylib"))
 
-for mode, name in (("presentation", "Presentation"), ("lifecycle", "Lifecycle")):
+for mode, name in (("presentation", "Presentation"), ("lifecycle", "Lifecycle"), ("multi-scene", "MultiScene")):
     if mode not in args.cases: continue
     bundle = output / f"{name}Probe.app"
     bundle.mkdir()
     with (bundle / "Info.plist").open("wb") as info:
         plistlib.dump({"CFBundleExecutable": f"{name}Probe", "CFBundleIdentifier": f"io.iosuse.{mode}-probe",
                       "CFBundleName": f"Runtime {name} Probe", "CFBundlePackageType": "APPL", "MinimumOSVersion": "26.0"}, info)
+    if mode == "multi-scene":
+        with (bundle / "Info.plist").open("rb") as info: metadata = plistlib.load(info)
+        metadata["UIApplicationSceneManifest"] = {
+            "UIApplicationSupportsMultipleScenes": True,
+            "UISceneConfigurations": {"UIWindowSceneSessionRoleApplication": [{
+                "UISceneConfigurationName": "Runtime Multi Scene", "UISceneClassName": "UIWindowScene",
+                "UISceneDelegateClassName": "MultiSceneDelegate"}]}}
+        with (bundle / "Info.plist").open("wb") as info: plistlib.dump(metadata, info)
     build("xcrun", "clang", *sim_flags, "-fobjc-arc", "-fblocks", str(SOURCE / f"{name}Probe.m"),
           "-framework", "Foundation", "-framework", "UIKit", "-framework", "QuartzCore", "-framework", "IOSurface", "-o", str(bundle / f"{name}Probe"))
     build("xcrun", "clang", "-arch", "arm64", "-fobjc-arc", "-fblocks", str(SOURCE / "HostBroker.m"),
           str(SOURCE / "HostWindow.m"), str(SOURCE / "HostUserNotifications.m"), str(SOURCE / f"{name}ProbeHost.m"),
           "-framework", "Foundation", "-framework", "CoreFoundation", "-framework", "Metal",
           "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "IOSurface", "-o", str(output / f"{mode}-broker"))
+
+if "native-webkit" in args.cases:
+    build("xcrun", "--sdk", "macosx", "clang", "-fobjc-arc", "-fblocks",
+          str(SOURCE / "NativeWebKitProbe.m"), "-framework", "AppKit", "-framework", "WebKit",
+          "-o", str(output / "native-webkit-probe"))
 
 if "webkit" in args.cases:
     web_app = output / "WebKitProbe.app"
@@ -385,7 +400,7 @@ def adapters_for(mode):
     if mode == "linear-buffer":
         return ["metal-buffer"]
     base = ["display", "scene", "compositor"]
-    if mode in ("presentation", "lifecycle"):
+    if mode in ("presentation", "lifecycle", "multi-scene"):
         return base
     if mode == "webkit":
         return base + (["webkit-launcher"] if args.webkit_launcher == "standalone" else [])
@@ -419,14 +434,15 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
     environment.pop("IOS_USE_RUNTIME_PRESENT", None)
     environment.pop("IOS_USE_RUNTIME_TAP", None)
     environment.pop("IOS_USE_RUNTIME_STATIC_PROBE", None)
-    if args.present or mode in ("presentation", "lifecycle", "text-input"):
+    environment.pop("IOS_USE_RUNTIME_CLOSE_SECOND", None)
+    if args.present or mode in ("presentation", "lifecycle", "multi-scene", "text-input"):
         environment["IOS_USE_RUNTIME_PRESENT"] = "1"
-    if mode in ("application", "presentation", "lifecycle", "webkit", "gles-window", "text-input", "linear-buffer"):
+    if mode in ("application", "presentation", "lifecycle", "multi-scene", "webkit", "gles-window", "text-input", "linear-buffer"):
         client = app_executable if external_app else app / "RuntimeProbe"
         if mode == "gles-window":
             client = gles_app / "GLESWindowProbe"
-        elif mode in ("presentation", "lifecycle"):
-            name = "Presentation" if mode == "presentation" else "Lifecycle"
+        elif mode in ("presentation", "lifecycle", "multi-scene"):
+            name = {"presentation": "Presentation", "lifecycle": "Lifecycle", "multi-scene": "MultiScene"}[mode]
             client = output / f"{name}Probe.app/{name}Probe"
         elif mode == "webkit":
             client = web_app / "WebKitProbe"
@@ -441,7 +457,7 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
                str(output / "endpoints.dylib"), str(home), ",".join(services)]
     if mode == "text-input":
         command[0] = str(output / "keyboard-broker")
-    elif mode in ("presentation", "lifecycle"):
+    elif mode in ("presentation", "lifecycle", "multi-scene"):
         command[0] = str(output / f"{mode}-broker")
     if mode in ("trust", "network"):
         command[2] = str(output / f"{mode}-probe")
@@ -468,6 +484,8 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
         command.extend([str(output / "device.metallib"), str(output / "retargeted.metallib")])
     elif mode.endswith("metallib"):
         command.append(str(output / "probe.metallib"))
+    if mode == "native-webkit":
+        command = [str(output / "native-webkit-probe")]
     log_path = output / f"{number:02d}-{mode}.log"
     if args.present and os.isatty(0):
         print(f"Window commands: tap X Y, text TEXT, backspace, capture, quit. Diagnostics: {log_path}", flush=True)
@@ -502,6 +520,18 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
                 status = execute(command, environment, log)
         else:
             status = execute(command, environment, log, args.present, args.duration + 30 if mode == "lifecycle" else 30)
+            if mode == "multi-scene" and status == 0:
+                # Close the non-main virtual display as well as the LCD owner.
+                other_home = output / f"home-{number:02d}-close-second"
+                other_home.mkdir()
+                (other_home / "tmp").mkdir()
+                other_command = command[:]
+                other_command[4] = str(other_home)
+                other_command.append("--close-second")
+                other_environment = environment.copy()
+                other_environment.update(HOME=str(other_home), CFFIXED_USER_HOME=str(other_home),
+                                         TMPDIR=str(other_home / "tmp") + "/", IOS_USE_RUNTIME_CLOSE_SECOND="1")
+                status = execute(other_command, other_environment, log)
             if mode == "presentation" and status == 0:
                 # Exercise the ordinary host after both successful and failed
                 # client exits; the window-close path ran in the pixel workload.
@@ -541,7 +571,7 @@ for number, (mode, services, adapters, deletion) in enumerate(runs):
                     if status: break
     print(log_path.read_text(), end="")
     print(f"{mode}: exit={status}", flush=True)
-    results.append((mode, services, adapters if mode in ("application", "presentation", "lifecycle", "webkit", "gles-window", "text-input", "linear-buffer") else [], status, deletion))
+    results.append((mode, services, adapters if mode in ("application", "presentation", "lifecycle", "multi-scene", "webkit", "gles-window", "text-input", "linear-buffer") else [], status, deletion))
     failed |= status != 0 and not deletion
 print("\nCase                 Services                      App adapters    Exit   Experiment")
 for mode, services, adapters, status, deletion in results:

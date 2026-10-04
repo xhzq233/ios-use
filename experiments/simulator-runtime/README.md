@@ -133,7 +133,16 @@ python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
   --cases lifecycle --duration 300
 
-# Known-failing WebKit diagnostics, excluded from the default passing cases.
+# Two real Scenes, independent native pixels, overlay isolation, both close orders.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases multi-scene
+
+# Ordinary macOS WKWebView: JS and green snapshot, with an ephemeral data store.
+# This measures the native host; it is not a Simulator WKWebView bridge.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases native-webkit
+
+# Known-failing Simulator WebKit diagnostics, excluded from passing defaults.
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
   --cases webkit --webkit-launcher system
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
@@ -214,8 +223,9 @@ are not yet implemented.
 `capture` saves that native view as `prompt-NNN.png`, or the app's displayed
 shared buffer as `capture-NNN.png`; wait for the UI transition before requesting
 it. These view/buffer diagnostics do not prove physical display visibility.
-`quit` or closing the window terminates the owned app and services and returns
-success for that intentional close. `--audit` reports deletion cases as observations, including their nonzero exits. Selected
+`quit` or closing the last native window terminates the owned app and services
+and returns success for that intentional close. Closing one of multiple windows
+destroys only its Scene; other Scenes remain running. `--audit` reports deletion cases as observations, including their nonzero exits. Selected
 cases must succeed for the runner to return zero; an observed dependency
 failure does not become a successful workload.
 
@@ -238,13 +248,25 @@ windows. No device or Simulator state is modified. Once a
 run has stopped, its `run-*` directory can be deleted to remove its home, caches,
 temporary files, logs, and build products.
 
-Minimizing/restoring the native window delivers a foreground settings diff to
-the real FrontBoard scene client; UIKit produces the corresponding application
-callbacks. This does not implement process suspension, multiple independent
-Scenes, or multiple Mac display windows. Invalidating an app CA context removes
-its host layer from the compositor. The lifecycle workload checks overlay and
-underlying pixels, repeated context retirement, real foreground/background
-callbacks, and reports process memory rather than claiming constant allocation.
+Minimizing/restoring a native window delivers a foreground settings diff to its
+real FrontBoard scene client; UIKit produces the lifecycle callbacks. Scene
+layers, including overlays and transition contexts, share their owning Scene's
+canvas. Each Scene has an independent virtual display, stream, three-buffer pool,
+return/control port, and Mac window. Filtering contexts on a single virtual
+display allowed pixels to cross Scene boundaries in the first real E2E; separate
+virtual displays passed. This adds no background service. The main LCD display
+remains available as UIKit's refresh source; other displays retire after their
+last native frame is returned.
+
+The `multi-scene` workload creates two actual Scene sessions through FrontBoard,
+checks independent native colors and an overlay, minimizes/restores one, closes
+it, and requires the survivor to keep changing pixels. It runs both close orders
+and checks real Scene callbacks. This covers host-created Scenes; application
+`requestSceneSessionActivation:` requests, process suspension, and input routing
+across Scenes are not implemented. The one-shot whole-display snapshot diagnostic
+requires exactly one Scene. The single-Scene `lifecycle` workload continues to
+check overlay and underlying pixels, context retirement, lifecycle callbacks,
+and process memory rather than claiming constant allocation.
 Closing the host allows two seconds for the owned app to exit before SIGKILL;
 the child PID remains unreaped until the main thread handles termination, so
 the delayed signal cannot target a reused PID.
@@ -713,8 +735,8 @@ touch/text delivery is optional:
 - `LocalSceneHost.m` hosts an anonymous workspace peer inside the app. It accepts
   connection setup, the scene handshake, and client-settings notifications,
   including BoardServices batches. Without batch handling, the peer disconnects
-  and the app can lose its foreground scene. `SceneBootstrap.m` delivers one
-  scene through the runtime's `FBSWorkspaceScenesClient`; UIKit invokes the app's
+  and the app can lose its foreground scene. `SceneBootstrap.m` delivers the
+  initial scene and diagnostic additional scenes through the runtime's `FBSWorkspaceScenesClient`; UIKit invokes the app's
   delegate. No code calls AppDelegate directly. A legacy window without a scene
   is assigned the unique connected window scene when it becomes key and visible.
   The same `scene` library includes `LocalInput.m`: a registration-only
@@ -722,11 +744,12 @@ touch/text delivery is optional:
   receives no input. It accepts delivery-rule registration and closes the peer
   for unsupported operations; it does not deliver events or start backboardd.
 - `LocalCompositor.m` starts the runtime's actual CoreAnimation render server and
-  a 1206×2622 `CAWindowServerVirtualDisplay`. The server's `local` option avoids
+  1206×2622 `CAWindowServerVirtualDisplay` instances, one per Scene. The server's `local` option avoids
   display discovery and launchd registration. `CA_FORCE_LOCAL_SERVER` is set at
   process launch so display links also find it. UIKit's non-displayable contexts
-  are embedded through `CALayerHost` under one displayable parent, scaled from
-  points to 3× pixels. Simply supplying a context's render-server port was enough
+  are assigned by `FBSScene.attachLayer:` / `detachLayer:` to their Scene, then
+  embedded through `CALayerHost` under its displayable parent, with scene-layer
+  levels and a scale from points to 3× pixels. Simply supplying a context's render-server port was enough
   for a layer snapshot, but not for full-display capture or a continuous stream.
   `IOSUseCopyWindowSurface` lays out/displays pending layers, requests a bounded
   rendering wait, then takes a whole-display `CARenderServerSnapshot`. Snapshot
@@ -1012,9 +1035,24 @@ not an impossibility result for every possible bridge. WebKit's upstream
 and [XPC entry point](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/Shared/EntryPointUtilities/Cocoa/XPCService/XPCServiceMain.mm)
 describe the corresponding launch and bootstrap stages.
 
-The lifecycle and import changes have been exercised on the installed macOS
-15.7.7 / iOS runtime 26.0.1 combination. Independent multi-Scene hosting and
-compatibility across other macOS/runtime versions remain unverified.
+Read-only inspection of the installed ExtensionFoundation also found host audit
+identity, RBS launch-context, extension containment, and entitlement checks.
+Switching to public `AppExtensionProcess` does not provide an arbitrary path or
+endpoint launch interface: its configuration takes a discovered extension
+identity ([Apple extension discovery](https://developer.apple.com/documentation/extensionfoundation/discovering-app-extensions-from-your-app)).
+No additional authorized standalone launch path was established.
+
+`native-webkit` separately runs the host's public macOS `WKWebView` with a
+nonpersistent data store and inline HTML that disallows external resources.
+Navigation, JavaScript result 42, and a green 640×480 snapshot passed through the
+normal macOS WebKit service path. This supports investigating a native host
+adapter, but does not implement Simulator `WKWebView` API/delegate behavior,
+UIKit embedding, shared cookies, or a transparent replacement. It does not mix
+private macOS and Simulator WebKit IPC.
+
+Import, lifecycle, and host-created multi-Scene hosting have been exercised on
+macOS 15.7.7 / iOS runtime 26.0.1. Compatibility across other macOS/runtime
+versions remains unverified.
 
 Earlier controlled experiments isolated a separate process-domain dependency.
 They borrowed an experimental Simulator's bootstrap namespace and used the

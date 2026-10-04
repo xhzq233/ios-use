@@ -1,4 +1,4 @@
-// Minimal anonymous FrontBoard workspace peer for the single-scene diagnostic.
+// Minimal anonymous FrontBoard workspace peer for locally hosted scenes.
 #import <Foundation/Foundation.h>
 #import <xpc/xpc.h>
 #import <unistd.h>

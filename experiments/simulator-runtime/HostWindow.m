@@ -11,7 +11,24 @@
 extern NSWindow *IOSUseUserNotificationWindow(void);
 extern void IOSUseStopUserNotifications(void);
 
-static mach_port_t inputPort;
+@interface RuntimeSceneWindow : NSObject <NSWindowDelegate>
+@property(nonatomic) uint32_t sceneID;
+@property(nonatomic, strong) NSWindow *window;
+@property(nonatomic, strong) CALayer *surfaceLayer;
+@property(nonatomic) mach_port_t inputPort;
+@property(nonatomic) mach_port_t releasePort;
+@property(nonatomic) uint32_t displayedSurface;
+@property(nonatomic) unsigned frames;
+@property(nonatomic) BOOL closed;
+@end
+
+// All Scene records and process lifecycle state are owned by the AppKit thread.
+static NSMutableDictionary<NSNumber *, RuntimeSceneWindow *> *sceneWindows;
+static NSMutableSet<NSNumber *> *closedSceneIDs;
+static NSString *artifactDirectory;
+static pid_t clientPID;
+static BOOL clientExited, clientTerminating, hostClosedNormally;
+
 static void sendHostMessage(const mach_msg_header_t *message) {
     mach_port_t destination = message->msgh_remote_port;
     if (!destination) return;
@@ -26,7 +43,9 @@ static void sendHostMessage(const mach_msg_header_t *message) {
         inputQueue = dispatch_queue_create("iosuse.runtime.input", DISPATCH_QUEUE_SERIAL);
         releaseQueue = dispatch_queue_create("iosuse.runtime.frame-release", DISPATCH_QUEUE_SERIAL);
     });
-    dispatch_queue_t queue = message->msgh_id == IOSUseWindowRelease || message->msgh_id == IOSUseWindowSceneState ? releaseQueue : inputQueue;
+    BOOL presentation = message->msgh_id == IOSUseWindowRelease ||
+        message->msgh_id == IOSUseWindowSceneState || message->msgh_id == IOSUseWindowSceneClose;
+    dispatch_queue_t queue = presentation ? releaseQueue : inputQueue;
     NSMutableData *packet = [NSMutableData dataWithBytes:message length:message->msgh_size];
     dispatch_async(queue, ^{
         kern_return_t sent = mach_msg(packet.mutableBytes, MACH_SEND_MSG, (mach_msg_size_t)packet.length, 0, 0, 0, 0);
@@ -35,7 +54,7 @@ static void sendHostMessage(const mach_msg_header_t *message) {
     });
 }
 
-static void sendText(NSString *text, uint32_t operation) {
+static void sendText(mach_port_t inputPort, NSString *text, uint32_t operation) {
     if (!inputPort) return;
     if (IOSUseUserNotificationWindow()) {
         fprintf(stderr, "[host-window] finish the consent dialog before entering app text\n");
@@ -67,19 +86,21 @@ static void releaseSurface(mach_port_t release, uint32_t identifier) {
     sendHostMessage(&message.header);
 }
 @interface RuntimeSurfaceView : NSView
+@property(nonatomic, weak) RuntimeSceneWindow *scene;
 @end
 @implementation RuntimeSurfaceView
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
-- (BOOL)acceptsFirstResponder { return inputPort != MACH_PORT_NULL; }
+- (BOOL)acceptsFirstResponder { return self.scene.inputPort != MACH_PORT_NULL; }
 - (void)keyDown:(NSEvent *)event { [self interpretKeyEvents:@[event]]; }
 - (void)insertText:(id)value {
     NSString *text = [value isKindOfClass:NSAttributedString.class] ? [value string] : value;
-    sendText(text, IOSUseTextInsert);
+    sendText(self.scene.inputPort, text, IOSUseTextInsert);
 }
-- (void)deleteBackward:(id)sender { sendText(@"", IOSUseTextDeleteBackward); }
-- (void)insertNewline:(id)sender { sendText(@"\n", IOSUseTextInsert); }
+- (void)deleteBackward:(id)sender { sendText(self.scene.inputPort, @"", IOSUseTextDeleteBackward); }
+- (void)insertNewline:(id)sender { sendText(self.scene.inputPort, @"\n", IOSUseTextInsert); }
 - (void)sendPointer:(NSEvent *)event phase:(uint32_t)phase {
+    mach_port_t inputPort = self.scene.inputPort;
     if (!inputPort) return;
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     IOSUseWindowPointerMessage message = {0};
@@ -97,60 +118,101 @@ static void releaseSurface(mach_port_t release, uint32_t identifier) {
 - (void)mouseUp:(NSEvent *)event { [self sendPointer:event phase:3]; }
 @end
 
-@interface RuntimeWindowDelegate : NSObject <NSWindowDelegate>
-@property(nonatomic) pid_t client;
-@property(nonatomic) BOOL closed;
-@property(nonatomic) BOOL exited;
-@end
-static void stopPresentation(void);
-static void sendSceneState(BOOL foreground);
-@implementation RuntimeWindowDelegate
-- (void)windowDidMiniaturize:(NSNotification *)notification { sendSceneState(NO); }
-- (void)windowDidDeminiaturize:(NSNotification *)notification { sendSceneState(YES); }
-- (void)windowWillClose:(NSNotification *)notification {
-    self.closed = YES;
-    stopPresentation();
-    kill(self.client, SIGTERM);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        // waitid below keeps the PID owned until the main thread reaps it.
-        if (!self.exited) kill(self.client, SIGKILL);
-    });
-}
-@end
-
-static NSWindow *window;
-static CALayer *surfaceLayer;
-static RuntimeWindowDelegate *windowDelegate;
-static NSString *artifactDirectory;
-static uint32_t displayedSurface;
-static mach_port_t displayedReleasePort;
-
-static void sendSceneState(BOOL foreground) {
+static void sendSceneState(RuntimeSceneWindow *scene, BOOL foreground) {
     IOSUseWindowSceneStateMessage message = {0};
     message.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
     message.header.msgh_size = sizeof(message);
-    message.header.msgh_remote_port = displayedReleasePort;
+    message.header.msgh_remote_port = scene.releasePort;
     message.header.msgh_id = IOSUseWindowSceneState;
     message.foreground = foreground;
     sendHostMessage(&message.header);
 }
 
-static void stopPresentation(void) {
-    surfaceLayer.contents = nil;
+static void stopPresentation(RuntimeSceneWindow *scene) {
+    uint32_t previous = scene.displayedSurface;
+    mach_port_t previousRelease = scene.releasePort;
+    scene.releasePort = MACH_PORT_NULL;
+    scene.displayedSurface = 0;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    // Keep the last buffer leased until AppKit retires the layer contents, just
+    // as when replacing a frame. The producer stops after these leases return.
+    [CATransaction setCompletionBlock:^{
+        releaseSurface(previousRelease, previous);
+        if (previousRelease) mach_port_deallocate(mach_task_self(), previousRelease);
+    }];
+    scene.surfaceLayer.contents = nil;
+    [CATransaction commit];
     [CATransaction flush];
-    releaseSurface(displayedReleasePort, displayedSurface);
-    if (displayedReleasePort) mach_port_deallocate(mach_task_self(), displayedReleasePort);
-    displayedReleasePort = MACH_PORT_NULL;
-    displayedSurface = 0;
-    if (inputPort) mach_port_deallocate(mach_task_self(), inputPort);
-    inputPort = MACH_PORT_NULL;
+    if (scene.inputPort) mach_port_deallocate(mach_task_self(), scene.inputPort);
+    scene.inputPort = MACH_PORT_NULL;
 }
 
-BOOL IOSUseHostWindowClosedNormally(void) { return windowDelegate.closed; }
+static void retireScene(RuntimeSceneWindow *scene, BOOL closeWindow) {
+    if (scene.closed) return;
+    scene.closed = YES;
+    [closedSceneIDs addObject:@(scene.sceneID)];
+    stopPresentation(scene);
+    scene.window.delegate = nil;
+    if (closeWindow) [scene.window close];
+    [sceneWindows removeObjectForKey:@(scene.sceneID)];
+}
+
+static void terminateClient(void) {
+    if (clientTerminating || clientExited) return;
+    clientTerminating = YES;
+    hostClosedNormally = YES;
+    IOSUseStopUserNotifications();
+    for (RuntimeSceneWindow *scene in sceneWindows.allValues) retireScene(scene, YES);
+    kill(clientPID, SIGTERM);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        // waitid below keeps the PID owned until the main thread reaps it.
+        if (!clientExited) kill(clientPID, SIGKILL);
+    });
+}
+
+@implementation RuntimeSceneWindow
+- (void)windowDidMiniaturize:(NSNotification *)notification { sendSceneState(self, NO); }
+- (void)windowDidDeminiaturize:(NSNotification *)notification { sendSceneState(self, YES); }
+- (void)windowWillClose:(NSNotification *)notification {
+    if (self.closed) return;
+    if (sceneWindows.count > 1) {
+        mach_msg_header_t message = {0};
+        message.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
+        message.msgh_size = sizeof(message);
+        message.msgh_remote_port = self.releasePort;
+        message.msgh_id = IOSUseWindowSceneClose;
+        sendHostMessage(&message);
+    }
+    retireScene(self, NO);
+    if (!sceneWindows.count) terminateClient();
+}
+@end
+
+BOOL IOSUseHostWindowClosedNormally(void) { return hostClosedNormally; }
+
+void IOSUseCloseSceneWindow(uint32_t sceneID) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [closedSceneIDs addObject:@(sceneID)];
+        RuntimeSceneWindow *scene = sceneWindows[@(sceneID)];
+        if (!scene) return;
+        retireScene(scene, YES);
+        if (!sceneWindows.count) terminateClient();
+    });
+}
+
+static RuntimeSceneWindow *selectedScene(void) {
+    for (RuntimeSceneWindow *scene in sceneWindows.allValues) {
+        if (scene.window == NSApp.keyWindow) return scene;
+    }
+    // Scene IDs keep the fallback deterministic when no app window is key.
+    NSNumber *first = [[sceneWindows.allKeys sortedArrayUsingSelector:@selector(compare:)] firstObject];
+    return first ? sceneWindows[first] : nil;
+}
 
 static void sendTap(double x, double y) {
     NSWindow *prompt = IOSUseUserNotificationWindow();
-    NSWindow *target = prompt ?: window;
+    NSWindow *target = prompt ?: selectedScene().window;
     if (!target) { fprintf(stderr, "[host-window] window not ready\n"); return; }
     NSPoint point = NSMakePoint(x, target.contentView.bounds.size.height - y);
     NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:point modifierFlags:0
@@ -197,7 +259,7 @@ static void saveStreamFrame(IOSurfaceRef surface, NSString *filename) {
     IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
 }
 
-void IOSUseShowSurface(mach_port_t port, mach_port_t release, mach_port_t input, uint32_t identifier) {
+void IOSUseShowSurface(mach_port_t port, mach_port_t release, mach_port_t input, uint32_t identifier, uint32_t sceneID) {
     IOSurfaceRef surface = IOSurfaceLookupFromMachPort(port);
     mach_port_deallocate(mach_task_self(), port);
     if (!surface) {
@@ -208,31 +270,43 @@ void IOSUseShowSurface(mach_port_t port, mach_port_t release, mach_port_t input,
         return;
     }
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (windowDelegate.closed) {
+        if (clientTerminating || clientExited || [closedSceneIDs containsObject:@(sceneID)]) {
             releaseSurface(release, identifier);
             if (release) mach_port_deallocate(mach_task_self(), release);
             if (input) mach_port_deallocate(mach_task_self(), input);
             CFRelease(surface);
             return;
         }
-        if (inputPort) mach_port_deallocate(mach_task_self(), inputPort);
-        inputPort = input;
-        if (!window) {
-            window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 402, 874)
+        RuntimeSceneWindow *scene = sceneWindows[@(sceneID)];
+        if (!scene) {
+            scene = [RuntimeSceneWindow new];
+            scene.sceneID = sceneID;
+            sceneWindows[@(sceneID)] = scene;
+            NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 402, 874)
                 styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
                 backing:NSBackingStoreBuffered defer:NO];
+            scene.window = window;
             window.releasedWhenClosed = NO;
             window.title = @"iOS runtime 26 — experimental app";
-            window.delegate = windowDelegate;
-            window.contentView = [[RuntimeSurfaceView alloc] initWithFrame:NSMakeRect(0, 0, 402, 874)];
+            window.delegate = scene;
+            RuntimeSurfaceView *view = [[RuntimeSurfaceView alloc] initWithFrame:NSMakeRect(0, 0, 402, 874)];
+            view.scene = scene;
+            window.contentView = view;
             window.contentView.wantsLayer = YES;
-            [window makeFirstResponder:window.contentView];
-            surfaceLayer = [CALayer layer];
+            CALayer *surfaceLayer = [CALayer layer];
+            scene.surfaceLayer = surfaceLayer;
             surfaceLayer.frame = window.contentView.bounds;
             surfaceLayer.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
             surfaceLayer.contentsGravity = kCAGravityResizeAspect;
             [window.contentView.layer addSublayer:surfaceLayer];
             [window center];
+            // Keep independent Scene windows visibly separate without changing
+            // the shared logical display size expected by the runtime adapter.
+            if (sceneWindows.count > 1) {
+                NSPoint origin = window.frame.origin;
+                CGFloat offset = 28 * (sceneWindows.count - 1);
+                [window setFrameOrigin:NSMakePoint(origin.x + offset, origin.y - offset)];
+            }
             [window makeKeyAndOrderFront:nil];
             [NSApp activateIgnoringOtherApps:YES];
             const char *tap = getenv("IOS_USE_RUNTIME_TAP");
@@ -243,39 +317,43 @@ void IOSUseShowSurface(mach_port_t port, mach_port_t release, mach_port_t input,
                 });
             }
         }
+        BOOL hadInput = scene.inputPort != MACH_PORT_NULL;
+        if (scene.inputPort) mach_port_deallocate(mach_task_self(), scene.inputPort);
+        scene.inputPort = input;
+        if (!hadInput && input) [scene.window makeFirstResponder:scene.window.contentView];
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
-        uint32_t previous = displayedSurface;
-        mach_port_t previousRelease = displayedReleasePort;
-        displayedSurface = identifier;
-        displayedReleasePort = release;
+        uint32_t previous = scene.displayedSurface;
+        mach_port_t previousRelease = scene.releasePort;
+        scene.displayedSurface = identifier;
+        scene.releasePort = release;
         // Keep the displayed buffer leased. Return its predecessor only after
         // the native transaction replaces it, so the producer cannot overwrite it.
         [CATransaction setCompletionBlock:^{
             releaseSurface(previousRelease, previous);
             if (previousRelease) mach_port_deallocate(mach_task_self(), previousRelease);
         }];
-        surfaceLayer.contents = (__bridge id)surface;
+        scene.surfaceLayer.contents = (__bridge id)surface;
         [CATransaction commit];
         [CATransaction flush];
-        static unsigned frames;
-        if (++frames == 1 || frames % 30 == 0) fprintf(stderr, "[host-window] window=%ld frames=%u size=%zux%zu\n",
-            (long)window.windowNumber, frames, IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface));
+        if (++scene.frames == 1 || scene.frames % 30 == 0) fprintf(stderr, "[host-window] scene=%u window=%ld frames=%u size=%zux%zu\n",
+            sceneID, (long)scene.window.windowNumber, scene.frames, IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface));
         // Linked only into the presentation workload's broker.
         static void (*observeFrame)(NSWindow *, BOOL);
         static dispatch_once_t observerOnce;
         dispatch_once(&observerOnce, ^{ observeFrame = dlsym(RTLD_DEFAULT, "IOSUseObserveHostFrame"); });
-        if (observeFrame) observeFrame(window, inputPort != MACH_PORT_NULL);
+        if (observeFrame) observeFrame(scene.window, scene.inputPort != MACH_PORT_NULL);
         CFRelease(surface);
     });
 }
 
 int IOSUseRunHostWindow(pid_t client, NSString *home) {
     artifactDirectory = home;
+    clientPID = client;
+    sceneWindows = [NSMutableDictionary dictionary];
+    closedSceneIDs = [NSMutableSet set];
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-    windowDelegate = [RuntimeWindowDelegate new];
-    windowDelegate.client = client;
     if (isatty(STDIN_FILENO)) {
         // Interactive diagnostics use the same native mouse path as the window.
         // No extra daemon, listening socket, or accessibility permission is needed.
@@ -293,11 +371,11 @@ int IOSUseRunHostWindow(pid_t client, NSString *home) {
                     } else if ([rawCommand hasPrefix:@"text "]) {
                         NSString *text = [rawCommand substringFromIndex:5];
                         dispatch_async(dispatch_get_main_queue(), ^{
-                            [(RuntimeSurfaceView *)window.contentView insertText:text];
+                            [(RuntimeSurfaceView *)selectedScene().window.contentView insertText:text];
                         });
                     } else if ([command isEqualToString:@"backspace"]) {
                         dispatch_async(dispatch_get_main_queue(), ^{
-                            [(RuntimeSurfaceView *)window.contentView deleteBackward:nil];
+                            [(RuntimeSurfaceView *)selectedScene().window.contentView deleteBackward:nil];
                         });
                     } else if ([command isEqualToString:@"capture"]) {
                         dispatch_async(dispatch_get_main_queue(), ^{
@@ -314,16 +392,14 @@ int IOSUseRunHostWindow(pid_t client, NSString *home) {
                                 fprintf(stderr, "[host-prompt] view diagnostic saved=%d file=%s\n", saved, filename.UTF8String);
                                 return;
                             }
-                            IOSurfaceRef surface = (__bridge IOSurfaceRef)surfaceLayer.contents;
+                            IOSurfaceRef surface = (__bridge IOSurfaceRef)selectedScene().surfaceLayer.contents;
                             if (!surface) { fprintf(stderr, "[host-window] frame not ready\n"); return; }
                             static unsigned capture;
                             saveStreamFrame(surface, [NSString stringWithFormat:@"capture-%03u.png", ++capture]);
                         });
                     } else if ([command isEqualToString:@"quit"]) {
                         dispatch_async(dispatch_get_main_queue(), ^{
-                            IOSUseStopUserNotifications();
-                            if (window) [window performClose:nil];
-                            else [windowDelegate windowWillClose:nil];
+                            terminateClient();
                         });
                         break;
                     } else {
@@ -340,13 +416,12 @@ int IOSUseRunHostWindow(pid_t client, NSString *home) {
         int rc;
         do { rc = waitid(P_PID, client, &info, WEXITED | WNOWAIT); } while (rc < 0 && errno == EINTR);
         dispatch_async(dispatch_get_main_queue(), ^{
-            windowDelegate.exited = YES;
+            clientExited = YES;
             pid_t reaped;
             do { reaped = waitpid(client, &status, 0); } while (reaped < 0 && errno == EINTR);
             if (rc < 0 || reaped != client) status = 8 << 8;
             IOSUseStopUserNotifications();
-            stopPresentation();
-            [window orderOut:nil];
+            for (RuntimeSceneWindow *scene in sceneWindows.allValues) retireScene(scene, YES);
             [NSApp stop:nil];
             [NSApp postEvent:[NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint
                 modifierFlags:0 timestamp:0 windowNumber:0 context:nil subtype:0 data1:0 data2:0] atStart:YES];
