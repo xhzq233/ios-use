@@ -85,6 +85,17 @@ def unpack(source, work):
     return apps[0]
 
 
+def bundle_executable(bundle):
+    metadata, directory = bundle / 'Info.plist', bundle
+    if not metadata.is_file() and (bundle / 'Contents/Info.plist').is_file():
+        metadata, directory = bundle / 'Contents/Info.plist', bundle / 'Contents/MacOS'
+    with metadata.open('rb') as f: info = plistlib.load(f)
+    executable = info.get('CFBundleExecutable', '')
+    if not executable or Path(executable).name != executable or not (directory / executable).is_file():
+        raise ValueError(f'{bundle.name}: no valid CFBundleExecutable')
+    return directory / executable
+
+
 def prepare(source, destination, runtime):
     source, destination, runtime = source.resolve(), destination.absolute(), runtime.resolve()
     if destination.exists() or destination.is_symlink(): raise ValueError('Output already exists; choose a new .app path')
@@ -98,10 +109,8 @@ def prepare(source, destination, runtime):
     with tempfile.TemporaryDirectory(prefix='import-', dir=destination.parent) as directory:
         work = Path(directory)
         app = unpack(source, work)
-        with (app / 'Info.plist').open('rb') as f: info = plistlib.load(f)
-        executable = info.get('CFBundleExecutable', '')
-        if not executable or Path(executable).name != executable or not (app / executable).is_file():
-            raise ValueError('App has no valid CFBundleExecutable')
+        entry_points = {bundle: bundle_executable(bundle) for bundle in [app] + sorted(
+            p for p in app.rglob('*') if p.is_dir() and p.suffix in ('.app', '.appex', '.xpc'))}
         binaries = {}
         libraries = []
         for path in sorted(app.rglob('*')):
@@ -120,43 +129,55 @@ def prepare(source, destination, runtime):
                 if record['minimum'] > runtime_min:
                     raise ValueError(f'{path.relative_to(app)}: minimum iOS {version(record["minimum"])} exceeds runtime {runtime_version}')
                 binaries[path] = record
-        main = app / executable
-        if main not in binaries: raise ValueError('Main executable is not supported Mach-O')
-        # Resolve bundled dependencies, including transitive @rpath inheritance.
-        def expand(name, loader):
-            return name.replace('@loader_path', str(loader.parent)).replace('@executable_path', str(main.parent))
+        for executable in entry_points.values():
+            if executable not in binaries:
+                raise ValueError(f'{executable.relative_to(app)}: executable is not supported Mach-O')
+        # Each separately launched bundle starts its own run-path stack. Shared
+        # code can resolve differently when loaded by different executables.
+        def expand(name, loader, executable):
+            return name.replace('@loader_path', str(loader.parent)).replace('@executable_path', str(executable.parent))
+        def resolution(dep, executable, value):
+            dep.setdefault('resolutions', {})[str(executable.relative_to(app))] = value
         resolved = set()
-        def resolve(path, inherited, visited):
+        def resolve(path, executable, inherited, visited):
             if path in visited: return
             visited = visited | {path}
             resolved.add(path)
             record = binaries[path]
-            search = [expand(p, path) for p in record['rpaths']] + inherited
+            search = [expand(p, path, executable) for p in record['rpaths']] + inherited
             for dep in record['dependencies']:
                 name = dep['path']
                 if name.startswith(('/System/Library/', '/usr/lib/')):
                     # Shared-cache images are validated by dyld when launching;
                     # their absence on disk does not mean the dependency is missing.
-                    dep['resolution'] = 'runtime (dyld validation at launch)'
+                    resolution(dep, executable, 'runtime (dyld validation at launch)')
                     continue
-                candidates = ([Path(p) / name[7:] for p in search] if name.startswith('@rpath/') else [Path(expand(name, path))])
+                candidates = ([Path(p) / name[7:] for p in search] if name.startswith('@rpath/') else [Path(expand(name, path, executable))])
                 runtime_candidate = next((str(p) for p in candidates if str(p).startswith(('/System/Library/', '/usr/lib/'))), None)
                 found = next((p.resolve() for p in candidates if p.is_file() and p.resolve().is_relative_to(app)), None)
                 if found is None:
                     if runtime_candidate:
-                        dep['resolution'] = runtime_candidate + ' (dyld validation at launch)'
+                        resolution(dep, executable, runtime_candidate + ' (dyld validation at launch)')
                         continue
                     if dep['weak']:
-                        dep['resolution'] = 'missing optional dependency'
+                        resolution(dep, executable, 'missing optional dependency')
                         continue
-                    raise ValueError(f'{path.relative_to(app)}: unresolved dependency {name}')
+                    raise ValueError(f'{path.relative_to(app)}: unresolved dependency {name} for {executable.relative_to(app)}')
                 if found not in binaries: raise ValueError(f'{name}: dependency is not supported Mach-O')
-                dep['resolution'] = str(found.relative_to(app))
-                resolve(found, search, visited)
-        resolve(main, [], set())
+                resolution(dep, executable, str(found.relative_to(app)))
+                resolve(found, executable, search, visited)
+        for executable in entry_points.values():
+            resolve(executable, executable, [], set())
         for path in binaries:
             if path not in resolved:
-                resolve(path, [expand(p, main) for p in binaries[main]['rpaths']], set())
+                executable = next(entry_points[parent] for parent in path.parents if parent in entry_points)
+                resolve(path, executable, [expand(p, executable, executable) for p in binaries[executable]['rpaths']], set())
+        for record in binaries.values():
+            for dep in record['dependencies']:
+                values = set(dep['resolutions'].values())
+                if len(values) == 1:
+                    dep['resolution'] = values.pop()
+                    del dep['resolutions']
         for path, record in binaries.items():
             converted = work / 'converted'
             command('xcrun', 'vtool', '-set-build-version', 'iossim', version(record['minimum']),

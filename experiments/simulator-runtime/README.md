@@ -30,14 +30,21 @@ ad-hoc signs the copy. It preserves the input and refuses an existing output,
 encrypted code, unsupported platforms/architectures, missing bundled strong
 dependencies, unsafe archive paths, and deployment targets newer than the selected
 runtime. Failed staging is removed. The JSON result distinguishes original and
-converted platforms and records dependency resolution. Apple shared-cache
+converted platforms and records dependency resolution. Each embedded `.app`,
+`.appex`, or `.xpc` resolves `@executable_path` and inherited `@rpath` from its own
+entry executable, including `Contents/MacOS` layouts. Shared code is checked in
+every referencing entry's load chain. A dependency has `resolution` when the
+result is common, or `resolutions` keyed by entry executable when paths differ.
+Apple shared-cache
 dependencies still require dyld validation at launch; retargeting metadata is
 not a guarantee of ABI/API compatibility or app-extension execution support.
 
 `test_import.py --runtime-root "$RUNTIME_ROOT"` builds a synthetic device IPA
-with a universal executable, an embedded framework, and a device Metal library,
+with a universal executable, shared frameworks, nested app/extension/service
+entry points, and a device Metal library,
 then checks real framework calls, GPU compute, UIKit startup, source preservation,
-and import rejection boundaries. It removes its disposable inputs and outputs.
+and import rejection boundaries. `--skip-runtime` runs the file/signing checks
+without launching UIKit. It removes its disposable inputs and outputs.
 
 ```sh
 python3 experiments/simulator-runtime/run.py \
