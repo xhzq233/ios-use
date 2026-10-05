@@ -13,6 +13,7 @@
 #import <xpc/xpc.h>
 #import "WindowMessage.h"
 #import "ServicePorts.h"
+#import "WebBridgeTransport.h"
 
 extern void IOSUseShowSurface(mach_port_t port, mach_port_t release, mach_port_t input, uint32_t identifier, uint32_t sceneID);
 extern void IOSUseCloseSceneWindow(uint32_t sceneID);
@@ -60,6 +61,12 @@ static void serveEndpoints(mach_port_t rendezvous, mach_port_t metal, mach_port_
             kern_return_t kr = mach_msg(&request.header, MACH_RCV_MSG, 0,
                                        sizeof(request), rendezvous, 0, 0);
             if (kr) return;
+            if (request.header.msgh_id == IOSUseWebBridgeMessageID) {
+                BOOL (*webMessage)(mach_msg_header_t *) = dlsym(RTLD_DEFAULT, "IOSUseHandleWebBridgeMessage");
+                if (webMessage) webMessage(&request.header);
+                else mach_msg_destroy(&request.header);
+                continue;
+            }
             if (request.header.msgh_id == IOSUseWindowFrame) {
                 IOSUseWindowFrameMessage *frame = (void *)&request;
                 IOSUseShowSurface(frame->surface.name, frame->release.name, frame->input.name, frame->surfaceID, frame->sceneID);

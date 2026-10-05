@@ -158,11 +158,17 @@ static void retireScene(RuntimeSceneWindow *scene, BOOL closeWindow) {
     [sceneWindows removeObjectForKey:@(scene.sceneID)];
 }
 
+static void stopWebBridge(void) {
+    void (*stop)(void) = dlsym(RTLD_DEFAULT, "IOSUseStopWebBridge");
+    if (stop) stop();
+}
+
 static void terminateClient(void) {
     if (clientTerminating || clientExited) return;
     clientTerminating = YES;
     hostClosedNormally = YES;
     IOSUseStopUserNotifications();
+    stopWebBridge();
     for (RuntimeSceneWindow *scene in sceneWindows.allValues) retireScene(scene, YES);
     kill(clientPID, SIGTERM);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -421,6 +427,7 @@ int IOSUseRunHostWindow(pid_t client, NSString *home) {
             do { reaped = waitpid(client, &status, 0); } while (reaped < 0 && errno == EINTR);
             if (rc < 0 || reaped != client) status = 8 << 8;
             IOSUseStopUserNotifications();
+            stopWebBridge();
             for (RuntimeSceneWindow *scene in sceneWindows.allValues) retireScene(scene, YES);
             [NSApp stop:nil];
             [NSApp postEvent:[NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint

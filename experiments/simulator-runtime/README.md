@@ -142,6 +142,11 @@ python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
   --cases native-webkit
 
+# Experimental API bridge: Mac WebKit snapshots composed inside Simulator UIKit.
+# Synthetic fixture only; not an adapter for supplied applications.
+python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
+  --cases webkit-bridge
+
 # Known-failing Simulator WebKit diagnostics, excluded from passing defaults.
 python3 experiments/simulator-runtime/run.py --runtime-root "$RUNTIME_ROOT" \
   --cases webkit --webkit-launcher system
@@ -232,7 +237,8 @@ failure does not become a successful workload.
 Artifacts go into a new `$IOS_USE_HOME/artifacts/runtime-probe/run-*` directory
 (default: repository `.ios-use/artifacts/runtime-probe/`). Each case has a fresh
 home and `TMPDIR`, a log, and process-group cleanup. Headless cases have a
-30-second timeout, except `lifecycle`, which allows `--duration` plus 30 seconds;
+30-second timeout, except `lifecycle`, which allows `--duration` plus 30 seconds,
+and `webkit-bridge`, which allows 60 seconds;
 `--present` runs until the window closes, the app exits, or
 Ctrl-C. On exit, the broker gives each owned service two seconds to finish after
 SIGTERM, then kills and reaps it if needed; trustd can retain background XPC
@@ -1049,6 +1055,45 @@ normal macOS WebKit service path. This supports investigating a native host
 adapter, but does not implement Simulator `WKWebView` API/delegate behavior,
 UIKit embedding, shared cookies, or a transparent replacement. It does not mix
 private macOS and Simulator WebKit IPC.
+
+The separate `webkit-bridge` case tests a limited cross-process adapter. The
+Simulator keeps a real UIKit `WKWebView` object for view hierarchy and lifetime,
+hides its original scroll view, and forwards `loadHTMLString:baseURL:`, navigation
+events, and `evaluateJavaScript:completionHandler:` over the private broker Mach
+channel. The native host uses public macOS `WKWebView`, an ephemeral data store,
+and an offscreen window. JSON-compatible JS results and NSError descriptions
+return to the Simulator main thread; pending evaluations cancel once when their
+view is removed, and later replies are discarded.
+
+Native snapshots are drawn into fresh IOSurfaces at at most 5 Hz, with one frame
+awaiting acknowledgement. The Simulator puts each immutable surface into a
+child CALayer inside the original WKWebView. This leaves layout, transforms,
+parent clipping, and translucent UIKit overlays in the existing UIKit compositor.
+It includes a CPU pixel copy and full snapshots; it is not a zero-copy or
+video-performance result. The native WKWebView is not overlaid on the final Mac
+window, and no WebKit private IPC is shared between operating-system versions.
+
+The executable workload checks real navigation order, JS arithmetic and
+exceptions, null versus undefined, and actual page viewport dimensions after
+resize. It reads pixels only from its own native windows to check web content,
+transforms, clipping, translucent UIKit overlap, removal, and replacement.
+Removing a view with a pending evaluation must cancel that callback once and
+allow the UIKit object to deallocate. Closing a Scene while its second web view
+is still retained must leave zero native web views and pending client callbacks,
+while another Scene continues updating its pixels. Closing submits the final
+layer removal even after native web frames stop arriving.
+
+The bridge is intentionally available only through its synthetic case, not
+`--app-adapters`. It does not provide WKNavigation identities: load returns nil
+and navigation delegates receive nil, rather than an uninitialized private
+WebKit object. Persistent data stores, cookies, script-message handlers,
+`loadRequest`, scrolling/input, snapshot APIs, and getters such as URL/title/
+loading are not forwarded. `removeFromSuperview` ends that bridged instance;
+reusing it after reattachment or removing only an ancestor is not covered.
+Scene destruction releases the native view even when the app retains its UIKit
+objects. Transport failures end the selected diagnostic with a nonzero status
+instead of leaving completion blocks waiting indefinitely. This is a feasibility
+adapter, not transparent compatibility for an arbitrary app.
 
 Import, lifecycle, and host-created multi-Scene hosting have been exercised on
 macOS 15.7.7 / iOS runtime 26.0.1. Compatibility across other macOS/runtime

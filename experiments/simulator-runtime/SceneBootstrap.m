@@ -79,6 +79,8 @@ void IOSUseDestroyScene(NSString *identifier) {
         localScenes[identifier] = closing;
         [localClient sceneID:record[@"identity"] destroyWithTransitionContext:nil completion:^(id result) {
             dispatch_async(dispatch_get_main_queue(), ^{
+                void (*retireWeb)(NSString *) = dlsym(RTLD_DEFAULT, "IOSUseRetireWebViewsForScene");
+                if (retireWeb) retireWeb(identifier);
                 void (*retire)(NSString *) = dlsym(RTLD_DEFAULT, "IOSUseRetireScene");
                 if (retire) retire(identifier);
                 // A same-name replacement must not attach to the old canvas or
