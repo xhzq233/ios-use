@@ -158,7 +158,6 @@ struct PlayCoverRuntimeDOMArguments: Codable, Equatable, Sendable {
     var diff: Bool = false
     var since: String = ""
     let raw: Bool
-    let fresh: Bool
     let waitQuiescence: Bool
 }
 

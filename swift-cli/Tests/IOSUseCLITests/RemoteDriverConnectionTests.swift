@@ -42,7 +42,7 @@ final class RemoteDriverConnectionTests: XCTestCase {
                 XCTAssertNotNil(context.info.remoteConnection)
                 let client = LockedDriverClientSession(paths: context.paths)
                 defer { client.close() }
-                _ = try client.run { try $0.dom(raw: false, fresh: true, waitQuiescence: false) }
+                _ = try client.run { try $0.dom(raw: false, waitQuiescence: false) }
                 XCTAssertEqual(server.acceptCount, 1)
             }
         }
@@ -66,7 +66,7 @@ final class RemoteDriverConnectionTests: XCTestCase {
             let original = try DriverSessionStore.readInfo(paths: scoped)
             let client = LockedDriverClientSession(paths: scoped)
             defer { client.close() }
-            XCTAssertThrowsError(try client.run { try $0.dom(raw: false, fresh: false, waitQuiescence: false) })
+            XCTAssertThrowsError(try client.run { try $0.dom(raw: false, waitQuiescence: false) })
             XCTAssertEqual(try DriverSessionStore.readInfo(paths: scoped), original)
             XCTAssertEqual(launches, 0)
             XCTAssertEqual(terminations, 0)

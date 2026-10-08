@@ -42,8 +42,8 @@ final class CLIParserTests: XCTestCase {
             }
             XCTAssertThrowsError(try CLIParser.parse(command + ["--nodiff"]))
         }
-        XCTAssertEqual(try CLIParser.parse(["dom"]), .driver(.dom(raw: false, fresh: true, waitQuiescence: false, diff: true)))
-        XCTAssertEqual(try CLIParser.parse(["dom", "--nodiff", "--json"]), .driver(.dom(raw: false, fresh: false, waitQuiescence: false, diff: false)))
+        XCTAssertEqual(try CLIParser.parse(["dom"]), .driver(.dom(raw: false, waitQuiescence: false, diff: true)))
+        XCTAssertEqual(try CLIParser.parse(["dom", "--nodiff", "--json"]), .driver(.dom(raw: false, waitQuiescence: false, diff: false)))
         XCTAssertEqual(try CLIParser.parse(["tap", "Continue", "--nodiff", "-D", "300ms"]),
                        .driver(.tap(target: "Continue", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: .afterMilliseconds(300))))
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--diff", "--nodiff"]))
@@ -51,7 +51,7 @@ final class CLIParserTests: XCTestCase {
 
     func testDiffObservationOptionsAndConflicts() throws {
         XCTAssertEqual(try CLIParser.parse(["dom", "--diff"]),
-                       .driver(.dom(raw: false, fresh: true, waitQuiescence: false, diff: true)))
+                       .driver(.dom(raw: false, waitQuiescence: false, diff: true)))
         XCTAssertEqual(try CLIParser.parse(["tap", "Continue", "-D"]),
                        .driver(.tap(target: "Continue", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: .diffAfterQuiescence)))
         XCTAssertEqual(try CLIParser.parse(["home", "-D", "0.2s"]),
@@ -460,13 +460,14 @@ final class CLIParserTests: XCTestCase {
     func testParsesDriverReadCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["dom", "--wait-quiescence"]),
-            .driver(.dom(raw: false, fresh: true, waitQuiescence: true, diff: true))
+            .driver(.dom(raw: false, waitQuiescence: true, diff: true))
         )
 
-        XCTAssertEqual(
-            try CLIParser.parse(["dom", "--fresh", "--wait-quiescence"]),
-            .driver(.dom(raw: false, fresh: true, waitQuiescence: true, diff: true))
-        )
+        for arguments in [["dom", "--fresh"], ["dom", "--fresh", "--wait-quiescence"], ["dom", "--raw", "--fresh"]] {
+            XCTAssertThrowsError(try CLIParser.parse(arguments)) { error in
+                XCTAssertEqual(error as? CLIParseError, .unknownOption("--fresh"))
+            }
+        }
 
         XCTAssertEqual(
             try CLIParser.parse(["waitFor", "--label", "Ready", "--timeout", "1.5", "--traits", "Text", "--cindex", "0"]),
@@ -845,12 +846,8 @@ final class CLIParserTests: XCTestCase {
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--udid"))
         }
 
-        XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--fresh"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence or --diff"))
-        }
-
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--wait-quiescence"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence or --diff"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --wait-quiescence or --diff"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--ocr"])) { error in
@@ -1048,7 +1045,7 @@ final class CLIParserTests: XCTestCase {
             ]),
             ParsedInvocation(
                 command: .driver(
-                    .dom(raw: false, fresh: true, waitQuiescence: false, diff: true)
+                    .dom(raw: false, waitQuiescence: false, diff: true)
                 ),
                 json: true,
                 deviceID: "real:DEVICE-1"
@@ -1073,7 +1070,7 @@ final class CLIParserTests: XCTestCase {
             ]),
             ParsedInvocation(
                 command: .driver(
-                    .dom(raw: false, fresh: true, waitQuiescence: false, diff: true)
+                    .dom(raw: false, waitQuiescence: false, diff: true)
                 ),
                 json: true,
                 deviceID: "mac"

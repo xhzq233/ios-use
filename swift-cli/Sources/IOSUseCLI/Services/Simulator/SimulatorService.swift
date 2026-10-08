@@ -381,7 +381,7 @@ enum SimulatorService {
         while Date() < deadline {
             let driver = DriverClient()
             defer { driver.close() }
-            if (try? driver.dom(raw: false, fresh: false, waitQuiescence: false)) != nil {
+            if (try? driver.dom(raw: false, waitQuiescence: false)) != nil {
                 return
             }
             usleep(useconds_t(IOSUseProtocol.simulatorDriverConfigureProbePollMicroseconds))

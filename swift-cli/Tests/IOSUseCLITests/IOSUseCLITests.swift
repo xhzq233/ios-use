@@ -617,11 +617,11 @@ final class IOSUseCLITests: XCTestCase {
             XCTAssertEqual(session.deviceType, "real")
             attempts += 1
             if attempts == 1 {
-                return FakeDriverCommandClient(domHandler: { _, _, _ in
+                return FakeDriverCommandClient(domHandler: { _, _ in
                     throw DriverClientError.connectFailed(61)
                 })
             }
-            return FakeDriverCommandClient(domHandler: { _, _, _ in
+            return FakeDriverCommandClient(domHandler: { _, _ in
                 ForyDomPayload(app: "com.example.app", windowSize: ForyPoint(x: 100, y: 200))
             })
         }
@@ -689,11 +689,11 @@ final class IOSUseCLITests: XCTestCase {
             clientSessions.append(session)
             attempts += 1
             if attempts == 1 {
-                return FakeDriverCommandClient(domHandler: { _, _, _ in
+                return FakeDriverCommandClient(domHandler: { _, _ in
                     throw DriverClientError.connectFailed(61)
                 })
             }
-            return FakeDriverCommandClient(domHandler: { _, _, _ in
+            return FakeDriverCommandClient(domHandler: { _, _ in
                 ForyDomPayload(app: "com.example.app", windowSize: ForyPoint(x: 100, y: 200))
             })
         }
@@ -774,7 +774,7 @@ final class IOSUseCLITests: XCTestCase {
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             attempts += 1
             return FakeDriverCommandClient(
-                domHandler: { _, _, _ in
+                domHandler: { _, _ in
                     try SessionService.writeDriverLock(
                         info: replacement,
                         paths: paths
@@ -887,13 +887,13 @@ final class IOSUseCLITests: XCTestCase {
             attempts += 1
             if attempts == 1 {
                 return FakeDriverCommandClient(
-                    domHandler: { _, _, _ in
+                    domHandler: { _, _ in
                         throw DriverClientError.connectFailed(61)
                     }
                 )
             }
             return FakeDriverCommandClient(
-                domHandler: { _, _, _ in
+                domHandler: { _, _ in
                     ForyDomPayload(
                         app: "com.example.app",
                         windowSize: ForyPoint(x: 100, y: 200)
@@ -1003,7 +1003,7 @@ final class IOSUseCLITests: XCTestCase {
             )
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(domHandler: { _, _, _ in
+            FakeDriverCommandClient(domHandler: { _, _ in
                 throw DriverClientError.connectFailed(61)
             })
         }
@@ -1037,9 +1037,8 @@ final class IOSUseCLITests: XCTestCase {
             return AppLifecycleService.Result(message: "App \(options.bundleID) activated")
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(domHandler: { raw, fresh, wait in
+            FakeDriverCommandClient(domHandler: { raw, wait in
                 XCTAssertFalse(raw)
-                XCTAssertTrue(fresh)
                 XCTAssertEqual(hostCalls, foregroundCalls)
                 domCalls += 1
                 waitForIdle = wait
@@ -1120,8 +1119,7 @@ final class IOSUseCLITests: XCTestCase {
         var domCalls = 0
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             FakeDriverCommandClient(
-                domHandler: { _, fresh, _ in
-                    XCTAssertTrue(fresh)
+                domHandler: { _, _ in
                     domCalls += 1
                     if domCalls == 1 {
                         throw DriverClientError.driverError(
@@ -1244,7 +1242,7 @@ final class IOSUseCLITests: XCTestCase {
             attempts += 1
             XCTAssertEqual(session.udid, "SIM-LOCK")
             XCTAssertEqual(session.deviceType, "simulator")
-            return FakeDriverCommandClient(domHandler: { _, _, _ in
+            return FakeDriverCommandClient(domHandler: { _, _ in
                 throw DriverClientError.readFailed
             })
         }
@@ -1289,9 +1287,8 @@ final class IOSUseCLITests: XCTestCase {
             events.append("open")
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(domHandler: { raw, fresh, wait in
+            FakeDriverCommandClient(domHandler: { raw, wait in
                 XCTAssertFalse(raw)
-                XCTAssertTrue(fresh)
                 XCTAssertTrue(wait)
                 return ForyDomPayload(app: "com.apple.mobilesafari", elements: [ForyDomElement(traits: ["Button"], label: "Ready")])
             }, waitAppForegroundHandler: { expected, timeout, returnDom, waitForSnapshot in
@@ -1347,9 +1344,8 @@ final class IOSUseCLITests: XCTestCase {
             dispatchCount += 1
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(domHandler: { raw, fresh, wait in
+            FakeDriverCommandClient(domHandler: { raw, wait in
                 XCTAssertFalse(raw)
-                XCTAssertTrue(fresh)
                 XCTAssertTrue(wait)
                 return ForyDomPayload(app: "com.example.b", elements: [ForyDomElement(traits: ["Button"], label: "Ready")])
             }, waitAppForegroundHandler: { expected, _, _, _ in
@@ -2153,7 +2149,7 @@ final class IOSUseCLITests: XCTestCase {
     }
 }
 private final class FakeDriverCommandClient: DriverCommandClient {
-    private let domHandler: (Bool, Bool, Bool) throws -> ForyDomPayload
+    private let domHandler: (Bool, Bool) throws -> ForyDomPayload
     private let tapHandler: (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint?) throws -> ForyElementPayload
     private let activateHandler: (String) throws -> Void
     private let terminateHandler: (String) throws -> Void
@@ -2163,7 +2159,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     private let dismissAlertHandler: (ForyDismissAlertArgs) throws -> ForyAlertPayload
 
     init(
-        domHandler: @escaping (Bool, Bool, Bool) throws -> ForyDomPayload = { _, _, _ in
+        domHandler: @escaping (Bool, Bool) throws -> ForyDomPayload = { _, _ in
             throw CLIParseError.invalidValue("unexpected dom")
         },
         tapHandler: @escaping (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint?) throws -> ForyElementPayload = { _, _, _, _, _ in
@@ -2200,8 +2196,8 @@ private final class FakeDriverCommandClient: DriverCommandClient {
 
     func close() {}
 
-    func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload {
-        try domHandler(raw, fresh, waitQuiescence)
+    func dom(raw: Bool, waitQuiescence: Bool) throws -> ForyDomPayload {
+        try domHandler(raw, waitQuiescence)
     }
 
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload {

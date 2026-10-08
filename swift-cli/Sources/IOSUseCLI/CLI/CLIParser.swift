@@ -658,7 +658,6 @@ public enum CLIParser {
 
     private static func parseDom(_ parser: inout ArgumentParser) throws -> DriverAction {
         var raw = false
-        var fresh = false
         var waitQuiescence = false
         var diff: Bool?
         while let arg = parser.consume() {
@@ -670,18 +669,17 @@ public enum CLIParser {
                 }
                 diff = requested
             case "--raw": raw = true
-            case "--fresh": fresh = true
             case "--wait-quiescence": waitQuiescence = true
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        if raw && (fresh || waitQuiescence || diff == true) {
+        if raw && (waitQuiescence || diff == true) {
             throw CLIParseError.invalidValue(
-                "dom --raw cannot be combined with --fresh, --wait-quiescence or --diff"
+                "dom --raw cannot be combined with --wait-quiescence or --diff"
             )
         }
         let useDiff = !raw && (diff ?? true)
-        return .dom(raw: raw, fresh: fresh || waitQuiescence || useDiff, waitQuiescence: waitQuiescence, diff: useDiff)
+        return .dom(raw: raw, waitQuiescence: waitQuiescence, diff: useDiff)
     }
 
     private static func resolvedPostDom(_ mode: PostDomMode?, noDiff: Bool) throws -> PostDomMode? {

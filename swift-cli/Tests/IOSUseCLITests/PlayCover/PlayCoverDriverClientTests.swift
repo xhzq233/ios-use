@@ -91,7 +91,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
 
         let dom = try client.dom(
             raw: true,
-            fresh: false,
             waitQuiescence: true
         )
         let wait = try client.waitFor(
@@ -170,7 +169,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
             return XCTFail("missing DOM arguments")
         }
         XCTAssertTrue(domArgs.raw)
-        XCTAssertFalse(domArgs.fresh)
         XCTAssertTrue(domArgs.waitQuiescence)
         guard case .waitFor(let waitArgs) = requests[1].1 else {
             return XCTFail("missing waitFor arguments")
@@ -844,7 +842,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertNoThrow(
             try valid.dom(
                 raw: false,
-                fresh: true,
                 waitQuiescence: false
             )
         )
@@ -863,7 +860,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertThrowsError(
             try invalid.dom(
                 raw: false,
-                fresh: true,
                 waitQuiescence: false
             )
         ) {
@@ -880,14 +876,14 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 windowSize: .init(x: size.width, y: size.height), raw: "", snapshotGeneration: 2,
                 elements: [makeElement(generation: 2)])
             payload.windowMode = "resizable"
-            let result = try makeClient(response: .dom(payload)).dom(raw: false, fresh: true, waitQuiescence: false)
+            let result = try makeClient(response: .dom(payload)).dom(raw: false, waitQuiescence: false)
             XCTAssertEqual(result.windowSize.x, size.width)
             XCTAssertEqual(result.windowSize.y, size.height)
         }
         var empty = PlayCoverRuntimeDOMPayload(app: "Demo", windowSize: .init(x: 0, y: 845),
             raw: "", snapshotGeneration: 2, elements: [])
         empty.windowMode = "resizable"
-        XCTAssertThrowsError(try makeClient(response: .dom(empty)).dom(raw: false, fresh: true, waitQuiescence: false))
+        XCTAssertThrowsError(try makeClient(response: .dom(empty)).dom(raw: false, waitQuiescence: false))
     }
 
     func testActionSucceedsWithoutGenericVisualPostcondition()

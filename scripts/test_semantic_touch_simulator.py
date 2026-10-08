@@ -92,7 +92,7 @@ def main():
                 raise AssertionError("Native App rotation did not complete")
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                dom = cli("dom", "--nodiff", "--fresh")[1]["data"]
+                dom = cli("dom", "--nodiff")[1]["data"]
                 app_frame = dom["elements"][0]["frame"]
                 if app_frame[2] > app_frame[3]:
                     break

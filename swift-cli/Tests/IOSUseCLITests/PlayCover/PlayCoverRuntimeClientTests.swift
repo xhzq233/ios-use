@@ -24,12 +24,10 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 .dom,
                 .dom(.init(
                     raw: true,
-                    fresh: false,
                     waitQuiescence: true
                 )),
                 {
                     XCTAssertEqual($0["raw"] as? Bool, true)
-                    XCTAssertEqual($0["fresh"] as? Bool, false)
                     XCTAssertEqual(
                         $0["waitQuiescence"] as? Bool,
                         true
@@ -947,7 +945,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 socketPath: fixture.socketPath,
                 refreshAlertStatus: true
             ).dom(
-                .init(raw: false, fresh: true, waitQuiescence: false)
+                .init(raw: false, waitQuiescence: false)
             )
         ) {
             guard case .remoteError(let code, _, let details) =
@@ -1010,7 +1008,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 socketPath: fixture.socketPath,
                 refreshAlertStatus: true
             ).dom(
-                .init(raw: false, fresh: true, waitQuiescence: false)
+                .init(raw: false, waitQuiescence: false)
             )
         ) {
             guard case .remoteError(let code, _, let details) =

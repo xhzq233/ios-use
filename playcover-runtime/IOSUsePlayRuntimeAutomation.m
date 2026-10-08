@@ -576,7 +576,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationFreshDOM(
     return IOSUsePlayRuntimeDOMCommand(
         @{
             @"raw": @NO,
-            @"fresh": @YES,
             @"waitQuiescence": @NO,
         },
         commandError

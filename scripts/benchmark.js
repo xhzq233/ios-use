@@ -606,7 +606,7 @@ async function customPrepareInputSession(ctx) {
       cli(['tap', 'CancelBarItemButton', '--udid', ctx.udid], { allowFailure: true });
     }
   }
-  cli(['dom', '--fresh', '--udid', ctx.udid], { allowFailure: true });
+  cli(['dom', '--udid', ctx.udid], { allowFailure: true });
   cli(['waitFor', '--label', ctx.inputPrepareLabel, '--timeout', '8', '--udid', ctx.udid]);
 }
 

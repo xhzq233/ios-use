@@ -110,14 +110,14 @@ final class PlayCoverDriverClient: DriverCommandClient {
         return try mapScreenshot(result.screenshot)
     }
 
-    func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload {
-        try observeDOM(ForyDomArgs(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence))
+    func dom(raw: Bool, waitQuiescence: Bool) throws -> ForyDomPayload {
+        try observeDOM(ForyDomArgs(raw: raw, waitQuiescence: waitQuiescence))
     }
 
     func observeDOM(_ args: ForyDomArgs) throws -> ForyDomPayload {
         guard case .dom(let payload) = try request(.dom, arguments: .dom(
             PlayCoverRuntimeDOMArguments(semantic: args.semantic, diff: args.diff, since: args.since,
-                raw: args.raw, fresh: args.fresh, waitQuiescence: args.waitQuiescence))) else {
+                raw: args.raw, waitQuiescence: args.waitQuiescence))) else {
             throw PlayCoverDriverClientError.malformedRuntimePayload("dom response type")
         }
         return try mapDOM(payload)
