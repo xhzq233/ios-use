@@ -1,5 +1,24 @@
 # Minimal standalone Simulator runtime (issue #20)
 
+The goal is a general-purpose path for running development iOS apps as native
+Mac processes using Simulator UIKit/runtime semantics. Keep the app's UIKit
+hierarchy and rendering in that runtime, present it in native Mac windows, and
+reuse host AppKit or Catalyst capabilities at explicit service/API boundaries
+where experiments establish compatibility. This is separate from the existing
+Catalyst backend that retargets the app itself. App-specific patches are outside
+the goal; binary import alone does not establish compatibility.
+
+Measure which services each workload actually needs, then remove or replace
+unnecessary dependencies. A macOS VM and a full booted Simulator are outside
+this approach. Presentation must work independently of input; input is optional
+for the current research. Experiments preserve source apps and user data and do
+not bypass system authorization or entitlement checks.
+
+The current WebKit snapshot adapter is a feasibility probe, not the final
+rendering architecture or a claim of general WKWebView support. Remaining work
+includes faithful API/lifecycle behavior, broader app and runtime compatibility,
+and measured rendering performance before production backend integration.
+
 This harness loads an installed iOS Simulator runtime in ordinary macOS child
 processes and starts only the selected rendering, trust, keychain, notification, photo,
 and LaunchServices components. It does not invoke
