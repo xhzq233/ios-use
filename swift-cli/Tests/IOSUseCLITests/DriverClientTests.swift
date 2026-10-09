@@ -11,8 +11,8 @@ final class DriverClientTests: XCTestCase {
         let client = DriverClient(port: UInt16(server.port))
         defer { client.close() }
 
-        _ = try client.dom(raw: false, fresh: false)
-        _ = try client.dom(raw: true, fresh: true)
+        _ = try client.dom(raw: false)
+        _ = try client.dom(raw: true)
 
         XCTAssertEqual(server.acceptCount, 1)
         XCTAssertEqual(server.requestCommands, ["dom", "dom"])
@@ -36,10 +36,10 @@ final class DriverClientTests: XCTestCase {
         let client = DriverClient(port: UInt16(server.port))
         defer { client.close() }
 
-        XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
+        XCTAssertThrowsError(try client.dom(raw: false)) { error in
             XCTAssertTrue(String(describing: error).contains("driver rejected request"))
         }
-        _ = try client.dom(raw: true, fresh: true)
+        _ = try client.dom(raw: true)
 
         XCTAssertEqual(server.acceptCount, 1)
         XCTAssertEqual(server.requestCommands, ["dom", "dom"])
@@ -62,10 +62,10 @@ final class DriverClientTests: XCTestCase {
         let client = DriverClient(port: UInt16(server.port))
         defer { client.close() }
 
-        XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
+        XCTAssertThrowsError(try client.dom(raw: false)) { error in
             XCTAssertTrue(String(describing: error).contains("[driver_watchdog_timeout] main thread stuck"))
         }
-        _ = try client.dom(raw: true, fresh: true)
+        _ = try client.dom(raw: true)
 
         XCTAssertEqual(server.acceptCount, 2)
         XCTAssertEqual(server.requestCommands, ["dom", "dom"])
@@ -79,7 +79,7 @@ final class DriverClientTests: XCTestCase {
         let client = DriverClient(port: UInt16(server.port))
         defer { client.close() }
 
-        XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
+        XCTAssertThrowsError(try client.dom(raw: false)) { error in
             XCTAssertTrue(String(describing: error).contains("invalid driver error payload"))
             XCTAssertTrue(String(describing: error).contains("empty payload"))
         }
@@ -188,13 +188,12 @@ final class DriverClientTests: XCTestCase {
         let client = DriverClient(port: UInt16(server.port))
         defer { client.close() }
 
-        _ = try client.dom(raw: false, fresh: true, waitQuiescence: true)
+        _ = try client.dom(raw: false, waitQuiescence: true)
 
         let request = try XCTUnwrap(server.requestFrames.first)
         XCTAssertEqual(request.command, DriverCommand.dom.rawValue)
         let args = try fory.deserialize(request.payload, as: ForyDomArgs.self)
         XCTAssertFalse(args.raw)
-        XCTAssertTrue(args.fresh)
         XCTAssertTrue(args.waitQuiescence)
     }
 
@@ -374,8 +373,8 @@ final class DriverClientTests: XCTestCase {
         let client = DriverClient(port: UInt16(server.port), cliLogPath: logPath)
         defer { client.close() }
 
-        _ = try client.dom(raw: false, fresh: true)
-        _ = try client.dom(raw: true, fresh: false)
+        _ = try client.dom(raw: false)
+        _ = try client.dom(raw: true)
         client.close()
 
         let log = try String(contentsOfFile: logPath, encoding: .utf8)
@@ -408,7 +407,7 @@ final class DriverClientTests: XCTestCase {
         defer { server.stop() }
         let client = DriverClient(port: UInt16(server.port))
 
-        _ = try client.dom(raw: false, fresh: false)
+        _ = try client.dom(raw: false)
 
         XCTAssertFalse(server.waitForDisconnect(timeout: 0.1))
         client.close()
@@ -429,7 +428,7 @@ final class DriverClientTests: XCTestCase {
         let client = DriverClient(udid: "REAL-CMD", deviceType: "real")
         defer { client.close() }
 
-        XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
+        XCTAssertThrowsError(try client.dom(raw: false)) { error in
             XCTAssertTrue(String(describing: error).contains("driver not listening yet"))
         }
 

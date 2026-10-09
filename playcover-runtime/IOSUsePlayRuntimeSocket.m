@@ -1461,7 +1461,6 @@ static NSDictionary<NSString *, id> *IOSUseHandleScreenshot(
             dom = IOSUsePlayRuntimeDOMCommand(
                 @{
                     @"raw": @NO,
-                    @"fresh": @YES,
                     @"waitQuiescence": @NO,
                 },
                 &domError

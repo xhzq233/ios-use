@@ -464,7 +464,7 @@ async function runCaseContainsAndDomContains(id, expected, args, domExpected, se
     recordFail(id, res.stdout + res.stderr, res.code === 0 ? 'assertion' : 'command');
     return;
   }
-  const dom = await runCommand(id, ['dom', '--nodiff', '--fresh'], domOut, domErr);
+  const dom = await runCommand(id, ['dom', '--nodiff'], domOut, domErr);
   if (!dom) return;
   if (dom.code === 0 && dom.stdout.includes(domExpected)) recordPass(id);
   else recordFail(id, `${res.stdout}${res.stderr}${dom.stdout}${dom.stderr}`, dom.code === 0 ? 'assertion' : 'command');
@@ -560,7 +560,7 @@ async function runDomPresentationCase() {
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use dom JSON geometry and scroll axes`);
-  const res = runCliToFiles(['dom', '--nodiff', '--fresh', '--json'], out, err);
+  const res = runCliToFiles(['dom', '--nodiff', '--json'], out, err);
   const reply = res.code === 0 ? JSON.parse(res.stdout) : null;
   const elements = reply?.data.elements ?? [];
   const usableFrame = element => Array.isArray(element.frame) && element.frame.length === 4
@@ -582,7 +582,7 @@ async function runDomNoWindowHeaderCase() {
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use dom omits Window header`);
-  const res = runCliToFiles(['dom', '--nodiff', '--fresh'], out, err);
+  const res = runCliToFiles(['dom', '--nodiff'], out, err);
   if (res.code === 0 && res.stdout.includes('App: com.apple.Preferences') && !res.stdout.includes('Window:')) {
     recordPass(id);
   } else {
@@ -613,7 +613,7 @@ async function runDomPayloadShapeCase() {
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use dom payload/output shape`);
-  const res = runCliToFiles(['dom', '--nodiff', '--fresh'], out, err);
+  const res = runCliToFiles(['dom', '--nodiff'], out, err);
   const output = res.stdout;
   const hasAppHeader = output.includes('App: com.apple.Preferences');
   const hasNoWindowHeader = !/Window:\s*\d+x\d+/.test(output);
@@ -670,7 +670,7 @@ async function runStartCreatesDriverLockCase() {
   } catch (error) {
     return recordFail(id, `${res.stdout}${res.stderr}${error}\n`, res.code === 0 ? 'assertion' : 'command');
   }
-  const dom = runCliToFiles(['dom', '--nodiff', '--fresh'], domOut, domErr);
+  const dom = runCliToFiles(['dom', '--nodiff'], domOut, domErr);
   if (
     res.code === 0 &&
     res.stdout.includes(`Driver started for ${sim.udid}`) &&
@@ -756,7 +756,7 @@ async function waitForDriver() {
   let consecutiveUnreachable = 0;
   while (performance.now() - startedAt < driverReadyTimeoutMs) {
     attempt++;
-    const res = runCliToFiles(['dom', '--nodiff', '--fresh'], out, err);
+    const res = runCliToFiles(['dom', '--nodiff'], out, err);
     if (res.code === 0) {
       console.log('[sim-test] Driver ready');
       return;
@@ -852,7 +852,7 @@ function ensureDriverStarted(prefix = 'driver-start') {
 
 async function ensureDriverReady() {
   ensureDriverStarted('driver-ready-start');
-  const probe = runCli(['dom', '--nodiff', '--fresh']);
+  const probe = runCli(['dom', '--nodiff']);
   if (probe.code === 0) return;
   recoveryCount++;
   console.log('[sim-test] Driver unavailable, reconfiguring simulator driver');
@@ -947,7 +947,7 @@ async function verifyExampleDomainOpened(id) {
   for (let attempt = 0; attempt < 12; attempt++) {
     await sleep(1000);
     const dom = runCliToFiles(
-      ['dom', '--nodiff', '--fresh'],
+      ['dom', '--nodiff'],
       path.join(artifactDir, `${id}-verify-dom.out`),
       path.join(artifactDir, `${id}-verify-dom.err`),
     );
@@ -1001,7 +1001,7 @@ async function runInputAndVerifyDom(
     if (!await runSetup(id, setup)) return;
     res = runCliToFiles(['input', '--tap', label, '--content', content, ...args], out, err);
   }
-  const dom = runCliToFiles(['dom', '--nodiff', '--fresh'], domOut, domErr);
+  const dom = runCliToFiles(['dom', '--nodiff'], domOut, domErr);
   if (res.stdout.includes('Input') && dom.code === 0 && dom.stdout.includes(expected)) recordPass(id, { attempts });
   else recordFail(id, `${readFileIfExists(out)}${readFileIfExists(err)}${readFileIfExists(domOut)}${readFileIfExists(domErr)}`, res.code === 0 ? 'assertion' : 'command', { attempts });
 }
@@ -1016,7 +1016,7 @@ async function verifyContactsNameFields(id, suffix) {
   const last = runCli(['input', '--tap', 'Last name', '--content', 'Beta', '--traits', 'Input']);
   writeFile(out, first.stdout + last.stdout);
   writeFile(err, first.stderr + last.stderr);
-  const dom = runCliToFiles(['dom', '--nodiff', '--fresh'], domOut, domErr);
+  const dom = runCliToFiles(['dom', '--nodiff'], domOut, domErr);
   return first.code === 0 && last.code === 0 && dom.code === 0 && dom.stdout.includes('First name=Alpha') && dom.stdout.includes('Last name=Beta');
 }
 
@@ -1041,7 +1041,7 @@ async function runDomPerfCase() {
   const warmErr = path.join(artifactDir, `${id}-warm.err`);
   console.log(`[sim-test] RUN ${id}: cold/warm dom stability`);
   const coldStart = performance.now();
-  const cold = runCliToFiles(['dom', '--nodiff', '--fresh'], coldOut, coldErr);
+  const cold = runCliToFiles(['dom', '--nodiff'], coldOut, coldErr);
   const coldMs = Math.round(performance.now() - coldStart);
   const warmStart = performance.now();
   const warm = runCliToFiles(['dom'], warmOut, warmErr);

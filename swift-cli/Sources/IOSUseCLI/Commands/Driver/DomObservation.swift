@@ -13,8 +13,8 @@ struct DomObservation {
             .appendingPathComponent("dom-observation-revision")
     }
 
-    func arguments(raw: Bool = false, fresh: Bool, waitQuiescence: Bool, diff: Bool) -> ForyDomArgs {
-        ForyDomArgs(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence,
+    func arguments(raw: Bool = false, waitQuiescence: Bool, diff: Bool) -> ForyDomArgs {
+        ForyDomArgs(raw: raw, waitQuiescence: waitQuiescence,
             semantic: !raw && (!detailed || diff), diff: diff,
             since: (try? String(contentsOf: file, encoding: .utf8)) ?? "")
     }

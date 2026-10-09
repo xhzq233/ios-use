@@ -269,7 +269,7 @@ enum OpenURLService {
                     dom = try DriverCommandExecutor.collectPostDom(mode: postDom, paths: paths, detailed: detailedDom)
                 } else {
                     dom = try DriverCommandExecution.withLockedClient(paths: paths, verbose: session.verbose) {
-                        try $0.dom(raw: false, fresh: true, waitQuiescence: false)
+                        try $0.dom(raw: false, waitQuiescence: false)
                     }
                 }
                 return OpenResult(

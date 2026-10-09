@@ -27,7 +27,7 @@ enum RemoteDeviceService {
                 do {
                     let client = DriverClient(session: info, paths: paths, socketTimeoutSeconds: 15)
                     defer { client.close() }
-                    _ = try client.dom(raw: false, fresh: true)
+                    _ = try client.dom(raw: false)
                     try DriverSessionStore.write(info: info, paths: paths)
                     return "Started remote XCTest Driver for Device \(paths.deviceID ?? connection.udid)\n"
                 } catch {

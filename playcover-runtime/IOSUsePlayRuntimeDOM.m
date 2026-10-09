@@ -4040,7 +4040,6 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
 ) {
     NSSet<NSString *> *keys = [NSSet setWithArray:@[
         @"raw",
-        @"fresh",
         @"waitQuiescence",
     ]];
     if (![arguments isKindOfClass:NSDictionary.class] ||
@@ -4050,24 +4049,19 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
             [NSSet setWithArray:@[@"semantic", @"diff", @"since"]]
         ) ||
         !IOSUseDOMIsBoolean(arguments[@"raw"]) ||
-        !IOSUseDOMIsBoolean(arguments[@"fresh"]) ||
         !IOSUseDOMIsBoolean(arguments[@"waitQuiescence"]) ||
         (arguments[@"semantic"] != nil && !IOSUseDOMIsBoolean(arguments[@"semantic"])) ||
         (arguments[@"diff"] != nil && !IOSUseDOMIsBoolean(arguments[@"diff"])) ||
         (arguments[@"since"] != nil && ![arguments[@"since"] isKindOfClass:NSString.class])) {
         if (commandError != NULL) {
             *commandError = IOSUseDOMValidationError(
-                @"dom requires raw/fresh/waitQuiescence booleans; optional semantic/diff are booleans and since is a string",
+                @"dom requires raw/waitQuiescence booleans; optional semantic/diff are booleans and since is a string",
                 nil
             );
         }
         return nil;
     }
     BOOL waitQuiescence = [arguments[@"waitQuiescence"] boolValue];
-    // The injected runtime always traverses UIKit afresh, so both values of
-    // `fresh` intentionally select the same stronger snapshot behavior.
-    BOOL requestedFresh = [arguments[@"fresh"] boolValue];
-    (void)requestedFresh;
 
     NSDictionary<NSString *, id> *snapshotError = nil;
     IOSUseDOMSnapshot *snapshot = IOSUseDOMFreshSnapshot(

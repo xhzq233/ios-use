@@ -109,8 +109,7 @@ final class DriverFailureOutputTests: XCTestCase {
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             FailureDriverClient(
                 counters: counters,
-                domHandler: { _, fresh, _ in
-                    XCTAssertTrue(fresh)
+                domHandler: { _, _ in
                     throw DriverClientError.driverError(
                         message: "snapshot unavailable",
                         payload: underlying
@@ -260,7 +259,7 @@ private final class FailureClientCounters {
 
 private final class FailureDriverClient: DriverCommandClient {
     typealias DomHandler =
-        (Bool, Bool, Bool) throws -> ForyDomPayload
+        (Bool, Bool) throws -> ForyDomPayload
     typealias TapHandler =
         (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint?) throws
             -> ForyElementPayload
@@ -271,7 +270,7 @@ private final class FailureDriverClient: DriverCommandClient {
 
     init(
         counters: FailureClientCounters,
-        domHandler: @escaping DomHandler = { _, _, _ in
+        domHandler: @escaping DomHandler = { _, _ in
             throw CLIParseError.invalidValue("unexpected dom")
         },
         tapHandler: @escaping TapHandler
@@ -285,11 +284,10 @@ private final class FailureDriverClient: DriverCommandClient {
 
     func dom(
         raw: Bool,
-        fresh: Bool,
         waitQuiescence: Bool
     ) throws -> ForyDomPayload {
         counters.domCalls += 1
-        return try domHandler(raw, fresh, waitQuiescence)
+        return try domHandler(raw, waitQuiescence)
     }
 
     func waitFor(

@@ -646,18 +646,16 @@ public struct ForyRotateArgs {
 @ForyStruct
 public struct ForyDomArgs {
     public var raw: Bool = false
-    public var fresh: Bool = false
     public var waitQuiescence: Bool = false
     public var semantic: Bool = false
     public var diff: Bool = false
     public var since: String = ""
 
-    public init(raw: Bool = false, fresh: Bool = false, waitQuiescence: Bool = false, semantic: Bool = false, diff: Bool = false, since: String = "") {
+    public init(raw: Bool = false, waitQuiescence: Bool = false, semantic: Bool = false, diff: Bool = false, since: String = "") {
         self.semantic = semantic
         self.diff = diff
         self.since = since
         self.raw = raw
-        self.fresh = fresh
         self.waitQuiescence = waitQuiescence
     }
 }

@@ -36,7 +36,7 @@ Once the Simulator target is started, driver-backed commands are the same as on
 a real device:
 
 ```bash
-ios-use dom --fresh
+ios-use dom
 ios-use waitFor "Settings" --timeout 5s
 ios-use tap "Settings" -D
 ios-use screenshot

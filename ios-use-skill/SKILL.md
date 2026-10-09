@@ -44,7 +44,7 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   delay; it does not wait for loading to finish.
 - If an action fails, read its error and suggested matches before retrying.
   Use `dom` to inspect the current page. On a real device or Simulator,
-  `dom --fresh` also rechecks which App is in the foreground.
+  `dom` also rechecks which App is in the foreground.
 - Keep page-dependent actions sequential. Batch known steps with `&&` so failure
   stops later mutations; inspect intermediate UI when the next step is not known.
   Parallelize only independent Devices or independent read-only observations.

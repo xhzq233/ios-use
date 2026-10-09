@@ -312,11 +312,10 @@ enum CLIHelp {
             """
         case "dom":
             return driverHelp(
-                usage: "ios-use dom [--raw] [--fresh] [--wait-quiescence] [--nodiff]",
+                usage: "ios-use dom [--raw] [--wait-quiescence] [--nodiff]",
                 summary: "Print the current UI element tree.",
                 options: [
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
-                    "--fresh             Also redetect the foreground App on XCTest targets",
                     "--nodiff            Return the complete current tree instead of changes",
                     "--diff              Explicitly select the default diff behavior",
                     "--wait-quiescence   Request UI-idle waiting, then refresh the tree",
@@ -325,7 +324,7 @@ enum CLIHelp {
                 Use labels/values as action targets, not entire DOM lines. --dom on an action already returns an updated tree.
                 dom defaults to diff; the first observation returns full. Use dom --nodiff for a full tree.
                 dom --nodiff --json retains exact geometry and label provenance.
-                Each observation captures the current tree; snapshots are not reused across commands.
+                Each observation redetects the foreground App on XCTest targets and captures the current tree; snapshots are not reused across commands.
                 Diff is computed in the Driver: - removed selectors, + added rows, ~ updated rows, with shared parent context.
                 Layout-only changes are reported separately; full output is used when its text is shorter.
                 App/session/size changes reset diff; unchanged semantics do not prove visual readiness.

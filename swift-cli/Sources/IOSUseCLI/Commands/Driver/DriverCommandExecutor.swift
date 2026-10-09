@@ -48,8 +48,8 @@ enum DriverCommandExecutor {
             )
         }
         switch action {
-        case .dom(let raw, let fresh, let waitQuiescence, let diff):
-            let payload = try requiredPayload(clientRunner { .dom(try $0.observeDOM(observer!.arguments(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence, diff: diff))) }, as: ForyDomPayload.self)
+        case .dom(let raw, let waitQuiescence, let diff):
+            let payload = try requiredPayload(clientRunner { .dom(try $0.observeDOM(observer!.arguments(raw: raw, waitQuiescence: waitQuiescence, diff: diff))) }, as: ForyDomPayload.self)
             let observation = try observer!.observe(payload, diff: diff)
             ok = true
             return DriverCommandResult(stdout: observation.text, payload: .dom(payload), observation: observation)
@@ -302,7 +302,7 @@ enum DriverCommandExecutor {
         if let milliseconds = mode.milliseconds {
             Thread.sleep(forTimeInterval: Double(milliseconds) / 1000)
         }
-        return try postMutationDom(args: observer?.arguments(fresh: true, waitQuiescence: mode.milliseconds == nil, diff: mode.diff) ?? ForyDomArgs(fresh: true, waitQuiescence: mode.milliseconds == nil), clientRunner: clientRunner)
+        return try postMutationDom(args: observer?.arguments(waitQuiescence: mode.milliseconds == nil, diff: mode.diff) ?? ForyDomArgs(waitQuiescence: mode.milliseconds == nil), clientRunner: clientRunner)
     }
 
     static func collectPostDom(mode: PostDomMode, paths: IOSUsePaths, detailed: Bool = false) throws -> ForyDomPayload {

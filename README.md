@@ -15,7 +15,7 @@ Application nodes in the DOM provide page context. Element selectors search
 their contents, so an App name does not shadow a button with the same label.
 DOM reads, semantic actions and each wait poll capture the current tree; the
 Driver does not reuse a snapshot across commands. On XCTest targets,
-`dom --fresh` additionally redetects the foreground App after an external App switch.
+each DOM observation redetects the foreground App after an external App switch.
 
 DOM observations default to diff. Use `dom`, or append `--dom [duration]` / `-D [duration]` to a UI
 mutation (`tap`, `longpress`, `input`, `swipe`, `rotate`, `home`, `dismissAlert`,

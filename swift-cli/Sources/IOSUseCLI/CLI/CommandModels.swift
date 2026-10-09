@@ -356,7 +356,7 @@ public enum DriverAction: Equatable, Sendable {
     case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case input(tap: String?, content: String, delete: Int, enter: Bool, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case swipe(to: String?, from: String?, find: String? = nil, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
-    case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool, diff: Bool = false)
+    case dom(raw: Bool, waitQuiescence: Bool, diff: Bool = false)
     case screenshot(name: String?, ocr: Bool)
     case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode)
     case activateApp(bundleId: String)
