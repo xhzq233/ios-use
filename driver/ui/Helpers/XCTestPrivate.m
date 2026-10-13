@@ -369,6 +369,28 @@ XCUIApplication *GetActiveApplication(void)
     NSArray<id<FBXCAccessibilityElement>> *activeApplicationElements = [AccessibilityClient() performSelector:NSSelectorFromString(@"activeApplications")];
     id<FBXCAccessibilityElement> activeApplicationElement = nil;
 
+    // On integrated multi-display devices the primary display may retain
+    // SpringBoard while an app is foreground on the unfolded inner display.
+    // A point on UIScreen.mainScreen therefore cannot decide the active app.
+    if (XCUIScreen.screens.count > 1) {
+        XCUIApplication *foregroundApplication = nil;
+        XCUIApplication *systemApplication = nil;
+        for (id<FBXCAccessibilityElement> appElement in activeApplicationElements) {
+            XCUIApplication *application = ApplicationWithPID(appElement.processIdentifier);
+            if (!application || application.state != XCUIApplicationStateRunningForeground) continue;
+            if ([[application valueForKey:@"bundleID"] isEqualToString:@"com.apple.springboard"]) {
+                systemApplication = application;
+            } else if (!foregroundApplication) {
+                foregroundApplication = application;
+            }
+        }
+        if (foregroundApplication) {
+            // Keep system permission/confirmation alerts in control of the DOM.
+            if (systemApplication && systemApplication.alerts.count > 0) return systemApplication;
+            return foregroundApplication;
+        }
+    }
+
     if (activeApplicationElements.count > 1) {
         id<FBXCAccessibilityElement> currentElement = DetectionPointElement();
         if (nil == currentElement) {
@@ -889,10 +911,31 @@ BOOL SnapshotMatchesElement(id a, id b) {
     // WDA: self.lastSnapshot = snapshot (XCUIElement private header, @property(retain))
     [app setValue:raw forKey:@"lastSnapshot"];
     CGRect appFrame = XCRawSnapshotFrame(raw);
+    BOOL hasDisplayWindowFrame = NO;
+    if (XCUIScreen.screens.count > 1) {
+        // The application root can retain portrait/primary-display geometry
+        // while its window is landscape on another integrated display.
+        NSArray *children = XCValueForKeySafely(raw, @"children");
+        for (id child in children) {
+            NSNumber *type = XCValueForKeySafely(child, @"elementType");
+            NSNumber *displayID = XCValueForKeySafely(child, @"displayID");
+            CGRect windowFrame = XCRawSnapshotFrame(child);
+            if (type.unsignedIntegerValue == XCUIElementTypeWindow && displayID.unsignedLongLongValue > 0 && !CGRectIsEmpty(windowFrame)) {
+                appFrame = windowFrame;
+                hasDisplayWindowFrame = YES;
+                break;
+            }
+        }
+    }
     if (CGRectIsEmpty(appFrame)) {
         appFrame = [UIScreen mainScreen].bounds;
     }
-    return [[SafeSnapshot alloc] initWithRaw:raw appFrame:appFrame];
+    SafeSnapshot *result = [[SafeSnapshot alloc] initWithRaw:raw appFrame:appFrame];
+    if (hasDisplayWindowFrame) {
+        result->_frame = appFrame;
+        result->_frameCached = YES;
+    }
+    return result;
 }
 
 - (instancetype)initWithRaw:(id)raw appFrame:(CGRect)appFrame {
