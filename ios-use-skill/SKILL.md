@@ -42,6 +42,9 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
 - Verify the requested result in the returned output. For loading, use
   `waitFor` with an observed label or loading indicator. `-D 300ms` adds a fixed
   delay; it does not wait for loading to finish.
+- If a connected iPhone is asleep and has no passcode, `ios-use home` can wake
+  its screen. The command presses Home, so it can also leave the current App when
+  the phone is already unlocked. It cannot unlock a passcode-protected iPhone.
 - If an action fails, read its error and suggested matches before retrying.
   Use `dom` to inspect the current page. On a real device or Simulator,
   `dom` also rechecks which App is in the foreground.
