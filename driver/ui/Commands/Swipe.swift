@@ -261,8 +261,8 @@ enum SwipeCommands {
                                                  to: ForyPoint,
                                                  app: XCUIApplication,
                                                  waitForIdle: Bool = true) throws -> ForyResponseFrame {
-        let start = RawPointer.coordinate(app: app, point: CGPoint(x: from.x, y: from.y))
-        let end = RawPointer.coordinate(app: app, point: CGPoint(x: to.x, y: to.y))
+        let start = try RawPointer.coordinate(app: app, point: CGPoint(x: from.x, y: from.y))
+        let end = try RawPointer.coordinate(app: app, point: CGPoint(x: to.x, y: to.y))
         _ = try RawPointer.perform(
             app: app,
             event: .drag(

@@ -183,7 +183,7 @@ func hitPointOffset(for vector: CGVector, scrollFrame: CGRect) -> CGVector {
 func scrollAncestorByVector(_ vector: CGVector, scrollFrame: CGRect, app: XCUIApplication) throws {
     let hitPoint = hitPointOffset(for: vector, scrollFrame: scrollFrame)
 
-    let startCoord = RawPointer.coordinate(app: app, point: CGPoint(x: hitPoint.dx, y: hitPoint.dy))
+    let startCoord = try RawPointer.coordinate(app: app, point: CGPoint(x: hitPoint.dx, y: hitPoint.dy))
     let endCoord = startCoord.withOffset(CGVector(dx: vector.dx, dy: vector.dy))
 
     _ = try RawPointer.perform(

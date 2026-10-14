@@ -8,10 +8,19 @@ enum ScreenCommands {
     /// Captures a JPEG screenshot and returns it as a ForyResponseFrame.
     static func screenshot() throws -> ForyResponseFrame {
         var error: NSError?
-        guard let jpeg = XCRequestScreenshotJPEG(CGFloat(IOSUseProtocol.screenshotJpegQuality), &error) as Data? else {
+        var screen = XCUIScreen.main
+        var scale = Double(UIScreen.main.scale)
+        if XCUIScreen.screens.count > 1 {
+            let app = try Session.shared.refreshActive()
+            guard let appScreen = XCAppScreen(app, &error) else {
+                throw DriverError.screenshotFailed(error?.localizedDescription ?? "Active display is unavailable")
+            }
+            screen = appScreen
+            scale = (screen.value(forKey: "scale") as? NSNumber)?.doubleValue ?? 0
+        }
+        guard let jpeg = XCRequestScreenshotJPEG(CGFloat(IOSUseProtocol.screenshotJpegQuality), screen, &error) as Data? else {
             throw DriverError.screenshotFailed("JPEG capture failed: \(error?.localizedDescription ?? "unknown error")")
         }
-        let screen = UIScreen.main
         let payload = ForyScreenshotPayload(
             jpeg: jpeg,
             // Some real-device XCTest runners report a synthetic 320×480
@@ -19,7 +28,7 @@ enum ScreenCommands {
             // CoreDevice Display Info in parallel with this request, so do not
             // take an expensive AX snapshot on the screenshot hot path.
             logicalSize: ForyPoint(),
-            scale: Double(screen.scale)
+            scale: scale
         )
         return try Codec.foryOK(payload)
     }

@@ -7,9 +7,12 @@ enum RawPointerEvent {
 }
 
 enum RawPointer {
-    static func coordinate(app: XCUIApplication, point: CGPoint) -> XCUICoordinate {
+    static func coordinate(app: XCUIApplication, point: CGPoint) throws -> XCUICoordinate {
         if XCUIScreen.screens.count > 1 {
-            let window = app.windows.firstMatch
+            var error: NSError?
+            guard let window = XCAppWindow(app, &error) else {
+                throw DriverError.gestureFailed(error?.localizedDescription ?? "Active display window is unavailable")
+            }
             let frame = window.frame
             return window.coordinate(withNormalizedOffset: .zero)
                 .withOffset(CGVector(dx: point.x - frame.minX, dy: point.y - frame.minY))
@@ -18,41 +21,33 @@ enum RawPointer {
             .withOffset(CGVector(dx: point.x, dy: point.y))
     }
 
+    private static func displayID(app: XCUIApplication) throws -> NSNumber? {
+        guard XCUIScreen.screens.count > 1 else { return nil }
+        var error: NSError?
+        guard let screen = XCAppScreen(app, &error) else {
+            throw DriverError.gestureFailed(error?.localizedDescription ?? "Active display is unavailable")
+        }
+        return screen.value(forKey: "displayID") as? NSNumber
+    }
+
     static func perform(app: XCUIApplication, event: RawPointerEvent, waitForIdle: Bool = true) throws -> NSError? {
         if waitForIdle { try Quiescence.wait(app: app, command: "raw-pointer") }
         try CommandDeadline.check()
 
-        // App-relative XCTest coordinates resolve the display from the app's
-        // snapshot. Raw synthesized records otherwise default to the outer screen.
-        if XCUIScreen.screens.count > 1 {
-            switch event {
-            case .tap(let point):
-                try Quiescence.bounded {
-                    coordinate(app: app, point: point).tap()
-                }
-                return nil
-            case .longPress(let point, let duration):
-                try Quiescence.bounded {
-                    coordinate(app: app, point: point).press(forDuration: duration)
-                }
-                return nil
-            case .drag:
-                break
-            }
-        }
-
         switch event {
         case .tap(let point):
             var error: NSError?
-            let screenPoint = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: point.x, dy: point.y)).screenPoint
-            guard XCSynthesizeTapAtPoint(screenPoint, app, &error) else { return error }
+            let screenPoint = try coordinate(app: app, point: point).screenPoint
+            let display = try displayID(app: app)
+            try CommandDeadline.check()
+            guard XCSynthesizeTapAtPoint(screenPoint, app, display, &error) else { return error }
 
         case .longPress(let point, let duration):
             var error: NSError?
-            let screenPoint = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: point.x, dy: point.y)).screenPoint
-            guard XCSynthesizeLongPressAtPoint(screenPoint, duration, app, &error) else { return error }
+            let screenPoint = try coordinate(app: app, point: point).screenPoint
+            let display = try displayID(app: app)
+            try CommandDeadline.check()
+            guard XCSynthesizeLongPressAtPoint(screenPoint, duration, app, display, &error) else { return error }
 
         case .drag(let start, let end, let pressDuration, let velocity, let holdDuration):
             try Quiescence.bounded {

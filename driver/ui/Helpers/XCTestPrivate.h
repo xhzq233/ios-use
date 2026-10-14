@@ -7,6 +7,13 @@ void XCPressAndDrag(XCUICoordinate *start, XCUICoordinate *end,
 
 XCUIApplication * _Nullable GetActiveApplication(void);
 
+/// Resolve the target App's live window to an active XCTest screen. Single-screen
+/// devices retain the main-screen path; multi-screen IDs come from window snapshots.
+XCUIScreen * _Nullable XCAppScreen(XCUIApplication * _Nonnull app, NSError * _Nullable * _Nullable error);
+XCUIElement * _Nullable XCAppWindow(XCUIApplication * _Nonnull app, NSError * _Nullable * _Nullable error);
+/// Find a nonempty, visible display-backed window in an application snapshot.
+id _Nullable XCDisplayWindowSnapshot(id _Nonnull raw);
+
 /// Temporarily bound XCTest's own application-idle waits, including implicit
 /// waits inside native gestures. Restores the process setting even on exception.
 BOOL XCWithApplicationStateTimeout(double timeout, void (NS_NOESCAPE ^ _Nonnull block)(void), NSError * _Nullable * _Nullable error);
@@ -21,16 +28,21 @@ BOOL XCFBTypeText(NSString * _Nonnull text, NSUInteger typingSpeed, NSError * _N
 
 /// WDA-style synthesized tap/long press using XCSynthesizedEventRecord +
 /// XCPointerEventPath(initForTouchAtPoint:offset:) + liftUpAtOffset:.
-/// Points are XCTest screen points; the record uses the target App's orientation.
-BOOL XCSynthesizeTapAtPoint(CGPoint point, XCUIApplication * _Nonnull app, NSError * _Nullable * _Nullable error);
-BOOL XCSynthesizeLongPressAtPoint(CGPoint point, double duration, XCUIApplication * _Nonnull app, NSError * _Nullable * _Nullable error);
+/// Points are XCTest screen points; the record uses the target App's orientation
+/// and, on multi-screen devices, its window's display ID.
+BOOL XCSynthesizeTapAtPoint(CGPoint point, XCUIApplication * _Nonnull app, NSNumber * _Nullable displayID,
+                            NSError * _Nullable * _Nullable error);
+BOOL XCSynthesizeLongPressAtPoint(CGPoint point, double duration, XCUIApplication * _Nonnull app,
+                                  NSNumber * _Nullable displayID, NSError * _Nullable * _Nullable error);
 /// Build a touch record without dispatching it.
 id _Nullable XCMakeTouchEventRecord(CGPoint point, double holdDuration, NSString * _Nonnull name,
-                                    NSInteger interfaceOrientation, NSError * _Nullable * _Nullable error);
+                                    NSInteger interfaceOrientation, NSNumber * _Nullable displayID,
+                                    NSError * _Nullable * _Nullable error);
 
 /// Captures a screenshot through XCTest daemon `_XCT_requestScreenshot`
 /// using JPEG encoding with the provided compression quality.
-NSData * _Nullable XCRequestScreenshotJPEG(double compressionQuality, NSError * _Nullable * _Nullable error);
+NSData * _Nullable XCRequestScreenshotJPEG(double compressionQuality, XCUIScreen * _Nonnull screen,
+                                           NSError * _Nullable * _Nullable error);
 
 /// Matches WDA's defaultTypingFrequency:
 /// NSUserDefaults["com.apple.xctest.iOSMaximumTypingFrequency"] or 60.
