@@ -7,9 +7,39 @@ enum RawPointerEvent {
 }
 
 enum RawPointer {
+    static func coordinate(app: XCUIApplication, point: CGPoint) -> XCUICoordinate {
+        if XCUIScreen.screens.count > 1 {
+            let window = app.windows.firstMatch
+            let frame = window.frame
+            return window.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: point.x - frame.minX, dy: point.y - frame.minY))
+        }
+        return app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: point.x, dy: point.y))
+    }
+
     static func perform(app: XCUIApplication, event: RawPointerEvent, waitForIdle: Bool = true) throws -> NSError? {
         if waitForIdle { try Quiescence.wait(app: app, command: "raw-pointer") }
         try CommandDeadline.check()
+
+        // App-relative XCTest coordinates resolve the display from the app's
+        // snapshot. Raw synthesized records otherwise default to the outer screen.
+        if XCUIScreen.screens.count > 1 {
+            switch event {
+            case .tap(let point):
+                try Quiescence.bounded {
+                    coordinate(app: app, point: point).tap()
+                }
+                return nil
+            case .longPress(let point, let duration):
+                try Quiescence.bounded {
+                    coordinate(app: app, point: point).press(forDuration: duration)
+                }
+                return nil
+            case .drag:
+                break
+            }
+        }
 
         switch event {
         case .tap(let point):
