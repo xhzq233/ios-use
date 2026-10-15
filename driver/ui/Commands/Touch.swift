@@ -48,7 +48,7 @@ enum TouchCommands {
         case .found(let snapshot, let elem, let frame):
             defer { withExtendedLifetime(snapshot) {} }
             let point = resolveTapPoint(frame: frame, offset: args.offset, ratio: args.ratio)
-            try tapAtPoint(point, app: app, waitForIdle: false)
+            try tapAtPoint(point, app: app, displayContext: snapshot.root.displayContext, waitForIdle: false)
             let payload = ForyElementPayload(
                 element: makeForyElementSummary(elem.node)
             )
@@ -98,7 +98,8 @@ enum TouchCommands {
         switch try resolveSemanticTouchTarget(target, command: "longPress") {
         case .found(let snapshot, let elem, let frame):
             defer { withExtendedLifetime(snapshot) {} }
-            try pressAtPoint(CGPoint(x: frame.midX, y: frame.midY), duration: duration, app: app, waitForIdle: false)
+            try pressAtPoint(CGPoint(x: frame.midX, y: frame.midY), duration: duration, app: app,
+                             displayContext: snapshot.root.displayContext, waitForIdle: false)
             let payload = ForyElementPayload(
                 element: makeForyElementSummary(elem.node)
             )
@@ -109,14 +110,17 @@ enum TouchCommands {
 
     // MARK: - Internals
 
-    private static func tapAtPoint(_ p: CGPoint, app: XCUIApplication, waitForIdle: Bool = true) throws {
-        if let error = try RawPointer.perform(app: app, event: .tap(p), waitForIdle: waitForIdle) {
+    private static func tapAtPoint(_ p: CGPoint, app: XCUIApplication,
+                                   displayContext: XCDisplayContext? = nil, waitForIdle: Bool = true) throws {
+        if let error = try RawPointer.perform(app: app, event: .tap(p), displayContext: displayContext, waitForIdle: waitForIdle) {
             throw DriverError.gestureFailed("tap synthesis failed: \(error.localizedDescription)")
         }
     }
 
-    private static func pressAtPoint(_ p: CGPoint, duration: Double, app: XCUIApplication, waitForIdle: Bool = true) throws {
-        if let error = try RawPointer.perform(app: app, event: .longPress(p, duration: duration), waitForIdle: waitForIdle) {
+    private static func pressAtPoint(_ p: CGPoint, duration: Double, app: XCUIApplication,
+                                     displayContext: XCDisplayContext? = nil, waitForIdle: Bool = true) throws {
+        if let error = try RawPointer.perform(app: app, event: .longPress(p, duration: duration),
+                                             displayContext: displayContext, waitForIdle: waitForIdle) {
             throw DriverError.gestureFailed("longPress synthesis failed: \(error.localizedDescription)")
         }
     }

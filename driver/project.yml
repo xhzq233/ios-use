@@ -20,6 +20,7 @@ targets:
       - path: tcp
       - path: ui
       - path: runner
+      - path: tests/integration
     dependencies:
       - package: Fory
     info:
@@ -52,6 +53,8 @@ targets:
       - path: tcp
       - path: ui
       - path: tests
+        excludes:
+          - integration/**
     dependencies:
       - package: Fory
     settings:

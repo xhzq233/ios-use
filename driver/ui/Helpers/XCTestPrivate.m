@@ -14,6 +14,7 @@ static const double XCDefaultLongPressDuration = 0.5;
 static const CGFloat XCDetectionPointScreenRatio = 0.2;
 static const int64_t XCSynthesizeEventTimeoutSeconds = 5;
 static const int64_t XCScreenshotTimeoutSeconds = 20;
+static id XCWindowLayerSnapshot(XCUIApplication *app);
 
 BOOL XCWithApplicationStateTimeout(double timeout, void (^block)(void), NSError **error) {
     double (*getTimeout)(void) = dlsym(RTLD_DEFAULT, "_XCTApplicationStateTimeout");
@@ -105,6 +106,152 @@ static CGRect XCRawSnapshotFrame(id raw) {
     return [value CGRectValue];
 }
 
+static NSArray<XCUIScreen *> *XCScreenInventory = nil;
+
+static NSArray<XCUIScreen *> *XCDisplayScreens(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        for (NSNotificationName name in @[UIScreenDidConnectNotification, UIScreenDidDisconnectNotification]) {
+            [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:NSOperationQueue.mainQueue
+                usingBlock:^(NSNotification *notification) { XCScreenInventory = nil; }];
+        }
+    });
+    if (!XCScreenInventory) {
+        XCScreenInventory = XCUIScreen.screens;
+#if DEBUG_PERF
+        NSLog(@"[perf] display.inventory count=%lu", (unsigned long)XCScreenInventory.count);
+#endif
+    }
+    return XCScreenInventory;
+}
+
+void XCPrepareDisplays(void) { (void)XCDisplayScreens(); }
+BOOL XCHasMultipleDisplays(void) { return XCDisplayScreens().count > 1; }
+XCUIScreen *XCPrimaryScreen(void) { return XCDisplayScreens().firstObject; }
+
+static BOOL XCContainsVisibleAlert(id raw) {
+    NSUInteger type = [XCValueForKeySafely(raw, @"elementType") unsignedIntegerValue];
+    NSNumber *visible = XCValueForKeySafely(raw, @"isVisible");
+    if (visible && !visible.boolValue) return NO;
+    if (type == XCUIElementTypeAlert || type == XCUIElementTypeSheet) return YES;
+    for (id child in XCValueForKeySafely(raw, @"children")) {
+        if (XCContainsVisibleAlert(child)) return YES;
+    }
+    return NO;
+}
+
+static BOOL XCIsDisplayWindow(id window) {
+    NSNumber *type = XCValueForKeySafely(window, @"elementType");
+    NSNumber *displayID = XCValueForKeySafely(window, @"displayID");
+    NSNumber *visible = XCValueForKeySafely(window, @"isVisible");
+    return type.unsignedIntegerValue == XCUIElementTypeWindow
+        && [displayID isKindOfClass:[NSNumber class]]
+        && !CGRectIsEmpty(XCRawSnapshotFrame(window))
+        && (!visible || visible.boolValue);
+}
+
+id XCDisplayWindowSnapshot(id raw) {
+    NSArray *children = XCValueForKeySafely(raw, @"children");
+    NSArray *candidates = [XCValueForKeySafely(raw, @"elementType") unsignedIntegerValue] == XCUIElementTypeWindow
+        ? @[raw] : children;
+    id firstWindow = nil;
+    for (id window in candidates) {
+        if (XCIsDisplayWindow(window)) {
+            if (XCContainsVisibleAlert(window)) return window;
+            if (!firstWindow) firstWindow = window;
+        }
+    }
+    return firstWindow;
+}
+
+@interface XCDisplayContext ()
+@property (nonatomic, strong) XCUIApplication *app;
+@property (nonatomic, strong) id applicationSnapshot;
+@property (nonatomic, strong, readwrite) id windowSnapshot;
+@property (nonatomic, strong) XCUIElement *nativeWindow;
+@end
+
+@implementation XCDisplayContext
+- (NSNumber *)displayID { return XCValueForKeySafely(self.windowSnapshot, @"displayID"); }
+- (CGRect)windowFrame { return XCRawSnapshotFrame(self.windowSnapshot); }
+@end
+
+XCDisplayContext *XCResolveDisplayContext(XCUIApplication *app, id snapshot, NSError **error) {
+    id raw = snapshot;
+    if (!raw) {
+        raw = XCWindowLayerSnapshot(app);
+        // A shallow observation suffices for a single eligible window. With
+        // multiple candidates, inspect their content to preserve alert priority.
+        NSUInteger windows = 0;
+        for (id child in XCValueForKeySafely(raw, @"children")) {
+            if (XCIsDisplayWindow(child)) windows++;
+        }
+        if (windows > 1) raw = SnapshotOfElement(app);
+    }
+    id window = raw ? XCDisplayWindowSnapshot(raw) : nil;
+    if (window) {
+        // Native coordinate resolution associates its snapshot root with the
+        // App. A directly requested snapshot needs the same weak association.
+        [raw setValue:app forKey:@"application"];
+        XCDisplayContext *context = [XCDisplayContext new];
+        context.app = app;
+        context.applicationSnapshot = raw;
+        context.windowSnapshot = window;
+        return context;
+    }
+    if (error) {
+        *error = [NSError errorWithDomain:@"ios-use" code:20
+            userInfo:@{NSLocalizedDescriptionKey: @"Cannot resolve the foreground display's window snapshot"}];
+    }
+    return nil;
+}
+
+XCUIScreen *XCDisplayScreen(XCDisplayContext *context, NSError **error) {
+    // A newly observed display ID can precede UIKit's connection notification.
+    for (NSUInteger attempt = 0; attempt < 2; attempt++) {
+        for (XCUIScreen *screen in XCDisplayScreens()) {
+            if ([context.displayID isEqualToNumber:XCValueForKeySafely(screen, @"displayID")]) return screen;
+        }
+        XCScreenInventory = nil;
+    }
+    if (error) {
+        *error = [NSError errorWithDomain:@"ios-use" code:20
+            userInfo:@{NSLocalizedDescriptionKey: @"Cannot resolve the foreground window to an active XCTest display"}];
+    }
+    return nil;
+}
+
+XCUIElement *XCDisplayWindow(XCDisplayContext *context, NSError **error) {
+    if (context.nativeWindow) return context.nativeWindow;
+    for (XCUIElement *window in context.app.windows.allElementsBoundByIndex) {
+        if (SnapshotMatchesElement(context.windowSnapshot, SnapshotOfElement(window))) {
+            context.nativeWindow = window;
+            return window;
+        }
+    }
+    if (error) *error = [NSError errorWithDomain:@"ios-use" code:20
+        userInfo:@{NSLocalizedDescriptionKey: @"Cannot resolve the foreground display's native window"}];
+    return nil;
+}
+
+BOOL XCDisplayScreenPoint(XCDisplayContext *context, CGPoint point, NSInteger orientation,
+                          CGPoint *result, NSError **error) {
+    // XCUICoordinate.screenPoint applies this conversion to its referenced
+    // element's snapshot. Our point is already in the window's App coordinates.
+    SEL selector = NSSelectorFromString(@"point:transformedForEventSynthesisFromOrientation:error:");
+    if ([context.windowSnapshot respondsToSelector:selector]) {
+        id converted = ((id (*)(id, SEL, CGPoint, NSInteger, NSError **))objc_msgSend)(
+            context.windowSnapshot, selector, point, orientation, error);
+        if (converted) {
+            *result = ((CGPoint (*)(id, SEL))objc_msgSend)(converted, NSSelectorFromString(@"point"));
+            return YES;
+        }
+    }
+    if (error && !*error) *error = [NSError errorWithDomain:@"ios-use" code:20
+        userInfo:@{NSLocalizedDescriptionKey: @"Cannot convert the foreground window's touch coordinates"}];
+    return NO;
+}
+
 static BOOL XCRawSnapshotIsVisibleInAppFrame(id raw, CGRect appFrame) {
     NSNumber *value = XCValueForKeySafely(raw, @"isVisible");
     if ([value isKindOfClass:[NSNumber class]]) {
@@ -165,6 +312,7 @@ static id (*XCOriginalSnapshotParameters)(id, SEL) = NULL;
 static NSDictionary *XCDefaultRequestParameters = nil;
 static NSDictionary *XCAdditionalRequestParameters = nil;
 static NSMutableDictionary *XCCustomRequestParameters = nil;
+static NSNumber *XCSnapshotDepthOverride = nil;
 
 static void XCSetSnapshotRequestParameter(NSString *name, id value) {
     static dispatch_once_t onceToken;
@@ -192,6 +340,7 @@ static id XCSwizzledDefaultParameters(id self, SEL _cmd) {
     if ([XCCustomRequestParameters isKindOfClass:[NSDictionary class]]) {
         [result addEntriesFromDictionary:XCCustomRequestParameters];
     }
+    if (XCSnapshotDepthOverride) result[@"maxDepth"] = XCSnapshotDepthOverride;
     return result.copy;
 }
 
@@ -369,6 +518,28 @@ XCUIApplication *GetActiveApplication(void)
     NSArray<id<FBXCAccessibilityElement>> *activeApplicationElements = [AccessibilityClient() performSelector:NSSelectorFromString(@"activeApplications")];
     id<FBXCAccessibilityElement> activeApplicationElement = nil;
 
+    // On integrated multi-display devices the primary display may retain
+    // SpringBoard while an app is foreground on the unfolded inner display.
+    // A point on UIScreen.mainScreen therefore cannot decide the active app.
+    if (XCHasMultipleDisplays()) {
+        XCUIApplication *foregroundApplication = nil;
+        XCUIApplication *systemApplication = nil;
+        for (id<FBXCAccessibilityElement> appElement in activeApplicationElements) {
+            XCUIApplication *application = ApplicationWithPID(appElement.processIdentifier);
+            if (!application || application.state != XCUIApplicationStateRunningForeground) continue;
+            if ([[application valueForKey:@"bundleID"] isEqualToString:@"com.apple.springboard"]) {
+                systemApplication = application;
+            } else if (!foregroundApplication) {
+                foregroundApplication = application;
+            }
+        }
+        if (foregroundApplication) {
+            // Keep system permission/confirmation alerts in control of the DOM.
+            if (systemApplication && (systemApplication.alerts.count > 0 || systemApplication.sheets.count > 0)) return systemApplication;
+            return foregroundApplication;
+        }
+    }
+
     if (activeApplicationElements.count > 1) {
         id<FBXCAccessibilityElement> currentElement = DetectionPointElement();
         if (nil == currentElement) {
@@ -406,7 +577,7 @@ XCUIApplication *GetActiveApplication(void)
     return ApplicationWithPID(systemApplication.processIdentifier);
 }
 
-id SnapshotOfElement(XCUIElement *element) {
+static id XCSnapshotOfElement(XCUIElement *element, NSNumber *maxDepth) {
     if (!element) return nil;
     XCInstallSnapshotRequestParameterPatch();
     SEL sel = NSSelectorFromString(@"snapshotWithError:");
@@ -418,11 +589,31 @@ id SnapshotOfElement(XCUIElement *element) {
     [inv setSelector:sel];
     NSError *error = nil;
     [inv setArgument:&error atIndex:2];
-    [inv invoke];
-    __unsafe_unretained id tmp = nil;
-    [inv getReturnValue:&tmp];
-    return tmp;
+    NSNumber *previousDepth = XCSnapshotDepthOverride;
+    NSDictionary *previousParameters = XCAdditionalRequestParameters;
+    @try {
+        XCSnapshotDepthOverride = maxDepth;
+#if DEBUG_PERF
+        CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
+#endif
+        [inv invoke];
+        __unsafe_unretained id tmp = nil;
+        [inv getReturnValue:&tmp];
+#if DEBUG_PERF
+        NSLog(@"[perf] snapshot.request depth=%@ elapsed=%.1fms", maxDepth ?: @"full",
+              (CFAbsoluteTimeGetCurrent() - startedAt) * 1000);
+#endif
+        return tmp;
+    } @finally {
+        XCSnapshotDepthOverride = previousDepth;
+        // XCTest can echo scoped parameters through snapshotParameters. Do not
+        // let the window-only depth survive into a later DOM/target request.
+        if (maxDepth) XCAdditionalRequestParameters = previousParameters;
+    }
 }
+
+id SnapshotOfElement(XCUIElement *element) { return XCSnapshotOfElement(element, nil); }
+static id XCWindowLayerSnapshot(XCUIApplication *app) { return XCSnapshotOfElement(app, @2); }
 
 NSUInteger XCDefaultTypingFrequency(void) {
     NSInteger defaultFreq = [[NSUserDefaults standardUserDefaults] integerForKey:@"com.apple.xctest.iOSMaximumTypingFrequency"];
@@ -480,7 +671,7 @@ static BOOL XCSynthesizeEventRecord(id record, NSError **error) {
 }
 
 id XCMakeTouchEventRecord(CGPoint point, double holdDuration, NSString *name,
-                          NSInteger interfaceOrientation, NSError **error) {
+                          NSInteger interfaceOrientation, NSNumber *displayID, NSError **error) {
     Class recordClass = NSClassFromString(@"XCSynthesizedEventRecord");
     Class pathClass = NSClassFromString(@"XCPointerEventPath");
     if (!recordClass || !pathClass) {
@@ -493,7 +684,9 @@ id XCMakeTouchEventRecord(CGPoint point, double holdDuration, NSString *name,
     }
 
     id allocatedRecord = [recordClass alloc];
-    SEL initSel = NSSelectorFromString(@"initWithName:interfaceOrientation:");
+    SEL initSel = NSSelectorFromString(displayID
+        ? @"initWithName:displayID:interfaceOrientation:"
+        : @"initWithName:interfaceOrientation:");
     if (![allocatedRecord respondsToSelector:initSel]) {
         if (error) {
             *error = [NSError errorWithDomain:@"ios-use" code:6
@@ -501,7 +694,9 @@ id XCMakeTouchEventRecord(CGPoint point, double holdDuration, NSString *name,
         }
         return nil;
     }
-    id record = ((id (*)(id, SEL, id, NSInteger))objc_msgSend)(allocatedRecord, initSel, name, interfaceOrientation);
+    id record = displayID
+        ? ((id (*)(id, SEL, id, unsigned long long, NSInteger))objc_msgSend)(allocatedRecord, initSel, name, displayID.unsignedLongLongValue, interfaceOrientation)
+        : ((id (*)(id, SEL, id, NSInteger))objc_msgSend)(allocatedRecord, initSel, name, interfaceOrientation);
 
     SEL pathInitSel = NSSelectorFromString(@"initForTouchAtPoint:offset:");
     id path = [[pathClass alloc] init];
@@ -545,7 +740,7 @@ id XCMakeTouchEventRecord(CGPoint point, double holdDuration, NSString *name,
 }
 
 static BOOL XCSynthesizeTouchPath(CGPoint point, double holdDuration, NSString *name,
-                                  XCUIApplication *app, NSError **error) {
+                                  XCUIApplication *app, NSNumber *displayID, NSError **error) {
     NSNumber *orientation = XCValueForKeySafely(app, @"interfaceOrientation");
     if (![orientation isKindOfClass:[NSNumber class]]) {
         if (error) {
@@ -554,20 +749,20 @@ static BOOL XCSynthesizeTouchPath(CGPoint point, double holdDuration, NSString *
         }
         return NO;
     }
-    id record = XCMakeTouchEventRecord(point, holdDuration, name, orientation.integerValue, error);
+    id record = XCMakeTouchEventRecord(point, holdDuration, name, orientation.integerValue, displayID, error);
     return record != nil && XCSynthesizeEventRecord(record, error);
 }
 
-BOOL XCSynthesizeTapAtPoint(CGPoint point, XCUIApplication *app, NSError **error) {
-    return XCSynthesizeTouchPath(point, XCTapLiftUpDelay, @"Tap", app, error);
+BOOL XCSynthesizeTapAtPoint(CGPoint point, XCUIApplication *app, NSNumber *displayID, NSError **error) {
+    return XCSynthesizeTouchPath(point, XCTapLiftUpDelay, @"Tap", app, displayID, error);
 }
 
-BOOL XCSynthesizeLongPressAtPoint(CGPoint point, double duration, XCUIApplication *app, NSError **error) {
+BOOL XCSynthesizeLongPressAtPoint(CGPoint point, double duration, XCUIApplication *app, NSNumber *displayID, NSError **error) {
     double effectiveDuration = duration > 0 ? duration : XCDefaultLongPressDuration;
-    return XCSynthesizeTouchPath(point, effectiveDuration, @"Long Press", app, error);
+    return XCSynthesizeTouchPath(point, effectiveDuration, @"Long Press", app, displayID, error);
 }
 
-NSData *XCRequestScreenshotJPEG(double compressionQuality, NSError **error) {
+NSData *XCRequestScreenshotJPEG(double compressionQuality, XCUIScreen *screen, NSError **error) {
     Class daemonSessionClass = NSClassFromString(@"XCTRunnerDaemonSession");
     SEL sharedSel = NSSelectorFromString(@"sharedSession");
     if (!daemonSessionClass || ![daemonSessionClass respondsToSelector:sharedSel]) {
@@ -642,7 +837,7 @@ NSData *XCRequestScreenshotJPEG(double compressionQuality, NSError **error) {
         }
         return nil;
     }
-    id rawScreenID = [XCUIScreen.mainScreen valueForKey:@"displayID"];
+    id rawScreenID = [screen valueForKey:@"displayID"];
     long long screenID = [rawScreenID respondsToSelector:@selector(longLongValue)] ? [rawScreenID longLongValue] : 0;
     CGRect rect = CGRectNull;
     NSMethodSignature *requestInitSig = [screenshotRequestAllocated methodSignatureForSelector:requestInitSel];
@@ -804,6 +999,7 @@ BOOL SnapshotMatchesElement(id a, id b) {
 @implementation SafeSnapshot
 {
     id _raw;
+    XCDisplayContext *_displayContext;
     CGRect _appFrame;
     NSString *_label;
     NSString *_identifier;
@@ -868,31 +1064,28 @@ BOOL SnapshotMatchesElement(id a, id b) {
 // MARK: Factory
 
 + (instancetype)snapshotOfApp:(XCUIApplication *)app {
-    XCInstallSnapshotRequestParameterPatch();
-    __block id raw = nil;
-    @autoreleasepool {
-        SEL sel = NSSelectorFromString(@"snapshotWithError:");
-        if (![app respondsToSelector:sel]) return nil;
-        NSMethodSignature *sig = [app methodSignatureForSelector:sel];
-        if (!sig) return nil;
-        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-        [inv setTarget:app];
-        [inv setSelector:sel];
-        NSError *error = nil;
-        [inv setArgument:&error atIndex:2];
-        [inv invoke];
-        __unsafe_unretained id tmp = nil;
-        [inv getReturnValue:&tmp];
-        raw = tmp;
-    }
+    id raw = SnapshotOfElement(app);
     if (!raw) return nil;
     // WDA: self.lastSnapshot = snapshot (XCUIElement private header, @property(retain))
     [app setValue:raw forKey:@"lastSnapshot"];
     CGRect appFrame = XCRawSnapshotFrame(raw);
+    XCDisplayContext *displayContext = nil;
+    if (XCHasMultipleDisplays()) {
+        // The application root can retain portrait/primary-display geometry
+        // while its window is landscape on another integrated display.
+        displayContext = XCResolveDisplayContext(app, raw, nil);
+        if (displayContext) appFrame = displayContext.windowFrame;
+    }
     if (CGRectIsEmpty(appFrame)) {
         appFrame = [UIScreen mainScreen].bounds;
     }
-    return [[SafeSnapshot alloc] initWithRaw:raw appFrame:appFrame];
+    SafeSnapshot *result = [[SafeSnapshot alloc] initWithRaw:raw appFrame:appFrame];
+    result->_displayContext = displayContext;
+    if (displayContext) {
+        result->_frame = appFrame;
+        result->_frameCached = YES;
+    }
+    return result;
 }
 
 - (instancetype)initWithRaw:(id)raw appFrame:(CGRect)appFrame {
@@ -905,6 +1098,7 @@ BOOL SnapshotMatchesElement(id a, id b) {
 }
 
 - (id)raw { return _raw; }
+- (XCDisplayContext *)displayContext { return _displayContext; }
 - (CGRect)appFrame { return _appFrame; }
 
 // MARK: Properties
