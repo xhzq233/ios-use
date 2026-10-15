@@ -4,6 +4,7 @@ final class IOSUseDriver: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = true
+        XCPrepareDisplays()
         // #region debug-point xctest-entry-setup
         DriverLog.info("[debug][xctest-entry-setup] IOSUseDriver setUp invoked")
         // #endregion

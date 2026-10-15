@@ -157,6 +157,7 @@ strip_release_test_binary() {
 if [ "$DEBUG_PERF" = true ]; then
   XCODE_COMMON+=(
     'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) FORY_SWIFT_MACRO DEBUG_PERF'
+    'GCC_PREPROCESSOR_DEFINITIONS=$(inherited) DEBUG_PERF=1'
   )
   echo "[build] DEBUG_PERF enabled"
 fi

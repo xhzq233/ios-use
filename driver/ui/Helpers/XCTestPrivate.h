@@ -7,10 +7,30 @@ void XCPressAndDrag(XCUICoordinate *start, XCUICoordinate *end,
 
 XCUIApplication * _Nullable GetActiveApplication(void);
 
-/// Resolve the target App's live window to an active XCTest screen. Single-screen
-/// devices retain the main-screen path; multi-screen IDs come from window snapshots.
-XCUIScreen * _Nullable XCAppScreen(XCUIApplication * _Nonnull app, NSError * _Nullable * _Nullable error);
-XCUIElement * _Nullable XCAppWindow(XCUIApplication * _Nonnull app, NSError * _Nullable * _Nullable error);
+/// Cache screen capabilities, not the currently foreground window/display.
+/// Screen connection notifications invalidate the inventory.
+void XCPrepareDisplays(void);
+BOOL XCHasMultipleDisplays(void);
+XCUIScreen * _Nonnull XCPrimaryScreen(void);
+
+/// Owned by one observation/gesture. Never cached across commands.
+@interface XCDisplayContext : NSObject
+@property (nonatomic, readonly, nonnull) id windowSnapshot;
+@property (nonatomic, readonly, nonnull) NSNumber *displayID;
+@property (nonatomic, readonly) CGRect windowFrame;
+@end
+
+/// Reuse the supplied snapshot. Otherwise request only App -> Window metadata;
+/// multiple eligible windows require a full snapshot to preserve alert priority.
+XCDisplayContext * _Nullable XCResolveDisplayContext(XCUIApplication * _Nonnull app, id _Nullable snapshot,
+                                                    NSError * _Nullable * _Nullable error);
+XCUIScreen * _Nullable XCDisplayScreen(XCDisplayContext * _Nonnull context, NSError * _Nullable * _Nullable error);
+/// Native drag anchoring resolves the window at most once per context.
+XCUIElement * _Nullable XCDisplayWindow(XCDisplayContext * _Nonnull context, NSError * _Nullable * _Nullable error);
+/// Same snapshot coordinate conversion used by XCUICoordinate.screenPoint, without
+/// resolving another live XCUIElement/window or requesting another snapshot.
+BOOL XCDisplayScreenPoint(XCDisplayContext * _Nonnull context, CGPoint point, NSInteger orientation,
+                          CGPoint * _Nonnull result, NSError * _Nullable * _Nullable error);
 /// Find a nonempty, visible display-backed window in an application snapshot.
 id _Nullable XCDisplayWindowSnapshot(id _Nonnull raw);
 
@@ -66,6 +86,7 @@ BOOL SnapshotMatchesElement(id _Nonnull a, id _Nonnull b);
                             appFrame:(CGRect)appFrame;
 
 @property (nonatomic, readonly, nonnull) id raw;
+@property (nonatomic, readonly, nullable) XCDisplayContext *displayContext;
 @property (nonatomic, readonly, nullable) NSString *label;
 @property (nonatomic, readonly, nullable) NSString *identifier;
 @property (nonatomic, readonly, nullable) NSString *baseDisplayLabel;

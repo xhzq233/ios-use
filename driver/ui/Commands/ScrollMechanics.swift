@@ -22,27 +22,31 @@ func scrollBackwardsToward(targetFrame: CGRect, scrollFrame: CGRect, axis: Scrol
 // MARK: - Normalized direction helpers (doc 5.8)
 
 /// Content scrolls up → finger moves down (+dy)
-func scrollUpByNormalizedDistance(_ dist: Double, scrollFrame: CGRect, app: XCUIApplication) throws {
+func scrollUpByNormalizedDistance(_ dist: Double, scrollFrame: CGRect, app: XCUIApplication,
+                                  displayContext: XCDisplayContext? = nil) throws {
     let vector = CGVector(dx: 0, dy: scrollFrame.height * CGFloat(dist))
-    try scrollByVector(vector, scrollFrame: scrollFrame, app: app)
+    try scrollByVector(vector, scrollFrame: scrollFrame, app: app, displayContext: displayContext)
 }
 
 /// Content scrolls down → finger moves up (-dy)
-func scrollDownByNormalizedDistance(_ dist: Double, scrollFrame: CGRect, app: XCUIApplication) throws {
+func scrollDownByNormalizedDistance(_ dist: Double, scrollFrame: CGRect, app: XCUIApplication,
+                                    displayContext: XCDisplayContext? = nil) throws {
     let vector = CGVector(dx: 0, dy: -scrollFrame.height * CGFloat(dist))
-    try scrollByVector(vector, scrollFrame: scrollFrame, app: app)
+    try scrollByVector(vector, scrollFrame: scrollFrame, app: app, displayContext: displayContext)
 }
 
 /// Content scrolls left → finger moves right (+dx)
-func scrollLeftByNormalizedDistance(_ dist: Double, scrollFrame: CGRect, app: XCUIApplication) throws {
+func scrollLeftByNormalizedDistance(_ dist: Double, scrollFrame: CGRect, app: XCUIApplication,
+                                    displayContext: XCDisplayContext? = nil) throws {
     let vector = CGVector(dx: scrollFrame.width * CGFloat(dist), dy: 0)
-    try scrollByVector(vector, scrollFrame: scrollFrame, app: app)
+    try scrollByVector(vector, scrollFrame: scrollFrame, app: app, displayContext: displayContext)
 }
 
 /// Content scrolls right → finger moves left (-dx)
-func scrollRightByNormalizedDistance(_ dist: Double, scrollFrame: CGRect, app: XCUIApplication) throws {
+func scrollRightByNormalizedDistance(_ dist: Double, scrollFrame: CGRect, app: XCUIApplication,
+                                     displayContext: XCDisplayContext? = nil) throws {
     let vector = CGVector(dx: -scrollFrame.width * CGFloat(dist), dy: 0)
-    try scrollByVector(vector, scrollFrame: scrollFrame, app: app)
+    try scrollByVector(vector, scrollFrame: scrollFrame, app: app, displayContext: displayContext)
 }
 
 // MARK: - Vector scroll (segmented, doc 5.8)
@@ -123,11 +127,13 @@ func projectVectorToPrimaryAxis(_ vector: CGVector, axis: ScrollAxis) -> CGVecto
 /// Executes each precomputed segment exactly once and returns the number of
 /// segments that were dispatched.
 /// Time complexity: O(k), where k is the segment count.
-func dispatchScrollSegments(_ segments: [CGVector], scrollFrame: CGRect, app: XCUIApplication) throws -> Int {
+func dispatchScrollSegments(_ segments: [CGVector], scrollFrame: CGRect, app: XCUIApplication,
+                            displayContext: XCDisplayContext? = nil) throws -> Int {
     guard !segments.isEmpty else { return 0 }
+    let origin = try RawPointer.origin(app: app, displayContext: displayContext)
     for (index, segment) in segments.enumerated() {
         try autoreleasepool {
-            try scrollAncestorByVector(segment, scrollFrame: scrollFrame, app: app)
+            try scrollAncestorByVector(segment, scrollFrame: scrollFrame, app: app, origin: origin)
         }
 
         if index < segments.count - 1 {
@@ -142,9 +148,10 @@ func dispatchScrollSegments(_ segments: [CGVector], scrollFrame: CGRect, app: XC
 
 /// Plans then dispatches scroll segments.
 /// Time complexity: O(k), where k is the segment count.
-func scrollByVector(_ vector: CGVector, scrollFrame: CGRect, app: XCUIApplication) throws -> Int {
+func scrollByVector(_ vector: CGVector, scrollFrame: CGRect, app: XCUIApplication,
+                    displayContext: XCDisplayContext? = nil) throws -> Int {
     let segments = scrollSegments(for: vector, scrollFrame: scrollFrame)
-    return try dispatchScrollSegments(segments, scrollFrame: scrollFrame, app: app)
+    return try dispatchScrollSegments(segments, scrollFrame: scrollFrame, app: app, displayContext: displayContext)
 }
 
 /// Computes the vector that drags the target's center to the scroll frame's
@@ -180,10 +187,12 @@ func hitPointOffset(for vector: CGVector, scrollFrame: CGRect) -> CGVector {
 /// WDA's fb_scrollAncestorScrollViewByVectorWithinScrollViewFrame:
 /// Compute absolute coordinates and perform press+drag at 350 px/s.
 /// Time complexity: O(1).
-func scrollAncestorByVector(_ vector: CGVector, scrollFrame: CGRect, app: XCUIApplication) throws {
+func scrollAncestorByVector(_ vector: CGVector, scrollFrame: CGRect, app: XCUIApplication,
+                            origin: XCUICoordinate? = nil) throws {
     let hitPoint = hitPointOffset(for: vector, scrollFrame: scrollFrame)
 
-    let startCoord = try RawPointer.coordinate(app: app, point: CGPoint(x: hitPoint.dx, y: hitPoint.dy))
+    let anchor = try origin ?? RawPointer.origin(app: app)
+    let startCoord = anchor.withOffset(hitPoint)
     let endCoord = startCoord.withOffset(CGVector(dx: vector.dx, dy: vector.dy))
 
     _ = try RawPointer.perform(

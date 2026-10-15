@@ -8,11 +8,12 @@ enum ScreenCommands {
     /// Captures a JPEG screenshot and returns it as a ForyResponseFrame.
     static func screenshot() throws -> ForyResponseFrame {
         var error: NSError?
-        var screen = XCUIScreen.main
+        var screen = XCPrimaryScreen()
         var scale = Double(UIScreen.main.scale)
-        if XCUIScreen.screens.count > 1 {
+        if XCHasMultipleDisplays() {
             let app = try Session.shared.refreshActive()
-            guard let appScreen = XCAppScreen(app, &error) else {
+            guard let context = XCResolveDisplayContext(app, nil, &error),
+                  let appScreen = XCDisplayScreen(context, &error) else {
                 throw DriverError.screenshotFailed(error?.localizedDescription ?? "Active display is unavailable")
             }
             screen = appScreen

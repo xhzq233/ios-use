@@ -49,7 +49,8 @@ enum SwipeCommands {
             case .point(let point): end = point
             case .failure(let response): return response
             }
-            return try handleAbsolutePointSwipe(from: start, to: end, app: app, waitForIdle: false)
+            return try handleAbsolutePointSwipe(from: start, to: end, app: app,
+                                                 displayContext: cs.root.displayContext, waitForIdle: false)
         }
         return try handleDistanceSwipe(args: args, cs: cs, app: app)
     }
@@ -160,7 +161,8 @@ enum SwipeCommands {
                                             target: toTarget,
                                             vertical: vertical,
                                             scrollUpwards: scrollUpwards,
-                                            app: app)
+                                            app: app,
+                                            displayContext: cs.root.displayContext)
 
         switch scrolls {
         case .reachedMax:
@@ -234,7 +236,8 @@ enum SwipeCommands {
                                         target: toTarget,
                                         vertical: vertical,
                                         scrollUpwards: scrollUpwards,
-                                        app: app)
+                                        app: app,
+                                        displayContext: cs.root.displayContext)
         switch result {
         case .found(let count, let target, let snapshot):
             return try withExtendedLifetime(snapshot) {
@@ -260,9 +263,12 @@ enum SwipeCommands {
     private static func handleAbsolutePointSwipe(from: ForyPoint,
                                                  to: ForyPoint,
                                                  app: XCUIApplication,
+                                                 displayContext: XCDisplayContext? = nil,
                                                  waitForIdle: Bool = true) throws -> ForyResponseFrame {
-        let start = try RawPointer.coordinate(app: app, point: CGPoint(x: from.x, y: from.y))
-        let end = try RawPointer.coordinate(app: app, point: CGPoint(x: to.x, y: to.y))
+        if waitForIdle { try Quiescence.wait(app: app, command: "swipe") }
+        let origin = try RawPointer.origin(app: app, displayContext: displayContext)
+        let start = origin.withOffset(CGVector(dx: from.x, dy: from.y))
+        let end = origin.withOffset(CGVector(dx: to.x, dy: to.y))
         _ = try RawPointer.perform(
             app: app,
             event: .drag(
@@ -272,7 +278,7 @@ enum SwipeCommands {
                 velocity: IOSUseProtocol.touchVelocity,
                 holdDuration: IOSUseProtocol.touchHoldDuration
             ),
-            waitForIdle: waitForIdle
+            waitForIdle: false
         )
         let payload = ForySwipePayload(
             ancestors: [],
@@ -328,7 +334,8 @@ enum SwipeCommands {
                                    vector: vector,
                                    vertical: vertical,
                                    scrollUpwards: isBack,
-                                   app: app)
+                                   app: app,
+                                   displayContext: cs.root.displayContext)
     }
 
     // MARK: - STEP 6 helper
@@ -346,9 +353,11 @@ enum SwipeCommands {
                                    target: ForyTarget,
                                    vertical: Bool,
                                    scrollUpwards: Bool,
-                                   app: XCUIApplication) throws -> ScrollOutcome {
+                                   app: XCUIApplication,
+                                   displayContext: XCDisplayContext?) throws -> ScrollOutcome {
         var currentScrollView = scrollView
         var currentSnapshot: CleanedSnapshot?
+        var currentDisplay = displayContext
         // Only the current iteration's tree survives into the next gesture.
         defer { withExtendedLifetime(currentSnapshot) {} }
         var prevFrames = collectVisibleCellFrames(currentScrollView)
@@ -360,12 +369,12 @@ enum SwipeCommands {
             try autoreleasepool {
                 if vertical {
                     scrollUpwards
-                        ? try scrollUpByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
-                        : try scrollDownByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
+                        ? try scrollUpByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app, displayContext: currentDisplay)
+                        : try scrollDownByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app, displayContext: currentDisplay)
                 } else {
                     scrollUpwards
-                        ? try scrollLeftByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
-                        : try scrollRightByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
+                        ? try scrollLeftByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app, displayContext: currentDisplay)
+                        : try scrollRightByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app, displayContext: currentDisplay)
                 }
             }
             Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
@@ -398,6 +407,7 @@ enum SwipeCommands {
             prevFrames = nowFrames
             currentScrollView = freshScrollView
             currentSnapshot = freshCS
+            currentDisplay = freshCS.root.displayContext
         }
         return .reachedMax
     }
@@ -408,7 +418,8 @@ enum SwipeCommands {
                                             vector: CGVector,
                                             vertical: Bool,
                                             scrollUpwards: Bool,
-                                            app: XCUIApplication) throws -> ForyResponseFrame {
+                                            app: XCUIApplication,
+                                            displayContext: XCDisplayContext?) throws -> ForyResponseFrame {
         let segments = scrollSegments(for: vector, scrollFrame: scrollFrame)
         guard !segments.isEmpty else {
             DriverLog.info(String(format: "[point-swipe] too small to scroll vector=(%.1f,%.1f)", vector.dx, vector.dy))
@@ -416,7 +427,8 @@ enum SwipeCommands {
         }
 
         let prevFrames = collectVisibleCellFrames(scrollView)
-        let segmentCount = try dispatchScrollSegments(segments, scrollFrame: scrollFrame, app: app)
+        let segmentCount = try dispatchScrollSegments(segments, scrollFrame: scrollFrame, app: app,
+                                                       displayContext: displayContext)
 
         Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
 
