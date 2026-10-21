@@ -11,6 +11,9 @@ silicon Macs. It exposes a compact accessibility tree, semantic actions, JSON
 output, screenshots, logs, proxy capture, and multi-device operation. Linux hosts
 can operate iOS Drivers and Apple device services over remote connections.
 
+**See ios-use in action:** one-command setup without Xcode, AX actions, composable
+scripts, and iPhone Apps running on Mac with built-in Frida.
+
 Application nodes in the DOM provide page context. Element selectors search
 their contents, so an App name does not shadow a button with the same label.
 DOM reads, semantic actions and each wait poll capture the current tree; the
