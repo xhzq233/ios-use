@@ -14,6 +14,8 @@ can operate iOS Drivers and Apple device services over remote connections.
 **See ios-use in action:** one-command setup without Xcode, AX actions, composable
 scripts, and iPhone Apps running on Mac with built-in Frida.
 
+https://github.com/user-attachments/assets/0d17a651-41fc-4773-9ebf-061518197a69
+
 Application nodes in the DOM provide page context. Element selectors search
 their contents, so an App name does not shadow a button with the same label.
 DOM reads, semantic actions and each wait poll capture the current tree; the
