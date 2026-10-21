@@ -1,75 +1,37 @@
-# ios-use
+<div align="center">
 
-> Fast iOS UI automation for agents and scripts.
+<h1>ios-use</h1>
+<p><strong>Fast &nbsp; Easy &nbsp; Powerful</strong></p>
+<p>Control iPhone apps with AI or a few lines of code.</p>
 
-[![Release](https://img.shields.io/github/v/release/xhzq233/ios-use?sort=semver)](https://github.com/xhzq233/ios-use/releases)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20iOS-lightgrey.svg)](#requirements)
+<p>
+  <a href="https://github.com/xhzq233/ios-use/releases"><img src="https://img.shields.io/github/v/release/xhzq233/ios-use?sort=semver&amp;style=flat-square&amp;color=087f68" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-087f68?style=flat-square" alt="License: AGPL v3"></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/Host-macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="Hosts: macOS and Linux"></a>
+</p>
+
+<p>
+  <a href="#install">Install</a> &nbsp;·&nbsp;
+  <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
+  <a href="#commands">Commands</a> &nbsp;·&nbsp;
+  <a href="#performance-snapshot">Performance</a> &nbsp;·&nbsp;
+  <a href="#requirements">Requirements</a>
+</p>
+
+</div>
+
+https://github.com/user-attachments/assets/0d17a651-41fc-4773-9ebf-061518197a69
+
+<p align="center"><sub>57 seconds · Real iPhone · AX actions · Composable scripts · Mac + Frida</sub></p>
+
+| Fast | Easy | Powerful |
+| --- | --- | --- |
+| **8 moves in 9.56 seconds** in the demo. [Explore the benchmarks](#performance-snapshot). | **Install with one command.** Set up a real iPhone without Xcode. | **Act by element name.** Compose CLI scripts and debug supported Mac Apps with built-in Frida. |
 
 `ios-use` drives real iPhones, Simulators, and supported iPhone Apps on Apple
 silicon Macs. It exposes a compact accessibility tree, semantic actions, JSON
 output, screenshots, logs, proxy capture, and multi-device operation. Linux hosts
 can operate iOS Drivers and Apple device services over remote connections.
-
-Application nodes in the DOM provide page context. Element selectors search
-their contents, so an App name does not shadow a button with the same label.
-DOM reads, semantic actions and each wait poll capture the current tree; the
-Driver does not reuse a snapshot across commands. On XCTest targets,
-each DOM observation redetects the foreground App after an external App switch.
-
-DOM observations default to diff. Use `dom`, or append `--dom [duration]` / `-D [duration]` to a UI
-mutation (`tap`, `longpress`, `input`, `swipe`, `rotate`, `home`, `dismissAlert`,
-`open`, `activateApp`, `terminateApp`). For example:
-
-```bash
-ios-use dom
-ios-use tap "Continue" -D
-ios-use input --tap "Search" --content "photos" -D 300ms
-```
-
-Normal DOM is an indented semantic tree: labels, roles, values, state, hints and
-hierarchy. Existing selector labels are retained, including generated names and
-aliases. `dom --nodiff --json` returns the detailed tree with rectangles, identifiers,
-original `accessibilityLabel` and `labelSource`; it does not guess provenance
-from a label's spelling.
-
-The first diff observation is full. Later observations show removed/added/updated rows
-with shared parent context and zero-based child positions, or `DOM semantics unchanged`.
-Positions describe tree order, not visual direction or new tap IDs. Pure geometry
-changes are reported as `Layout changed`; request `dom --nodiff --json` when exact current
-coordinates are needed. Add `--nodiff` to `dom` or an action with `--dom` / `-D` for full semantics. An App or
-window-size change, lost continuation, restarted Driver, or broad change returns
-full automatically. Raw and detailed reads clear the CLI continuation.
-
-XCTest and Mac Runtime own the last semantic observation in memory, separate
-from their current lookup snapshots. Internal action lookups do not advance or
-clear this history. The CLI stores only a continuation token per Device under
-`IOS_USE_HOME`; no per-agent configuration is needed. Diff avoids repeating
-unchanged semantic rows. It still captures a fresh tree after mutations, so it
-does not avoid the native work needed to observe asynchronous UI changes.
-
-Bare `-D` / `--dom` waits briefly for DOM quiescence; `-D 300ms` uses a fixed delay (ms by default,
-minimum 100ms). XCTest application-idle waits are limited to 2s; a missing animation
-notification does not wait for the native 60s default. The Driver checks the
-command deadline before dispatching further input; already dispatched gestures
-cannot be retracted. Neither unchanged semantics nor best-effort settling proves that rendering
-or asynchronous loading has finished. Use current labels/values for actions;
-the Driver resolves them against its complete current tree. Semantic tap, long
-press and input focus settle before taking that tree, so layout changes during
-the wait do not leave their target coordinates stale.
-
-`dom --json` returns `mode: full` with `lines`, or `mode: diff` with
-`changes` grouped by parent `context`. Each group contains `removed` (old offset,
-child index and selector label), `added` (new offset, child index and full line),
-and `updated` (same old/new offset, child index and replacement line). `~` updates
-are emitted only for a unique unchanged selector at the same position and parent
-path; otherwise the exact remove/add edits are kept. To reconstruct, remove both
-removed/updated old offsets in descending order, then insert added/updated lines
-at their final offsets in ascending order. Removed values are already present in
-the preceding observation and are not repeated. The shorter model-facing text
-wins; transport size is measured separately. Geometry is deliberately separate. `dom --nodiff --json` retains `elements`.
-`open` returns its observation once at `data.dom`; `data.readiness` holds readiness
-metadata. This experimental protocol requires the matching CLI and Driver/Runtime.
 
 ## Install
 
@@ -78,6 +40,9 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 ```
 
 The CLI and Skill come from the same release, including when installing latest.
+
+<details>
+<summary>Install options and agent skill setup</summary>
 
 Successful interactive `start` and `status` commands check for a newer stable
 release at most once per day and print an update reminder to stderr. Run the
@@ -126,6 +91,8 @@ ios-use owns XCTest, App management, URL opening and App stdout/stderr.
 OCR, capture sequences, local USB, Simulator, the Mac App backend, system
 logs and proxy require macOS.
 
+</details>
+
 ## Quick Start
 
 ### Real device
@@ -149,82 +116,6 @@ ios-use stop
 Release use on a real device does not require Xcode. Free Apple Developer
 signing is supported and normally needs renewal every seven days.
 
-### Simulator
-
-```bash
-xcrun simctl list devices booted
-ios-use config --simulator --udid <simulator-udid>
-ios-use start <simulator-udid>
-```
-
-Screenshots default to JPEG output without OCR on both hosts. On macOS, use
-`screenshot --ocr` to also recognize text and save an OCR sidecar. `--no-ocr`
-remains accepted; Linux has no OCR engine. These defaults apply to local and
-remote targets from Alpha 4; earlier macOS releases default to OCR enabled.
-On macOS, screenshot sizes, OCR boxes, and changed-frame comparisons honor JPEG
-orientation, so their coordinates follow the displayed image after rotation.
-
-### Remote Apple device services
-
-A provider can expose a paired usbmux endpoint and a Driver TCP endpoint.
-Save its connection description as `device-connection.json`:
-
-```json
-{
-  "udid": "DEVICE-UDID",
-  "driverBundleID": "com.iosuse.xcuidriver.xctrunner",
-  "usbmux": { "host": "127.0.0.1", "port": 27015 },
-  "driver": { "host": "127.0.0.1", "port": 18102 }
-}
-```
-
-Use the provider's actual endpoints. It must install the matching, signed
-Driver and prepare paired developer services. This transport is supported on
-macOS and Linux x86_64; iOS 18.5 has been tested on real hardware.
-
-```bash
-ios-use start -d phone --connection device-connection.json
-ios-use apps -d phone
-ios-use install /path/to/signed-App.ipa -d phone --json
-ios-use activateApp com.example.app --terminateExisting --log -d phone --json
-ios-use open 'myapp://page' -d phone --dom
-ios-use open 'myapp://page' -d phone --bundle-id com.example.app --dom
-ios-use tap '<label-from-dom>' -d phone --dom
-ios-use uninstall com.example.app -d phone --json
-ios-use stop -d phone
-```
-
-Here ios-use owns XCTest and reports `lifecycleOwner: ios-use`. `stop` closes
-XCTest and App log capture, while the provider keeps its lease and transport.
-Start again with the same description while that connection remains valid.
-The UI path connects directly to the Driver endpoint. Swift uses usbmux,
-Lockdown and CoreDevice for App services; no Go runtime is required. TLS wraps
-the existing device socket directly, with no additional localhost relay.
-`activateApp --log` captures stdout/stderr from the new App process on the CLI
-host, under `$IOS_USE_HOME/logs/devices/<device-id>/` (default home: `~/.ios-use`).
-`--json` returns `data.logFile` and `data.logCapturePid`; use `tail -f <logFile>`
-to follow output. Stopping capture retains the file. Sandbox log files are not read.
-The adjacent `cli.log` records tunnel, stdio, App service and launch stages for
-capture startup diagnosis.
-Signing remains the provider's responsibility; `install` accepts packages
-already signed for the device. `status` checks the holder process/control connection and Driver TCP reachability
-(`healthy`, `unhealthy`, or `stale`); use `dom` to verify UI responsiveness.
-
-After `start` exits, a background holder maintains the XCTest/TestManager session
-and its CoreDevice connections. Session metadata lives at
-`$IOS_USE_HOME/state/devices/<device-id>/driver.lock` (default home: `~/.ios-use`),
-including endpoints, holder/runner PIDs and the holder's local control socket.
-Subsequent compatible CLI processes on the same host, user and `IOS_USE_HOME`
-reuse that session; another terminal or working directory needs no new `start`.
-Use `-d <device-id>` when multiple Devices run. UI commands connect directly to
-the Driver endpoint, reuse that TCP connection within the command, then close it.
-App management and launch commands open their own device-service connections as needed.
-Copying state files to another host does not transfer the holder or its connections.
-
-Capture logs with
-`activateApp <bundleId> --terminateExisting --log` for App launch stdout/stderr,
-`start --mac --log` on Mac, or `oslog` for unified logging.
-
 ### Mac backend
 
 ```bash
@@ -237,6 +128,12 @@ ios-use stop
 
 The Mac backend requires an unencrypted arm64 iPhone App. It is not fully
 supported on macOS 26 or newer.
+
+Every Mac session includes Frida. See the
+[debugging guide](ios-use-skill/references/frida-debug.md) for scripts and live hooks.
+
+<details>
+<summary>Mac device presets, windows and runtime behavior</summary>
 
 Choose a device preset with `ios-use config --mac --device-model ipad-pro-11`.
 This changes the running Mac App and saves the selection in the current
@@ -350,7 +247,6 @@ running that OS. A newer macOS supplies newer host frameworks, but still needs
 Mac backend compatibility validation and does not reproduce iPhone-only system
 behavior. See Apple's [Xcode system requirements](https://developer.apple.com/xcode/system-requirements).
 
-
 Background scenes, minimized windows, and windows on another Space do not
 automatically block UI commands. Apps can still pause work or rendering in the
 background: a successful action or DOM update does not guarantee fresh pixels
@@ -358,6 +254,185 @@ from every renderer. Mac UI command entries in `logs/cli.log` include `sceneStat
 `minimized`, and `activeSpace`; failures in those states also include `uiContext`
 in JSON output or a context line in text output. Successful commands do not
 emit a background warning.
+
+</details>
+
+### Simulator
+
+```bash
+xcrun simctl list devices booted
+ios-use config --simulator --udid <simulator-udid>
+ios-use start <simulator-udid>
+```
+
+Requires full Xcode and a booted Simulator.
+
+### Remote Apple device services
+
+Connect from macOS or Linux using a provider-supplied device connection file.
+
+<details>
+<summary>Remote setup, App management and session lifecycle</summary>
+
+A provider can expose a paired usbmux endpoint and a Driver TCP endpoint.
+Save its connection description as `device-connection.json`:
+
+```json
+{
+  "udid": "DEVICE-UDID",
+  "driverBundleID": "com.iosuse.xcuidriver.xctrunner",
+  "usbmux": { "host": "127.0.0.1", "port": 27015 },
+  "driver": { "host": "127.0.0.1", "port": 18102 }
+}
+```
+
+Use the provider's actual endpoints. It must install the matching, signed
+Driver and prepare paired developer services. This transport is supported on
+macOS and Linux x86_64; iOS 18.5 has been tested on real hardware.
+
+```bash
+ios-use start -d phone --connection device-connection.json
+ios-use apps -d phone
+ios-use install /path/to/signed-App.ipa -d phone --json
+ios-use activateApp com.example.app --terminateExisting --log -d phone --json
+ios-use open 'myapp://page' -d phone --dom
+ios-use open 'myapp://page' -d phone --bundle-id com.example.app --dom
+ios-use tap '<label-from-dom>' -d phone --dom
+ios-use uninstall com.example.app -d phone --json
+ios-use stop -d phone
+```
+
+Here ios-use owns XCTest and reports `lifecycleOwner: ios-use`. `stop` closes
+XCTest and App log capture, while the provider keeps its lease and transport.
+Start again with the same description while that connection remains valid.
+The UI path connects directly to the Driver endpoint. Swift uses usbmux,
+Lockdown and CoreDevice for App services; no Go runtime is required. TLS wraps
+the existing device socket directly, with no additional localhost relay.
+`activateApp --log` captures stdout/stderr from the new App process on the CLI
+host, under `$IOS_USE_HOME/logs/devices/<device-id>/` (default home: `~/.ios-use`).
+`--json` returns `data.logFile` and `data.logCapturePid`; use `tail -f <logFile>`
+to follow output. Stopping capture retains the file. Sandbox log files are not read.
+The adjacent `cli.log` records tunnel, stdio, App service and launch stages for
+capture startup diagnosis.
+Signing remains the provider's responsibility; `install` accepts packages
+already signed for the device. `status` checks the holder process/control connection and Driver TCP reachability
+(`healthy`, `unhealthy`, or `stale`); use `dom` to verify UI responsiveness.
+
+After `start` exits, a background holder maintains the XCTest/TestManager session
+and its CoreDevice connections. Session metadata lives at
+`$IOS_USE_HOME/state/devices/<device-id>/driver.lock` (default home: `~/.ios-use`),
+including endpoints, holder/runner PIDs and the holder's local control socket.
+Subsequent compatible CLI processes on the same host, user and `IOS_USE_HOME`
+reuse that session; another terminal or working directory needs no new `start`.
+Use `-d <device-id>` when multiple Devices run. UI commands connect directly to
+the Driver endpoint, reuse that TCP connection within the command, then close it.
+App management and launch commands open their own device-service connections as needed.
+Copying state files to another host does not transfer the holder or its connections.
+
+Capture logs with
+`activateApp <bundleId> --terminateExisting --log` for App launch stdout/stderr,
+`start --mac --log` on Mac, or `oslog` for unified logging.
+
+</details>
+
+## Work with UI
+
+Read the accessibility tree and act by element name. Add `--dom` (`-D`) to
+observe the UI after an action.
+
+```bash
+ios-use dom
+ios-use tap "Continue" -D
+ios-use input --tap "Search" --content "photos" -D 300ms
+```
+
+<details>
+<summary>Accessibility trees, DOM diffs and action timing</summary>
+
+Application nodes in the DOM provide page context. Element selectors search
+their contents, so an App name does not shadow a button with the same label.
+DOM reads, semantic actions and each wait poll capture the current tree; the
+Driver does not reuse a snapshot across commands. On XCTest targets,
+each DOM observation redetects the foreground App after an external App switch.
+
+DOM observations default to diff. Use `dom`, or append `--dom [duration]` / `-D [duration]` to a UI
+mutation (`tap`, `longpress`, `input`, `swipe`, `rotate`, `home`, `dismissAlert`,
+`open`, `activateApp`, `terminateApp`). For example:
+
+Normal DOM is an indented semantic tree: labels, roles, values, state, hints and
+hierarchy. Existing selector labels are retained, including generated names and
+aliases. `dom --nodiff --json` returns the detailed tree with rectangles, identifiers,
+original `accessibilityLabel` and `labelSource`; it does not guess provenance
+from a label's spelling.
+
+The first diff observation is full. Later observations show removed/added/updated rows
+with shared parent context and zero-based child positions, or `DOM semantics unchanged`.
+Positions describe tree order, not visual direction or new tap IDs. Pure geometry
+changes are reported as `Layout changed`; request `dom --nodiff --json` when exact current
+coordinates are needed. Add `--nodiff` to `dom` or an action with `--dom` / `-D` for full semantics. An App or
+window-size change, lost continuation, restarted Driver, or broad change returns
+full automatically. Raw and detailed reads clear the CLI continuation.
+
+XCTest and Mac Runtime own the last semantic observation in memory, separate
+from their current lookup snapshots. Internal action lookups do not advance or
+clear this history. The CLI stores only a continuation token per Device under
+`IOS_USE_HOME`; no per-agent configuration is needed. Diff avoids repeating
+unchanged semantic rows. It still captures a fresh tree after mutations, so it
+does not avoid the native work needed to observe asynchronous UI changes.
+
+Bare `-D` / `--dom` waits briefly for DOM quiescence; `-D 300ms` uses a fixed delay (ms by default,
+minimum 100ms). XCTest application-idle waits are limited to 2s; a missing animation
+notification does not wait for the native 60s default. The Driver checks the
+command deadline before dispatching further input; already dispatched gestures
+cannot be retracted. Neither unchanged semantics nor best-effort settling proves that rendering
+or asynchronous loading has finished. Use current labels/values for actions;
+the Driver resolves them against its complete current tree. Semantic tap, long
+press and input focus settle before taking that tree, so layout changes during
+the wait do not leave their target coordinates stale.
+
+`dom --json` returns `mode: full` with `lines`, or `mode: diff` with
+`changes` grouped by parent `context`. Each group contains `removed` (old offset,
+child index and selector label), `added` (new offset, child index and full line),
+and `updated` (same old/new offset, child index and replacement line). `~` updates
+are emitted only for a unique unchanged selector at the same position and parent
+path; otherwise the exact remove/add edits are kept. To reconstruct, remove both
+removed/updated old offsets in descending order, then insert added/updated lines
+at their final offsets in ascending order. Removed values are already present in
+the preceding observation and are not repeated. The shorter model-facing text
+wins; transport size is measured separately. Geometry is deliberately separate. `dom --nodiff --json` retains `elements`.
+`open` returns its observation once at `data.dom`; `data.readiness` holds readiness
+metadata. This experimental protocol requires the matching CLI and Driver/Runtime.
+
+</details>
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `status`, `config` | Discover Devices and install or inspect Drivers |
+| `start`, `stop` | Start or release a Device Context |
+| `apps`, `install`, `activateApp`, `terminateApp` | Manage Apps |
+| `dom`, `waitFor` | Observe and query UI state |
+| `tap`, `longpress`, `swipe`, `input`, `rotate` | Interact with the UI |
+| `screenshot`, `capture`, `media import` | Capture or import media |
+| `oslog`, `proxy` | Capture logs and network traffic |
+| `open` | Open a URL or custom scheme |
+| `debug`, `ui-tree` | Mac backend diagnostics |
+
+Run `ios-use --help` or `ios-use <command> --help` for the complete contract.
+Most automation commands support `--json`.
+
+<details>
+<summary>Screenshot formats and OCR</summary>
+
+Screenshots default to JPEG output without OCR on both hosts. On macOS, use
+`screenshot --ocr` to also recognize text and save an OCR sidecar. `--no-ocr`
+remains accepted; Linux has no OCR engine. These defaults apply to local and
+remote targets from Alpha 4; earlier macOS releases default to OCR enabled.
+On macOS, screenshot sizes, OCR boxes, and changed-frame comparisons honor JPEG
+orientation, so their coordinates follow the displayed image after rotation.
+
+</details>
 
 ## Multiple Devices
 
@@ -385,6 +460,9 @@ Existing single-Device state is still read and moves to the new layout after its
 Mean latency in ms. ios-use: 2026-09-20, Release `aca8dc0b` with the foreground-only activation follow-up; Appium + WDA: May 30 baseline.
 USB uses iPhone Settings; Mac uses UIKit Fixture.
 
+<details>
+<summary>View all command timings</summary>
+
 | Operation | USB ios-use | Appium + WDA | Mac ios-use |
 | --- | ---: | ---: | ---: |
 | Start session | 2,087.8 | 10,753.6 | 1,834.4 |
@@ -411,31 +489,20 @@ USB uses iPhone Settings; Mac uses UIKit Fixture.
 DOM: 20 runs; other commands: 6; session start/stop: 3. Mac uses `start/stop` for App lifecycle.
 [Medians, before/after comparison and validation notes](docs/benchmark.md).
 
-## Commands
-
-| Command | Purpose |
-| --- | --- |
-| `status`, `config` | Discover Devices and install or inspect Drivers |
-| `start`, `stop` | Start or release a Device Context |
-| `apps`, `install`, `activateApp`, `terminateApp` | Manage Apps |
-| `dom`, `waitFor` | Observe and query UI state |
-| `tap`, `longpress`, `swipe`, `input`, `rotate` | Interact with the UI |
-| `screenshot`, `capture`, `media import` | Capture or import media |
-| `oslog`, `proxy` | Capture logs and network traffic |
-| `open` | Open a URL or custom scheme |
-| `debug`, `ui-tree` | Mac backend diagnostics |
-
-Run `ios-use --help` or `ios-use <command> --help` for the complete contract.
-Most automation commands support `--json`.
+</details>
 
 ## Requirements
 
-- Linux x86_64 for remote device connections; Apple silicon macOS for local device backends.
-- Real devices: iOS 17.4 or newer, USB, and a free or paid Apple Developer
-  account for driver signing.
-- Simulator and Driver builds: full Xcode, Swift and `xcodegen`. Linux CLI
-  builds require Swift 6.2+ and do not need Xcode.
-- Proxy capture: `mitmproxy`.
+| Target | Host | What you need |
+| --- | --- | --- |
+| Real iPhone over USB | Apple silicon Mac | iOS 17.4+ and a free or paid Apple Developer account for driver signing |
+| iPhone App on Mac | Apple silicon Mac | An unencrypted arm64 iPhone App; macOS 26+ is not fully supported |
+| iOS Simulator | Apple silicon Mac | Full Xcode and a booted Simulator |
+| Remote iPhone | macOS or Linux x86_64 | A provider connection file, a signed Driver and prepared device services |
+
+Simulator and Driver builds require full Xcode, Swift and `xcodegen`.
+Linux CLI builds require Swift 6.2+ and do not need Xcode.
+Proxy capture requires `mitmproxy`.
 
 ## Development
 
