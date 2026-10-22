@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: io.ios-use
   createIntermediateGroups: true
   deploymentTarget:
-    iOS: "13.0"
+    iOS: "15.0"
 settings:
   base:
     ARCHS: arm64
@@ -17,8 +17,9 @@ settings:
     ENABLE_BITCODE: false
     GCC_C_LANGUAGE_STANDARD: gnu17
     GCC_TREAT_WARNINGS_AS_ERRORS: true
-    IPHONEOS_DEPLOYMENT_TARGET: "13.0"
-    MACOSX_DEPLOYMENT_TARGET: "11.0"
+    # Catalyst iOS 15 maps to macOS 12, the oldest target accepted by Xcode 27.
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    MACOSX_DEPLOYMENT_TARGET: "12.0"
     PRODUCT_BUNDLE_IDENTIFIER: io.ios-use.play-runtime
     SKIP_INSTALL: true
     SUPPORTS_MACCATALYST: true

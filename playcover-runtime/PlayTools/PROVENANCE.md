@@ -103,6 +103,18 @@ touch, and PlayChain sources are compared directly with the pinned checkout by
 above and emitted as a full unified diff; an unrecorded or stale path fails the
 gate.
 
+### PlayChain key decoding
+
+`PlayedApple.swift` checks stored data, required key metadata and the result of
+`SecKeyCreateWithData` in both `copyMatching` key-decoding paths. Invalid input
+returns `errSecDecode` without changing storage or writing the output pointer.
+The existing reference-return selection and defaults are retained. The
+production-linked PlayChain harness covers malformed data, absent metadata,
+nil output pointers and valid RSA key round trips. The legacy key-pair hook
+retains `SecKeyGeneratePair` for Apps that still invoke it; its Swift entry is
+marked deprecated and its Objective-C adapter locally suppresses that API
+deprecation so the Runtime can build against current SDKs.
+
 ### Clean-iOS identity boundary
 
 The Runtime restores the v2.0.0 dyld active-platform interpose and reports

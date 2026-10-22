@@ -222,13 +222,131 @@ private func runHotRollbackRecoveryCheck(
     )
 }
 
+private func runKeyDecodingChecks() {
+    // Use the production database to exercise malformed persisted records too;
+    // SecItemAdd emulation may reject a malformed key before it can be queried.
+    func checkFailure(_ name: String, attributes: [String: Any], reference: Bool) {
+        let item = NSMutableDictionary(dictionary: attributes)
+        item[kSecAttrAccessGroup as String] = name
+        require(PlayKeychainDB.shared.insert(item) != nil, "could not seed \(name)")
+        let query = NSMutableDictionary(dictionary: [
+            kSecClass as String: attributes[kSecClass as String]!,
+            kSecAttrAccessGroup as String: name
+        ])
+        let before = PlayKeychainDB.shared.query(query)?.first
+        require(before != nil, "could not read \(name)")
+        if reference { query[kSecReturnRef as String] = true }
+        var result: Unmanaged<CFTypeRef>?
+        require(
+            PlayKeychain.copyMatching(query, result: &result) == errSecDecode,
+            "\(name) did not return errSecDecode"
+        )
+        require(result == nil, "\(name) wrote a result on failure")
+        require(
+            PlayKeychain.copyMatching(query, result: nil) == errSecDecode,
+            "\(name) failed with a nil output pointer"
+        )
+        require(
+            PlayKeychainDB.shared.query(query)?.first == before,
+            "\(name) changed stored data on decode failure"
+        )
+        require(PlayKeychain.delete(query) == errSecSuccess, "could not delete \(name)")
+    }
+
+    let password: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrAccount as String: "synthetic-key-decode",
+        kSecAttrService as String: "ios-use-key-decode",
+        kSecValueData as String: Data("not-a-key".utf8)
+    ]
+    checkFailure("password-reference", attributes: password, reference: true)
+    var invalidType = password
+    invalidType[kSecValueData as String] = "not-data"
+    checkFailure("password-reference-type", attributes: invalidType, reference: true)
+    var persistent = password
+    persistent[kSecValuePersistentRef as String] = Data("invalid-persistent-reference".utf8)
+    checkFailure("persistent-reference", attributes: persistent, reference: true)
+
+    let keyAttributes: [String: Any] = [
+        kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+        kSecAttrKeySizeInBits as String: 2048
+    ]
+    guard let privateKey = SecKeyCreateRandomKey(keyAttributes as CFDictionary, nil),
+          let publicKey = SecKeyCopyPublicKey(privateKey),
+          let publicData = SecKeyCopyExternalRepresentation(publicKey, nil) as Data? else {
+        fail("could not generate an ephemeral RSA key")
+    }
+    let keyItem: [String: Any] = [
+        kSecClass as String: kSecClassKey,
+        kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+        kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
+        kSecValueData as String: publicData
+    ]
+    for reference in [false, true] {
+        for data: Any in [Data("not-a-key".utf8), "not-data"] {
+            var invalidKey = keyItem
+            invalidKey[kSecValueData as String] = data
+            checkFailure("invalid-key-\(reference)", attributes: invalidKey, reference: reference)
+        }
+    }
+    for missing in [kSecAttrKeyType, kSecAttrKeyClass] {
+        var incomplete = keyItem
+        incomplete.removeValue(forKey: missing as String)
+        checkFailure("missing-\(missing)", attributes: incomplete, reference: false)
+    }
+
+    for metadata in [kSecAttrKeyType, kSecAttrKeyClass] {
+        var malformed = keyItem
+        malformed[metadata as String] = Data("invalid-metadata".utf8)
+        for reference in [false, true] {
+            checkFailure("metadata-\(metadata)-\(reference)", attributes: malformed, reference: reference)
+        }
+    }
+
+    // Valid decoding must still produce a usable key, including the existing
+    // RSA/public defaults in the reference-return branch.
+    for defaults in [false, true] {
+        var valid = defaults ? password : keyItem
+        valid[kSecValueData as String] = publicData
+        valid[kSecAttrAccessGroup as String] = "valid-round-trip"
+        require(PlayKeychainDB.shared.insert(valid as NSDictionary) != nil, "could not seed valid key")
+        let query = NSMutableDictionary(dictionary: [
+            kSecClass as String: valid[kSecClass as String]!,
+            kSecAttrAccessGroup as String: "valid-round-trip"
+        ])
+        for reference in defaults ? [true] : [false, true] {
+            if reference { query[kSecReturnRef as String] = true }
+            var result: Unmanaged<CFTypeRef>?
+            require(PlayKeychain.copyMatching(query, result: &result) == errSecSuccess, "valid key failed")
+            guard let value = result?.takeRetainedValue() else { fail("valid key was not returned") }
+            require(CFGetTypeID(value) == SecKeyGetTypeID(), "returned value is not a SecKey")
+            let copiedKey = value as! SecKey
+            require(
+                SecKeyCopyExternalRepresentation(copiedKey, nil) as Data? == publicData,
+                "key bytes changed during decoding"
+            )
+            let message = Data("synthetic-key-round-trip".utf8)
+            guard let signature = SecKeyCreateSignature(
+                privateKey, .rsaSignatureMessagePKCS1v15SHA256, message as CFData, nil
+            ) else { fail("could not sign test message") }
+            require(
+                SecKeyVerifySignature(copiedKey, .rsaSignatureMessagePKCS1v15SHA256,
+                                      message as CFData, signature, nil),
+                "decoded key could not verify a signature"
+            )
+            require(PlayKeychain.copyMatching(query, result: nil) == errSecSuccess, "valid nil result failed")
+        }
+        require(PlayKeychain.delete(query) == errSecSuccess, "could not delete valid key")
+    }
+}
+
 @main
 enum PlayChainPersistenceHarness {
     static func main() {
         guard CommandLine.arguments.count == 3 else {
             fail(
                 "usage: harness <database-path> "
-                    + "<seed|update|delete>"
+                    + "<seed|update|delete|key-decoding>"
             )
         }
         let requestedDatabaseURL = URL(
@@ -337,6 +455,8 @@ enum PlayChainPersistenceHarness {
                 ) == errSecItemNotFound,
                 "deleted item remained readable"
             )
+        case "key-decoding":
+            runKeyDecodingChecks()
         case "leave-hot-journal":
             leaveHotRollbackJournal(databaseURL: databaseURL)
         default:

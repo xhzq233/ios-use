@@ -220,6 +220,8 @@ static SecKeyRef pt_SecKeyCreateRandomKey(CFDictionaryRef parameters, CFErrorRef
 }
 
 // Deprecated, but some apps might still use it.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 static OSStatus pt_SecKeyGeneratePair(CFDictionaryRef parameters, SecKeyRef *publicKey, SecKeyRef *privateKey) {
     IOSUsePlayHookRegistryRecordInvocation(
         @"security.key-generate-pair"
@@ -246,6 +248,7 @@ DYLD_INTERPOSE(pt_SecItemUpdate, SecItemUpdate)
 DYLD_INTERPOSE(pt_SecItemDelete, SecItemDelete)
 DYLD_INTERPOSE(pt_SecKeyCreateRandomKey, SecKeyCreateRandomKey)
 DYLD_INTERPOSE(pt_SecKeyGeneratePair, SecKeyGeneratePair)
+#pragma clang diagnostic pop
 
 static uint8_t ue_status = 0;
 
