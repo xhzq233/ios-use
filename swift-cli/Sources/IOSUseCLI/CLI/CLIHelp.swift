@@ -250,6 +250,8 @@ enum CLIHelp {
 
             Stop one XCTest driver or exact Mac process recorded in its
             Device Context. --device is required when multiple Devices run.
+            Also recovers interrupted Mac launches before driver.lock exists;
+            recent submissions remain pending until their safety window expires.
 
             Options:
               -d, --device Device ID printed by status

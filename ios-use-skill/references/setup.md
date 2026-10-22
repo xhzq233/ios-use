@@ -145,6 +145,9 @@ Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
   still unresponsive, avoid repeated DOM requests; collect a process sample in
   Activity Monitor before restarting with `ios-use stop -d mac` followed by
   `ios-use start --mac --log`. Preserve the exact page and steps for diagnosis.
+- Mac launch was interrupted before a driver was recorded: use
+  `ios-use stop -d mac`. A recent submission returns a retryable error while
+  its asynchronous launch window is open; retry after that window expires.
 - Mac App has exited but `start --mac` reports an existing driver: inspect
   `ios-use status --json`; if the recorded process is stale, run
   `ios-use stop -d mac` before starting it again.

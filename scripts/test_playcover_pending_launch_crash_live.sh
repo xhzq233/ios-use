@@ -28,7 +28,7 @@ Usage: scripts/test_playcover_pending_launch_crash_live.sh --live
 
 Builds committed HEAD in scratch and exercises the two durable Mac launch
 crash boundaries. The gate proves phase-free launching.json recovery after
-NSWorkspace submission and exact cleanup after driver.lock becomes durable.
+observing the launched App and exact cleanup after driver.lock becomes durable.
 It uses the current login account and requires an unlocked launch-capable
 GUI session.
 USAGE
@@ -538,25 +538,25 @@ baseline_birth="$(jq -er '.processBirthMicroseconds' \
   "$RUN_DIR/baseline.process.json")"
 stop_and_verify baseline "$baseline_pid" "$baseline_birth"
 
-echo "[playcover-launch-recovery] afterOpenReturned..." >&2
-run_crash_start afterOpenReturned afterOpenReturned
-assert_launching_record afterOpenReturned
-assert_no_driver_lock afterOpenReturned
-capture_status afterOpenReturned
+echo "[playcover-launch-recovery] afterLaunchObserved..." >&2
+run_crash_start afterLaunchObserved afterLaunchObserved
+assert_launching_record afterLaunchObserved
+assert_no_driver_lock afterLaunchObserved
+capture_status afterLaunchObserved
 open_session="$(jq -er '.sessionID' \
-  "$RUN_DIR/afterOpenReturned.launching.json")"
+  "$RUN_DIR/afterLaunchObserved.launching.json")"
 jq -e \
   --arg bundle "$BUNDLE_ID" \
   --arg session "$open_session" '
     .data.driver.status == "unresolvedOpen" and
     .data.driver.bundleId == $bundle and
     .data.driver.sessionIdentifier == $session
-  ' "$RUN_DIR/afterOpenReturned.status.json" >/dev/null ||
-  fail_gate "afterOpenReturned status did not expose unresolvedOpen"
+  ' "$RUN_DIR/afterLaunchObserved.status.json" >/dev/null ||
+  fail_gate "afterLaunchObserved status did not expose unresolvedOpen"
 
 recovered=0
 for attempt in $(seq 1 100); do
-  printf -v attempt_name 'afterOpenReturned.recover-%03d' "$attempt"
+  printf -v attempt_name 'afterLaunchObserved.recover-%03d' "$attempt"
   set +e
   cli_env "$TEST_HOME" "$DEBUG_CLI" --json start --mac \
     --timeout 5s \
@@ -579,28 +579,28 @@ for attempt in $(seq 1 100); do
     .error.fatal == false and
     .error.mutationMayHaveApplied == false
   ' "$RUN_DIR/$attempt_name.stderr" >/dev/null ||
-    fail_gate "afterOpenReturned recovery failed with an unexpected error"
+    fail_gate "afterLaunchObserved recovery failed with an unexpected error"
   sleep 0.1
 done
 [[ "$recovered" -eq 1 ]] ||
-  fail_gate "afterOpenReturned did not recover the authenticated launch"
-assert_driver_lock afterOpenReturned.recovered
-assert_no_launching afterOpenReturned.recovered
-capture_healthy_status afterOpenReturned.recovered
-assert_fixed_slot afterOpenReturned.recovered
+  fail_gate "afterLaunchObserved did not recover the authenticated launch"
+assert_driver_lock afterLaunchObserved.recovered
+assert_no_launching afterLaunchObserved.recovered
+capture_healthy_status afterLaunchObserved.recovered
+assert_fixed_slot afterLaunchObserved.recovered
 jq -e --arg session "$open_session" '
   .data.driver.sessionIdentifier == $session
-' "$RUN_DIR/afterOpenReturned.recovered.status.json" >/dev/null ||
-  fail_gate "afterOpenReturned recovery did not adopt the submitted session"
+' "$RUN_DIR/afterLaunchObserved.recovered.status.json" >/dev/null ||
+  fail_gate "afterLaunchObserved recovery did not adopt the submitted session"
 open_pid="$(jq -er '.data.driver.runnerPid' \
-  "$RUN_DIR/afterOpenReturned.recovered.status.json")"
+  "$RUN_DIR/afterLaunchObserved.recovered.status.json")"
 open_executable="$(jq -er '.data.driver.macExecutablePath' \
-  "$RUN_DIR/afterOpenReturned.recovered.status.json")"
-capture_process_identity afterOpenReturned.recovered \
+  "$RUN_DIR/afterLaunchObserved.recovered.status.json")"
+capture_process_identity afterLaunchObserved.recovered \
   "$open_pid" "$open_executable"
 open_birth="$(jq -er '.processBirthMicroseconds' \
-  "$RUN_DIR/afterOpenReturned.recovered.process.json")"
-stop_and_verify afterOpenReturned.recovered "$open_pid" "$open_birth"
+  "$RUN_DIR/afterLaunchObserved.recovered.process.json")"
+stop_and_verify afterLaunchObserved.recovered "$open_pid" "$open_birth"
 
 echo "[playcover-launch-recovery] afterDriverLockDurable..." >&2
 run_crash_start afterDriverLockDurable afterDriverLockDurable
@@ -675,7 +675,7 @@ jq -n \
       result: "pass",
       gitHEAD: $head,
       bundleIdentifier: $bundleIdentifier,
-      crashCuts: ["afterOpenReturned", "afterDriverLockDurable"],
+      crashCuts: ["afterLaunchObserved", "afterDriverLockDurable"],
       phaseFreeLaunchingRecord: true,
       authenticatedOpenRecovery: true,
       exactStopAfterDriverLockCommit: true

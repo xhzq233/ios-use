@@ -8,7 +8,7 @@ enum PlayCoverLaunchCrashCut {
     static let exitStatus: Int32 = 86
 
     enum Point: String, CaseIterable {
-        case afterOpenReturned
+        case afterLaunchObserved
         case afterDriverLockDurable
     }
 
