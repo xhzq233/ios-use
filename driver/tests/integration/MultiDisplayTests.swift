@@ -4,6 +4,24 @@ import Fory
 
 /// Opt-in integration regression: keep the fixture foreground on the Duo inner screen.
 final class MultiDisplayTests: XCTestCase {
+    func testSystemPermissionAlertDismissal() throws {
+        guard let label = ProcessInfo.processInfo.environment["IOS_USE_TEST_ALERT_BUTTON"] else {
+            throw XCTSkip("Requires an already visible system permission alert and its explicit button label")
+        }
+        let springboard = XCUIApplication(bundleIdentifier: IOSUseProtocol.springboardBundleId)
+        XCTAssertTrue(springboard.buttons[label].exists)
+        let response = try AlertCommands.dismissAlert(ForyDismissAlertArgs(
+            selection: IOSUseAlertSelectionMode.label.rawValue,
+            label: label,
+            scope: IOSUseAlertScope.springboard.rawValue
+        ))
+        XCTAssertTrue(response.ok)
+        let payload = try createFory().deserialize(response.payload, as: ForyAlertPayload.self)
+        XCTAssertTrue(payload.dismissed)
+        XCTAssertEqual(payload.button, label)
+        XCTAssertFalse(springboard.buttons[label].waitForExistence(timeout: 1))
+    }
+
     func testWindowResolutionMatchesLiveSnapshot() throws {
         guard let bundle = ProcessInfo.processInfo.environment["IOS_USE_TEST_FOREGROUND_BUNDLE"] else {
             throw XCTSkip("Requires a foreground fixture")

@@ -346,7 +346,7 @@ enum AlertCommands {
             return nil
         }
 
-        let buttons = alertElement.descendants(matching: .button).allElementsBoundByIndex
+        let buttons = alertElement.descendants(matching: .button).allElementsBoundByAccessibilityElement
         let snapshots = buttons.enumerated().map { index, button in
             AlertButtonSnapshot(
                 queryIndex: index,
@@ -375,7 +375,10 @@ enum AlertCommands {
         if !alertLabel.isEmpty, !buttonLabels.contains(alertLabel) {
             result.append(alertLabel)
         }
-        for text in alert.descendants(matching: .staticText).allElementsBoundByIndex {
+        // Bind the resolved AX identities. On iOS 27 permission sheets, legacy
+        // and modern alert queries can enumerate different child counts; an
+        // index-bound element replays that query and may no longer exist.
+        for text in alert.descendants(matching: .staticText).allElementsBoundByAccessibilityElement {
             let label = text.label.trimmingCharacters(in: .whitespacesAndNewlines)
             if !label.isEmpty,
                !buttonLabels.contains(label),
