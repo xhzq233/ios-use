@@ -441,7 +441,7 @@ assert_cycle_identity() {
   local case_name="$1"
   local cycle="$2"
   local status_file="$RUN_DIR/${case_name}.stdout"
-  local lock_file="$SESSION_HOME/state/driver.lock"
+  local lock_file="$SESSION_HOME/state/devices/mac/driver.lock"
   if [[ ! -f "$lock_file" || -L "$lock_file" ]]; then
     fail_gate "$case_name has no private regular driver.lock"
   fi
@@ -501,7 +501,7 @@ assert_clean_cycle_stopped() {
       "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name stop left an active driver session"
   fi
-  if [[ -e "$SESSION_HOME/state/driver.lock" ]]; then
+  if [[ -e "$SESSION_HOME/state/devices/mac/driver.lock" ]]; then
     fail_gate "$case_name stop left the exact driver.lock behind"
   fi
   local attempt

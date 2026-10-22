@@ -376,12 +376,12 @@ assert_no_launching() {
 }
 
 assert_driver_lock() {
-  assert_private_file "$TEST_HOME/state/driver.lock" "$1 driver.lock"
+  assert_private_file "$TEST_HOME/state/devices/mac/driver.lock" "$1 driver.lock"
 }
 
 assert_no_driver_lock() {
-  [[ ! -e "$TEST_HOME/state/driver.lock" &&
-     ! -L "$TEST_HOME/state/driver.lock" ]] ||
+  [[ ! -e "$TEST_HOME/state/devices/mac/driver.lock" &&
+     ! -L "$TEST_HOME/state/devices/mac/driver.lock" ]] ||
     fail_gate "$1 retained driver.lock"
 }
 
@@ -611,7 +611,7 @@ driver_session="$(jq -er '.sessionID' \
 launching_sha_before="$(shasum -a 256 \
   "$TEST_HOME/mac/launching.json" | awk '{print $1}')"
 lock_sha_before="$(shasum -a 256 \
-  "$TEST_HOME/state/driver.lock" | awk '{print $1}')"
+  "$TEST_HOME/state/devices/mac/driver.lock" | awk '{print $1}')"
 capture_healthy_status afterDriverLockDurable
 assert_fixed_slot afterDriverLockDurable
 jq -e --arg session "$driver_session" '
@@ -644,7 +644,7 @@ jq -e '
 [[ "$launching_sha_before" == "$(shasum -a 256 \
      "$TEST_HOME/mac/launching.json" | awk '{print $1}')" &&
    "$lock_sha_before" == "$(shasum -a 256 \
-     "$TEST_HOME/state/driver.lock" | awk '{print $1}')" ]] ||
+     "$TEST_HOME/state/devices/mac/driver.lock" | awk '{print $1}')" ]] ||
   fail_gate "blocked start mutated the durable launch state"
 stop_and_verify afterDriverLockDurable "$driver_pid" "$driver_birth"
 

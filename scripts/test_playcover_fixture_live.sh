@@ -106,7 +106,7 @@ if [[ ! "$SESSION_HOME_ID" =~ ^[0-9a-f]{64}$ ]]; then
     >&2
   exit 78
 fi
-SESSION_LOG_DIR="$SESSION_HOME/logs/mac"
+SESSION_LOG_DIR="$SESSION_HOME/logs/devices/mac"
 printf '%s\n' "$SESSION_HOME" >"$RUN_DIR/session-home-origin"
 
 archive_session_home() {

@@ -257,7 +257,7 @@ assert_stopped() {
   run_cli "$name" status --json
   jq -e '.data.driver.status == "notRunning"' \
     "$RUN_DIR/$name.stdout" >/dev/null || fail "$name is not stopped"
-  [[ ! -e "$SESSION_HOME/state/driver.lock" ]] ||
+  [[ ! -e "$SESSION_HOME/state/devices/mac/driver.lock" ]] ||
     fail "$name retained driver.lock"
   [[ ! -e "$SESSION_HOME/mac/launching.json" ]] ||
     fail "$name retained launching.json"
