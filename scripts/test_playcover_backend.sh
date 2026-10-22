@@ -115,7 +115,7 @@ run_live() {
   echo "[playcover-live] Running phase-free launch-recovery crash matrix..."
   bash "$ROOT_DIR/scripts/test_playcover_pending_launch_crash_live.sh" --live
   echo "[playcover-live] Running fixed-slot Runtime lifecycle stress matrix..."
-  bash "$ROOT_DIR/scripts/test_playcover_runtime_stress_live.sh"
+  bash "$ROOT_DIR/scripts/test_playcover_runtime_stress_live.sh" --live
   echo "[playcover-live] core launch-recovery and fixed-slot stress gate passed"
 }
 

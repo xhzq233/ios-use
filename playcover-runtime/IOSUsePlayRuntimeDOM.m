@@ -3,6 +3,7 @@
 #import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayRuntimeDOM.h"
 #import "IOSUsePlaySnapshot.h"
+#import "IOSUsePlayInteractionView.h"
 #import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlayAppKitBridge.h"
 
@@ -1429,40 +1430,6 @@ static void IOSUseDOMResetLiveIdentityRecords(
     IOSUseDOMLiveIdentityGeneration = generation;
 }
 
-static UIView * _Nullable IOSUseDOMNormalizedInteractionView(
-    UIView * _Nullable view
-) {
-    UIView *nearestOwner = nil;
-    for (UIView *candidate = view;
-         candidate != nil;
-         candidate = candidate.superview) {
-        if (candidate.hidden ||
-            candidate.alpha <= 0.01 ||
-            candidate.accessibilityElementsHidden) {
-            return nil;
-        }
-        if ([candidate isKindOfClass:UIControl.class] &&
-            ![(UIControl *)candidate isEnabled]) {
-            return nil;
-        }
-        if (!candidate.userInteractionEnabled) {
-            if (candidate == view &&
-                ![candidate isKindOfClass:UIControl.class]) {
-                continue;
-            }
-            return nil;
-        }
-        if (nearestOwner == nil &&
-            ![candidate isKindOfClass:UIWindow.class]) {
-            nearestOwner = candidate;
-        }
-        if ([candidate isKindOfClass:UIWindow.class]) {
-            break;
-        }
-    }
-    return nearestOwner;
-}
-
 static UIView * _Nullable IOSUseDOMInteractionView(
     id object,
     UIView * _Nullable rawViewAncestor
@@ -1472,7 +1439,7 @@ static UIView * _Nullable IOSUseDOMInteractionView(
         @"DOM interaction owner resolution is main-only"
     );
     if ([object isKindOfClass:UIView.class]) {
-        return IOSUseDOMNormalizedInteractionView(object);
+        return IOSUsePlayNormalizedInteractionView(object);
     }
     NSHashTable<id> *visited = [NSHashTable hashTableWithOptions:
         NSPointerFunctionsObjectPointerPersonality |
@@ -1493,11 +1460,11 @@ static UIView * _Nullable IOSUseDOMInteractionView(
             break;
         }
         if ([container isKindOfClass:UIView.class]) {
-            return IOSUseDOMNormalizedInteractionView(container);
+            return IOSUsePlayNormalizedInteractionView(container);
         }
         current = container;
     }
-    return IOSUseDOMNormalizedInteractionView(rawViewAncestor);
+    return IOSUsePlayNormalizedInteractionView(rawViewAncestor);
 }
 
 static NSString * _Nullable IOSUseDOMIdentityString(id value) {
@@ -1740,7 +1707,7 @@ BOOL IOSUsePlayRuntimeDOMResolveLiveIdentity(
             recordedInteractionView.window == nil ||
             recordedInteractionView.window !=
                 record.snapshotWindow ||
-            IOSUseDOMNormalizedInteractionView(
+            IOSUsePlayNormalizedInteractionView(
                 recordedInteractionView
             ) != recordedInteractionView) {
             return NO;

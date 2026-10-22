@@ -2,6 +2,7 @@
 #import <UIKit/UIKit.h>
 
 #import "IOSUsePlayRuntimeDOM.h"
+#import "IOSUsePlayInteractionView.h"
 #import "IOSUsePlayRuntimeViewTree.h"
 
 UIView * _Nullable IOSUsePlayRuntimeDOMResolveTargetView(
@@ -30,6 +31,50 @@ static NSDictionary<NSString *, id> *IOSUseViewTreeFirstSubview(
 int main(void) {
     @autoreleasepool {
         BOOL passed = YES;
+
+        // Model Catalyst's tab label beneath a disabled visual-effect wrapper.
+        UIView *container = [UIView new];
+        UIButton *control = [UIButton buttonWithType:UIButtonTypeSystem];
+        UIView *decoration = [UIView new];
+        UIView *content = [UIView new];
+        UILabel *controlLabel = [UILabel new];
+        decoration.userInteractionEnabled = NO;
+        [container addSubview:control];
+        [control addSubview:decoration];
+        [decoration addSubview:content];
+        [content addSubview:controlLabel];
+        passed &= IOSUseViewTreeRequire(
+            IOSUsePlayNormalizedInteractionView(controlLabel) == control,
+            @"decorated label did not resolve to its owning control"
+        );
+        control.enabled = NO;
+        passed &= IOSUseViewTreeRequire(
+            IOSUsePlayNormalizedInteractionView(controlLabel) == nil,
+            @"disabled control became actionable through its label"
+        );
+        control.enabled = YES;
+        container.userInteractionEnabled = NO;
+        passed &= IOSUseViewTreeRequire(
+            IOSUsePlayNormalizedInteractionView(controlLabel) == nil,
+            @"disabled ancestor above the control was ignored"
+        );
+        container.userInteractionEnabled = YES;
+        decoration.hidden = YES;
+        passed &= IOSUseViewTreeRequire(
+            IOSUsePlayNormalizedInteractionView(controlLabel) == nil,
+            @"hidden decoration exposed its label"
+        );
+        decoration.hidden = NO;
+        [container addSubview:decoration];
+        passed &= IOSUseViewTreeRequire(
+            IOSUsePlayNormalizedInteractionView(controlLabel) == nil,
+            @"disabled generic container acquired an interaction owner"
+        );
+        decoration.userInteractionEnabled = YES;
+        passed &= IOSUseViewTreeRequire(
+            IOSUsePlayNormalizedInteractionView(controlLabel) == content,
+            @"ordinary label interaction owner changed"
+        );
 
         UIView *root = [[UIView alloc] initWithFrame:
             CGRectMake(0, 0, 430, 932)];
