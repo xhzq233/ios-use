@@ -46,22 +46,17 @@ account-global resources. Prepare/start paths only resolve the signer and must
 not initialize or repair Keychain or Trust Settings from unattended
 validation.
 
-Any script that launches a PlayCover App, plus the entitlement capability
-audit, must run only in a disposable macOS account and requires both private
-environment values below:
+PlayCover launch tests and the entitlement capability audit use the current
+non-system macOS login account. A disposable account is optional. The shared
+account resolver derives all roots from the effective UID and canonical passwd
+Home; no disposable-account acknowledgement or expected-Home secret is needed.
 
-```text
-IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK=I_UNDERSTAND_THIS_ACCOUNT_IS_DISPOSABLE
-IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME=<canonical-passwd-home>
-```
-
-The Home value must exactly match the effective account's canonical passwd
-Home. The guard derives the account-global cache, PlayChain, and socket roots
-from that verified Home and UID. It exits with `EX_CONFIG` (78) before
-PlayCover state or launch mutation when either value is absent or mismatched.
-Keep the real Home value in private local configuration; GitHub workflows
-receive both values through secrets, never repository variables or public
-artifacts.
+The public fixture tests replace the `com.iosuse.playfixture.stablev1` App slot.
+Back up that slot before a run if it contains a test installation you need to
+keep, and do not run another session for the same Bundle ID concurrently.
+Other App slots and login Keychain identities are not cleanup targets. Test
+Homes still isolate logical session state, and evidence remains local unless
+explicitly uploaded.
 
 Use `./ios-use`, not global `ios-use`, when validating current workspace changes.
 
@@ -75,7 +70,7 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | `scripts/test_driver_unit.sh` | Run Swift driver unit tests with an isolated default `IOS_USE_HOME` under `~/.ios-use/test-homes/driver-unit`. |
 | `scripts/audit_playcover_upstreams.sh [--cache-dir <path>] [--metadata-only]` | Re-clone or reuse pinned PlayCover/PlayTools/inject checkouts; require script pins, provenance pins, licenses, expected vendored file sets, and local-patch sets to agree exactly. `--metadata-only` runs the hermetic closure without cloning. |
 | `scripts/test_playcover_packaging_contract.sh` | Hermetic packaging audit tests, including negative cases for a deleted expected source, a one-sided provenance pin change, a mismatched license declaration, and a Frida pin change. |
-| `scripts/test_playcover_live_workflow_contract.sh` | Small hermetic contract proving that PlayCover integration is manual-only, both jobs use the provisioned runner and disposable-account secrets, the core aggregate owns the launch-recovery and Runtime stress gates, only runner-temporary `run.log` is uploaded, and release remains hosted and isolated. |
+| `scripts/test_playcover_live_workflow_contract.sh` | Small hermetic contract proving that PlayCover integration is manual-only, both jobs use the provisioned runner, the core aggregate owns the launch-recovery and Runtime stress gates, only runner-temporary `run.log` is uploaded, and release remains hosted and isolated. |
 | `scripts/test_playcover_pending_launch_crash_live.sh --live` | Clean-HEAD public-fixture gate that builds committed HEAD outside the checkout and crashes the debug CLI at the two durable Mac launch boundaries (`afterOpenReturned`, `afterDriverLockDurable`). It proves the phase-free `launching.json` create→recover→remove lifecycle, next-start census plus authenticated Runtime hello adoption, exact stop, and the `driver.lock` handoff; while the asynchronous App is not yet visible, only the retryable typed `mac_launch_recovery_unresolved` result is accepted. A submitted record remains recoverable across transient zero-process observations; `stop` preserves it during the asynchronous submit window and reports successful no-process cleanup only after the stale window. Unknown-process refusal remains a deterministic unit boundary. |
 | `scripts/test_playcover_prepare_differential.sh` | Run the hermetic pinned Installer-vs-ios-use prepare differential suite in an isolated SwiftPM scratch directory and publish its fixture-only schema-v1 attestation without replacing existing evidence. It records the loaded XCTest image's device/inode and content hash without freezing checkout source files; it does not consume a private live UI scenario. |
 | `scripts/test_playcover_entitlement_capabilities.sh --prepared-app <App.app> --playchain-root <path>` | Test-only manual gate that copies the exact signed entitlements from an installed account-global App slot's main executable onto a standalone probe, verifies semantic entitlement equality, and directly exercises the fixed UID socket root plus account PlayChain filesystem capabilities without `sandbox-exec`. |
@@ -86,12 +81,12 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | `scripts/test_playcover_external_prepare_characterization_contract.sh` | Negative contract for the diagnostic entrypoint: missing/duplicate inputs, relative, CR/LF-bearing, or existing work paths, checkout-confined work/report paths, mismatched or dirty HEAD, the fixed filtered XCTest, and recursive rejection of conclusion/configuration vocabulary or canonical work-root disclosure in report keys and values. |
 | `scripts/test_playcover_external_prepare_differential.sh --profile <path> --profile-sha256 <sha256> --scenario <path> --runtime <path> --playtools <path> --work-root <path> --attestation <path> --commit <sha>` | Run the configured external-App prepare differential against one separately reviewed exact profile. Every input is mandatory; after the operator archives or explicitly removes the retained characterization tree, `--work-root` must reuse that same canonical requested path and again be fresh. The final owner-only attestation path must also be fresh and outside the checkout. The supplied commit must be the clean committed HEAD: tracked working-tree changes, index changes, and untracked non-ignored files are rejected, while ignored build output may remain. The entrypoint runs only the configured XCTest in a cleared environment, verifies the exact external schema and work-root binding before prepare, retains its own work root for operator inspection, and publishes by hard link without overwrite. It never derives allowances from a raw diagnostic report or recursively removes the work root. |
 | `scripts/test_playcover_external_prepare_differential_contract.sh` | Focused negative contract for the external prepare entrypoint: missing/duplicate arguments, relative or CR/LF-bearing paths, stale output paths, checkout-confined outputs, invalid digests/revisions, dirty tracked/index/untracked state, and a commit other than current HEAD must fail before XCTest. |
-| `scripts/test_playcover_backend.sh --non-live` | Unified Apple-silicon integration-host gate: upstream audit, fresh workspace CLI/Runtime build and analysis, fixture build, production-linked compositor/PlayChain smoke, vendored and complete CLI Swift tests (including recorded PID reuse), hermetic pinned-prepare differential attestation, and release-installed execution. Because installed execution performs a real fixture launch, the host must be a disposable account with the two explicit safety values, the stable signer initialized by `./ios-use config --mac`, and a launch-capable GUI session. `--live` is the core live aggregate and runs only the same-boot launch-recovery crash gate followed by the fixed-slot Runtime stress gate against the committed public fixture. |
+| `scripts/test_playcover_backend.sh --non-live` | Unified Apple-silicon integration-host gate: upstream audit, fresh workspace CLI/Runtime build and analysis, fixture build, production-linked compositor/PlayChain smoke, vendored and complete CLI Swift tests (including recorded PID reuse), hermetic pinned-prepare differential attestation, and release-installed execution. Because installed execution performs a real fixture launch, the current account needs the stable signer initialized by `./ios-use config --mac`, and a launch-capable GUI session. `--live` is the core live aggregate and runs only the same-boot launch-recovery crash gate followed by the fixed-slot Runtime stress gate against the committed public fixture. |
 | `scripts/test_playcover_cgshw_compositor.sh [--deterministic-only]` | Links the production compositor into deterministic identity layout, inverse-coordinate, pixel-quantized full-edge canvas-only crop, fixed safe-area, and fixed UIKit phone-identity contract tests. Without `--deterministic-only`, it also runs the live CGWindow compositor smoke. |
 | `scripts/test_playcover_fixture_live.sh --live` | Optional additive diagnostic that runs the fixture acceptance gate on an unlocked GUI host against the fixed 430x932 non-resizable host window. It covers canvas-only capture, real global AppKit mouse delivery mapped from the Runtime `canvasCGWindowRect`, and a title-bar miss-hit check. It is not part of the core `test_playcover_backend.sh --live` or CI live gate. |
-| `scripts/test_playcover_runtime_stress_live.sh --live` | Clean-checkout public-fixture gate with fresh build scratch and a temporary logical Home in the explicitly disposable account. It proves fixed-slot A → B → A replacement at the canonical `App.app` path, automatic unchanged-source reuse, Frida eval/reset, and DOM, then runs 20 unique-session current-slot start/status/stop cycles. Each cycle checks the direct slot identity, App/executable path, `slot.json`, and absence of a symlink facade; the final attestation binds the clean HEAD and observed slot identity. |
+| `scripts/test_playcover_runtime_stress_live.sh --live` | Clean-checkout public-fixture gate with fresh build scratch and a temporary logical Home in the current login account. It proves fixed-slot A → B → A replacement at the canonical `App.app` path, automatic unchanged-source reuse, Frida eval/reset, and DOM, then runs 20 unique-session current-slot start/status/stop cycles. Each cycle checks the direct slot identity, App/executable path, `slot.json`, and absence of a symlink facade; the final attestation binds the clean HEAD and observed slot identity. |
 | `scripts/test_playcover_external_app_live.sh --live` | Optional additive generic 20-cycle external-App UI/mouse/lifecycle diagnostic. It requires explicit authorization, a private schema-v1 scenario, an unlocked GUI session, and an evidence directory outside the checkout. Global target input is mapped only from the Runtime `canvasCGWindowRect` onto the fixed 430x932 logical canvas, never the outer host frame; its redacted pass attestation is schema v2. It is not part of the core `test_playcover_backend.sh --live` or CI live gate. |
-| `scripts/test_playcover_installed_layout.sh [--release-dir <path>] [--verify-only]` | Without `--release-dir`, package the fresh local CLI/Runtime; with it, consume the exact release-build output. Both paths verify checksums and install into an isolated temporary prefix. The default form additionally runs fixture `start/status/stop` in the explicitly disposable account and proves the installed framework is unchanged; `--verify-only` stops before launch and never requires or touches account-global Mac state. |
+| `scripts/test_playcover_installed_layout.sh [--release-dir <path>] [--verify-only]` | Without `--release-dir`, package the fresh local CLI/Runtime; with it, consume the exact release-build output. Both paths verify checksums and install into an isolated temporary prefix. The default form additionally runs fixture `start/status/stop` in the current login account and proves the installed framework is unchanged; `--verify-only` stops before launch and never requires or touches account-global Mac state. |
 | `scripts/test_simulator_commands.mjs` | Node-based Simulator command case runner used by full Simulator validation. |
 | `scripts/test_semantic_touch_simulator.py --udid <test-sim> --home <isolated-home> --fixture-app <simulator-app>` | Uses the local CLI and an already running test Driver to verify cold-launch moving targets, stable taps, offsets, sustained-motion rejection without touch, long press, both landscape directions, and OCR points against App callbacks. Build the fixture with `bash playcover-fixtures/build.sh --sdk iphonesimulator`; the target must be a booted test Simulator and the Home must be isolated. |
 | `scripts/ios_use_test_simulator.js` | Shared helper used by driver unit tests and Simulator command tests to create/boot the fixed `IOSUseTest` Simulator. |
@@ -134,7 +129,7 @@ bash scripts/test_playcover_entitlement_capabilities.sh \
 ```
 
 Both arguments must be canonical absolute paths beneath the roots derived from
-the verified disposable account. The App must be the installed slot App inside
+the current login account. The App must be the installed slot App inside
 its `apps/<bundleID>/` directory (alongside `slot.json`); the PlayChain root
 must be the account-global owner-only `playchain` directory. The gate also
 validates the account-global `homes`/`locks` roots and fixed UID socket
@@ -148,8 +143,7 @@ socket root and the selected account PlayChain root; denied-path
 fixtures stay in the separate owner-only evidence root. It prints
 `PCAP-EVIDENCE-ROOT <absolute-path>` for that retained evidence. Only the
 exclusive file case unlinks its own file; socket and SQLite evidence are not
-recursively cleaned up. Run it only in the explicitly acknowledged disposable
-account.
+recursively cleaned up. Run it in the current login account with the prepared test App.
 
 Run the full UI replay only when needed:
 
@@ -164,8 +158,7 @@ changes; documentation-only and unrelated Mac changes do not wait for a
 Simulator. The PlayCover non-live integration job is explicit-dispatch-only and bound to the provisioned
 `[self-hosted, macOS, arm64, playcover-live]` runner because its installed
 execution performs a real launch; that host must already have the stable signer
-initialized by `./ios-use config --mac`, a launch-capable GUI session, and the
-two disposable-account secrets described above. The release workflow instead
+initialized by `./ios-use config --mac`, and a launch-capable GUI session. The release workflow instead
 runs on GitHub-hosted macOS and verifies the checksummed assets through an
 isolated temporary-prefix install. A real installed launch remains an explicit local or manual
 CI gate and is not required infrastructure for publishing the assets.

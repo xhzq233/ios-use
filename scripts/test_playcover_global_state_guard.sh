@@ -10,7 +10,7 @@ playcover_global_state_config_fail() {
   exit 78
 }
 
-playcover_require_disposable_account_contract() {
+playcover_resolve_current_account() {
   local label="$1"
   local account_uid
   local account_name
@@ -28,7 +28,7 @@ playcover_require_disposable_account_contract() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
     playcover_global_state_config_fail \
       "$label" \
-      "the disposable-account contract is supported only on macOS"
+      "account-global PlayCover tests are supported only on macOS"
   fi
 
   account_uid="$(/usr/bin/id -u 2>/dev/null)" ||
@@ -48,7 +48,7 @@ playcover_require_disposable_account_contract() {
   ]]; then
     playcover_global_state_config_fail \
       "$label" \
-      "a non-system disposable macOS account is required"
+      "a non-system macOS account is required"
   fi
 
   account_record="$(
@@ -92,20 +92,6 @@ playcover_require_disposable_account_contract() {
   expected_playchain_root="$canonical_account_home/Library/Application Support/dev.ios-use/mac/playchain"
   expected_socket_root="/private/tmp/dev.ios-use-$account_uid"
 
-  if [[
-    "${IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK:-}" != "I_UNDERSTAND_THIS_ACCOUNT_IS_DISPOSABLE"
-  ]]; then
-    playcover_global_state_config_fail \
-      "$label" \
-      "set IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK=I_UNDERSTAND_THIS_ACCOUNT_IS_DISPOSABLE only in a disposable macOS account"
-  fi
-  if [[
-    "${IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME:-}" != "$expected_account_home"
-  ]]; then
-    playcover_global_state_config_fail \
-      "$label" \
-      "IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME does not match the canonical login-account home"
-  fi
   PLAYCOVER_ACCOUNT_UID="$account_uid"
   PLAYCOVER_ACCOUNT_HOME="$expected_account_home"
   PLAYCOVER_ACCOUNT_CACHE_ROOT="$expected_account_cache"

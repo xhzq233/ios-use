@@ -40,8 +40,8 @@ The repository gate runs the Swift CLI and Driver unit suites, the pinned
 PlayCover differential contracts, script syntax and install smoke checks, then
 builds the Release CLI and Simulator Driver. The release build below owns fresh
 Runtime, Frida Engine and real-device Driver production builds. Account-global
-live tests remain explicit because they require an unlocked GUI session and a
-disposable account.
+live tests remain explicit because they require an unlocked GUI session and
+mutate the current account's fixture App slot.
 
 ## 3. Build release assets
 
@@ -100,7 +100,7 @@ This verifies the exact asset set, every checksum, both framework signatures,
 the embedded Frida notices, and an isolated-prefix install. It does not launch
 an App or touch account-global Mac state.
 
-For a local release candidate on a disposable, launch-capable Mac, run the live
+For a local release candidate on a launch-capable Mac, run the live
 installed-layout gate separately:
 
 ```bash
@@ -108,8 +108,8 @@ bash playcover-fixtures/build.sh
 bash scripts/test_playcover_installed_layout.sh --release-dir release
 ```
 
-The live form validates `start/status/stop` and requires the safety
-acknowledgement documented by the script.
+The live form validates `start/status/stop` and uses the current login account's
+fixture App slot.
 
 ## 5. Commit, tag, and push
 

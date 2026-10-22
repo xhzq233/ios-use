@@ -13,7 +13,7 @@ Usage: scripts/test_playcover_backend.sh [--non-live|--live]
 --non-live  Run the hermetic build, analysis, fixture, compositor, vendored
             Swift, release-install, and installed-execution gate. This is
             an integration-host gate: installed execution requires the
-            disposable-account contract, initialized stable host signer, and
+            current account, initialized stable host signer, and
             a launch-capable GUI session.
 --live      Run the independent launch-recovery crash gate and the fixed-slot
             Runtime lifecycle stress gate.
@@ -58,7 +58,7 @@ require_apple_silicon_xcode() {
   fi
 }
 
-require_disposable_account() {
+resolve_current_account() {
   if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
     echo \
       "[playcover-gate] EX_CONFIG: the account-global PlayCover safety guard is unavailable." \
@@ -67,11 +67,11 @@ require_disposable_account() {
   fi
   # shellcheck source=scripts/test_playcover_global_state_guard.sh
   source "$GLOBAL_STATE_GUARD"
-  playcover_require_disposable_account_contract "playcover-gate"
+  playcover_resolve_current_account "playcover-gate"
 }
 
 run_non_live() {
-  require_disposable_account
+  resolve_current_account
   require_apple_silicon_xcode
   echo "[playcover-gate] Auditing pinned upstreams and recorded local patches..."
   bash "$ROOT_DIR/scripts/audit_playcover_upstreams.sh" \
@@ -110,7 +110,7 @@ run_non_live() {
 }
 
 run_live() {
-  require_disposable_account
+  resolve_current_account
   require_apple_silicon_xcode 78
   echo "[playcover-live] Running phase-free launch-recovery crash matrix..."
   bash "$ROOT_DIR/scripts/test_playcover_pending_launch_crash_live.sh" --live

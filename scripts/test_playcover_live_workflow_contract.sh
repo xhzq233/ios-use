@@ -54,19 +54,6 @@ require_count 2 \
   "$LIVE_WORKFLOW" \
   "both PlayCover jobs must use the dedicated runner"
 
-for variable in \
-  IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK \
-  IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME; do
-  require_count 2 \
-    "$variable:.*secrets\.$variable" \
-    "$LIVE_WORKFLOW" \
-    "$variable must be secret-bound in both jobs"
-  require_absent "vars.$variable" "$LIVE_WORKFLOW" \
-    "$variable must not use a repository variable"
-  require_absent "$variable" "$RELEASE_WORKFLOW" \
-    "release must not read disposable-account secrets"
-done
-
 # The aggregate owns exactly the two core live behavior gates.
 require_count 1 \
   'test_playcover_pending_launch_crash_live\.sh.*--live' \

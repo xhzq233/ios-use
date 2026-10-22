@@ -17,8 +17,8 @@ Without --release-dir, constructs checksummed assets from the current freshly
 built CLI and PlayCover resources. With --release-dir, consumes the exact assets created by
 scripts/release_build.sh and validates their exact five-file checksum set
 before exercising an isolated temporary-prefix install. By default it also runs the installed
-start/status/stop path and therefore requires the documented disposable-account
-ACK and expected passwd Home. --verify-only stops after the isolated installed
+start/status/stop path in the current login account.
+--verify-only stops after the isolated installed
 layout checks; it neither launches an App nor touches account-global Mac state.
 USAGE
 }
@@ -54,7 +54,7 @@ if [[ "$VERIFY_ONLY" -eq 0 ]]; then
   fi
   # shellcheck source=scripts/test_playcover_global_state_guard.sh
   source "$GLOBAL_STATE_GUARD"
-  playcover_require_disposable_account_contract "installed-layout"
+  playcover_resolve_current_account "installed-layout"
 fi
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then

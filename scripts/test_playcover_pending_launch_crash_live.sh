@@ -29,8 +29,8 @@ Usage: scripts/test_playcover_pending_launch_crash_live.sh --live
 Builds committed HEAD in scratch and exercises the two durable Mac launch
 crash boundaries. The gate proves phase-free launching.json recovery after
 NSWorkspace submission and exact cleanup after driver.lock becomes durable.
-It requires the documented disposable-account acknowledgement and an
-unlocked launch-capable GUI session.
+It uses the current login account and requires an unlocked launch-capable
+GUI session.
 USAGE
 }
 
@@ -201,7 +201,7 @@ if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
 fi
 # shellcheck source=scripts/test_playcover_global_state_guard.sh
 source "$GLOBAL_STATE_GUARD"
-playcover_require_disposable_account_contract "playcover-launch-recovery"
+playcover_resolve_current_account "playcover-launch-recovery"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   config_fail "Apple-silicon macOS is required"

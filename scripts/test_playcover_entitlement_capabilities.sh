@@ -47,7 +47,7 @@ if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
 fi
 # shellcheck source=scripts/test_playcover_global_state_guard.sh
 source "$GLOBAL_STATE_GUARD"
-playcover_require_disposable_account_contract \
+playcover_resolve_current_account \
   "playcover-entitlement-capabilities"
 
 canonical_existing() {
