@@ -90,7 +90,7 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -
         case .failure(let response): return .failure(response)
         }
         defer { withExtendedLifetime(snapshot) {} }
-        guard try tapSnapshotCenter(elem.node, app: app) else {
+        guard try tapSnapshotCenter(elem.node, app: app, displayContext: snapshot.root.displayContext) else {
             return .failure(try Codec.foryError(
                 "input: failed to tap '\(target.label)'",
                 category: IOSUseErrorCategory.action,
@@ -109,10 +109,11 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -
     return .success(summary)
 }
 
-private func tapSnapshotCenter(_ snapshot: SafeSnapshot, app: XCUIApplication) throws -> Bool {
+private func tapSnapshotCenter(_ snapshot: SafeSnapshot, app: XCUIApplication,
+                               displayContext: XCDisplayContext?) throws -> Bool {
     guard let frame = interactionFrame(snapshot) else { return false }
     let point = CGPoint(x: frame.midX, y: frame.midY)
-    return try RawPointer.perform(app: app, event: .tap(point), waitForIdle: false) == nil
+    return try RawPointer.perform(app: app, event: .tap(point), displayContext: displayContext, waitForIdle: false) == nil
 }
 
 private func typeText(_ text: String) -> Bool {

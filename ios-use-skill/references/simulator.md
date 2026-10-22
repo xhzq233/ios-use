@@ -43,6 +43,10 @@ ios-use screenshot
 ios-use stop
 ```
 
+On multi-display Simulators, DOM, touch coordinates and screenshots follow the
+foreground App's window. After manually folding, unfolding or rotating a Duo,
+read `dom --nodiff` and take a new screenshot before reusing coordinates.
+
 Host-side commands accept an explicit Simulator UDID:
 
 ```bash
