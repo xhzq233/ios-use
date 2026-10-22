@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 @testable import PlayCoverUpstream
 import XCTest
 @testable import IOSUseCLI
@@ -610,7 +611,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             runtimeSHA256: runtimeBaselineInspection.fileSHA256,
             fridaSHA256: fridaBaselineInspection.fileSHA256,
             pluginSHA256: pluginBaselineInspection.fileSHA256,
-            observedDifferences: actual
+            observedDifferences: actual,
+            pinnedPadding: try checkedZeroPadding(XCTUnwrap(pinnedMain.allSlices.first)),
+            iosUsePadding: try checkedZeroPadding(XCTUnwrap(iosUseMain.allSlices.first))
         )
         let report = try PlayCoverPrepareDifferentialGate.enforce(
             pinned: pinned.prepared,
@@ -1987,11 +1990,33 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         }
     }
 
+    // codesign's reserved tail size varies across host versions. Accept only
+    // an all-zero tail of the inspected size, rather than freezing one host's
+    // padding length/hash or accepting arbitrary observed bytes.
+    private func checkedZeroPadding(
+        _ slice: PlayCoverUpstreamMachOSliceInspection
+    ) throws -> (size: String, hash: String) {
+        let count = try XCTUnwrap(slice.signature.superBlobPaddingSize)
+        guard UInt64(count) <= slice.size else {
+            throw NSError(domain: "PlayCoverPrepareDifferentialTests", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "signature padding exceeds slice size"])
+        }
+        let expected = SHA256.hash(data: Data(repeating: 0, count: Int(count)))
+            .map { String(format: "%02x", $0) }.joined()
+        guard slice.signature.superBlobPaddingSHA256 == expected else {
+            throw NSError(domain: "PlayCoverPrepareDifferentialTests", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "signature padding contains nonzero bytes"])
+        }
+        return (String(count), expected)
+    }
+
     private func makeAllowances(
         runtimeSHA256: String,
         fridaSHA256: String,
         pluginSHA256: String,
-        observedDifferences: [PlayCoverDifferentialDifference]
+        observedDifferences: [PlayCoverDifferentialDifference],
+        pinnedPadding: (size: String, hash: String),
+        iosUsePadding: (size: String, hash: String)
     ) throws -> [PlayCoverDifferentialAllowance] {
         let pinnedSign = "Shell.signAppWith(--deep)"
         let iosUseSign = "PlayCoverUpstreamEngine.signInsideOut"
@@ -2608,23 +2633,19 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-superblob-padding-size",
                 path: "Fixture",
                 field: "superBlob.paddingSize",
-                pinned: "18009",
-                iosUse: "18003",
-                reason: "The narrowed entitlement blobs change the exact "
-                    + "zero-padding extent within LC_CODE_SIGNATURE."
+                pinned: pinnedPadding.size,
+                iosUse: iosUsePadding.size,
+                reason: "The host codesign version chooses the reserved tail "
+                    + "size; both tails are independently verified as all-zero."
             ),
             signatureEvidenceAllowance(
                 "main-superblob-padding-hash",
                 path: "Fixture",
                 field: "superBlob.paddingSHA256",
-                pinned:
-                    "a823790dcb6fad8e523a4bed70301f678b0740535ca4ede98"
-                        + "5390960965c2aed",
-                iosUse:
-                    "7545207eeed18df73b3b3de2a2361cebcc6055c251fd0f3e"
-                        + "c561c8427ff615e5",
-                reason: "The exact zero-padding lengths have distinct "
-                    + "reviewed SHA-256 digests."
+                pinned: pinnedPadding.hash,
+                iosUse: iosUsePadding.hash,
+                reason: "The digest must match exactly that many zero bytes; "
+                    + "nonzero padding is rejected before allowances are built."
             ),
             try observedAllowance(
                 "main-superblob-structure",
