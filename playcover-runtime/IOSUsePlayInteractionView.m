@@ -47,4 +47,3 @@ UIView * _Nullable IOSUsePlayNormalizedInteractionView(
     }
     return nearestOwner;
 }
-
