@@ -2,6 +2,7 @@
 #import "IOSUsePlayDeviceConfiguration.h"
 #import "IOSUsePlayCanvas.h"
 #import "IOSUsePlayRuntimeDOM.h"
+#import "IOSUsePlaySnapshot.h"
 #import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlayAppKitBridge.h"
 
@@ -85,6 +86,7 @@ typedef CGRect (*IOSUseDOMSendRect)(id, SEL);
 @end
 
 @interface IOSUseDOMCaptureContext : NSObject
+@property(nonatomic, strong, nullable) IOSUsePlaySnapshotBudget *budget;
 @property(nonatomic, strong) NSHashTable<id> *visited;
 @property(nonatomic) NSUInteger visitedCount;
 @property(nonatomic) NSUInteger totalStringBytes;
@@ -199,20 +201,6 @@ static BOOL IOSUseDOMFramesMatchWithinTolerance(
 static BOOL IOSUseDOMViewIsActuallyVisibleInWindow(UIView *view);
 static CGRect IOSUseDOMObjectRect(id object);
 
-@interface IOSUseDOMSnapshotRequest : NSObject
-@property(nonatomic) CFAbsoluteTime expiresAt;
-@property(nonatomic) BOOL cancelled;
-@property(nonatomic) BOOL deadlineExpired;
-@property(nonatomic, strong) dispatch_semaphore_t completion;
-@property(nonatomic, strong, nullable) IOSUseDOMSnapshot *snapshot;
-@property(nonatomic, copy, nullable) NSString *failureMessage;
-@property(nonatomic, copy, nullable)
-    NSDictionary<NSString *, id> *commandError;
-@end
-
-@implementation IOSUseDOMSnapshotRequest
-@end
-
 typedef NS_ENUM(NSInteger, IOSUseDOMSelectorState) {
     IOSUseDOMSelectorStateNotFound = 0,
     IOSUseDOMSelectorStateFound = 1,
@@ -291,18 +279,6 @@ static NSDictionary<NSString *, NSNumber *> *IOSUseDOMRectJSON(CGRect rect) {
         @"w": @(rect.size.width),
         @"h": @(rect.size.height),
     };
-}
-
-static dispatch_queue_t IOSUseDOMSnapshotCoordinator(void) {
-    static dispatch_queue_t queue;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        queue = dispatch_queue_create(
-            "io.ios-use.play-runtime.dom-snapshots",
-            DISPATCH_QUEUE_SERIAL
-        );
-    });
-    return queue;
 }
 
 static NSDictionary<NSString *, id> *IOSUseDOMTargetJSON(
@@ -465,11 +441,20 @@ static unsigned long long IOSUseDOMAccessibilityTraits(id object) {
     }
 }
 
+static BOOL IOSUseDOMCaptureCanContinue(IOSUseDOMCaptureContext *context) {
+    if (context.failureMessage != nil) return NO;
+    if (context.budget == nil || [context.budget shouldContinue]) return YES;
+    context.failureMessage = context.budget.stopReason == IOSUsePlaySnapshotStopCancelled
+        ? @"UIKit accessibility snapshot was cancelled"
+        : @"UIKit accessibility snapshot exceeded its deadline";
+    return NO;
+}
+
 static NSString * _Nullable IOSUseDOMBoundedString(
     id value,
     IOSUseDOMCaptureContext *context
 ) {
-    if (value == nil || value == NSNull.null) {
+    if (!IOSUseDOMCaptureCanContinue(context) || value == nil || value == NSNull.null) {
         return nil;
     }
     NSString *string;
@@ -566,52 +551,12 @@ static NSArray * _Nullable IOSUseDOMContainerElements(
     id object,
     IOSUseDOMCaptureContext *context
 ) {
-    SEL countSelector = NSSelectorFromString(@"accessibilityElementCount");
-    SEL elementSelector =
-        NSSelectorFromString(@"accessibilityElementAtIndex:");
-    if (![object respondsToSelector:countSelector] ||
-        ![object respondsToSelector:elementSelector]) {
-        return nil;
-    }
-    NSInteger count = 0;
-    @try {
-        count = ((IOSUseDOMSendInteger)objc_msgSend)(
-            object,
-            countSelector
-        );
-    } @catch (__unused NSException *exception) {
-        return nil;
-    }
-    if (count < 0 || count == NSNotFound) {
-        return nil;
-    }
-    if ((NSUInteger)count > IOSUseDOMMaximumChildrenPerNode) {
-        context.failureMessage = [NSString stringWithFormat:
-            @"accessibility container %@ reported %ld children, exceeding "
-             "the 2048-child limit",
-            NSStringFromClass([object class]) ?: @"NSObject",
-            (long)count
-        ];
-        return nil;
-    }
-    NSMutableArray *elements =
-        [NSMutableArray arrayWithCapacity:(NSUInteger)count];
-    for (NSInteger index = 0; index < count; index += 1) {
-        id element = nil;
-        @try {
-            element = ((IOSUseDOMSendIDInteger)objc_msgSend)(
-                object,
-                elementSelector,
-                index
-            );
-        } @catch (__unused NSException *exception) {
-            element = nil;
-        }
-        if (element != nil) {
-            [elements addObject:element];
-        }
-    }
-    return elements;
+    NSString *failure = nil;
+    NSArray *result = IOSUsePlaySnapshotContainerElements(
+        object, IOSUseDOMMaximumChildrenPerNode, context.budget, &failure
+    );
+    if (failure != nil) context.failureMessage = failure;
+    return IOSUseDOMCaptureCanContinue(context) ? result : nil;
 }
 
 static NSArray *IOSUseDOMUniqueChildren(
@@ -619,6 +564,7 @@ static NSArray *IOSUseDOMUniqueChildren(
     id owner,
     IOSUseDOMCaptureContext *context
 ) {
+    if (!IOSUseDOMCaptureCanContinue(context)) return @[];
     if (children.count > IOSUseDOMMaximumChildrenPerNode) {
         context.failureMessage =
             @"accessibility node exceeded the 2048-child limit";
@@ -630,6 +576,7 @@ static NSArray *IOSUseDOMUniqueChildren(
     NSMutableArray *unique =
         [NSMutableArray arrayWithCapacity:children.count];
     for (id child in children) {
+        if (!IOSUseDOMCaptureCanContinue(context)) return @[];
         if (child == nil ||
             child == owner ||
             child == NSNull.null ||
@@ -882,6 +829,7 @@ static id _Nullable IOSUseDOMEvaluateFixedWebBridge(
     WKWebView *webView,
     NSDictionary<NSString *, id> *arguments,
     NSTimeInterval timeout,
+    IOSUsePlaySnapshotBudget * _Nullable budget,
     NSString * _Nullable *failureMessage
 ) {
     NSCAssert(
@@ -913,7 +861,8 @@ static id _Nullable IOSUseDOMEvaluateFixedWebBridge(
     }
     CFAbsoluteTime deadline =
         CFAbsoluteTimeGetCurrent() + timeout;
-    while (!completed && CFAbsoluteTimeGetCurrent() < deadline) {
+    while (!completed && CFAbsoluteTimeGetCurrent() < deadline &&
+           (budget == nil || [budget shouldContinue])) {
         CFRunLoopRunInMode(
             kCFRunLoopDefaultMode,
             MIN(0.01, deadline - CFAbsoluteTimeGetCurrent()),
@@ -955,7 +904,8 @@ static NSArray * _Nullable IOSUseDOMWebAccessibilityElements(
     id rawResult = IOSUseDOMEvaluateFixedWebBridge(
         webView,
         IOSUseDOMFixedWebBridgeArguments(@"snapshot"),
-        0.75,
+        MIN(0.75, context.budget != nil ? context.budget.remainingSeconds : 0.75),
+        context.budget,
         &failureMessage
     );
     if (![rawResult isKindOfClass:NSDictionary.class]) {
@@ -1137,6 +1087,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeWebInputState(
         webView,
         IOSUseDOMFixedWebBridgeArguments(@"inputState"),
         0.75,
+        nil,
         &evaluationFailure
     );
     if (![rawState isKindOfClass:NSDictionary.class] ||
@@ -1355,6 +1306,7 @@ IOSUsePlayRuntimePerformWebAccessibilityAction(
         webView,
         arguments,
         0.75,
+        nil,
         &evaluationFailure
     );
     if (![rawEvidence isKindOfClass:NSDictionary.class]) {
@@ -2071,6 +2023,7 @@ static NSArray *IOSUseDOMChildren(
     BOOL *hasAutomationChildren,
     IOSUseDOMCaptureContext *context
 ) {
+    if (!IOSUseDOMCaptureCanContinue(context)) return @[];
     if (!hierarchyVisible) {
         if (hasAutomationChildren != NULL) {
             *hasAutomationChildren = NO;
@@ -2085,7 +2038,7 @@ static NSArray *IOSUseDOMChildren(
                 object,
                 context
             );
-        if (context.failureMessage != nil) {
+        if (!IOSUseDOMCaptureCanContinue(context)) {
             return @[];
         }
         if (webAccessibilityElements.count > 0) {
@@ -2106,6 +2059,7 @@ static NSArray *IOSUseDOMChildren(
         NSSelectorFromString(@"automationElements"),
         &respondsToAutomation
     );
+    if (!IOSUseDOMCaptureCanContinue(context)) return @[];
     if (automation.count > 0) {
         if (hasAutomationChildren != NULL) {
             *hasAutomationChildren = YES;
@@ -2135,7 +2089,7 @@ static NSArray *IOSUseDOMChildren(
         NSSelectorFromString(@"accessibilityElements"),
         NULL
     );
-    if (context.failureMessage != nil) {
+    if (!IOSUseDOMCaptureCanContinue(context)) {
         return @[];
     }
     if (accessibilityElements.count > 0) {
@@ -2147,7 +2101,7 @@ static NSArray *IOSUseDOMChildren(
     }
 
     NSArray *containerElements = IOSUseDOMContainerElements(object, context);
-    if (context.failureMessage != nil) {
+    if (!IOSUseDOMCaptureCanContinue(context)) {
         return @[];
     }
     if (containerElements.count > 0) {
@@ -2636,7 +2590,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     UIView * _Nullable rawViewAncestor,
     IOSUseDOMCaptureContext *context
 ) {
-    if (context.failureMessage != nil || object == nil) {
+    if (!IOSUseDOMCaptureCanContinue(context) || object == nil) {
         return nil;
     }
     if (depth > IOSUseDOMMaximumDepth) {
@@ -2662,12 +2616,13 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     );
     unsigned long long accessibilityTraits =
         IOSUseDOMAccessibilityTraits(object);
+    if (!IOSUseDOMCaptureCanContinue(context)) return nil;
     id identifierObject = IOSUseDOMObjectValue(
         object,
         NSSelectorFromString(@"accessibilityIdentifier")
     );
     NSString *identifier = IOSUseDOMBoundedString(identifierObject, context);
-    if (context.failureMessage != nil) {
+    if (!IOSUseDOMCaptureCanContinue(context)) {
         return nil;
     }
     id labelObject = IOSUseDOMObjectValue(
@@ -2675,7 +2630,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
         NSSelectorFromString(@"accessibilityLabel")
     );
     NSString *label = IOSUseDOMBoundedString(labelObject, context);
-    if (context.failureMessage != nil) {
+    if (!IOSUseDOMCaptureCanContinue(context)) {
         return nil;
     }
     id visibleLabelObject = nil;
@@ -2692,7 +2647,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
         visibleLabelObject,
         context
     );
-    if (context.failureMessage != nil) {
+    if (!IOSUseDOMCaptureCanContinue(context)) {
         return nil;
     }
     // UIKitMacHelper can report accessibilityIdentifier as
@@ -2709,7 +2664,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
         NSSelectorFromString(@"accessibilityHint")
     );
     NSString *hint = IOSUseDOMBoundedString(hintObject, context);
-    if (context.failureMessage != nil) {
+    if (!IOSUseDOMCaptureCanContinue(context)) {
         return nil;
     }
     NSString *liveInputValue =
@@ -2721,7 +2676,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
             NSSelectorFromString(@"accessibilityValue")
         );
     NSString *value = IOSUseDOMBoundedString(valueObject, context);
-    if (context.failureMessage != nil) {
+    if (!IOSUseDOMCaptureCanContinue(context)) {
         return nil;
     }
     if (value.length == 0 &&
@@ -2732,7 +2687,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
             NSSelectorFromString(@"placeholder")
         );
         value = IOSUseDOMBoundedString(placeholderObject, context);
-        if (context.failureMessage != nil) {
+        if (!IOSUseDOMCaptureCanContinue(context)) {
             return nil;
         }
     }
@@ -2789,7 +2744,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
         &hasAutomationChildren,
         context
     );
-    if (context.failureMessage != nil) {
+    if (!IOSUseDOMCaptureCanContinue(context)) {
         return nil;
     }
     NSMutableArray<IOSUseDOMNode *> *children =
@@ -2807,7 +2762,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
             nearestRawView,
             context
         );
-        if (context.failureMessage != nil) {
+        if (!IOSUseDOMCaptureCanContinue(context)) {
             return nil;
         }
         if (child != nil) {
@@ -2928,11 +2883,14 @@ static NSArray<IOSUseCleanNode *> *IOSUseDOMSortedCleanNodes(
         }];
 }
 
-static NSArray<IOSUseCleanNode *> *IOSUseDOMCleanNode(IOSUseDOMNode *node) {
+static NSArray<IOSUseCleanNode *> *IOSUseDOMCleanNode(
+    IOSUseDOMNode *node, IOSUseDOMCaptureContext *context
+) {
+    if (!IOSUseDOMCaptureCanContinue(context)) return @[];
     NSMutableArray<IOSUseCleanNode *> *cleanChildren =
         [NSMutableArray array];
     for (IOSUseDOMNode *child in node.children) {
-        [cleanChildren addObjectsFromArray:IOSUseDOMCleanNode(child)];
+        [cleanChildren addObjectsFromArray:IOSUseDOMCleanNode(child, context)];
     }
 
     BOOL effectiveOpaque = node.opaque && cleanChildren.count == 0;
@@ -3040,6 +2998,7 @@ static BOOL IOSUseDOMAssignChildLabels(
     NSMutableDictionary<NSString *, NSNumber *> *nextIndexByBaseLabel,
     IOSUseDOMCaptureContext *context
 ) {
+    if (!IOSUseDOMCaptureCanContinue(context)) return NO;
     NSUInteger childCount = parent.children.count;
     for (NSUInteger index = 0; index < childCount; index += 1) {
         IOSUseCleanNode *child = parent.children[index];
@@ -3057,7 +3016,7 @@ static BOOL IOSUseDOMAssignChildLabels(
             ];
             child.displayLabel =
                 IOSUseDOMBoundedString(generated, context);
-            if (context.failureMessage != nil) {
+            if (!IOSUseDOMCaptureCanContinue(context)) {
                 return NO;
             }
         }
@@ -3074,7 +3033,7 @@ static BOOL IOSUseDOMAssignChildLabels(
                 ];
                 child.displayLabel =
                     IOSUseDOMBoundedString(alias, context);
-                if (context.failureMessage != nil) {
+                if (!IOSUseDOMCaptureCanContinue(context)) {
                     return NO;
                 }
             }
@@ -3115,15 +3074,17 @@ static BOOL IOSUseDOMAssignAutoLabels(
 static BOOL IOSUseDOMFlattenCleanNode(
     IOSUseCleanNode *node,
     IOSUseCleanNode * _Nullable parent,
-    NSMutableArray<IOSUseCleanNode *> *elements
+    NSMutableArray<IOSUseCleanNode *> *elements,
+    IOSUseDOMCaptureContext *context
 ) {
+    if (!IOSUseDOMCaptureCanContinue(context)) return NO;
     if (elements.count >= IOSUseDOMMaximumCleanNodeCount) {
         return NO;
     }
     node.parent = parent;
     [elements addObject:node];
     for (IOSUseCleanNode *child in node.children) {
-        if (!IOSUseDOMFlattenCleanNode(child, node, elements)) {
+        if (!IOSUseDOMFlattenCleanNode(child, node, elements, context)) {
             return NO;
         }
     }
@@ -3234,9 +3195,11 @@ static NSArray<UIWindow *> *IOSUseDOMActiveWindows(void) {
 }
 
 static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
+    IOSUsePlaySnapshotBudget *budget,
     NSString * _Nullable *failureMessage
 ) {
     NSCAssert(NSThread.isMainThread, @"UIKit DOM traversal must run on main");
+    if (![budget shouldContinue]) return nil;
     NSArray<UIWindow *> *windows = IOSUseDOMActiveWindows();
     if (windows.count == 0) {
         if (failureMessage != NULL) {
@@ -3262,6 +3225,7 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
     }
 
     IOSUseDOMCaptureContext *context = [IOSUseDOMCaptureContext new];
+    context.budget = budget;
     context.visited = [NSHashTable hashTableWithOptions:
         NSPointerFunctionsObjectPointerPersonality |
         NSPointerFunctionsStrongMemory];
@@ -3285,7 +3249,7 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
             nil,
             context
         );
-        if (context.failureMessage != nil) {
+        if (!IOSUseDOMCaptureCanContinue(context)) {
             if (failureMessage != NULL) {
                 *failureMessage = context.failureMessage;
             }
@@ -3299,7 +3263,7 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
     NSMutableArray<IOSUseCleanNode *> *cleanRoots =
         [NSMutableArray array];
     for (IOSUseDOMNode *root in rawRoots) {
-        [cleanRoots addObjectsFromArray:IOSUseDOMCleanNode(root)];
+        [cleanRoots addObjectsFromArray:IOSUseDOMCleanNode(root, context)];
     }
     NSString *application =
         NSBundle.mainBundle.bundleIdentifier ?: @"";
@@ -3317,7 +3281,7 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
     NSMutableArray<IOSUseCleanNode *> *elements =
         [NSMutableArray array];
     for (IOSUseCleanNode *root in cleanRoots) {
-        if (!IOSUseDOMFlattenCleanNode(root, nil, elements)) {
+        if (!IOSUseDOMFlattenCleanNode(root, nil, elements, context)) {
             if (failureMessage != NULL) {
                 *failureMessage =
                     @"clean DOM exceeded the 4096-node response limit";
@@ -3330,6 +3294,10 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
         context.generation
     );
 
+    if (!IOSUseDOMCaptureCanContinue(context)) {
+        if (failureMessage != NULL) *failureMessage = context.failureMessage;
+        return nil;
+    }
     IOSUseDOMSnapshot *snapshot = [IOSUseDOMSnapshot new];
     snapshot.application = application;
     snapshot.windowSize = primaryWindow.bounds.size;
@@ -3346,223 +3314,42 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMFreshSnapshot(
     IOSUsePlayRuntimeCancellationCheck _Nullable cancellationCheck,
     NSDictionary<NSString *, id> * _Nullable *commandError
 ) {
-    if (!isfinite(queueBudget) || queueBudget <= 0) {
+    __block NSString *failureMessage = nil;
+    __block NSDictionary<NSString *, id> *executionError = nil;
+    IOSUsePlaySnapshotStopReason stopped;
+    IOSUseDOMSnapshot *snapshot = IOSUsePlayRunSnapshot(
+        queueBudget, cancellationCheck,
+        ^id(IOSUsePlaySnapshotBudget *budget) {
+            @try {
+                executionError = IOSUsePlayRuntimeUICommandError();
+                if (executionError != nil) return nil;
+                return IOSUseDOMBuildSnapshotOnMain(budget, &failureMessage);
+            } @catch (NSException *exception) {
+                failureMessage = @"UIKit accessibility getter raised an exception";
+                NSLog(@"[ios-use-play] DOM traversal exception %@", exception.name);
+                return nil;
+            }
+        }, &stopped
+    );
+    // A timed-out capture can still be inside one getter. Do not read its
+    // shared result/error variables until the coordinator confirms completion.
+    if (stopped != IOSUsePlaySnapshotStopNone) {
         if (commandError != NULL) {
+            BOOL cancelled = stopped == IOSUsePlaySnapshotStopCancelled;
             *commandError = IOSUseDOMError(
-                @"snapshot_queue_timeout",
-                @"UIKit snapshot coordinator deadline expired",
-                @"timeout",
-                @"snapshot",
-                YES,
-                nil,
-                0,
-                @[]
+                cancelled ? @"request_cancelled" : @"snapshot_queue_timeout",
+                cancelled ? @"waitFor client disconnected" : @"UIKit snapshot coordinator deadline expired",
+                cancelled ? @"protocol" : @"timeout",
+                cancelled ? @"wait" : @"snapshot",
+                !cancelled, nil, 0, @[]
             );
         }
         return nil;
     }
-    if (NSThread.isMainThread) {
-        NSDictionary<NSString *, id> *readinessError =
-            IOSUsePlayRuntimeUICommandError();
-        if (readinessError != nil) {
-            if (commandError != NULL) {
-                *commandError = readinessError;
-            }
-            return nil;
-        }
-        NSString *failureMessage = nil;
-        IOSUseDOMSnapshot *snapshot = nil;
-        @try {
-            snapshot = IOSUseDOMBuildSnapshotOnMain(&failureMessage);
-        } @catch (NSException *exception) {
-            failureMessage =
-                @"UIKit accessibility getter raised an exception";
-            NSLog(
-                @"[ios-use-play] DOM traversal exception %@",
-                exception.name
-            );
-        }
-        if (snapshot == nil && commandError != NULL) {
-            *commandError = IOSUseDOMError(
-                @"snapshot_failed",
-                failureMessage ?:
-                    @"failed to take a fresh UIKit accessibility snapshot",
-                @"lookup",
-                @"snapshot",
-                YES,
-                nil,
-                0,
-                @[]
-            );
-        }
-        return snapshot;
-    }
-
-    IOSUseDOMSnapshotRequest *request =
-        [IOSUseDOMSnapshotRequest new];
-    request.expiresAt = CFAbsoluteTimeGetCurrent() + queueBudget;
-    request.completion = dispatch_semaphore_create(0);
-    dispatch_async(IOSUseDOMSnapshotCoordinator(), ^{
-        @autoreleasepool {
-            @try {
-                BOOL shouldStart = NO;
-                @synchronized (request) {
-                    shouldStart =
-                        !request.cancelled &&
-                        CFAbsoluteTimeGetCurrent() <= request.expiresAt;
-                    if (!shouldStart && !request.cancelled) {
-                        request.deadlineExpired = YES;
-                    }
-                }
-                if (!shouldStart) {
-                    return;
-                }
-
-                __block IOSUseDOMSnapshot *snapshot = nil;
-                __block NSString *failureMessage = nil;
-                __block NSDictionary<NSString *, id>
-                    *executionError = nil;
-                dispatch_semaphore_t mainCompletion =
-                    dispatch_semaphore_create(0);
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    @try {
-                        BOOL shouldCollect = NO;
-                        @synchronized (request) {
-                            shouldCollect =
-                                !request.cancelled &&
-                                CFAbsoluteTimeGetCurrent() <=
-                                    request.expiresAt;
-                            if (!shouldCollect && !request.cancelled) {
-                                request.deadlineExpired = YES;
-                            }
-                        }
-                        if (shouldCollect) {
-                            executionError =
-                                IOSUsePlayRuntimeUICommandError();
-                            if (executionError == nil) {
-                                snapshot = IOSUseDOMBuildSnapshotOnMain(
-                                    &failureMessage
-                                );
-                            }
-                        }
-                    } @catch (NSException *exception) {
-                        failureMessage =
-                            @"UIKit accessibility getter raised an exception";
-                        NSLog(
-                            @"[ios-use-play] DOM traversal exception %@",
-                            exception.name
-                        );
-                    } @finally {
-                        dispatch_semaphore_signal(mainCompletion);
-                    }
-                });
-                dispatch_semaphore_wait(
-                    mainCompletion,
-                    DISPATCH_TIME_FOREVER
-                );
-                @synchronized (request) {
-                    if (!request.cancelled) {
-                        request.snapshot = snapshot;
-                        request.failureMessage = failureMessage;
-                        request.commandError = executionError;
-                    }
-                }
-            } @catch (NSException *exception) {
-                @synchronized (request) {
-                    if (!request.cancelled) {
-                        request.failureMessage =
-                            @"snapshot coordinator raised an exception";
-                    }
-                }
-                NSLog(
-                    @"[ios-use-play] DOM coordinator exception %@",
-                    exception.name
-                );
-            } @finally {
-                dispatch_semaphore_signal(request.completion);
-            }
-        }
-    });
-
-    for (;;) {
-        NSTimeInterval remaining =
-            request.expiresAt - CFAbsoluteTimeGetCurrent();
-        if (remaining <= 0) {
-            @synchronized (request) {
-                request.cancelled = YES;
-                request.deadlineExpired = YES;
-            }
-            if (commandError != NULL) {
-                *commandError = IOSUseDOMError(
-                    @"snapshot_queue_timeout",
-                    @"UIKit snapshot coordinator deadline expired",
-                    @"timeout",
-                    @"snapshot",
-                    YES,
-                    nil,
-                    0,
-                    @[]
-                );
-            }
-            return nil;
-        }
-        NSTimeInterval waitSlice = MIN(remaining, 0.1);
-        dispatch_time_t sliceDeadline = dispatch_time(
-            DISPATCH_TIME_NOW,
-            (int64_t)(waitSlice * NSEC_PER_SEC)
-        );
-        if (dispatch_semaphore_wait(
-                request.completion,
-                sliceDeadline
-            ) == 0) {
-            break;
-        }
-        if (cancellationCheck != nil && cancellationCheck()) {
-            @synchronized (request) {
-                request.cancelled = YES;
-            }
-            if (commandError != NULL) {
-                *commandError = IOSUseDOMError(
-                    @"request_cancelled",
-                    @"waitFor client disconnected",
-                    @"protocol",
-                    @"wait",
-                    NO,
-                    nil,
-                    0,
-                    @[]
-                );
-            }
-            return nil;
-        }
-    }
-
-    IOSUseDOMSnapshot *snapshot = nil;
-    NSString *failureMessage = nil;
-    NSDictionary<NSString *, id> *executionError = nil;
-    BOOL deadlineExpired = NO;
-    @synchronized (request) {
-        snapshot = request.snapshot;
-        failureMessage = request.failureMessage;
-        executionError = request.commandError;
-        deadlineExpired = request.deadlineExpired;
-    }
     if (snapshot == nil && commandError != NULL) {
         *commandError = executionError ?: IOSUseDOMError(
-            deadlineExpired
-                ? @"snapshot_queue_timeout"
-                : @"snapshot_failed",
-            failureMessage ?: (
-                deadlineExpired
-                    ? @"UIKit snapshot coordinator deadline expired"
-                    : @"failed to take a fresh UIKit accessibility snapshot"
-            ),
-            deadlineExpired ? @"timeout" : @"lookup",
-            @"snapshot",
-            YES,
-            nil,
-            0,
-            @[]
+            @"snapshot_failed", failureMessage ?: @"failed to take a fresh UIKit accessibility snapshot",
+            @"lookup", @"snapshot", YES, nil, 0, @[]
         );
     }
     return snapshot;

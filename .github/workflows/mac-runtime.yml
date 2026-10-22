@@ -5,12 +5,16 @@ on:
     paths:
       - "playcover-runtime/**"
       - "scripts/build_playcover_runtime.sh"
+      - "scripts/test_playcover_snapshot.sh"
+      - "scripts/test_playcover_playchain.sh"
       - ".github/workflows/mac-runtime.yml"
   push:
     branches: [main]
     paths:
       - "playcover-runtime/**"
       - "scripts/build_playcover_runtime.sh"
+      - "scripts/test_playcover_snapshot.sh"
+      - "scripts/test_playcover_playchain.sh"
       - ".github/workflows/mac-runtime.yml"
 
 concurrency:
@@ -35,3 +39,10 @@ jobs:
 
       - name: Build Mac Runtime
         run: bash scripts/build_playcover_runtime.sh --output "$RUNNER_TEMP/IOSUsePlayRuntime.framework"
+
+      - name: Test snapshot cancellation and PlayChain recovery
+        env:
+          IOS_USE_HOME: ${{ runner.temp }}/ios-use-runtime-tests
+        run: |
+          bash scripts/test_playcover_snapshot.sh
+          bash scripts/test_playcover_playchain.sh

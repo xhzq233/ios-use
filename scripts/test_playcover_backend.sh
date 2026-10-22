@@ -87,6 +87,7 @@ run_non_live() {
   echo "[playcover-gate] Running compositor and PlayChain harnesses..."
   bash "$ROOT_DIR/scripts/test_playcover_cgshw_compositor.sh"
   bash "$ROOT_DIR/scripts/test_playcover_playchain.sh"
+  bash "$ROOT_DIR/scripts/test_playcover_snapshot.sh"
   echo "[playcover-gate] Building vendored inject and testing vendored PlayCover..."
   # inject is upstream library-only at the pinned revision and deliberately has
   # no XCTest target; `swift build` is its complete Swift gate.
