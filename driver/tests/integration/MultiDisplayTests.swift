@@ -1,3 +1,4 @@
+#if DEBUG
 import UIKit
 import XCTest
 import Fory
@@ -220,3 +221,4 @@ final class MultiDisplayTests: XCTestCase {
                        "Foreground detection must select the app on the active inner display")
     }
 }
+#endif
