@@ -156,6 +156,11 @@ Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
   that same command.
 - altsign HTTP 4xx: verify Apple Developer account state and interactive
   authentication, then retry `config`.
+- macOS 27 `MID is invalid` with empty `machineID`/`otp`: rerun the installer
+  in `SKILL.md` to get AltSign v0.3.2 or later, then repeat the standalone login
+  above. Its Anisette v3 provider defaults to `https://mac-ani.jkcoxson.com`;
+  ensure the provider and Apple are reachable. `ALTSIGN_ANISETTE_SERVER` selects
+  another trusted HTTPS v3 provider. Passwords and codes go only to Apple.
 - altsign HTTP 5xx: check network, VPN, or proxy conditions and retry later; do not
   change device UI state to solve a signing-service failure.
 - Signing succeeded but launch still fails: check developer trust and run
