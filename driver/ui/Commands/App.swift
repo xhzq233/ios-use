@@ -104,6 +104,23 @@ enum AppCommands {
     }
 
     static func home() throws -> ForyResponseFrame {
+        #if targetEnvironment(simulator)
+        if #available(iOS 27.0, *) {
+            // The 27.1 Duo runtime acknowledges the emulated Home button but
+            // can leave the App on screen. LaunchServices activation actually
+            // brings SpringBoard forward; keep the existing foreground check
+            // without taking a DOM snapshot.
+            guard OpenApplicationWithBundleId(IOSUseProtocol.springboardBundleId) else {
+                throw DriverError.appNotFound(IOSUseProtocol.springboardBundleId)
+            }
+            let readiness = try waitAppForeground(ForyWaitAppForegroundArgs(
+                expectedBundleId: IOSUseProtocol.springboardBundleId,
+                waitForSnapshot: false
+            ))
+            guard readiness.ok else { return readiness }
+            return Codec.foryOK()
+        }
+        #endif
         XCUIDevice.shared.press(.home)
         return Codec.foryOK()
     }

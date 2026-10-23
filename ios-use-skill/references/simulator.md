@@ -56,3 +56,13 @@ ios-use oslog --udid <sim-udid> --process IOSUseDriver-Runner --timeout 5
 
 - If `start` fails, run `xcrun simctl list devices booted` to verify the Simulator is booted, run `ios-use config --list` to inspect target configuration, then stop the target and retry the setup sequence.
 - Do not use `ddi-mount` for Simulator; DDI is a real-device requirement.
+
+- If `simctl create` reports `Incompatible device`, inspect
+  `xcrun simctl list runtimes --json`: the selected runtime's
+  `supportedDeviceTypes` determines usable models. A model appearing in
+  `simctl list devicetypes` does not mean every installed runtime supports it.
+- After changing Xcode or the Simulator runtime, rebuild the Simulator Driver
+  from source with `bash scripts/build_driver.sh --simulator-only`, then
+  configure the selected Simulator again. Preserve the real-device Driver.
+- On iOS 27 Simulator, `home` waits for SpringBoard to become foreground.
+  Use `home -D` to verify the resulting Home-screen DOM.

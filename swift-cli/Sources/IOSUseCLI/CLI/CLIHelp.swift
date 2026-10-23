@@ -518,7 +518,7 @@ enum CLIHelp {
         case "home":
             return driverHelp(
                 usage: "ios-use home [--dom [duration] | -D [duration]] [--nodiff]",
-                summary: "Press the Home button.",
+                summary: "Return to the Home screen.",
                 options: [postDOMOption, diffDOMOption],
                 footer: "The Mac backend has no Home action. Use start/status/stop; restart it with stop, then start --mac."
             )
