@@ -62,8 +62,8 @@ ln -s "$HOME/.ios-use/skill" .agents/skills/ios-use
 Install a specific release or build from source:
 
 ```bash
-# Install version 2.1.1.
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.1/scripts/install.sh | bash -s -- --version v2.1.1
+# Install version 2.1.2.
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.2/scripts/install.sh | bash -s -- --version v2.1.2
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
@@ -74,7 +74,7 @@ services on Linux x86_64. Install with the command above, or build from
 source with Swift 6.2+ and standard Linux build tools:
 
 ```bash
-git clone --branch v2.1.1 https://github.com/xhzq233/ios-use.git
+git clone --branch v2.1.2 https://github.com/xhzq233/ios-use.git
 cd ios-use
 bash scripts/build_swift_cli.sh
 ./ios-use start -d phone --connection device-connection.json
