@@ -33,6 +33,8 @@ silicon Macs. It exposes a compact accessibility tree, semantic actions, JSON
 output, screenshots, logs, proxy capture, and multi-device operation. Linux hosts
 can operate iOS Drivers and Apple device services over remote connections.
 
+Supports macOS 27 and iOS 27.
+
 ## Install
 
 ```bash
@@ -62,8 +64,8 @@ ln -s "$HOME/.ios-use/skill" .agents/skills/ios-use
 Install a specific release or build from source:
 
 ```bash
-# Install version 2.1.1.
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.1/scripts/install.sh | bash -s -- --version v2.1.1
+# Install version 2.1.2.
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.2/scripts/install.sh | bash -s -- --version v2.1.2
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
@@ -74,7 +76,7 @@ services on Linux x86_64. Install with the command above, or build from
 source with Swift 6.2+ and standard Linux build tools:
 
 ```bash
-git clone --branch v2.1.1 https://github.com/xhzq233/ios-use.git
+git clone --branch v2.1.2 https://github.com/xhzq233/ios-use.git
 cd ios-use
 bash scripts/build_swift_cli.sh
 ./ios-use start -d phone --connection device-connection.json
@@ -126,12 +128,7 @@ ios-use tap "A stable label" --dom
 ios-use stop
 ```
 
-The Mac backend requires an unencrypted arm64 iPhone App. It is not fully
-supported on macOS 26 or newer. The macOS 27 compatibility work covers CLI and
-Runtime builds, invalid PlayChain key decoding, and cooperative DOM snapshot
-cancellation. App-specific layout and sustained UI interaction still require
-validation on the target App and host OS; successful compilation alone does
-not establish full compatibility.
+The Mac backend supports macOS 27 and requires an unencrypted arm64 iPhone App.
 
 Every Mac session includes Frida. See the
 [debugging guide](ios-use-skill/references/frida-debug.md) for scripts and live hooks.
@@ -500,7 +497,7 @@ DOM: 20 runs; other commands: 6; session start/stop: 3. Mac uses `start/stop` fo
 | Target | Host | What you need |
 | --- | --- | --- |
 | Real iPhone over USB | Apple silicon Mac | iOS 17.4+ and a free or paid Apple Developer account for driver signing |
-| iPhone App on Mac | Apple silicon Mac | An unencrypted arm64 iPhone App; macOS 26+ is not fully supported |
+| iPhone App on Mac | Apple silicon Mac | An unencrypted arm64 iPhone App |
 | iOS Simulator | Apple silicon Mac | Full Xcode and a booted Simulator |
 | Remote iPhone | macOS or Linux x86_64 | A provider connection file, a signed Driver and prepared device services |
 

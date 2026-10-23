@@ -32,9 +32,7 @@ Duo folds along the same physical hinge: the portrait outer display opens into
 the landscape inner display, and the landscape outer display opens into portrait.
 Its exact iOS 27.1 safe areas and side-mounted system bars are not emulated.
 
-On macOS 26 or newer, `start --mac` warns and continues, but Mac UI interaction
-is not fully supported and may crash. Prefer a validated older macOS host, a
-real device, or a Simulator for reliable automation.
+The Mac backend supports macOS 27.
 
 `config --mac` asks for macOS authentication. If authentication is cancelled,
 rerun the same command. This setup is shared across `IOS_USE_HOME` values.
