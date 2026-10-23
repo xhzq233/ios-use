@@ -351,6 +351,78 @@ final class PlayCoverSessionTests: XCTestCase {
         #endif
     }
 
+    func testCLIStopRoutesPendingMacWithoutDriverLock() throws {
+        #if canImport(AppKit)
+        for selection in [[], ["-d", "mac"]] {
+            let fixture = try makeFixture()
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+            configureNoRunningBundle()
+            try FileManager.default.createDirectory(
+                atPath: fixture.paths.playcoverPlayChain,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            let record = try launchingRecord(fixture: fixture, submittedAt: 1)
+            try PlayCoverLaunchingStore.create(record, paths: fixture.paths)
+            let result = IOSUseCLI(pathsForTesting: fixture.paths).run(
+                arguments: ["stop"] + selection
+            )
+            XCTAssertEqual(result.exitCode, 0, result.stderr)
+            XCTAssertNil(try PlayCoverLaunchingStore.load(paths: fixture.paths))
+        }
+        #endif
+    }
+
+    func testCLIStopPreservesRecentPendingMac() throws {
+        #if canImport(AppKit)
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        configureNoRunningBundle()
+        try FileManager.default.createDirectory(
+            atPath: fixture.paths.playcoverPlayChain,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        PlayCoverSessionService.nowMillisecondsOverrideForTesting = { 2_000 }
+        let record = try launchingRecord(fixture: fixture, submittedAt: 1_000)
+        try PlayCoverLaunchingStore.create(record, paths: fixture.paths)
+        let result = IOSUseCLI(pathsForTesting: fixture.paths).run(
+            arguments: ["stop", "-d", "mac", "--json"]
+        )
+        XCTAssertNotEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stderr.contains("mac_launch_recovery_unresolved"))
+        XCTAssertEqual(try PlayCoverLaunchingStore.load(paths: fixture.paths), record)
+        #endif
+    }
+
+    func testCLIStopPendingMacRequiresSelectionBesideAnotherDevice() throws {
+        #if canImport(AppKit)
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        configureNoRunningBundle()
+        try FileManager.default.createDirectory(
+            atPath: fixture.paths.playcoverPlayChain,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let record = try launchingRecord(fixture: fixture, submittedAt: 1)
+        try PlayCoverLaunchingStore.create(record, paths: fixture.paths)
+        let otherPaths = try fixture.paths.deviceContext("OTHER-DEVICE")
+        let other = SessionService.Info(
+            udid: "OTHER-DEVICE", deviceName: "Other", deviceVersion: "1",
+            deviceType: "real"
+        )
+        try SessionService.writeDriverLock(info: other, paths: otherPaths)
+        let cli = IOSUseCLI(pathsForTesting: fixture.paths)
+        XCTAssertNotEqual(cli.run(arguments: ["stop"]).exitCode, 0)
+        XCTAssertEqual(try PlayCoverLaunchingStore.load(paths: fixture.paths), record)
+        let selected = cli.run(arguments: ["stop", "-d", "mac"])
+        XCTAssertEqual(selected.exitCode, 0, selected.stderr)
+        XCTAssertNil(try PlayCoverLaunchingStore.load(paths: fixture.paths))
+        XCTAssertEqual(try SessionService.readDriverLockInfo(paths: otherPaths), other)
+        #endif
+    }
+
     func testUnknownSameBundleProcessIsNeverTerminated() throws {
         #if canImport(AppKit)
         let fixture = try makeFixture()

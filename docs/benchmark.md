@@ -1,5 +1,8 @@
 # Benchmark
 
+For the macOS 27 follow-up, compatibility findings and comparison limits, see
+[macOS 27 validation](macos27-validation.md).
+
 2026-09-20 · Release `aca8dc0b`, with activation remeasured after the foreground-only follow-up. Each measurement uses matching CLI and Driver/Runtime. Mean / median CLI wall time in ms; setup and verification are outside the timer. DOM: 20 runs, other commands: 6, session start/stop: 3. WDA reuses the May 30 measurements.
 
 | Operation | USB mean / median | May ios-use mean | WDA mean | Mac mean / median |

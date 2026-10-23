@@ -60,6 +60,14 @@ extern BOOL IOSUsePlaySafeAreaClassDispatchesIMPForTesting(
     SEL selector,
     IMP expected
 );
+@interface IOSUsePlaySafeAreaWindowFixture : NSObject
+@property(nonatomic, readonly) UIWindowScene *windowScene;
+@end
+
+@implementation IOSUsePlaySafeAreaWindowFixture
+- (UIWindowScene *)windowScene { return nil; }
+@end
+
 @interface IOSUsePlaySafeAreaABIFixture : NSObject
 - (UIEdgeInsets)provider:(BOOL)includeStatusBar;
 - (void)invalidate;
@@ -438,7 +446,11 @@ int main(void) {
                 ),
             @"production UIWindow owner did not dispatch to the hook"
         );
-        UIWindow *firstWindow = [UIWindow new];
+        // Evidence bookkeeping only needs object identity and windowScene.
+        // Creating a real UIWindow outside UIApplicationMain now enters an
+        // incomplete Catalyst scene lifecycle on macOS 27. Keep actual UIWindow
+        // ABI/hook assertions above; live window layout belongs to the App suite.
+        UIWindow *firstWindow = (id)[IOSUsePlaySafeAreaWindowFixture new];
         IOSUsePlaySafeAreaResetEvidenceForWindowForTesting(
             firstWindow
         );
@@ -492,7 +504,7 @@ int main(void) {
             @"later provider invocation rewrote immutable first-read "
              "evidence"
         );
-        UIWindow *replacementWindow = [UIWindow new];
+        UIWindow *replacementWindow = (id)[IOSUsePlaySafeAreaWindowFixture new];
         IOSUsePlaySafeAreaResetEvidenceForWindowForTesting(
             replacementWindow
         );

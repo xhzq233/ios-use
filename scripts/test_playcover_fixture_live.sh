@@ -27,8 +27,7 @@ Usage: scripts/test_playcover_fixture_live.sh --live
 
 --live    Run the fixture acceptance gate against a real unlocked macOS GUI
           session. Live evidence and global input are intentionally never the
-          default. The documented disposable-account ACK and expected passwd
-          Home are mandatory.
+          default. Uses the current login account and its fixture App slot.
 USAGE
 }
 
@@ -56,7 +55,7 @@ if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
 fi
 # shellcheck source=scripts/test_playcover_global_state_guard.sh
 source "$GLOBAL_STATE_GUARD"
-playcover_require_disposable_account_contract "playcover-fixture-live"
+playcover_resolve_current_account "playcover-fixture-live"
 
 mkdir -p "$RUN_DIR"
 printf 'matrixVersion\tcase\tcommand\tstdout\tstderr\n' >"$MANIFEST"
@@ -107,7 +106,7 @@ if [[ ! "$SESSION_HOME_ID" =~ ^[0-9a-f]{64}$ ]]; then
     >&2
   exit 78
 fi
-SESSION_LOG_DIR="$SESSION_HOME/logs/mac"
+SESSION_LOG_DIR="$SESSION_HOME/logs/devices/mac"
 printf '%s\n' "$SESSION_HOME" >"$RUN_DIR/session-home-origin"
 
 archive_session_home() {

@@ -54,7 +54,7 @@ labels. Raw screenshots, DOM, logs, and session state are retained only below
 the private evidence directory, which must be outside this public checkout.
 IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR may select a separate directory for one
 redacted pass attestation. Missing prerequisites exit with EX_CONFIG (78).
-The documented disposable-account ACK and expected passwd Home are mandatory;
+The test uses the current login account;
 a temporary IOS_USE_HOME does not isolate account-global PlayCover state.
 Crash/stale Runtime behavior is covered by the Runtime stress gate, and
 synthetic PID-reuse identity handling is covered by focused unit tests.
@@ -93,7 +93,7 @@ if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
 fi
 # shellcheck source=scripts/test_playcover_global_state_guard.sh
 source "$GLOBAL_STATE_GUARD"
-playcover_require_disposable_account_contract "playcover-external-live"
+playcover_resolve_current_account "playcover-external-live"
 
 if [[ -z "$SCENARIO_PATH" ]]; then
   config_fail "IOS_USE_PLAYCOVER_LIVE_SCENARIO is required"
@@ -441,7 +441,7 @@ assert_cycle_identity() {
   local case_name="$1"
   local cycle="$2"
   local status_file="$RUN_DIR/${case_name}.stdout"
-  local lock_file="$SESSION_HOME/state/driver.lock"
+  local lock_file="$SESSION_HOME/state/devices/mac/driver.lock"
   if [[ ! -f "$lock_file" || -L "$lock_file" ]]; then
     fail_gate "$case_name has no private regular driver.lock"
   fi
@@ -501,7 +501,7 @@ assert_clean_cycle_stopped() {
       "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name stop left an active driver session"
   fi
-  if [[ -e "$SESSION_HOME/state/driver.lock" ]]; then
+  if [[ -e "$SESSION_HOME/state/devices/mac/driver.lock" ]]; then
     fail_gate "$case_name stop left the exact driver.lock behind"
   fi
   local attempt

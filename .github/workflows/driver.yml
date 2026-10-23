@@ -8,6 +8,8 @@ on:
       - "swift-cli/Sources/IOSUseCLI/CLI/Version.swift"
       - "scripts/build_driver.sh"
       - "scripts/test_driver_unit.sh"
+      - "scripts/ios_use_test_simulator.js"
+      - "scripts/test_ios_use_test_simulator.mjs"
       - ".github/workflows/driver.yml"
   push:
     branches: [main]
@@ -17,6 +19,8 @@ on:
       - "swift-cli/Sources/IOSUseCLI/CLI/Version.swift"
       - "scripts/build_driver.sh"
       - "scripts/test_driver_unit.sh"
+      - "scripts/ios_use_test_simulator.js"
+      - "scripts/test_ios_use_test_simulator.mjs"
       - ".github/workflows/driver.yml"
 
 concurrency:
@@ -36,6 +40,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      - name: Test Simulator selection
+        run: node --test scripts/test_ios_use_test_simulator.mjs
 
       - name: Install xcodegen
         run: brew install xcodegen

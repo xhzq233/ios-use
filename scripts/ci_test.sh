@@ -30,6 +30,7 @@ bash "$ROOT_DIR/scripts/test_install.sh"
 if command -v node >/dev/null 2>&1; then
   node --check "$ROOT_DIR/scripts/benchmark.js"
   node --check "$ROOT_DIR/scripts/ios_use_test_simulator.js"
+  node --test "$ROOT_DIR/scripts/test_ios_use_test_simulator.mjs"
   node --check "$ROOT_DIR/scripts/test_simulator_commands.mjs"
 else
   echo "[ci-test] node not found; skipping Node script syntax checks"

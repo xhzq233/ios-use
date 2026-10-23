@@ -405,7 +405,32 @@ public struct IOSUseCLI: Sendable {
                 startUDID: requestedUDID
             )
 
-        case .stop, .driver, .debug, .uiTree, .capture,
+        case .stop:
+            let active = DeviceContextStore.sessions(paths: paths)
+            if (explicitDeviceID == nil || explicitDeviceID == DeviceContextStore.macDeviceID),
+               !active.contains(where: { $0.deviceID == DeviceContextStore.macDeviceID }),
+               try PlayCoverLaunchingStore.load(paths: paths) != nil {
+                guard explicitDeviceID != nil || active.isEmpty else {
+                    throw CLIParseError.invalidValue(
+                        "Multiple active or pending Devices. Pass --device <device-id>."
+                    )
+                }
+                // An interrupted Mac launch has no driver.lock yet. Let the
+                // existing authenticated stop/recovery path handle its record.
+                return InvocationTarget(
+                    paths: try paths.deviceContext(DeviceContextStore.macDeviceID),
+                    startUDID: nil
+                )
+            }
+            let context = try DeviceContextStore.activeContext(
+                explicitDeviceID: explicitDeviceID, paths: paths
+            )
+            return InvocationTarget(
+                paths: context.paths, startUDID: nil,
+                remoteConnection: context.info.remoteConnection
+            )
+
+        case .driver, .debug, .uiTree, .capture,
                 .mediaImport:
             let context = try DeviceContextStore.activeContext(
                 explicitDeviceID: explicitDeviceID,

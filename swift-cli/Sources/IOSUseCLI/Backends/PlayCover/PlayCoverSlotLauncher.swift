@@ -368,14 +368,17 @@ enum PlayCoverSlotLauncher {
                 completionHandler: completion
             )
         }
-        #if DEBUG && canImport(Darwin)
-        PlayCoverLaunchCrashCut.hit(.afterOpenReturned)
-        #endif
         var callbackError: Error?
         while ProcessInfo.processInfo.systemUptime < deadline {
             if let result = box.value {
                 switch result {
                 case .success(let identity):
+                    #if DEBUG && canImport(Darwin)
+                    // openApplication returns before the async submission has
+                    // necessarily left this process. Observe the App before
+                    // testing recovery of an accepted launch.
+                    PlayCoverLaunchCrashCut.hit(.afterLaunchObserved)
+                    #endif
                     return identity
                 case .failure(let error):
                     callbackError = error
@@ -430,6 +433,9 @@ enum PlayCoverSlotLauncher {
                 )
             }
             if let identity = candidates.first {
+                #if DEBUG && canImport(Darwin)
+                PlayCoverLaunchCrashCut.hit(.afterLaunchObserved)
+                #endif
                 return identity
             }
             if Thread.isMainThread {

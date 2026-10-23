@@ -250,6 +250,8 @@ enum CLIHelp {
 
             Stop one XCTest driver or exact Mac process recorded in its
             Device Context. --device is required when multiple Devices run.
+            Also recovers interrupted Mac launches before driver.lock exists;
+            recent submissions remain pending until their safety window expires.
 
             Options:
               -d, --device Device ID printed by status
@@ -516,7 +518,7 @@ enum CLIHelp {
         case "home":
             return driverHelp(
                 usage: "ios-use home [--dom [duration] | -D [duration]] [--nodiff]",
-                summary: "Press the Home button.",
+                summary: "Return to the Home screen.",
                 options: [postDOMOption, diffDOMOption],
                 footer: "The Mac backend has no Home action. Use start/status/stop; restart it with stop, then start --mac."
             )

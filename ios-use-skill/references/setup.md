@@ -140,6 +140,17 @@ Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
 - The Mac backend reports missing or incomplete installed resources: reinstall or
   update ios-use from a complete release, then retry the same `start --mac --app`
   command.
+- Mac DOM reports `snapshot_queue_timeout`: traversal stops between element
+  reads, but a getter already executing can outlive the command. If the App is
+  still unresponsive, avoid repeated DOM requests; collect a process sample in
+  Activity Monitor before restarting with `ios-use stop -d mac` followed by
+  `ios-use start --mac --log`. Preserve the exact page and steps for diagnosis.
+- Mac launch was interrupted before a driver was recorded: use
+  `ios-use stop -d mac`. A recent submission returns a retryable error while
+  its asynchronous launch window is open; retry after that window expires.
+- Mac App has exited but `start --mac` reports an existing driver: inspect
+  `ios-use status --json`; if the recorded process is stale, run
+  `ios-use stop -d mac` before starting it again.
 - Mac setup is missing or macOS trust needs attention: run
   `ios-use config --mac`. If macOS authentication was cancelled, safely retry
   that same command.

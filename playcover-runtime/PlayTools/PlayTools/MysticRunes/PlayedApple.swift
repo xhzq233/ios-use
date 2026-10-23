@@ -182,8 +182,11 @@ public class PlayKeychain: NSObject {
                 kSecAttrKeyClass: keychainDict[kSecAttrKeyClass] ?? kSecAttrKeyClassPublic
             ] as CFDictionary
 
-            let secKey = SecKeyCreateWithData(key as! CFData, dummyKeyAttrs, nil) // swiftlint:disable:this force_cast
-            result?.pointee = Unmanaged.passRetained(secKey!)
+            guard let keyData = key as? Data,
+                  let secKey = SecKeyCreateWithData(keyData as CFData, dummyKeyAttrs, nil) else {
+                return errSecDecode
+            }
+            result?.pointee = Unmanaged.passRetained(secKey)
             return errSecSuccess
         }
 
@@ -195,13 +198,19 @@ public class PlayKeychain: NSObject {
             if classType == "keys" {
                 // kSecAttrKeyType is stored as `type` in the dictionary
                 // kSecAttrKeyClass is stored as `kcls` in the dictionary
+                guard let keyType = keychainDict[kSecAttrKeyType] as? String,
+                      let keyClass = keychainDict[kSecAttrKeyClass] as? String,
+                      let keyData = vData as? Data else {
+                    return errSecDecode
+                }
                 let keyAttributes = [
-                    kSecAttrKeyType: keychainDict[kSecAttrKeyType] as! CFString, // swiftlint:disable:this force_cast
-                    kSecAttrKeyClass: keychainDict[kSecAttrKeyClass] as! CFString // swiftlint:disable:this force_cast
+                    kSecAttrKeyType: keyType,
+                    kSecAttrKeyClass: keyClass
                 ]
-                let keyData = vData as! Data // swiftlint:disable:this force_cast
-                let key = SecKeyCreateWithData(keyData as CFData, keyAttributes as CFDictionary, nil)
-                result?.pointee = Unmanaged.passRetained(key!)
+                guard let key = SecKeyCreateWithData(keyData as CFData, keyAttributes as CFDictionary, nil) else {
+                    return errSecDecode
+                }
+                result?.pointee = Unmanaged.passRetained(key)
                 return errSecSuccess
             }
             result?.pointee = Unmanaged.passRetained(vData as CFTypeRef)
@@ -247,6 +256,10 @@ public class PlayKeychain: NSObject {
         return Unmanaged.passRetained(key)
     }
 
+    // Compatibility entry point for Apps that still call SecKeyGeneratePair.
+    @available(macOS, deprecated: 12.0)
+    @available(macCatalyst, deprecated: 15.0)
+    @available(iOS, deprecated: 15.0)
     @objc static public func keyGeneratePair(_ parameters: NSDictionary,
                                              publicKey: UnsafeMutablePointer<Unmanaged<SecKey>?>?,
                                              privateKey: UnsafeMutablePointer<Unmanaged<SecKey>?>?) -> OSStatus {

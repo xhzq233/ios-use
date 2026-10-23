@@ -180,6 +180,7 @@ xcrun --sdk macosx clang \
   -framework UIKit \
   -I "$IOS_USE_REPO_ROOT/playcover-runtime" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeViewTree.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayInteractionView.m" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/tests/ViewTreeContractTests.m" \
   -o "$IOS_USE_SMOKE_TEMP/ViewTreeContractTests"
 

@@ -127,7 +127,11 @@ ios-use stop
 ```
 
 The Mac backend requires an unencrypted arm64 iPhone App. It is not fully
-supported on macOS 26 or newer.
+supported on macOS 26 or newer. The macOS 27 compatibility work covers CLI and
+Runtime builds, invalid PlayChain key decoding, and cooperative DOM snapshot
+cancellation. App-specific layout and sustained UI interaction still require
+validation on the target App and host OS; successful compilation alone does
+not establish full compatibility.
 
 Every Mac session includes Frida. See the
 [debugging guide](ios-use-skill/references/frida-debug.md) for scripts and live hooks.

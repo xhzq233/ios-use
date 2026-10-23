@@ -43,8 +43,6 @@ jobs:
       - name: Run non-live PlayCover integration
         env:
           IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
-          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
-          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
         run: bash scripts/test_playcover_backend.sh --non-live
 
   live:
@@ -55,9 +53,6 @@ jobs:
 
       - name: Run core PlayCover live gate
         shell: bash
-        env:
-          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
-          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/ios-use-playcover-live-$GITHUB_RUN_ID"

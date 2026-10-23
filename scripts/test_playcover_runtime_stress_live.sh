@@ -19,8 +19,8 @@ Usage: scripts/test_playcover_runtime_stress_live.sh --live
 
 Builds a fresh CLI and fixture, proves fixed-slot A/B replacement, then runs
 20 cold start/status/stop cycles through the current slot. This gate mutates the
-account-global ios-use Mac slot for the fixture Bundle ID and therefore
-requires the disposable-account acknowledgement used by the other live gates.
+account-global ios-use Mac slot for the fixture Bundle ID in the current
+login account. Other App slots are not test inputs.
 EOF
 }
 
@@ -58,7 +58,7 @@ fi
 
 # shellcheck source=scripts/test_playcover_global_state_guard.sh
 source "$GLOBAL_STATE_GUARD"
-playcover_require_disposable_account_contract "playcover-runtime-stress"
+playcover_resolve_current_account "playcover-runtime-stress"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   fail "Apple-silicon macOS is required"
@@ -257,7 +257,7 @@ assert_stopped() {
   run_cli "$name" status --json
   jq -e '.data.driver.status == "notRunning"' \
     "$RUN_DIR/$name.stdout" >/dev/null || fail "$name is not stopped"
-  [[ ! -e "$SESSION_HOME/state/driver.lock" ]] ||
+  [[ ! -e "$SESSION_HOME/state/devices/mac/driver.lock" ]] ||
     fail "$name retained driver.lock"
   [[ ! -e "$SESSION_HOME/mac/launching.json" ]] ||
     fail "$name retained launching.json"
