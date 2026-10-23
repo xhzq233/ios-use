@@ -583,13 +583,6 @@ public struct IOSUseCLI: Sendable {
         json: Bool,
         deviceID: String?
     ) -> CLIResult {
-        if case .start(let options) = parsed,
-           options.mac,
-           let warning = Self.macBackendCompatibilityWarning(
-               for: ProcessInfo.processInfo.operatingSystemVersion
-           ) {
-            CLIInvocationContext.current?.recordWarning(warning)
-        }
         // An explicit Mac App start must establish its read-only signer
         // evidence before routing probes driver.lock. This keeps a missing
         // configuration ahead of every Mac state/cache/source mutation and
@@ -1102,20 +1095,6 @@ public struct IOSUseCLI: Sendable {
             )
         }
     }
-
-    static func macBackendCompatibilityWarning(
-        for operatingSystemVersion: OperatingSystemVersion
-    ) -> String? {
-        guard operatingSystemVersion.majorVersion >= 26 else {
-            return nil
-        }
-        return "The Mac backend is not fully supported on macOS 26 or newer. "
-            + "An App may launch, but UI interaction can still crash. "
-            + "Use a validated older macOS release, a real device, or a "
-            + "Simulator for reliable automation."
-    }
-
-
 
     private func executeOSLog(
         _ options: OSLogOptions,
