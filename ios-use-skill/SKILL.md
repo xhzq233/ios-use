@@ -33,6 +33,11 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
 - Use `swipe --from <label|x,y> --to <label|x,y>` for a direct drag between
   visible endpoints. Use `--find <label>` instead of `--to` to scroll until an
   item is visible in the anchor's list. Finding an item does not tap it.
+- If automatic search reports that it cannot infer an axis safely inside a
+  nested container, use explicit `swipe --from x,y --to x,y` endpoints inside
+  the intended container, then observe the page again. Automatic search only
+  tries the other axis for uncertain standalone containers before any progress;
+  it does not probe nested containers or add probes to distance/endpoint drags.
 - Append `-D` (alias `--dom`) to actions to see the result. `dom` and `-D`
   return a full tree initially, then changes when useful: `+` adds, `-` removes,
   and `~` updates an item. Read changes together with the preceding tree.
