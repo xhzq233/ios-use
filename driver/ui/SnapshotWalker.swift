@@ -557,35 +557,89 @@ func collectCellSnapshots(_ scrollView: SafeSnapshot) -> [SafeSnapshot] {
     return scrollView.allDescendants
 }
 
-/// Early-terminating variant: collects up to `limit` visible cell/icon frames.
-/// Used by boundary detection in scroll loops — only needs a few anchor frames
-/// to detect movement, not the full cell list.
-func collectVisibleCellFrames(_ scrollView: SafeSnapshot, limit: Int? = 3) -> [CGRect] {
-    var frames: [CGRect] = []
-    frames.reserveCapacity(limit ?? 3)
-    var stack: [SafeSnapshot] = [scrollView]
-    while let n = stack.popLast() {
-        if cellLikeElementTypes.contains(UInt(n.elementType)) && n.isVisible {
-            frames.append(n.frame)
-            if let limit, frames.count >= limit { return frames }
+/// Content belongs to this container only. In particular, a scroll bar's
+/// anonymous descendants are decoration, and nested scrollables own their
+/// own content. Reuse the supplied tree; never request another AX snapshot.
+func collectScrollContent(_ scrollView: SafeSnapshot, limit: Int? = nil) -> [SafeSnapshot] {
+    var cells: [SafeSnapshot] = []
+    var leaves: [SafeSnapshot] = []
+    var stack = Array(scrollView.children.reversed())
+    while let node = stack.popLast() {
+        let type = UInt(node.elementType)
+        if type == XCUIElement.ElementType.scrollBar.rawValue || scrollableElementTypes.contains(type) {
+            continue
         }
-        for c in n.children.reversed() { stack.append(c) }
-    }
-    // Without Cell/Icon nodes, sample visible leaves. Structural wrappers can
-    // stay fixed while their children scroll (e.g. sectioned bottom sheets).
-    if frames.isEmpty {
-        var fallback: [SafeSnapshot] = [scrollView]
-        while let n = fallback.popLast() {
-            if n.isVisible && n !== scrollView && n.children.isEmpty
-                && UInt(n.elementType) != XCUIElement.ElementType.scrollBar.rawValue
-                && !n.frame.isEmpty {
-                frames.append(n.frame)
-                if let limit, frames.count >= limit { return frames }
+        if node.isVisible && !node.frame.isEmpty {
+            if cellLikeElementTypes.contains(type) {
+                cells.append(node)
+                if let limit, cells.count >= limit { return cells }
+                continue
             }
-            for c in n.children.reversed() { fallback.append(c) }
+            // iOS 27 can expose scroll indicators as anonymous Other leaves
+            // under Other wrappers, rather than ScrollBar. They carry neither
+            // content nor identity; do not infer an axis from their position.
+            let anonymousDecoration = type == XCUIElement.ElementType.other.rawValue
+                && node.identifier == nil && node.label == nil && node.value == nil
+            if node.children.isEmpty && !anonymousDecoration && leaves.count < (limit ?? Int.max) {
+                leaves.append(node)
+            }
         }
+        for child in node.children.reversed() { stack.append(child) }
     }
-    return frames
+    return cells.isEmpty ? leaves : cells
+}
+
+/// Boundary observations retain identity/content as well as position: recycled
+/// cells can fill exactly the old frames after a successful scroll.
+struct ScrollContentSample: Equatable {
+    let identifier: String?
+    let label: String?
+    let value: String?
+    let childContent: [String]
+    let type: UInt
+    let frame: CGRect
+
+    init(_ node: SafeSnapshot, viewport: CGRect) {
+        identifier = node.identifier
+        label = node.label
+        value = node.value
+        var content: [String] = []
+        var stack = Array(node.children.reversed())
+        var visited = 0
+        while let child = stack.popLast(), visited < 16 {
+            visited += 1
+            if scrollableElementTypes.contains(child.elementType)
+                || child.elementType == XCUIElement.ElementType.scrollBar.rawValue { continue }
+            content.append(contentsOf: [child.identifier, child.label, child.value].compactMap { $0 })
+            for descendant in child.children.reversed() { stack.append(descendant) }
+        }
+        childContent = content
+        type = node.elementType
+        frame = node.frame.offsetBy(dx: -viewport.minX, dy: -viewport.minY)
+    }
+
+    func matches(_ other: ScrollContentSample) -> Bool {
+        identifier == other.identifier && label == other.label && value == other.value && type == other.type
+            && childContent == other.childContent
+            && abs(frame.minX - other.frame.minX) <= 1
+            && abs(frame.minY - other.frame.minY) <= 1
+            && abs(frame.width - other.frame.width) <= 1
+            && abs(frame.height - other.frame.height) <= 1
+    }
+}
+
+func scrollContentSamples(_ scrollView: SafeSnapshot) -> [ScrollContentSample] {
+    collectScrollContent(scrollView, limit: 12).map { ScrollContentSample($0, viewport: scrollView.frame) }
+}
+
+/// nil means there is no content evidence, not that a boundary was reached.
+func scrollContentChanged(_ before: [ScrollContentSample], _ after: [ScrollContentSample]) -> Bool? {
+    guard !before.isEmpty, !after.isEmpty else { return nil }
+    return before.count != after.count || !zip(before, after).allSatisfy { $0.matches($1) }
+}
+
+func collectVisibleCellFrames(_ scrollView: SafeSnapshot, limit: Int? = 3) -> [CGRect] {
+    collectScrollContent(scrollView, limit: limit).map(\.frame)
 }
 
 /// Iterative DFS over the subtree rooted at `root`.
@@ -730,4 +784,17 @@ func hasInteractionFrame(_ element: SnapshotElement, in bounds: CGRect) -> Bool 
 
 func elementTypeName(_ type: XCUIElement.ElementType) -> String {
     IOSUseElementTypes.displayName(rawType: Int32(truncatingIfNeeded: type.rawValue))
+}
+
+/// Check the same start point used by native scrolling. An uncertain search
+/// must not probe an inner carousel while trying to learn the outer axis.
+func scrollStartsInContainer(_ container: SafeSnapshot, frame: CGRect, axis: ScrollAxis, backwards: Bool) -> Bool {
+    // UIKit may hand a gesture on a non-scrolling axis to an outer container.
+    // Do not use an uncertain-axis probe in a nested scrollable at all.
+    if let parent = container.parent, findScrollableAncestor(parent) != nil { return false }
+    let sign: CGFloat = backwards ? 1 : -1
+    let vector = axis == .vertical ? CGVector(dx: 0, dy: sign) : CGVector(dx: sign, dy: 0)
+    let start = hitPointOffset(for: vector, scrollFrame: frame)
+    guard let hit = findScrollableAtPoint(CGPoint(x: start.dx, y: start.dy), container) else { return false }
+    return SnapshotMatchesElement(hit.raw, container.raw)
 }

@@ -245,6 +245,50 @@ final class TypesTests: XCTestCase {
         XCTAssertNotEqual(collectVisibleCellFrames(snapshot), collectVisibleCellFrames(moved))
     }
 
+    func testScrollSamplesPruneScrollBarSubtreesAndNestedCarousels() {
+        let viewport = CGRect(x: 0, y: 0, width: 867, height: 669)
+        let first = FakeRawSnapshot(identifier: "first", frame: CGRect(x: 28, y: 100, width: 811, height: 40))
+        let second = FakeRawSnapshot(identifier: "second", frame: CGRect(x: 350, y: 500, width: 167, height: 40))
+        let thumb = FakeRawSnapshot(frame: CGRect(x: 861, y: 638, width: 3, height: 28))
+        let bar = FakeRawSnapshot(elementType: .scrollBar, children: [thumb])
+        let modernBar = FakeRawSnapshot(label: "Decorated indicator", elementType: .other, children: [
+            FakeRawSnapshot(elementType: .other, frame: CGRect(x: 861, y: 638, width: 3, height: 28))
+        ])
+        let inner = FakeRawSnapshot(elementType: .scrollView, frame: CGRect(x: 100, y: 100, width: 600, height: 100), children: [
+            FakeRawSnapshot(elementType: .cell, frame: CGRect(x: 100, y: 100, width: 100, height: 80)),
+            FakeRawSnapshot(elementType: .cell, frame: CGRect(x: 500, y: 100, width: 100, height: 80)),
+        ])
+        let root = SafeSnapshot(raw: FakeRawSnapshot(elementType: .scrollView, frame: viewport, children: [first, second, bar, inner, modernBar]), appFrame: viewport)
+        XCTAssertEqual(collectScrollContent(root).map(\.identifier), ["first", "second"])
+        XCTAssertEqual(primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(root, limit: nil), scrollFrame: viewport), .vertical)
+        XCTAssertEqual(primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(root.children[3], limit: nil), scrollFrame: root.children[3].frame), .horizontal)
+        XCTAssertFalse(scrollStartsInContainer(root, frame: viewport, axis: .horizontal, backwards: false))
+        XCTAssertTrue(scrollStartsInContainer(root, frame: viewport, axis: .vertical, backwards: false))
+        XCTAssertFalse(scrollStartsInContainer(root.children[3], frame: root.children[3].frame, axis: .vertical, backwards: false))
+    }
+
+    func testBoundarySamplesDetectRecycledContentAndIgnoreViewportTranslation() {
+        let viewport = CGRect(x: 0, y: 0, width: 400, height: 600)
+        func sample(_ id: String, _ label: String, _ y: CGFloat = 100, viewport: CGRect = CGRect(x: 0, y: 0, width: 400, height: 600)) -> ScrollContentSample {
+            ScrollContentSample(SafeSnapshot(raw: FakeRawSnapshot(label: label, identifier: id,
+                elementType: .cell, frame: CGRect(x: viewport.minX, y: y + viewport.minY, width: 300, height: 40)), appFrame: viewport), viewport: viewport)
+        }
+        let first = [sample("row.1", "One")]
+        XCTAssertEqual(scrollContentChanged(first, [sample("row.2", "Two")]), true)
+        XCTAssertEqual(scrollContentChanged(first, [sample("row.1", "Two")]), true)
+        XCTAssertEqual(scrollContentChanged(first, [sample("row.1", "One", 50)]), true)
+        XCTAssertEqual(scrollContentChanged(first, [sample("row.1", "One", 100.5)]), false)
+        XCTAssertEqual(scrollContentChanged(first, [sample("row.1", "One", viewport: viewport.offsetBy(dx: 20, dy: 30))]), false)
+        XCTAssertNil(scrollContentChanged([], first))
+        XCTAssertNil(scrollContentChanged(first, []))
+        func cell(_ text: String) -> ScrollContentSample {
+            ScrollContentSample(SafeSnapshot(raw: FakeRawSnapshot(elementType: .cell, children: [
+                FakeRawSnapshot(label: text)
+            ]), appFrame: viewport), viewport: viewport)
+        }
+        XCTAssertEqual(scrollContentChanged([cell("First row")], [cell("Next row")]), true)
+    }
+
     private func makeElement(
         label: String? = nil,
         identifier: String? = nil,
