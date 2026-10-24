@@ -82,6 +82,13 @@ def main():
     # Isolate unknown-axis probing from gesture hand-off to an outer list.
     cli('tap', 'fixture.scroll.sparse')
     assert offsets()['sparseStrip']
+    cli('swipe', '--from', 'fixture.strip.0', '--dir', 'forth', '--distance', '100')
+    s = offsets()
+    assert s['strip'] > 0 and s['left'] == s['right'] == 0, s
+    gestures = json.loads((container / 'Documents' / 'gesture-state.json').read_text())
+    drags = [v for v in gestures['vectors'] if max(abs(v[0]), abs(v[1])) > 20]
+    assert len(drags) == 1 and abs(drags[0][0]) > abs(drags[0][1]), drags
+    cli('tap', 'fixture.scroll.reset')
     assert not any(e.get('identifier') == 'fixture.strip.2' for e in dom()), 'Target must be absent, not merely offscreen'
     result = cli('swipe', '--from', 'fixture.strip.0', '--find', 'fixture.strip.2')
     assert result['direction'] == 'right', result
@@ -92,6 +99,7 @@ def main():
     drags = [v for v in gestures['vectors'] if max(abs(v[0]), abs(v[1])) > 20]
     assert len(drags) >= 2 and abs(drags[0][1]) > abs(drags[0][0]), drags
     assert all(abs(v[0]) > abs(v[1]) for v in drags[1:]), drags
+    (evidence / 'unknown-axis-gestures.json').write_text(json.dumps(gestures, indent=2))
 
     # Go to the real end, then verify a missing target terminates at a boundary.
     cli('tap', 'fixture.scroll.sparse')

@@ -317,7 +317,10 @@ enum SwipeCommands {
         }
         let scrollFrame = scrollNode.flatMap(interactionFrame) ?? cs.appFrame
         let isBack = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
-        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root, limit: nil), scrollFrame: scrollFrame) ?? .vertical
+        // Distance commands retain their historical fallback; they must not
+        // introduce a probe or silently change sparse horizontal drags to vertical.
+        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root, limit: nil), scrollFrame: scrollFrame)
+            ?? (scrollFrame.height >= scrollFrame.width ? .vertical : .horizontal)
         let axisSize = axis == .vertical ? scrollFrame.height : scrollFrame.width
         let distance = args.distance > 0 ? args.distance : (IOSUseProtocol.scrollTouchProportion * Double(axisSize))
 
