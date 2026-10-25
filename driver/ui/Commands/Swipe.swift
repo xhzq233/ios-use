@@ -7,6 +7,9 @@ enum SwipeCommands {
 
     /// Drag between endpoints, find within a scroll container, or scroll a distance.
     static func swipe(_ args: ForySwipeArgs) throws -> ForyResponseFrame {
+        guard IOSUseSwipeDirection(rawValue: args.dir) != nil else {
+            return try invalidArguments("swipe: unsupported direction")
+        }
         let app = try Session.shared.ensureActive()
         let to = args.toTarget
         let from = args.fromTarget
@@ -139,15 +142,13 @@ enum SwipeCommands {
         let lastVisibleIdx = visibleCells.last.flatMap { last in
             cellSnapshots.firstIndex { SnapshotMatchesElement($0.raw, last.raw) }
         }
-        let axisHint = scrollAxisToward(targetFrame: target.node.frame, scrollFrame: scrollFrame)
+        let axisHint = explicitScrollAxis(args.dir) ?? scrollAxisToward(targetFrame: target.node.frame, scrollFrame: scrollFrame)
             ?? primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollView, limit: nil), scrollFrame: scrollFrame)
         let axis = axisHint ?? .vertical
 
         let scrollUpwards: Bool
-        if args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack {
-            scrollUpwards = true
-        } else if args.dir == IOSUseProtocol.XCConstants.swipeDirectionForth {
-            scrollUpwards = false
+        if let backwards = IOSUseSwipeDirection(rawValue: args.dir)?.backwards {
+            scrollUpwards = backwards
         } else if let backwards = scrollBackwardsToward(targetFrame: target.node.frame,
                                                         scrollFrame: scrollFrame, axis: axis) {
             scrollUpwards = backwards
@@ -232,8 +233,8 @@ enum SwipeCommands {
         guard let frame = interactionFrame(anchorScrollView) else {
             return try scrollUnavailable("anchor's scrollable has no interaction frame", target: fromTarget)
         }
-        let axisHint = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(anchorScrollView, limit: nil), scrollFrame: frame)
-        let scrollUpwards = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
+        let axisHint = explicitScrollAxis(args.dir) ?? primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(anchorScrollView, limit: nil), scrollFrame: frame)
+        let scrollUpwards = IOSUseSwipeDirection(rawValue: args.dir)?.backwards == true
 
         let result = try scrollUntilVisible(scrollView: anchorScrollView,
                                         target: toTarget,
@@ -316,10 +317,10 @@ enum SwipeCommands {
             scrollNode = findLargestScrollable(cs.root)
         }
         let scrollFrame = scrollNode.flatMap(interactionFrame) ?? cs.appFrame
-        let isBack = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
+        let isBack = IOSUseSwipeDirection(rawValue: args.dir)?.backwards == true
         // Distance commands retain their historical fallback; they must not
         // introduce a probe or silently change sparse horizontal drags to vertical.
-        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root, limit: nil), scrollFrame: scrollFrame)
+        let axis = explicitScrollAxis(args.dir) ?? primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root, limit: nil), scrollFrame: scrollFrame)
             ?? (scrollFrame.height >= scrollFrame.width ? .vertical : .horizontal)
         let axisSize = axis == .vertical ? scrollFrame.height : scrollFrame.width
         let distance = args.distance > 0 ? args.distance : (IOSUseProtocol.scrollTouchProportion * Double(axisSize))

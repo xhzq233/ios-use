@@ -533,18 +533,15 @@ final class DriverClient: DriverCommandClient {
     }
 
     func swipe(to: ForyTarget, from: ForyTarget, find: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32? = nil) throws -> ForySwipePayload {
-        let dirValue: Int32
-        switch dir {
-        case "forth": dirValue = IOSUseProtocol.XCConstants.swipeDirectionForth
-        case "back": dirValue = IOSUseProtocol.XCConstants.swipeDirectionBack
-        default: dirValue = IOSUseProtocol.XCConstants.swipeDirectionUnspecified
+        guard let direction = IOSUseSwipeDirection(argument: dir) else {
+            throw CLIParseError.invalidValue("Invalid swipe direction")
         }
         let args = ForySwipeArgs(
             toTarget: to.label.isEmpty ? to : to.withLookup(traits: traits, cindex: cindex),
             fromTarget: from,
             findTarget: find.label.isEmpty ? find : find.withLookup(traits: traits, cindex: cindex),
             distance: distance ?? 0,
-            dir: dirValue
+            dir: direction.rawValue
         )
         let payload = try fory.serialize(args)
         let response = try sendRawPayload(

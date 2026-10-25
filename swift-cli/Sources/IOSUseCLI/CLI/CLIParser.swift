@@ -636,7 +636,7 @@ public enum CLIParser {
             case "--from": from = try parser.value(for: arg)
             case "--dir":
                 let value = try parser.value(for: arg)
-                guard value == "forth" || value == "back" else { throw CLIParseError.invalidValue("Invalid swipe dir: \"\(value)\", expected \"forth\" or \"back\"") }
+                guard IOSUseSwipeDirection(argument: value) != nil else { throw CLIParseError.invalidValue("Invalid swipe dir: \"\(value)\", expected forth, back, up, down, left, or right") }
                 dir = value
             case "--distance": distance = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)

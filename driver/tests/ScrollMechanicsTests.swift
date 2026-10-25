@@ -1,6 +1,27 @@
 import XCTest
+import Fory
 
 final class ScrollMechanicsTests: XCTestCase {
+
+    func testExplicitDirectionLocksAxisAndDoesNotProbeAfterNoProgress() {
+        for (direction, axis, back) in [(IOSUseSwipeDirection.up, ScrollAxis.vertical, true),
+                                       (.down, .vertical, false), (.left, .horizontal, true), (.right, .horizontal, false)] {
+            XCTAssertEqual(explicitScrollAxis(direction.rawValue), axis)
+            XCTAssertEqual(direction.backwards, back)
+            var search = ScrollAxisSearch(hint: explicitScrollAxis(direction.rawValue))
+            XCTAssertFalse(search.observe(changed: false))
+            XCTAssertEqual(search.axis, axis)
+        }
+        XCTAssertNil(explicitScrollAxis(IOSUseSwipeDirection.forth.rawValue))
+        XCTAssertNil(explicitScrollAxis(IOSUseSwipeDirection.back.rawValue))
+    }
+
+    func testUnknownWireDirectionFailsBeforeResolvingAnApp() throws {
+        let result = try SwipeCommands.swipe(ForySwipeArgs(dir: 99))
+        XCTAssertFalse(result.ok)
+        let error = try createFory().deserialize(result.payload, as: ForyErrorPayload.self)
+        XCTAssertEqual(error.code, IOSUseErrorCode.invalidArguments)
+    }
 
     func testOffscreenTargetDirectionUsesViewportGeometryOnBothAxes() {
         let viewport = CGRect(x: 40, y: 120, width: 320, height: 640)

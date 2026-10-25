@@ -5,6 +5,10 @@ enum ScrollAxis {
     case horizontal
 }
 
+func explicitScrollAxis(_ direction: Int32) -> ScrollAxis? {
+    IOSUseSwipeDirection(rawValue: direction)?.horizontalAxis.map { $0 ? .horizontal : .vertical }
+}
+
 /// An offscreen target and its viewport share App coordinates. Prefer geometry
 /// over accessibility traversal order, which need not match visual placement.
 func scrollBackwardsToward(targetFrame: CGRect, scrollFrame: CGRect, axis: ScrollAxis) -> Bool? {

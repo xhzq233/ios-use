@@ -12,6 +12,33 @@
 #import <math.h>
 #import <stdint.h>
 
+// Same values as IOSUseSwipeDirection on the shared Int32 wire field.
+typedef NS_ENUM(NSInteger, IOSUseAutomationScrollDirection) {
+    IOSUseScrollUnspecified = -1,
+    IOSUseScrollForth = 0,
+    IOSUseScrollBack = 1,
+    IOSUseScrollUp = 2,
+    IOSUseScrollDown = 3,
+    IOSUseScrollLeft = 4,
+    IOSUseScrollRight = 5,
+};
+
+static BOOL IOSUseExplicitScrollDirection(NSInteger direction) {
+    return direction >= IOSUseScrollUp && direction <= IOSUseScrollRight;
+}
+
+static NSString *IOSUseScrollDirectionName(NSInteger direction) {
+    switch (direction) {
+        case IOSUseScrollForth: return @"forth";
+        case IOSUseScrollBack: return @"back";
+        case IOSUseScrollUp: return @"up";
+        case IOSUseScrollDown: return @"down";
+        case IOSUseScrollLeft: return @"left";
+        case IOSUseScrollRight: return @"right";
+        default: return @"unspecified";
+    }
+}
+
 static const NSTimeInterval IOSUseAutomationMainTimeout = 40.0;
 static const NSUInteger IOSUseAutomationMaximumSemanticScrolls = 25;
 static const CGFloat IOSUseAutomationScrollProportion = 0.75;
@@ -1249,8 +1276,12 @@ static BOOL IOSUseAutomationCandidateVisibleInScrollView(
 
 static BOOL IOSUseAutomationScrollUsesHorizontalAxis(
     UIScrollView *scrollView,
-    IOSUseAutomationCandidate *target
+    IOSUseAutomationCandidate *target,
+    NSInteger direction
 ) {
+    if (IOSUseExplicitScrollDirection(direction)) {
+        return direction == IOSUseScrollLeft || direction == IOSUseScrollRight;
+    }
     UIEdgeInsets inset = scrollView.adjustedContentInset;
     CGFloat horizontalRange = MAX(
         0,
@@ -1293,6 +1324,9 @@ static BOOL IOSUseAutomationScrollBackwardTowardTarget(
     BOOL horizontal,
     NSInteger requestedDirection
 ) {
+    if (IOSUseExplicitScrollDirection(requestedDirection)) {
+        return requestedDirection == IOSUseScrollUp || requestedDirection == IOSUseScrollLeft;
+    }
     if (target != nil) {
         CGRect viewport = IOSUseAutomationScrollViewport(scrollView);
         CGFloat targetCenter = horizontal
@@ -1309,10 +1343,31 @@ static BOOL IOSUseAutomationScrollBackwardTowardTarget(
     return requestedDirection == 1;
 }
 
+// An explicit direction cannot reverse after overshooting. When the target
+// fits in the viewport, cap the next step at its near visibility boundary.
+static CGFloat IOSUseAutomationTargetScrollDistance(
+    CGFloat distance, UIScrollView *scrollView,
+    IOSUseAutomationCandidate *target, BOOL horizontal, BOOL backward
+) {
+    if (target == nil) { return distance; }
+    CGRect viewport = IOSUseAutomationScrollViewport(scrollView);
+    CGRect frame = target.frame;
+    CGFloat size = horizontal ? frame.size.width : frame.size.height;
+    CGFloat viewportSize = horizontal ? viewport.size.width : viewport.size.height;
+    if (size <= 0 || size > viewportSize || CGRectIsNull(frame) || CGRectIsInfinite(frame)) {
+        return distance;
+    }
+    CGFloat overflow = horizontal
+        ? (backward ? CGRectGetMinX(viewport) - CGRectGetMinX(frame) : CGRectGetMaxX(frame) - CGRectGetMaxX(viewport))
+        : (backward ? CGRectGetMinY(viewport) - CGRectGetMinY(frame) : CGRectGetMaxY(frame) - CGRectGetMaxY(viewport));
+    return overflow > IOSUseAutomationScrollEpsilon ? MIN(distance, overflow) : distance;
+}
+
 static CGPoint IOSUseAutomationProposedContentOffset(
     UIScrollView *scrollView,
     BOOL horizontal,
-    BOOL backward
+    BOOL backward,
+    IOSUseAutomationCandidate *target
 ) {
     UIEdgeInsets inset = scrollView.adjustedContentInset;
     CGPoint current = scrollView.contentOffset;
@@ -1328,6 +1383,7 @@ static CGPoint IOSUseAutomationProposedContentOffset(
             scrollView.bounds.size.width *
                 IOSUseAutomationScrollProportion
         );
+        delta = IOSUseAutomationTargetScrollDistance(delta, scrollView, target, YES, backward);
         current.x = MIN(
             maximum,
             MAX(minimum, current.x + (backward ? -delta : delta))
@@ -1344,6 +1400,7 @@ static CGPoint IOSUseAutomationProposedContentOffset(
             scrollView.bounds.size.height *
                 IOSUseAutomationScrollProportion
         );
+        delta = IOSUseAutomationTargetScrollDistance(delta, scrollView, target, NO, backward);
         current.y = MIN(
             maximum,
             MAX(minimum, current.y + (backward ? -delta : delta))
@@ -2454,7 +2511,8 @@ IOSUseAutomationSemanticSwipe(
                 )) {
                 horizontal = IOSUseAutomationScrollUsesHorizontalAxis(
                     scrollView,
-                    target
+                    target,
+                    requestedDirection
                 );
                 backward = IOSUseAutomationScrollBackwardTowardTarget(
                     scrollView,
@@ -2490,7 +2548,8 @@ IOSUseAutomationSemanticSwipe(
 
         horizontal = IOSUseAutomationScrollUsesHorizontalAxis(
             scrollView,
-            target
+            target,
+            requestedDirection
         );
         backward = IOSUseAutomationScrollBackwardTowardTarget(
             scrollView,
@@ -2521,7 +2580,8 @@ IOSUseAutomationSemanticSwipe(
         CGPoint proposed = IOSUseAutomationProposedContentOffset(
             scrollView,
             horizontal,
-            backward
+            backward,
+            IOSUseExplicitScrollDirection(requestedDirection) ? target : nil
         );
         if (IOSUseAutomationPointsApproximatelyEqual(
                 before,
@@ -2601,6 +2661,16 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
 ) {
     BOOL isSwipe = [command isEqualToString:@"swipe"];
     if (isSwipe) {
+        id direction = arguments[@"direction"];
+        if (direction != nil && (!IOSUseAutomationIsNumber(direction) ||
+            [direction doubleValue] != [direction integerValue] ||
+            [direction integerValue] < IOSUseScrollUnspecified || [direction integerValue] > IOSUseScrollRight)) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(@"invalid_arguments", @"unsupported swipe direction",
+                    @"validation", @"validation", NO, nil, @[]);
+            }
+            return nil;
+        }
         BOOL hasTo = [arguments[@"toTarget"] isKindOfClass:NSDictionary.class];
         BOOL hasFind = [arguments[@"findTarget"] isKindOfClass:NSDictionary.class];
         BOOL hasFrom = [arguments[@"fromTarget"] isKindOfClass:NSDictionary.class];
@@ -3116,11 +3186,11 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         }
         CGFloat distance = [arguments[@"distance"] doubleValue];
         NSInteger direction = [arguments[@"direction"] integerValue];
-        if (direction < -1 || direction > 1 || distance <= 0) {
+        if (direction < IOSUseScrollUnspecified || direction > IOSUseScrollRight || distance <= 0) {
             if (commandError != NULL) {
                 *commandError = IOSUseAutomationError(
                     @"invalid_arguments",
-                    @"swipe direction must be unspecified (-1), forth (0), or back (1), and distance must be positive",
+                    @"swipe direction must be -1 through 5, and distance must be positive",
                     @"validation",
                     @"validation",
                     NO,
@@ -3130,8 +3200,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
             }
             return nil;
         }
-        BOOL isBack =
-            direction == 1;
+        BOOL isBack = direction == IOSUseScrollBack || direction == IOSUseScrollUp || direction == IOSUseScrollLeft;
         observedScrollView = IOSUseAutomationScrollableAncestor(
             IOSUseAutomationCandidateView(candidate, hitView)
         );
@@ -3146,8 +3215,9 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
             }
             return nil;
         }
-        BOOL horizontal = observedScrollView != nil &&
-            IOSUseAutomationScrollUsesHorizontalAxis(observedScrollView, nil);
+        BOOL horizontal = IOSUseExplicitScrollDirection(direction)
+            ? (direction == IOSUseScrollLeft || direction == IOSUseScrollRight)
+            : (observedScrollView != nil && IOSUseAutomationScrollUsesHorizontalAxis(observedScrollView, nil, direction));
         CGFloat displacement = isBack ? distance : -distance;
         endPoint = CGPointMake(
             point.x + (horizontal ? displacement : 0),
@@ -3317,14 +3387,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         nil,
         @{
             @"scrolls": @(scrolls),
-            @"direction":
-                [arguments[@"direction"] integerValue] == 0
-                    ? @"forth"
-                    : (
-                        [arguments[@"direction"] integerValue] == 1
-                            ? @"back"
-                            : @"unspecified"
-            ),
+            @"direction": IOSUseScrollDirectionName([arguments[@"direction"] integerValue]),
             @"toElement": IOSUseAutomationElementJSON(toCandidate),
         }
     );
