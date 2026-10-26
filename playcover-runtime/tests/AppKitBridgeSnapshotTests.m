@@ -6,6 +6,10 @@
 
 #import <stdint.h>
 #import <unistd.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
+
+extern id IOSUsePlayDeviceChromeToolbarItemForTesting(NSString *identifier);
 
 // This executable links the bridge without the Runtime socket/service loop.
 BOOL IOSUsePlayRuntimePublishUIReadiness(void) { return YES; }
@@ -438,6 +442,26 @@ static BOOL IOSUseBridgeSnapshotTestConsolidatedAlertSnapshot(void) {
     return passed;
 }
 
+static BOOL IOSUseBridgeTestToolbarIdentifiers(void) {
+    Class base = NSClassFromString(@"NSToolbarItem");
+    SEL identifierSelector = NSSelectorFromString(@"accessibilityIdentifier");
+    IMP original = class_getMethodImplementation(base, identifierSelector);
+    BOOL passed = base != Nil;
+    for (NSString *identifier in @[@"device", @"rotate", @"hide", @"expand"]) {
+        id item = IOSUsePlayDeviceChromeToolbarItemForTesting(identifier);
+        id value = ((id (*)(id, SEL))objc_msgSend)(item, identifierSelector);
+        passed &= IOSUseBridgeSnapshotRequire(
+            [item isKindOfClass:base] && [value isEqual:identifier],
+            @"device toolbar item did not expose its identifier to accessibility"
+        );
+    }
+    passed &= IOSUseBridgeSnapshotRequire(
+        class_getMethodImplementation(base, identifierSelector) == original,
+        @"device toolbar changed the system toolbar item's accessibility getter"
+    );
+    return passed;
+}
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         (void)argv;
@@ -463,6 +487,7 @@ int main(int argc, const char *argv[]) {
             IOSUseBridgeSnapshotTestRequestEnumerationCounts();
         passed &=
             IOSUseBridgeSnapshotTestConsolidatedAlertSnapshot();
+        passed &= IOSUseBridgeTestToolbarIdentifiers();
 
         IOSUseBridgeSnapshotNativeAlertWindows = nil;
         IOSUsePlayAppKitBridgeSetNativeAlertWindowsProviderForTesting(
