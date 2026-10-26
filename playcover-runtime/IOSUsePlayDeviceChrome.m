@@ -84,27 +84,22 @@ static void drawPDF(NSString *directory, NSString *name, CGRect target) {
     }
     CGPDFDocumentRelease(document);
 }
-static UIImage *png(NSString *name) {
-    return [UIImage imageWithContentsOfFile:[resources() stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"png"]]];
-}
-
 static void loadFrame(void) {
     NSString *preset = @(IOSUsePlayDeviceCurrent()->name);
-    int turns = IOSUsePlayDeviceQuarterTurns();
+    // Duo DeviceKit artwork rotates opposite to UIKit interface coordinates.
+    int turns = IOSUsePlayDeviceIsDuo()
+        ? (4 - IOSUsePlayDeviceQuarterTurns()) % 4 : IOSUsePlayDeviceQuarterTurns();
     NSString *key = [NSString stringWithFormat:@"%@-%d", preset, turns];
     if ([imageKey isEqual:key]) return;
     imageKey = key;
     frameImage = nil;
     CGFloat w = IOSUsePlayDeviceCurrent()->logicalWidth, h = IOSUsePlayDeviceCurrent()->logicalHeight;
-    BOOL outer = [preset isEqual:@"iphone-duo-outer"], inner = [preset isEqual:@"iphone-duo-inner"];
-    NSDictionary *models = @{@"iphone-se":@"phone", @"iphone-13":@"phone4", @"iphone-15-pro":@"phone9", @"iphone-15-pro-max":@"phone10", @"ipad-pro-11":@"tablet2"};
+    NSDictionary *models = @{@"iphone-se":@"phone", @"iphone-13":@"phone4", @"iphone-15-pro":@"phone9", @"iphone-15-pro-max":@"phone10", @"ipad-pro-11":@"tablet2", @"iphone-duo-inner":@"phone14", @"iphone-duo-outer":@"phone15"};
     NSString *directory = models[preset] ? [resources() stringByAppendingPathComponent:models[preset]] : nil;
     NSData *data = directory ? [NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:@"chrome.json"]] : nil;
     NSDictionary *profile = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
     NSDictionary *images = profile[@"images"], *sizing = images[@"sizing"], *padding = images[@"devicePadding"];
-    if (outer || inner) {
-        frameInsets = outer ? UIEdgeInsetsMake(16,20,16,16) : UIEdgeInsetsMake(22,16,16,16);
-    } else if (sizing) {
+    if (sizing) {
         frameInsets = UIEdgeInsetsMake([sizing[@"topHeight"] doubleValue]+[padding[@"top"] doubleValue],
             [sizing[@"leftWidth"] doubleValue]+[padding[@"left"] doubleValue],
             [sizing[@"bottomHeight"] doubleValue]+[padding[@"bottom"] doubleValue],
@@ -117,19 +112,11 @@ static void loadFrame(void) {
     CGRect screen = CGRectMake(frameInsets.left, frameInsets.top, w, h);
     UIGraphicsBeginImageContextWithOptions(size, NO, 2);
     CGContextRef context = UIGraphicsGetCurrentContext();
-    if (outer || inner) {
-        NSString *variant = outer ? @"outer" : @"inner";
-        [png([NSString stringWithFormat:@"duo-%@-Frame",variant]) drawInRect:(CGRect){CGPointZero,size}];
-        CGContextSetBlendMode(context, kCGBlendModeClear);
-        UIBezierPath *hole = outer
-            ? [UIBezierPath bezierPathWithRoundedRect:screen byRoundingCorners:UIRectCornerTopRight|UIRectCornerBottomRight cornerRadii:CGSizeMake(64,64)]
-            : [UIBezierPath bezierPathWithRoundedRect:screen cornerRadius:58];
-        [hole fill];
-        CGContextSetBlendMode(context, kCGBlendModeNormal);
-        [png([NSString stringWithFormat:@"duo-%@-Overlay",variant]) drawInRect:(CGRect){CGPointZero,size}];
-    } else {
+    {
         [[UIColor colorWithWhite:0.12 alpha:1] setFill];
-        UIRectFill(screen);
+        // Duo composite PDFs already include the screen backing. A rectangular
+        // fill leaks beyond their asymmetric rounded bezel corners.
+        if (!IOSUsePlayDeviceIsDuo()) UIRectFill(screen);
         CGRect body = CGRectMake([padding[@"left"] doubleValue], [padding[@"top"] doubleValue],
             w+[sizing[@"leftWidth"] doubleValue]+[sizing[@"rightWidth"] doubleValue],
             h+[sizing[@"topHeight"] doubleValue]+[sizing[@"bottomHeight"] doubleValue]);
@@ -173,6 +160,14 @@ static void loadFrame(void) {
         // DeviceKit's framebuffer mask leaves the Dynamic Island to the
         // Simulator compositor. Keep this hardware cutout with the shell so
         // hiding the decorative status items never removes it.
+        // DeviceKit's Duo shell excludes the compositor's camera overlay.
+        // Retain the existing 34pt outer-camera cutout, drawn as a vector rather
+        // than importing the old preview PNG with its estimated bezel padding.
+        if ([preset isEqual:@"iphone-duo-outer"]) {
+            [UIColor.blackColor setFill];
+            [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(screen.origin.x+w-65,
+                screen.origin.y+29,34,34)] fill];
+        }
         if ([preset isEqual:@"iphone-15-pro"] || [preset isEqual:@"iphone-15-pro-max"]) {
             [UIColor.blackColor setFill];
             [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(screen.origin.x+(w-125)/2,
@@ -215,9 +210,9 @@ static id toolbarView(id parent, NSUInteger depth) {
     return nil;
 }
 static CGPathRef duoCanvasPath(CGRect canvas) CF_RETURNS_RETAINED {
-    CGFloat radii[4]={58,58,58,58}; // top-left, top-right, bottom-right, bottom-left
-    if (!IOSUsePlayDeviceIsDuoInner()) { radii[0]=7;radii[1]=64;radii[2]=64;radii[3]=7; }
-    for (int q=0;q<IOSUsePlayDeviceQuarterTurns();q++) {
+    CGFloat radii[4]={55,55,55,55}; // top-left, top-right, bottom-right, bottom-left
+    if (!IOSUsePlayDeviceIsDuoInner()) { radii[0]=8;radii[1]=59;radii[2]=59;radii[3]=8; }
+    for (int q=0;q<(4-IOSUsePlayDeviceQuarterTurns())%4;q++) {
         CGFloat last=radii[3];for(int i=3;i>0;i--)radii[i]=radii[i-1];radii[0]=last;
     }
     CGFloat w=IOSUsePlayDeviceLogicalWidth,h=IOSUsePlayDeviceLogicalHeight;

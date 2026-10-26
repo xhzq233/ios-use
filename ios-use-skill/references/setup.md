@@ -30,7 +30,8 @@ Toolbar controls affect the current session; use config to save the selection.
 `status --json` shows the active `macDevice` and saved `configuredMacDevice`.
 Duo folds along the same physical hinge: the portrait outer display opens into
 the landscape inner display, and the landscape outer display opens into portrait.
-Its exact iOS 27.1 safe areas and side-mounted system bars are not emulated.
+Full-screen safe areas are calibrated against the iOS 27.1 Duo Simulator.
+System bars remain decorative previews, and Mac mode still uses host UIKit.
 
 The Mac backend supports macOS 27.
 
@@ -182,6 +183,7 @@ provider re-signing stays outside ios-use. Use a trusted network or secure
 tunnel for provider endpoints. Run `dom` to check remote responsiveness.
 
 Duo size preview: `config --mac --device-model iphone-duo`, then use the
-title-bar Expand/Collapse button without restarting the App. It uses App Store
-screenshot canvases at an assumed 3× scale (669×951 / 466×678 points), retains
-the existing iPhone runtime identity, and does not emulate the iOS fold lifecycle or iOS 27 UI.
+title-bar Expand/Collapse button without restarting the App. It uses Xcode 27.1
+DeviceKit artwork and the official Duo profile
+(669×951 / 466×678 points at 3×, iPhone19,4). It does not emulate the iOS
+fold lifecycle or replace host UIKit with the Simulator runtime.

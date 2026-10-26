@@ -1,0 +1,212 @@
+{
+  "identifier": "com.apple.dt.devicekit.chrome.phone15",
+  "images": {
+    "topLeft": "Phone TL",
+    "top": "Phone Top",
+    "topRight": "Phone TR",
+    "right": "Phone Right",
+    "bottomRight": "Phone BR",
+    "bottom": "Phone Base",
+    "bottomLeft": "Phone BL",
+    "left": "Phone Left",
+    "composite": "PhoneComposite",
+    "screen": "Screen",
+    "sizing": {
+      "leftWidth": 26,
+      "rightWidth": 22,
+      "topHeight": 14,
+      "bottomHeight": 14
+    },
+    "padding": {
+      "width": 10,
+      "height": 10
+    },
+    "devicePadding": {
+      "top": 9,
+      "left": 9,
+      "bottom": 0,
+      "right": 9
+    }
+  },
+  "paths": {
+    "simpleOutsideBorder": {
+      "insets": {
+        "top": 0,
+        "left": 0,
+        "bottom": 0,
+        "right": 0
+      },
+      "cornerRadiusX": 80,
+      "cornerRadiusY": 80
+    }
+  },
+  "inputs": [
+    {
+      "name": "volume-up",
+      "accessibilityTitle": "Volume Up",
+      "type": "button",
+      "usagePage": 12,
+      "usage": 233,
+      "image": "Vol BTN",
+      "imageDown": "Vol BTN Dn",
+      "imageDownDrawMode": "replace",
+      "onTop": false,
+      "anchor": "top",
+      "align": "leading",
+      "offsets": {
+        "normal": {
+          "x": 316,
+          "y": 7
+        },
+        "rollover": {
+          "x": 316,
+          "y": 2
+        }
+      }
+    },
+    {
+      "name": "volume-down",
+      "accessibilityTitle": "Volume Down",
+      "type": "button",
+      "usagePage": 12,
+      "usage": 234,
+      "image": "Vol BTN",
+      "imageDown": "Vol BTN Dn",
+      "imageDownDrawMode": "replace",
+      "onTop": false,
+      "anchor": "top",
+      "align": "leading",
+      "offsets": {
+        "normal": {
+          "x": 236,
+          "y": 7
+        },
+        "rollover": {
+          "x": 236,
+          "y": 2
+        }
+      }
+    },
+    {
+      "name": "power",
+      "accessibilityTitle": "Sleep/Wake",
+      "type": "button",
+      "usagePage": 12,
+      "usage": 48,
+      "image": "X_Power BTN",
+      "imageDown": "X_Power BTN Dn",
+      "imageDownDrawMode": "replace",
+      "onTop": false,
+      "anchor": "right",
+      "align": "leading",
+      "offsets": {
+        "normal": {
+          "x": -15,
+          "y": 202
+        },
+        "rollover": {
+          "x": -10,
+          "y": 202
+        }
+      }
+    }
+  ],
+  "resizeRects": [
+    {
+      "type": "lowerLeft",
+      "scales": true,
+      "centerPoint": {
+        "x": 28,
+        "y": 18
+      },
+      "size": {
+        "width": 40,
+        "height": 20
+      }
+    },
+    {
+      "type": "lowerLeft",
+      "scales": true,
+      "centerPoint": {
+        "x": 18,
+        "y": 28
+      },
+      "size": {
+        "width": 20,
+        "height": 40
+      }
+    },
+    {
+      "type": "lowerRight",
+      "scales": true,
+      "centerPoint": {
+        "x": -28,
+        "y": 18
+      },
+      "size": {
+        "width": 40,
+        "height": 20
+      }
+    },
+    {
+      "type": "lowerRight",
+      "scales": true,
+      "centerPoint": {
+        "x": -18,
+        "y": 28
+      },
+      "size": {
+        "width": 20,
+        "height": 40
+      }
+    },
+    {
+      "type": "upperRight",
+      "scales": true,
+      "centerPoint": {
+        "x": -28,
+        "y": -18
+      },
+      "size": {
+        "width": 40,
+        "height": 20
+      }
+    },
+    {
+      "type": "upperRight",
+      "scales": true,
+      "centerPoint": {
+        "x": -18,
+        "y": -28
+      },
+      "size": {
+        "width": 20,
+        "height": 40
+      }
+    },
+    {
+      "type": "upperLeft",
+      "scales": true,
+      "centerPoint": {
+        "x": 28,
+        "y": -18
+      },
+      "size": {
+        "width": 40,
+        "height": 20
+      }
+    },
+    {
+      "type": "upperLeft",
+      "scales": true,
+      "centerPoint": {
+        "x": 18,
+        "y": -28
+      },
+      "size": {
+        "width": 20,
+        "height": 40
+      }
+    }
+  ]
+}

@@ -20,10 +20,10 @@ static inline const IOSUsePlayDevicePreset *IOSUsePlayDevicePresetAt(int index) 
         {"iphone-15-pro", "iPhone16,1", "A2848", 0, 393, 852, 3, 59, 34},
         // Full-screen UIKit window, iPadOS 26 Simulator (both orientations).
         {"ipad-pro-11", "iPad14,3", "A2759", 1, 834, 1194, 2, 32, 25},
-        // Duo layout previews: App Store screenshot canvases at 3x.
-        // Keep the supported iPhone runtime identity; these do not emulate iOS 27.
-        {"iphone-duo-inner", "iPhone16,2", "A2849", 0, 669, 951, 3, 0, 0},
-        {"iphone-duo-outer", "iPhone16,2", "A2849", 0, 466, 678, 3, 0, 0},
+        // Xcode 27.1 Duo profile: inner 2007x2853, outer 1398x2034 at 3x.
+        // Device identity and geometry do not replace the host UIKit runtime.
+        {"iphone-duo-inner", "iPhone19,4", "A3447", 0, 669, 951, 3, 0, 0},
+        {"iphone-duo-outer", "iPhone19,4", "A3447", 0, 466, 678, 3, 0, 0},
     };
     return index >= 0 && index < (int)(sizeof(presets) / sizeof(presets[0]))
         ? &presets[index] : NULL;
@@ -89,19 +89,21 @@ static inline int IOSUsePlayDeviceHasSideStatusBar(void) {
     return IOSUsePlayDeviceIsDuo() && (!IOSUsePlayDeviceIsDuoInner() || IOSUsePlayDeviceIsLandscape());
 }
 static inline int IOSUsePlayDeviceStatusBarOnLeft(void) {
-    return IOSUsePlayDeviceQuarterTurns() >= 2;
+    // iOS 27.1 keeps the inner landscape band on the right in both
+    // interface orientations. Outer landscape-left (UIKit value 3) uses left.
+    int turns = IOSUsePlayDeviceQuarterTurns();
+    return !IOSUsePlayDeviceIsDuoInner() && (turns == 1 || turns == 2);
 }
 static inline IOSUsePlayDeviceInsets IOSUsePlayDeviceSafeInsets(void) {
     const IOSUsePlayDevicePreset *p = IOSUsePlayDeviceCurrent();
     if (IOSUsePlayDeviceIsDuo()) {
-        // Layout preview measured against Apple's Tech Talk 111466, 7:00.
-        // The side band is ~18% of the 466pt outer canvas (84pt). These
-        // estimates require calibration against the future Duo Simulator.
+        // Full-screen public fixture on iOS 27.1 Duo Simulator: side band
+        // 84pt, portrait inner top 82pt, and a 34pt bottom inset.
         if (IOSUsePlayDeviceHasSideStatusBar())
             return IOSUsePlayDeviceStatusBarOnLeft()
-                ? (IOSUsePlayDeviceInsets){0, 84, 0, 0}
-                : (IOSUsePlayDeviceInsets){0, 0, 0, 84};
-        return (IOSUsePlayDeviceInsets){32, 0, 25, 0};
+                ? (IOSUsePlayDeviceInsets){0, 84, 34, 0}
+                : (IOSUsePlayDeviceInsets){0, 0, 34, 84};
+        return (IOSUsePlayDeviceInsets){82, 0, 34, 0};
     }
     if (p->idiom == 0 && IOSUsePlayDeviceQuarterTurns() == 2)
         return (IOSUsePlayDeviceInsets){p->safeAreaBottom, 0, p->safeAreaTop, 0};

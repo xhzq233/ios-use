@@ -1,13 +1,22 @@
 Device chrome resources packaged in IOSUsePlayRuntime.framework.
 
-The phone, phone4, phone9, phone10, and tablet2 directories contain Apple
+The phone, phone4, phone9, phone10, phone14, phone15, and tablet2 directories contain Apple
 DeviceKit PDF artwork and chrome.json layouts, with framebuffer masks from the
 matching CoreSimulator device profiles. Apple artwork remains copyright Apple
 Inc.; it is not covered by the source-code license of ios-use. The Runtime reads
 these bundled files and does not require a local Xcode/DeviceKit installation.
 
-The duo-inner-* and duo-outer-* PNGs are original ios-use preview artwork. Duo screen and bezel
-geometry are visual estimates; they do not implement system fold behavior.
+Duo uses Xcode 27.1 (27A9275) DeviceKit phone14 (inner) and phone15
+(outer) PDF artwork and chrome.json, replacing the original preview PNGs.
+The matching iPhone Duo.simdevicetype provides the two framebuffer masks,
+iPhone19,4 / A3447 identity, 3x scale, and per-corner radii (inner 55pt;
+outer left 8pt/right 59pt). Source resources are in the installed
+/Library/Developer/DeviceKit/Chrome and CoreSimulator/Profiles/DeviceTypes
+directories. Screen dimensions are 669x951 and 466x678 logical points.
+These resources do not implement system fold behavior. The status items below
+remain drawn previews, separate from the official device shell. DeviceKit
+does not bundle the compositor camera overlay with the shell; the existing
+34pt outer-camera cutout is retained as a vector, without the old PNG.
 
 duo-status-black.pdf and duo-status-white.pdf contain the original eight filled
 Bezier paths in the Ring group of Apple's iOS 27 UI Kit (copyright Apple Inc.,
