@@ -27,7 +27,7 @@ struct PlayCoverAudioState: Codable, Equatable, Sendable {
     }
 
     static func load(file: URL) throws -> Self {
-        guard FileManager.default.fileExists(atPath: file.path) else { return Self(volume: 100, muted: false) }
+        guard FileManager.default.fileExists(atPath: file.path) else { return Self(volume: 100, muted: true) }
         let value = try JSONDecoder().decode(Self.self, from: Data(contentsOf: file))
         guard (0...100).contains(value.volume) else {
             throw CLIParseError.invalidValue("Saved Mac volume must be between 0 and 100")

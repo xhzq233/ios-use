@@ -137,7 +137,8 @@ Every Mac session includes Frida. See the
 <summary>Mac device presets, windows and runtime behavior</summary>
 
 Set the managed App's output gain with `ios-use config --mac --volume 25`
-(0–100), or use `--mute on` / `--mute off`. Audio settings apply immediately,
+(0–100), or use `--mute on` / `--mute off`. The default is muted at volume 100;
+use `--mute off` to enable sound. Saved explicit preferences are retained. Audio settings apply immediately,
 persist under `IOS_USE_HOME`, and restore the configured volume on unmute.
 They affect the App's in-process Core Audio PCM output, including AVPlayer,
 AVAudioPlayer, AVAudioEngine and AudioQueue, without changing system volume or

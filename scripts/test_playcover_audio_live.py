@@ -61,6 +61,15 @@ subprocess.run(['xcrun', '--sdk', 'iphoneos', 'clang', '-target', 'arm64-apple-i
                 str(root / 'playcover-runtime/tests/AudioAppFixture.m'), '-o', str(app / 'AudioFixture')], check=True)
 started = False
 try:
+    if not (home / 'playcover' / 'audio.json').exists():
+        started = True
+        run('start', '--mac', '--app', str(app), '--timeout', '30s')
+        default = state()
+        assert default['volume'] == 100 and default['muted'] and default['effective'] == 0, default
+        assert default['playing'] and default['outputs'] > 0, default
+        run('stop', '-d', 'mac')
+        started = False
+        print('[audio-live] fresh Home defaults to mute PASS')
     configured = run('config', '--mac', '--volume', '25', '--mute', 'on')
     assert configured['appliesOn'] == 'nextColdStart'
     # Ownership is established before the call, so a readiness failure still
@@ -87,7 +96,12 @@ try:
     run('start', '--mac', '--timeout', '30s')
     restarted = state()
     assert restarted['volume'] == 35 and restarted['muted'] and restarted['effective'] == 0, restarted
-    print('[audio-live] cold launch, live config, native player preservation and restart PASS')
+    run('config', '--mac', '--mute', 'off')
+    run('stop', '-d', 'mac')
+    run('start', '--mac', '--timeout', '30s')
+    unmuted = state()
+    assert unmuted['volume'] == 35 and not unmuted['muted'] and unmuted['effective'] == 35, unmuted
+    print('[audio-live] cold launch, live config, native player preservation and explicit mute/unmute restart PASS')
 finally:
     if started:
         run('stop', '-d', 'mac')

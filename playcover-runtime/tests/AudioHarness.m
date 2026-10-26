@@ -23,6 +23,14 @@ static void checkGain(double expected) {
     fprintf(stderr,"audio output did not reach gain %.2f: %s\n",expected,IOSUsePlayAudioTestMeter().description.UTF8String); abort();
 }
 static void unitTests(void) {
+    unsetenv("IOS_USE_MAC_MUTE"); unsetenv("IOS_USE_MAC_VOLUME");
+    IOSUsePlayAudioInitialize();
+    assert([IOSUsePlayAudioState()[@"muted"] boolValue]);
+    assert([IOSUsePlayAudioState()[@"volume"] intValue]==100);
+    setenv("IOS_USE_MAC_MUTE","0",1); IOSUsePlayAudioInitialize();
+    assert(![IOSUsePlayAudioState()[@"muted"] boolValue]);
+    setenv("IOS_USE_MAC_MUTE","1",1); IOSUsePlayAudioInitialize();
+    assert([IOSUsePlayAudioState()[@"muted"] boolValue]);
     AudioStreamBasicDescription format={.mFormatID=kAudioFormatLinearPCM,.mFormatFlags=kAudioFormatFlagIsFloat|kAudioFormatFlagIsPacked,.mBitsPerChannel=32,.mChannelsPerFrame=1,.mBytesPerFrame=4};
     float values[]={-1,-.25,0,.25,1};AudioBuffer b={1,sizeof(values),values};
     IOSUsePlayAudioTestScale(&b,format,.25);assert(values[0]==-.25 && values[4]==.25);

@@ -6,7 +6,7 @@
 
 // HAL output callbacks cover players/engines/queues without stacking gain at
 // each player layer. Keep the realtime path free of locks, allocations and ObjC.
-static atomic_uint audioSetting = 100; // low 8 bits: volume, bit 8: muted
+static atomic_uint audioSetting = 100 | 256; // low 8 bits: volume, bit 8: muted
 static pthread_mutex_t registryLock = PTHREAD_MUTEX_INITIALIZER;
 @class IOSUsePlayAudioContext;
 static NSMutableDictionary<NSString *, IOSUsePlayAudioContext *> *contexts;
@@ -248,7 +248,7 @@ void IOSUsePlayAudioInitialize(void) {
     const char *v=getenv("IOS_USE_MAC_VOLUME"),*m=getenv("IOS_USE_MAC_MUTE");
     unsigned volume=100;
     if(v){char *end;long n=strtol(v,&end,10);if(*v && !*end && n>=0 && n<=100)volume=(unsigned)n;}
-    atomic_store(&audioSetting,volume|((m && !strcmp(m,"1"))?256:0));
+    atomic_store(&audioSetting,volume|((m && !strcmp(m,"0"))?0:256));
 }
 #ifdef IOS_USE_PLAY_AUDIO_TESTING
 NSDictionary *IOSUsePlayAudioTestMeter(void) {

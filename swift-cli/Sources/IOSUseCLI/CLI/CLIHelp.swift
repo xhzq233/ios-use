@@ -132,7 +132,7 @@ enum CLIHelp {
             `--volume <0–100>` sets the managed Mac App's output gain; `--mute on|off`
             silences/restores it without changing its saved volume. Both apply immediately
             to a running App and persist under IOS_USE_HOME for future Mac launches.
-            Defaults are 100 and off. System volume and other processes are unchanged.
+            Defaults are volume 100 and mute on; use --mute off to enable sound. System volume and other processes are unchanged.
             Covers in-process Core Audio output (including players, engines and queues)
             using native float32/float64 or signed 16/32-bit PCM. Encoded passthrough,
             remote playback and audio produced by another process are not controlled.

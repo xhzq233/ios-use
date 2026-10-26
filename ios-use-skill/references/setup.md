@@ -33,23 +33,15 @@ the landscape inner display, and the landscape outer display opens into portrait
 Full-screen safe areas are calibrated against the iOS 27.1 Duo Simulator.
 System bars remain decorative previews, and Mac mode still uses host UIKit.
 
-Control only the managed Mac App's sound:
+Mac App audio defaults to muted. Settings apply immediately and persist:
 
 ```bash
-ios-use config --mac --volume 25
-ios-use config --mac --mute on
-ios-use config --mac --mute off
+ios-use config --mac --volume 25 --mute off  # enable sound at 25%
+ios-use config --mac --mute on              # mute, keeping the volume
 ```
 
-These settings apply immediately and persist for future Mac launches in the
-same `IOS_USE_HOME`. Unmuting restores the configured volume; defaults are 100
-and unmuted. Other apps and system output volume are unaffected. Control covers
-in-process Core Audio PCM output, including AVPlayer, AVAudioPlayer,
-AVAudioEngine and AudioQueue. Encoded passthrough, remote playback and audio
-from separate helper processes are outside its scope. If a running output has
-an unsupported format, config reports it instead of claiming it is muted.
-After upgrading, if the running App reports that `configureAudio` is unsupported,
-stop it and run `ios-use start --mac --app <original-App.app>` to refresh its Runtime.
+If `configureAudio` is unsupported after upgrading, stop the App and restart
+with `start --mac --app <original-App.app>` to refresh its Runtime.
 
 The Mac backend supports macOS 27.
 

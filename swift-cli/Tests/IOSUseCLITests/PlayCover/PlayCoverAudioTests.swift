@@ -23,8 +23,8 @@ final class PlayCoverAudioTests: XCTestCase {
         let paths = IOSUsePaths.resolve(environment: environment)
         let cli = IOSUseCLI(environment: environment)
         func state() throws -> PlayCoverAudioState { try .load(file: .init(fileURLWithPath: paths.playcover + "/audio.json")) }
-        XCTAssertEqual(try state(), PlayCoverAudioState(volume: 100, muted: false))
-        XCTAssertEqual(cli.run(arguments: ["config", "--mac", "--volume", "25", "--mute", "on"]).exitCode, 0)
+        XCTAssertEqual(try state(), PlayCoverAudioState(volume: 100, muted: true))
+        XCTAssertEqual(cli.run(arguments: ["config", "--mac", "--volume", "25"]).exitCode, 0)
         XCTAssertEqual(try state(), PlayCoverAudioState(volume: 25, muted: true))
         XCTAssertEqual(cli.run(arguments: ["config", "--mac", "--volume", "60"]).exitCode, 0)
         XCTAssertEqual(try state(), PlayCoverAudioState(volume: 60, muted: true))
@@ -37,7 +37,7 @@ final class PlayCoverAudioTests: XCTestCase {
         XCTAssertEqual(try state().volume, 35)
         XCTAssertEqual(try PlayCoverDevicePreset.configured(paths: paths).name, "iphone-se")
         let other = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root.appendingPathComponent("other").path])
-        XCTAssertEqual(try PlayCoverAudioState.load(file: PlayCoverAudioState.file(paths: other)).volume, 100)
+        XCTAssertEqual(try PlayCoverAudioState.load(file: PlayCoverAudioState.file(paths: other)), PlayCoverAudioState(volume: 100, muted: true))
         let launch = PlayCoverSlotLauncher.launchEnvironmentForTesting(source: [:],
             sessionID: "audio-test", runtimeSocketPath: "/tmp/audio-test.sock", installRevision: "test",
             playChainPath: "/tmp/audio-test-chain", deviceConfigurationPath: paths.playcover + "/device.json")
