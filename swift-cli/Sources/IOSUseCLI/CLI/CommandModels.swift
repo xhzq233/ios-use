@@ -78,6 +78,8 @@ public struct ConfigOptions: Equatable, Sendable {
     public var macDevice: String?
     public var macChrome: String?
     public var macWindowMode: String?
+    public var macVolume: Int?
+    public var macMute: Bool?
 
     public init(
         udid: String? = nil,

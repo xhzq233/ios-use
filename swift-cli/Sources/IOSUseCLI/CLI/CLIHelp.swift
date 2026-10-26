@@ -116,7 +116,7 @@ enum CLIHelp {
         case "config":
             return """
             Usage: ios-use config [--udid <udid>] [--simulator] [--list] [--verbose] [--json]
-                   ios-use config --mac [--device-model <preset>] [--device-chrome on|off] [--window-mode fixed|resizable] [--verbose] [--json]
+                   ios-use config --mac [--device-model <preset>] [--device-chrome on|off] [--window-mode fixed|resizable] [--volume 0–100] [--mute on|off] [--verbose] [--json]
 
             Configure a device or Simulator, or explicitly initialize the
             dedicated stable Mac-backend signing identity.
@@ -129,6 +129,13 @@ enum CLIHelp {
             Rotate, and a Duo Expand/Collapse button. These controls wait for the same
             transition and are disabled while it is in progress.
             Device chrome is on by default and is omitted from screenshots.
+            `--volume <0–100>` sets the managed Mac App's output gain; `--mute on|off`
+            silences/restores it without changing its saved volume. Both apply immediately
+            to a running App and persist under IOS_USE_HOME for future Mac launches.
+            Defaults are 100 and off. System volume and other processes are unchanged.
+            Covers in-process Core Audio output (including players, engines and queues)
+            using native float32/float64 or signed 16/32-bit PCM. Encoded passthrough,
+            remote playback and audio produced by another process are not controlled.
             `--window-mode resizable` preserves App scene size constraints and uses
             the current window size for DOM, touches and screenshots. Device screen
             identity stays fixed. This mode hides the device shell; use it to test

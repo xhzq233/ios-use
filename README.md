@@ -136,6 +136,14 @@ Every Mac session includes Frida. See the
 <details>
 <summary>Mac device presets, windows and runtime behavior</summary>
 
+Set the managed App's output gain with `ios-use config --mac --volume 25`
+(0–100), or use `--mute on` / `--mute off`. Audio settings apply immediately,
+persist under `IOS_USE_HOME`, and restore the configured volume on unmute.
+They affect the App's in-process Core Audio PCM output, including AVPlayer,
+AVAudioPlayer, AVAudioEngine and AudioQueue, without changing system volume or
+other processes. Encoded passthrough, remote playback and separate helper
+processes are not controlled. Config reports any observed unsupported formats.
+
 Choose a device preset with `ios-use config --mac --device-model ipad-pro-11`.
 This changes the running Mac App and saves the selection in the current
 `IOS_USE_HOME` for future starts. Setting a preset does not run signing setup.

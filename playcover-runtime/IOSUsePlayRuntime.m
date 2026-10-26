@@ -1,3 +1,4 @@
+#import "IOSUsePlayAudio.h"
 //
 // IOSUsePlayRuntime
 //
@@ -495,6 +496,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(
 }
 
 void IOSUsePlayRuntimeInitializeAfterStdio(void) {
+    IOSUsePlayAudioInitialize();
     @autoreleasepool {
         [IOSUsePlayAppKitBridge captureSceneBackingLaunchEnvironment];
         // Required API hooks must be installed synchronously before

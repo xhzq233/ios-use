@@ -19,6 +19,10 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             (.hello, .empty(), { XCTAssertTrue($0.isEmpty) }),
             (.ping, .empty(), { XCTAssertTrue($0.isEmpty) }),
             (.diagnostics, .empty(), { XCTAssertTrue($0.isEmpty) }),
+            (.configureAudio, .configureAudio(.init(volume: 25, muted: true)), {
+                XCTAssertEqual($0["volume"] as? Int, 25)
+                XCTAssertEqual($0["muted"] as? Bool, true)
+            }),
             (.screenshot, .empty(), { XCTAssertTrue($0.isEmpty) }),
             (
                 .dom,
@@ -1173,6 +1177,8 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         for command: PlayCoverRuntimeCommand
     ) -> [String: Any] {
         switch command {
+        case .configureAudio:
+            return ["volume": 25, "muted": true, "outputCallbacks": 1, "unsupportedOutputs": 0]
         case .configureDevice:
             return ["preset": "iphone-duo", "expanded": true, "orientation": "portrait",
                 "chrome": "on", "windowMode": "fixed", "logicalWidth": 669,
@@ -1503,6 +1509,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
 
 private extension PlayCoverRuntimeCommand {
     static let allCasesForTesting: [PlayCoverRuntimeCommand] = [
+        .configureAudio,
         .hello,
         .ping,
         .diagnostics,

@@ -109,7 +109,7 @@ public enum CLIParser {
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--find", "--from", "--dir", "--distance",
             "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
-            "--app", "--target", "--depth", "--device", "--connection", "--device-model", "--device-chrome", "--window-mode", "--bundle-id", "-d", "-i"
+            "--app", "--target", "--depth", "--device", "--connection", "--device-model", "--device-chrome", "--window-mode", "--volume", "--mute", "--bundle-id", "-d", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -143,7 +143,7 @@ public enum CLIParser {
             "--content", "--delete", "--to", "--find", "--from", "--dir",
             "--distance", "--match", "--fps", "--index", "--process",
             "--pid", "--output", "--runtime", "--app", "--target",
-            "--depth", "--connection", "--device-model", "--device-chrome", "--window-mode", "--bundle-id", "-i",
+            "--depth", "--connection", "--device-model", "--device-chrome", "--window-mode", "--volume", "--mute", "--bundle-id", "-i",
         ]
         var normalized: [String] = []
         var deviceID: String?
@@ -198,6 +198,19 @@ public enum CLIParser {
             case "--device-model": options.macDevice = try parser.value(for: arg)
             case "--device-chrome": options.macChrome = try parser.value(for: arg)
             case "--window-mode": options.macWindowMode = try parser.value(for: arg)
+            case "--volume":
+                let value = try parser.value(for: arg)
+                guard !value.isEmpty, value.allSatisfy({ $0.isASCII && $0.isNumber }),
+                      let volume = Int(value), (0...100).contains(volume) else {
+                    throw CLIParseError.invalidValue("--volume must be an integer from 0 to 100")
+                }
+                options.macVolume = volume
+            case "--mute":
+                let value = try parser.value(for: arg)
+                guard ["on", "off"].contains(value) else {
+                    throw CLIParseError.invalidValue("--mute must be on or off")
+                }
+                options.macMute = value == "on"
             default: throw CLIParseError.unknownOption(arg)
             }
         }
@@ -207,7 +220,7 @@ public enum CLIParser {
         if let value = options.macWindowMode, !["fixed", "resizable"].contains(value) {
             throw CLIParseError.invalidValue("--window-mode must be fixed or resizable")
         }
-        if (options.macDevice != nil || options.macChrome != nil || options.macWindowMode != nil) && !options.playCover {
+        if (options.macDevice != nil || options.macChrome != nil || options.macWindowMode != nil || options.macVolume != nil || options.macMute != nil) && !options.playCover {
             throw CLIParseError.invalidValue("Mac device and window options require --mac")
         }
         if options.playCover,

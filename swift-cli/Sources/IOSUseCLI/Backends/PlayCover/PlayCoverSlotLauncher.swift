@@ -121,6 +121,7 @@ enum PlayCoverSlotLauncher {
                     isDirectory: true
                 )
             )
+            _ = try PlayCoverAudioState.load(file: PlayCoverAudioState.file(paths: paths))
             let deadline = ProcessInfo.processInfo.systemUptime + timeout
             owned = try submitAndResolve(
                 slot: slot,
@@ -599,6 +600,11 @@ enum PlayCoverSlotLauncher {
         allowed["IOS_USE_MAC_CHROME"] = deviceChrome
         allowed["IOS_USE_MAC_WINDOW_MODE"] = windowMode
         if let deviceConfigurationPath {
+            let audioFile = URL(fileURLWithPath: deviceConfigurationPath).deletingLastPathComponent().appendingPathComponent("audio.json")
+            if let audio = try? PlayCoverAudioState.load(file: audioFile) {
+                allowed["IOS_USE_MAC_VOLUME"] = String(audio.volume)
+                allowed["IOS_USE_MAC_MUTE"] = audio.muted ? "1" : "0"
+            }
             if let data = try? Data(contentsOf: URL(fileURLWithPath: deviceConfigurationPath)),
                let selection = try? JSONDecoder().decode(PlayCoverDevicePreset.Selection.self, from: data) {
                 allowed["IOS_USE_MAC_EXPANDED"] = selection.expanded == false ? "0" : "1"
@@ -625,7 +631,8 @@ enum PlayCoverSlotLauncher {
         sessionID: String,
         runtimeSocketPath: String,
         installRevision: String,
-        playChainPath: String
+        playChainPath: String,
+        deviceConfigurationPath: String? = nil
     ) -> [String: String] {
         launchEnvironment(
             source: source,
@@ -633,6 +640,7 @@ enum PlayCoverSlotLauncher {
             runtimeSocketPath: runtimeSocketPath,
             installRevision: installRevision,
             playChainPath: playChainPath,
+            deviceConfigurationPath: deviceConfigurationPath,
             stdioLog: nil
         )
     }

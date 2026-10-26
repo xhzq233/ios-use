@@ -6,6 +6,7 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case ping
     case diagnostics
     case configureDevice
+    case configureAudio
     case screenshot
     case dom
     case uiTree
@@ -294,6 +295,7 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
     )
     case debug(PlayCoverRuntimeDebugArguments)
     case configureDevice(PlayCoverRuntimeDeviceChanges)
+    case configureAudio(PlayCoverAudioChanges)
 
     func encode(to encoder: Encoder) throws {
         switch self {
@@ -316,6 +318,8 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
         case .dismissAlert(let arguments):
             try arguments.encode(to: encoder)
         case .dismissAlertByLabel(let arguments):
+            try arguments.encode(to: encoder)
+        case .configureAudio(let arguments):
             try arguments.encode(to: encoder)
         case .configureDevice(let arguments):
             try arguments.encode(to: encoder)
@@ -682,6 +686,7 @@ enum PlayCoverRuntimeResponsePayload: Equatable, Sendable {
     case ping(PlayCoverRuntimePingPayload)
     case diagnostics(PlayCoverRuntimeDiagnosticsPayload)
     case configureDevice(PlayCoverRuntimeDeviceState)
+    case configureAudio(PlayCoverAudioState)
     case screenshot(PlayCoverRuntimeScreenshotResult)
     case dom(PlayCoverRuntimeDOMPayload)
     case uiTree(PlayCoverRuntimeUITreePayload)
@@ -1317,6 +1322,9 @@ final class PlayCoverRuntimeClient {
                 executablePath: executablePath
             )
             return .ping(payload)
+        case .configureAudio:
+            let payload: PlayCoverAudioState = try performRequest(command, arguments: arguments)
+            return .configureAudio(payload)
         case .configureDevice:
             let payload: PlayCoverRuntimeDeviceState = try performRequest(command, arguments: arguments)
             return .configureDevice(payload)

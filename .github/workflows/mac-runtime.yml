@@ -5,6 +5,7 @@ on:
     paths:
       - "playcover-runtime/**"
       - "scripts/build_playcover_runtime.sh"
+      - "scripts/test_playcover_audio.sh"
       - "scripts/test_playcover_snapshot.sh"
       - "scripts/test_playcover_playchain.sh"
       - "scripts/test_playcover_cgshw_compositor.sh"
@@ -14,6 +15,7 @@ on:
     paths:
       - "playcover-runtime/**"
       - "scripts/build_playcover_runtime.sh"
+      - "scripts/test_playcover_audio.sh"
       - "scripts/test_playcover_snapshot.sh"
       - "scripts/test_playcover_playchain.sh"
       - "scripts/test_playcover_cgshw_compositor.sh"
@@ -46,6 +48,7 @@ jobs:
         env:
           IOS_USE_HOME: ${{ runner.temp }}/ios-use-runtime-tests
         run: |
+          bash scripts/test_playcover_audio.sh
           bash scripts/test_playcover_snapshot.sh
           bash scripts/test_playcover_playchain.sh
           bash scripts/test_playcover_cgshw_compositor.sh --deterministic-only

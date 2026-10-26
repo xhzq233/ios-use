@@ -82,6 +82,7 @@ targets:
       - sdk: Photos.framework
       - sdk: Security.framework
       - sdk: libsqlite3.tbd
+      - sdk: CoreAudio.framework
       - sdk: AVFoundation.framework
       - sdk: CoreMotion.framework
       - sdk: GameController.framework
