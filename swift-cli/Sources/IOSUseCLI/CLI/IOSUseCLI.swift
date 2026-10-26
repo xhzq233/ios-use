@@ -931,7 +931,23 @@ public struct IOSUseCLI: Sendable {
         json: Bool
     ) -> CLIResult {
         do {
-            if options.macDevice != nil || options.macChrome != nil || options.macWindowMode != nil {
+            let hasDeviceChanges = options.macDevice != nil || options.macChrome != nil || options.macWindowMode != nil
+            // Validate geometry before changing audio when both are requested.
+            if let preset = options.macDevice { _ = try PlayCoverDevicePreset.named(preset) }
+            var audio: PlayCoverAudioState?
+            if options.macVolume != nil || options.macMute != nil {
+                let result = try PlayCoverAudioState.configure(
+                    PlayCoverAudioChanges(volume: options.macVolume, muted: options.macMute), paths: paths)
+                audio = result.state
+                if !hasDeviceChanges {
+                    return json ? MachineOutput.success(command: "config", data: .object([
+                        "audio": result.state.machineData,
+                        "appliesOn": .string(result.live ? "currentSession" : "nextColdStart")
+                    ]), warnings: result.state.warnings) : CLIResult(exitCode: 0, stdout: result.state.description
+                        + (result.live ? " Applied to the running App.\n" : " Saved for the next Mac App start.\n"))
+                }
+            }
+            if hasDeviceChanges {
                 var selection = try PlayCoverDevicePreset.Selection.load(paths: paths)
                 let preset = try PlayCoverDevicePreset.named(options.macDevice ?? selection.preset)
                 selection.preset = preset.name
@@ -948,16 +964,16 @@ public struct IOSUseCLI: Sendable {
                         windowMode: state.windowMode, orientation: state.orientation, expanded: state.expanded)
                     try selection.save(paths: paths)
                     return json
-                        ? MachineOutput.success(command: "config", data: .object(["device": state.machineData, "appliesOn": .string("currentSession")]))
-                        : CLIResult(exitCode: 0, stdout: "Mac device: \(state.preset) (\(Int(state.logicalWidth)) × \(Int(state.logicalHeight))), \(Int(state.scale))×, \(state.orientation). Applied to the running App.\n")
+                        ? MachineOutput.success(command: "config", data: .object(["device": state.machineData, "audio": audio?.machineData ?? .null, "appliesOn": .string("currentSession")]), warnings: audio?.warnings ?? [])
+                        : CLIResult(exitCode: 0, stdout: "Mac device: \(state.preset) (\(Int(state.logicalWidth)) × \(Int(state.logicalHeight))), \(Int(state.scale))×, \(state.orientation). Applied to the running App.\n" + (audio.map { $0.description + "\n" } ?? ""))
                 }
                 try selection.save(paths: paths)
                 return json
                     ? MachineOutput.success(command: "config", data: .object([
                         "device": preset.machineData, "deviceChrome": .string(selection.chrome ?? "on"),
-                        "windowMode": .string(selection.windowMode ?? "fixed"), "appliesOn": .string("nextColdStart")
-                    ]))
-                    : CLIResult(exitCode: 0, stdout: "Mac device: \(preset.name) (\(Int(preset.logicalSize.width)) × \(Int(preset.logicalSize.height)), \(Int(preset.scale))×, chrome \(selection.chrome ?? "on"), window \(selection.windowMode ?? "fixed"). Saved for the next Mac App start.\n")
+                        "windowMode": .string(selection.windowMode ?? "fixed"), "audio": audio?.machineData ?? .null, "appliesOn": .string("nextColdStart")
+                    ]), warnings: audio?.warnings ?? [])
+                    : CLIResult(exitCode: 0, stdout: "Mac device: \(preset.name) (\(Int(preset.logicalSize.width)) × \(Int(preset.logicalSize.height)), \(Int(preset.scale))×, chrome \(selection.chrome ?? "on"), window \(selection.windowMode ?? "fixed"). Saved for the next Mac App start.\n" + (audio.map { $0.description + "\n" } ?? ""))
             }
             let evidence = try playCoverSignerInitializer()
             if json {

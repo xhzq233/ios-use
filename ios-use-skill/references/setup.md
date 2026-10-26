@@ -33,6 +33,13 @@ the landscape inner display, and the landscape outer display opens into portrait
 Full-screen safe areas are calibrated against the iOS 27.1 Duo Simulator.
 System bars remain decorative previews, and Mac mode still uses host UIKit.
 
+Mac App audio defaults to muted. Settings apply immediately and persist:
+
+```bash
+ios-use config --mac --volume 25 --mute off  # enable sound at 25%
+ios-use config --mac --mute on              # mute, keeping the volume
+```
+
 The Mac backend supports macOS 27.
 
 `config --mac` asks for macOS authentication. If authentication is cancelled,

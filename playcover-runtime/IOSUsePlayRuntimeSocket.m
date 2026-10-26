@@ -1,3 +1,4 @@
+#import "IOSUsePlayAudio.h"
 #import "IOSUsePlayDeviceConfiguration.h"
 #import "IOSUsePlayDeviceChrome.h"
 #import "IOSUsePlayRuntimeSocket.h"
@@ -376,6 +377,7 @@ static NSArray<NSString *> *IOSUseCapabilities(BOOL requiredHooksReady) {
         @"ping",
         @"diagnostics",
         @"configureDevice",
+        @"configureAudio",
         @"screenshot",
         @"dom",
         @"uiTree",
@@ -2051,6 +2053,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             IOSUseCachedUISnapshot();
         payload = [snapshot[@"identity"] mutableCopy];
         payload[@"deviceState"] = IOSUsePlayDeviceState();
+        payload[@"audio"] = IOSUsePlayAudioState();
         payload[@"uiState"] = IOSUseCurrentUIReadiness();
         payload[@"stdio"] = IOSUseRuntimeStdioEvidence();
         payload[@"diagnostics"] = @{
@@ -2059,6 +2062,12 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
             @"observed": snapshot[@"observed"],
             @"playChain": snapshot[@"playChain"],
         };
+    } else if ([command isEqualToString:@"configureAudio"]) {
+        NSError *audioError = nil;
+        NSDictionary *state = IOSUsePlayConfigureAudio(arguments, &audioError);
+        if (!state) return IOSUseBasicErrorEnvelope(requestID, @"invalid_arguments",
+            audioError.localizedDescription, @"validation", @"audio", NO);
+        payload = [state mutableCopy];
     } else if ([command isEqualToString:@"configureDevice"]) {
         // Socket requests run on the command queue. Only that queue waits;
         // UIKit and toolbar actions use the same asynchronous main-queue path.

@@ -1303,6 +1303,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
             PlayCoverRuntimeAlertPayload? = nil
     ) -> PlayCoverRuntimeResponsePayload {
         switch capability {
+        case .configureAudio:
+            return .configureAudio(.init(volume: 25, muted: true))
         case .configureDevice:
             return .configureDevice(.init(preset: "iphone-duo", expanded: true, orientation: "portrait",
                 chrome: "on", windowMode: "fixed", logicalWidth: 669, logicalHeight: 951, scale: 3, idiom: 0))

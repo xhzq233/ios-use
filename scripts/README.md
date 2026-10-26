@@ -235,3 +235,20 @@ The tracked Git tag carries project and vendored source/license material. Frida
 public repositories and exact commits are recorded in
 `ThirdParty/Frida/PROVENANCE.md`; required static-dependency notices are embedded
 inside `IOSUseFridaEngine.framework` rather than duplicated as a top-level asset.
+
+### Mac App audio
+
+`bash scripts/test_playcover_audio.sh` checks PCM gain, mute restoration and
+invalid configuration without playing audio. `--output` additionally plays quiet
+synthetic audio through AVAudioPlayer, AVPlayer, AVAudioEngine, AudioQueue and
+both Core Audio callback APIs. It verifies the samples after the production
+gain stage, while another helper process retains unity gain. Requires a working
+Mac output device; no microphone, system audio capture, App slot or system
+volume changes. Use `IOS_USE_HOME` to place temporary test artifacts.
+
+After building `./ios-use` and its Mac Runtime, run
+`python3 scripts/test_playcover_audio_live.py --live --home <isolated-home>`
+for managed-App acceptance in the current macOS account. It compiles the small
+iPhoneOS `AudioAppFixture.m`, installs the dedicated audio fixture slot, checks
+live config and cold-start persistence, and stops its App on completion. It uses
+the existing Mac signing identity; initialize that separately if needed.
