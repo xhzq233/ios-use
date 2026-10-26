@@ -3393,17 +3393,30 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
     );
 }
 
+static BOOL IOSUseAutomationCanReceiveText(UIResponder *responder) {
+    return [responder conformsToProtocol:@protocol(UIKeyInput)] &&
+        [responder respondsToSelector:@selector(insertText:)];
+}
+
 static UIResponder *IOSUseAutomationFirstResponder(UIView *view) {
-    if (view.isFirstResponder) {
-        return view;
+    UIResponder *fallback = view.isFirstResponder ? view : nil;
+    // UISearchBar forwards isFirstResponder to its text field. Do not stop at
+    // that non-UIKeyInput wrapper: its field and private editor may both report
+    // focus too. Keep preorder among text responders so the public text field
+    // owns exact-value validation rather than its implementation-only editor.
+    if (fallback != nil && IOSUseAutomationCanReceiveText(fallback)) {
+        return fallback;
     }
     for (UIView *child in view.subviews) {
         UIResponder *found = IOSUseAutomationFirstResponder(child);
-        if (found != nil) {
+        if (found != nil && IOSUseAutomationCanReceiveText(found)) {
             return found;
         }
+        if (fallback == nil) {
+            fallback = found;
+        }
     }
-    return nil;
+    return fallback;
 }
 
 static UIResponder *IOSUseAutomationCurrentFirstResponder(void) {

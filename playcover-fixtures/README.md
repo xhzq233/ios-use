@@ -159,3 +159,38 @@ a host-observed process-birth token; `process-identity` can recheck that exact
 host identity after stop. A separate crash/restart gate uses these modes to
 bind pre-stop and post-stop evidence to the same process without waiting for
 UI readiness at an earlier launch boundary.
+
+## Search focus regression (#49)
+
+For a separate test App copy, set the Info.plist string
+`IOSUseFixtureSearchMode` to `navigation` (UISearchController in the navigation
+bar), `bar` (standalone UISearchBar), or `field` (plain UITextField control).
+Use a unique test bundle ID for the copy and an isolated `IOS_USE_HOME`; start
+it with the workspace CLI and the current Runtime. The normal fixture UI is
+unchanged when the key is absent.
+
+On macOS 27 a search bar, its text field and private editor can all report
+`isFirstResponder`. The production traversal must find the text-capable field
+past the outer search-bar wrapper, while preserving the public field before
+its private editor. The fixture records App-owned text/editing callbacks and
+focused view classes in `Documents/search-state.json`.
+
+Once the fresh App is ready, run:
+
+```bash
+python3 scripts/test_playcover_search_input.py \
+  --home /path/to/isolated-home --state-dir /path/to/fixture/Documents
+```
+
+Use `--target Search` for `field` mode; the search modes use `搜索`. Each run
+requires a fresh process with empty text. It verifies exact values after
+insertion, Unicode append and deletion, rejects input after native dismissal,
+and verifies refocusing. UISearchController may clear its query on dismissal;
+the check observes that native behavior rather than assuming text persistence.
+Evidence stays under the specified Home's artifacts directory.
+
+For the separate accessibility crash investigation, compare external macOS AX
+inspection before any input and after search focus, using fresh App processes.
+The opt-in search fixture records uncaught exception name/reason/stack in
+`Documents/search-exception.json` without suppressing termination. A successful
+input test is not evidence that the proprietary App's UIKit AX crash is fixed.
