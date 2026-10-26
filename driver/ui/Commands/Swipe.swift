@@ -7,6 +7,9 @@ enum SwipeCommands {
 
     /// Drag between endpoints, find within a scroll container, or scroll a distance.
     static func swipe(_ args: ForySwipeArgs) throws -> ForyResponseFrame {
+        guard IOSUseSwipeDirection(rawValue: args.dir) != nil else {
+            return try invalidArguments("swipe: unsupported direction")
+        }
         let app = try Session.shared.ensureActive()
         let to = args.toTarget
         let from = args.fromTarget
@@ -139,14 +142,13 @@ enum SwipeCommands {
         let lastVisibleIdx = visibleCells.last.flatMap { last in
             cellSnapshots.firstIndex { SnapshotMatchesElement($0.raw, last.raw) }
         }
-        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollView, limit: nil), scrollFrame: scrollFrame)
-        let vertical = axis == .vertical
+        let axisHint = explicitScrollAxis(args.dir) ?? scrollAxisToward(targetFrame: target.node.frame, scrollFrame: scrollFrame)
+            ?? primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollView, limit: nil), scrollFrame: scrollFrame)
+        let axis = axisHint ?? .vertical
 
         let scrollUpwards: Bool
-        if args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack {
-            scrollUpwards = true
-        } else if args.dir == IOSUseProtocol.XCConstants.swipeDirectionForth {
-            scrollUpwards = false
+        if let backwards = IOSUseSwipeDirection(rawValue: args.dir)?.backwards {
+            scrollUpwards = backwards
         } else if let backwards = scrollBackwardsToward(targetFrame: target.node.frame,
                                                         scrollFrame: scrollFrame, axis: axis) {
             scrollUpwards = backwards
@@ -159,7 +161,7 @@ enum SwipeCommands {
         // STEP 6: scroll loop.
         let scrolls = try scrollUntilVisible(scrollView: scrollView,
                                             target: toTarget,
-                                            vertical: vertical,
+                                            axisHint: axisHint,
                                             scrollUpwards: scrollUpwards,
                                             app: app,
                                             displayContext: cs.root.displayContext)
@@ -167,8 +169,10 @@ enum SwipeCommands {
         switch scrolls {
         case .reachedMax:
             return try scrollLimitReached("max scroll count reached", target: toTarget)
-        case .hitBoundary:
-            return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
+        case .hitBoundary(let axis):
+            return try boundaryResponse(vertical: axis == .vertical, scrollUpwards: scrollUpwards)
+        case .unavailable(let message):
+            return try scrollUnavailable(message, target: toTarget)
         case .snapshotFailed:
             return try snapshotFailure("scroll: failed to rebuild snapshot", target: toTarget)
         case .outsideAnchor:
@@ -177,11 +181,11 @@ enum SwipeCommands {
             return try withExtendedLifetime(snapshot) {
                 try ambiguityResponse(ForyTarget(label: lbl), matches: matches)
             }
-        case .found(let count, let finalTarget, let snapshot):
+        case .found(let count, let finalTarget, let snapshot, let axis):
             return try withExtendedLifetime(snapshot) {
                 try okScrollWithAncestors(node: finalTarget,
                                           scrolls: count,
-                                          scrollDirection: scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))
+                                          scrollDirection: scrollDirectionName(vertical: axis == .vertical, scrollUpwards: scrollUpwards))
             }
         }
     }
@@ -229,24 +233,26 @@ enum SwipeCommands {
         guard let frame = interactionFrame(anchorScrollView) else {
             return try scrollUnavailable("anchor's scrollable has no interaction frame", target: fromTarget)
         }
-        let vertical = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(anchorScrollView, limit: nil), scrollFrame: frame) == .vertical
-        let scrollUpwards = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
+        let axisHint = explicitScrollAxis(args.dir) ?? primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(anchorScrollView, limit: nil), scrollFrame: frame)
+        let scrollUpwards = IOSUseSwipeDirection(rawValue: args.dir)?.backwards == true
 
         let result = try scrollUntilVisible(scrollView: anchorScrollView,
                                         target: toTarget,
-                                        vertical: vertical,
+                                        axisHint: axisHint,
                                         scrollUpwards: scrollUpwards,
                                         app: app,
                                         displayContext: cs.root.displayContext)
         switch result {
-        case .found(let count, let target, let snapshot):
+        case .found(let count, let target, let snapshot, let axis):
             return try withExtendedLifetime(snapshot) {
                 try okScrollWithAncestors(node: target,
                                           scrolls: count,
-                                          scrollDirection: scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))
+                                          scrollDirection: scrollDirectionName(vertical: axis == .vertical, scrollUpwards: scrollUpwards))
             }
-        case .hitBoundary:
-            return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
+        case .hitBoundary(let axis):
+            return try boundaryResponse(vertical: axis == .vertical, scrollUpwards: scrollUpwards)
+        case .unavailable(let message):
+            return try scrollUnavailable(message, target: toTarget)
         case .reachedMax:
             return try scrollLimitReached("anchor scroll: max scroll count reached", target: toTarget)
         case .snapshotFailed:
@@ -311,8 +317,11 @@ enum SwipeCommands {
             scrollNode = findLargestScrollable(cs.root)
         }
         let scrollFrame = scrollNode.flatMap(interactionFrame) ?? cs.appFrame
-        let isBack = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
-        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root, limit: nil), scrollFrame: scrollFrame)
+        let isBack = IOSUseSwipeDirection(rawValue: args.dir)?.backwards == true
+        // Distance commands retain their historical fallback; they must not
+        // introduce a probe or silently change sparse horizontal drags to vertical.
+        let axis = explicitScrollAxis(args.dir) ?? primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root, limit: nil), scrollFrame: scrollFrame)
+            ?? (scrollFrame.height >= scrollFrame.width ? .vertical : .horizontal)
         let axisSize = axis == .vertical ? scrollFrame.height : scrollFrame.width
         let distance = args.distance > 0 ? args.distance : (IOSUseProtocol.scrollTouchProportion * Double(axisSize))
 
@@ -341,8 +350,9 @@ enum SwipeCommands {
     // MARK: - STEP 6 helper
 
     private enum ScrollOutcome {
-        case found(count: Int, target: SafeSnapshot, snapshot: CleanedSnapshot)
-        case hitBoundary
+        case found(count: Int, target: SafeSnapshot, snapshot: CleanedSnapshot, axis: ScrollAxis)
+        case hitBoundary(axis: ScrollAxis)
+        case unavailable(String)
         case reachedMax
         case snapshotFailed
         case outsideAnchor
@@ -351,7 +361,7 @@ enum SwipeCommands {
 
     private static func scrollUntilVisible(scrollView: SafeSnapshot,
                                    target: ForyTarget,
-                                   vertical: Bool,
+                                   axisHint: ScrollAxis?,
                                    scrollUpwards: Bool,
                                    app: XCUIApplication,
                                    displayContext: XCDisplayContext?) throws -> ScrollOutcome {
@@ -360,11 +370,19 @@ enum SwipeCommands {
         var currentDisplay = displayContext
         // Only the current iteration's tree survives into the next gesture.
         defer { withExtendedLifetime(currentSnapshot) {} }
-        var prevFrames = collectVisibleCellFrames(currentScrollView)
+        var previous = scrollContentSamples(currentScrollView)
+        var search = ScrollAxisSearch(hint: axisHint)
+        DriverLog.info("[scroll] axis=\(search.axis) inferred=\(axisHint != nil) samples=\(previous.count)")
 
         for i in 0..<IOSUseProtocol.maxScrollCount {
+            try CommandDeadline.check()
             guard let scrollFrame = interactionFrame(currentScrollView) else {
-                return .hitBoundary
+                return .unavailable("scroll container no longer has an interaction frame")
+            }
+            let vertical = search.axis == .vertical
+            if axisHint == nil && !scrollStartsInContainer(currentScrollView, frame: scrollFrame,
+                                                          axis: search.axis, backwards: scrollUpwards) {
+                return .unavailable("cannot infer scroll axis without touching a nested container; use explicit drag endpoints")
             }
             try autoreleasepool {
                 if vertical {
@@ -382,7 +400,7 @@ enum SwipeCommands {
             guard let freshCS = captureCleanedSnapshot() else { return .snapshotFailed }
 
             guard let freshScrollView = findMatching(in: freshCS.rawRoot, against: currentScrollView) else {
-                return .hitBoundary
+                return .unavailable("scroll container disappeared during search")
             }
 
             switch rawFindInSnapshot(target, cs: freshCS, enableFuzzy: false, visibility: .only) {
@@ -392,7 +410,7 @@ enum SwipeCommands {
                 if let viewport = interactionFrame(freshScrollView),
                    viewport.contains(CGPoint(x: elem.node.frame.midX, y: elem.node.frame.midY)),
                    hasInteractionFrame(elem, in: viewport) {
-                    return .found(count: i + 1, target: elem.node, snapshot: freshCS)
+                    return .found(count: i + 1, target: elem.node, snapshot: freshCS, axis: search.axis)
                 }
             case .ambiguous(let matches):
                 return .ambiguous(label: target.label, matches: matches, snapshot: freshCS)
@@ -400,11 +418,15 @@ enum SwipeCommands {
                 break
             }
 
-            let nowFrames = collectVisibleCellFrames(freshScrollView)
-            if nowFrames == prevFrames {
-                return .hitBoundary
+            let current = scrollContentSamples(freshScrollView)
+            let changed = scrollContentChanged(previous, current)
+            let alternate = search.observe(changed: changed)
+            DriverLog.info("[scroll] step=\(i + 1) changed=\(String(describing: changed)) alternate=\(alternate)")
+            if changed == nil {
+                return .unavailable("insufficient scroll content to verify progress")
             }
-            prevFrames = nowFrames
+            if changed == false && !alternate { return .hitBoundary(axis: search.axis) }
+            previous = current
             currentScrollView = freshScrollView
             currentSnapshot = freshCS
             currentDisplay = freshCS.root.displayContext
@@ -426,18 +448,18 @@ enum SwipeCommands {
             return try tooSmallToScrollResponse(vertical: vertical, scrollUpwards: scrollUpwards)
         }
 
-        let prevFrames = collectVisibleCellFrames(scrollView)
+        let previous = scrollContentSamples(scrollView)
         let segmentCount = try dispatchScrollSegments(segments, scrollFrame: scrollFrame, app: app,
                                                        displayContext: displayContext)
 
         Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
 
-        if !prevFrames.isEmpty,
+        if !previous.isEmpty,
            let freshCS = captureCleanedSnapshot(),
            let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) {
             defer { withExtendedLifetime(freshCS) {} }
-            let nowFrames = collectVisibleCellFrames(freshScrollView)
-            if nowFrames == prevFrames {
+            let current = scrollContentSamples(freshScrollView)
+            if scrollContentChanged(previous, current) == false {
                 DriverLog.info("[point-swipe] hit boundary after \(segmentCount) segment(s)")
                 return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
             }

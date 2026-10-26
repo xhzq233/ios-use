@@ -788,13 +788,24 @@ final class CLIParserTests: XCTestCase {
         }
     }
 
+    func testSwipeAcceptsExplicitDirectionsAndRejectsEndpointConflicts() throws {
+        for direction in ["forth", "back", "up", "down", "left", "right"] {
+            XCTAssertEqual(try CLIParser.parse(["swipe", "--from", "List", "--find", "Target", "--dir", direction]),
+                .driver(.swipe(to: nil, from: "List", find: "Target", dir: direction, distance: nil, traits: nil, cindex: nil, postDom: nil)))
+            XCTAssertThrowsError(try CLIParser.parse(["swipe", "--from", "10,20", "--to", "50,60", "--dir", direction]))
+        }
+        for invalid in ["top", "bottom", "UP"] {
+            XCTAssertThrowsError(try CLIParser.parse(["swipe", "--dir", invalid]))
+        }
+    }
+
     func testRejectsInvalidValuesAndUnknownOptions() {
         XCTAssertThrowsError(try CLIParser.parse(["devices"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownCommand("devices"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["swipe", "--dir", "forward"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("Invalid swipe dir: \"forward\", expected \"forth\" or \"back\""))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("Invalid swipe dir: \"forward\", expected forth, back, up, down, left, or right"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["waitFor", "--label", "Ready", "--timeout", "abc"])) { error in

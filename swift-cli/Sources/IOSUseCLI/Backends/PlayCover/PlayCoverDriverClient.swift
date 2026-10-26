@@ -305,15 +305,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
         traits: String?,
         cindex: Int32?
     ) throws -> ForySwipePayload {
-        let direction: Int32
-        switch dir {
-        case "forth":
-            direction = IOSUseProtocol.XCConstants.swipeDirectionForth
-        case "back":
-            direction = IOSUseProtocol.XCConstants.swipeDirectionBack
-        default:
-            direction =
-                IOSUseProtocol.XCConstants.swipeDirectionUnspecified
+        guard let direction = IOSUseSwipeDirection(argument: dir) else {
+            throw CLIParseError.invalidValue("Invalid swipe direction")
         }
         guard case .swipe(let payload) = try request(
             .swipe,
@@ -335,7 +328,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
                             cindex: nil
                         ),
                     distance: distance ?? 0,
-                    direction: direction,
+                    direction: direction.rawValue,
                     durationMs: nil
                 )
             ),
@@ -346,7 +339,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
                         fromTarget: from,
                         findTarget: find,
                         distance: distance ?? 0,
-                        dir: direction
+                        dir: direction.rawValue
                     )
                 )
             )

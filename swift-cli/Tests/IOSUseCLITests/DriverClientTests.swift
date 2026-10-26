@@ -125,6 +125,20 @@ final class DriverClientTests: XCTestCase {
         XCTAssertEqual(args.matchMode, IOSUseWaitForMatchMode.standard.rawValue)
     }
 
+    func testSwipeDirectionValuesReachTheExistingWireField() throws {
+        let directions: [(String?, Int32)] = [(nil, -1), ("forth", 0), ("back", 1), ("up", 2), ("down", 3), ("left", 4), ("right", 5)]
+        let fory = ForyRegistry.create()
+        let response = ForyResponseFrame(ok: true, payload: try fory.serialize(ForySwipePayload()))
+        let server = try FakeDriverServer(responses: Array(repeating: response, count: directions.count))
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+        for (direction, _) in directions {
+            _ = try client.swipe(to: ForyTarget(), from: ForyTarget(label: "List"), find: ForyTarget(label: "Target"), distance: nil, dir: direction, traits: nil)
+        }
+        XCTAssertEqual(try server.requestFrames.map { try fory.deserialize($0.payload, as: ForySwipeArgs.self).dir }, directions.map { $0.1 })
+    }
+
     func testClientUsesLongSocketDeadlineForLabelSwipe() throws {
         let fory = ForyRegistry.create()
         let payload = try fory.serialize(ForySwipePayload())

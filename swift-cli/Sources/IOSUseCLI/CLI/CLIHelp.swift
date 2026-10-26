@@ -450,13 +450,13 @@ enum CLIHelp {
             )
         case "swipe":
             return driverHelp(
-                usage: "ios-use swipe [--from <label|x,y>] [--to <label|x,y> | --find <label>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [duration] | -D [duration]] [--nodiff]",
+                usage: "ios-use swipe [--from <label|x,y>] [--to <label|x,y> | --find <label>] [--dir forth|back|up|down|left|right] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [duration] | -D [duration]] [--nodiff]",
                 summary: "Drag between two visible endpoints with --to, or scroll within a container to find a label with --find.",
                 options: [
                     "--from <label|x,y> Gesture start, or a visible anchor selecting the scroll container; required with --to/--find",
                     "--to <label|x,y>   Gesture end; both endpoints must be visible; does not search or scroll into view",
                     "--find <label>     Scroll until the label is visible in the anchor's container; mutually exclusive with --to",
-                    "--dir forth|back   Search or fixed-distance direction; omitted search direction is inferred when possible",
+                    "--dir forth|back|up|down|left|right   forth/back infer the axis; up/down/left/right lock the scroll direction",
                     "--distance <px>    Fixed-distance scroll without --to/--find",
                     "--traits <traits>  Comma-separated trait filter for --to or --find",
                     "--cindex <index>   Select the Nth child under the --to or --find parent",
@@ -471,6 +471,13 @@ enum CLIHelp {
                   ios-use swipe --from "蓝牙" --find "开发者" -D
                 For a fixed-distance scroll, omit --to and --find:
                   ios-use swipe --from "<visible-anchor>" --dir forth --distance 300 -D
+                To fix the axis and direction explicitly:
+                  ios-use swipe --from "<visible-anchor>" --find "<target>" --dir down
+                  ios-use swipe --from "<carousel>" --dir right --distance 200
+                Directions describe navigation through content: down moves toward lower content (finger moves up).
+                Explicit directions never switch axes or reverse. They do not mean scroll all the way to an edge.
+                A virtualized target exposed only after it has been passed may require a new search in the opposite direction.
+                Update CLI, Driver and Mac Runtime together before using the new direction values.
                 Existing scroll-to-label scripts must use --find instead of --to.
                 """
             )

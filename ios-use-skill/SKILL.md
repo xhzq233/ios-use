@@ -33,6 +33,17 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
 - Use `swipe --from <label|x,y> --to <label|x,y>` for a direct drag between
   visible endpoints. Use `--find <label>` instead of `--to` to scroll until an
   item is visible in the anchor's list. Finding an item does not tap it.
+- Use `--dir up|down|left|right` with `--find` or `--distance` when the scroll
+  direction is known. These directions navigate through content (`down` means
+  toward lower content, with the finger moving up); they never switch axes or reverse, and
+  do not mean scrolling all the way to an edge. If a virtualized target is exposed
+  only after it has been passed, observe again and search in the opposite direction. `forth/back` retain automatic
+  axis selection. Update CLI, Driver and Mac Runtime together for the new values.
+- If automatic search cannot infer an axis safely inside a nested container,
+  specify one of those four directions, or use explicit `--from x,y --to x,y`
+  endpoints inside the intended container, then observe again. Automatic search only
+  tries the other axis for uncertain standalone containers before any progress;
+  it does not probe nested containers or add probes to distance/endpoint drags.
 - Append `-D` (alias `--dom`) to actions to see the result. `dom` and `-D`
   return a full tree initially, then changes when useful: `+` adds, `-` removes,
   and `~` updates an item. Read changes together with the preceding tree.

@@ -5,6 +5,10 @@ enum ScrollAxis {
     case horizontal
 }
 
+func explicitScrollAxis(_ direction: Int32) -> ScrollAxis? {
+    IOSUseSwipeDirection(rawValue: direction)?.horizontalAxis.map { $0 ? .horizontal : .vertical }
+}
+
 /// An offscreen target and its viewport share App coordinates. Prefer geometry
 /// over accessibility traversal order, which need not match visual placement.
 func scrollBackwardsToward(targetFrame: CGRect, scrollFrame: CGRect, axis: ScrollAxis) -> Bool? {
@@ -94,22 +98,52 @@ func scrollSegments(for vector: CGVector, scrollFrame: CGRect) -> [CGVector] {
     return segments
 }
 
-/// Infers the dominant scroll axis from visible cells first, then falls back to
-/// frame geometry when the subtree has too little structure to inspect.
-/// Use the whole visible span: the first few items may share one grid row.
-/// Time complexity: O(n).
-func primaryScrollAxis(visibleCellFrames: [CGRect], scrollFrame: CGRect) -> ScrollAxis {
-    if visibleCellFrames.count >= 2,
-       let first = visibleCellFrames.first {
-        var minX = first.minX, maxX = first.minX
-        var minY = first.minY, maxY = first.minY
-        for frame in visibleCellFrames.dropFirst() {
-            minX = min(minX, frame.minX); maxX = max(maxX, frame.minX)
-            minY = min(minY, frame.minY); maxY = max(maxY, frame.minY)
-        }
-        return maxY - minY >= maxX - minX ? .vertical : .horizontal
+/// Content geometry is evidence, not a property of the viewport's aspect
+/// ratio. Ambiguous grids and sparse trees remain unknown. Use centers so
+/// differently aligned text inside full-width rows does not bias the axis.
+func primaryScrollAxis(visibleCellFrames: [CGRect], scrollFrame: CGRect) -> ScrollAxis? {
+    let frames = visibleCellFrames.filter { !$0.isEmpty && !$0.isInfinite && !$0.isNull }
+    guard frames.count >= 2, let first = frames.first else { return nil }
+    var minX = first.midX, maxX = first.midX
+    var minY = first.midY, maxY = first.midY
+    for frame in frames.dropFirst() {
+        minX = min(minX, frame.midX); maxX = max(maxX, frame.midX)
+        minY = min(minY, frame.midY); maxY = max(maxY, frame.midY)
     }
-    return scrollFrame.height >= scrollFrame.width ? .vertical : .horizontal
+    let dx = maxX - minX, dy = maxY - minY
+    guard max(dx, dy) > 1 else { return nil }
+    if dy > dx * 1.5 { return .vertical }
+    if dx > dy * 1.5 { return .horizontal }
+    return nil
+}
+
+/// An offscreen target can disambiguate the axis without any extra observation.
+func scrollAxisToward(targetFrame: CGRect, scrollFrame: CGRect) -> ScrollAxis? {
+    let x = scrollBackwardsToward(targetFrame: targetFrame, scrollFrame: scrollFrame, axis: .horizontal)
+    let y = scrollBackwardsToward(targetFrame: targetFrame, scrollFrame: scrollFrame, axis: .vertical)
+    if x != nil && y == nil { return .horizontal }
+    if y != nil && x == nil { return .vertical }
+    return nil
+}
+
+/// A search may try the other axis once, only before any content progress and
+/// only when the initial axis was unknown. Direct/distance drags never use it.
+struct ScrollAxisSearch {
+    private(set) var axis: ScrollAxis
+    private var mayTryAlternate: Bool
+
+    init(hint: ScrollAxis?) {
+        axis = hint ?? .vertical
+        mayTryAlternate = hint == nil
+    }
+
+    mutating func observe(changed: Bool?) -> Bool {
+        if changed == true { mayTryAlternate = false; return false }
+        guard changed == false, mayTryAlternate else { return false }
+        axis = axis == .vertical ? .horizontal : .vertical
+        mayTryAlternate = false
+        return true
+    }
 }
 
 /// Keeps only the component aligned with the scrollable's dominant axis so a

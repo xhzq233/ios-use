@@ -7,6 +7,21 @@ import XCTest
 @testable import IOSUseCLI
 
 final class PlayCoverDriverClientTests: XCTestCase {
+    func testSwipeDirectionsMapToMacRuntimeWithoutChangingLegacyValues() throws {
+        var received: [Int32] = []
+        let client = PlayCoverDriverClient(session: makeSession()) { command, arguments, _ in
+            guard case .swipe(let args) = arguments else { throw PlayCoverDriverClientError.malformedRuntimePayload("expected swipe") }
+            received.append(args.direction)
+            return self.makePayload(capability: command, swipe: .init(
+                element: self.makeSummary(generation: 14), hitView: self.makeHitView(),
+                finalState: self.makeFinalState(), scrolls: 1, direction: "down"))
+        }
+        for direction: String? in [nil, "forth", "back", "up", "down", "left", "right"] {
+            _ = try client.swipe(to: ForyTarget(), from: ForyTarget(label: "List"), find: ForyTarget(label: "Target"), distance: nil, dir: direction, traits: nil, cindex: nil)
+        }
+        XCTAssertEqual(received, [-1, 0, 1, 2, 3, 4, 5])
+    }
+
     func testAllUICommandsMapTypedArgumentsAndPreserveResults()
         throws
     {

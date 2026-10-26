@@ -1,3 +1,44 @@
+/// Scroll direction on the existing Int32 wire field. Absolute directions
+/// describe navigation through content, not the finger's travel direction.
+public enum IOSUseSwipeDirection: Int32, Sendable, CaseIterable {
+    case unspecified = -1
+    case forth = 0
+    case back = 1
+    case up = 2
+    case down = 3
+    case left = 4
+    case right = 5
+
+    public init?(argument: String?) {
+        switch argument {
+        case nil: self = .unspecified
+        case "forth": self = .forth
+        case "back": self = .back
+        case "up": self = .up
+        case "down": self = .down
+        case "left": self = .left
+        case "right": self = .right
+        default: return nil
+        }
+    }
+
+    public var horizontalAxis: Bool? {
+        switch self {
+        case .up, .down: return false
+        case .left, .right: return true
+        default: return nil
+        }
+    }
+
+    public var backwards: Bool? {
+        switch self {
+        case .up, .left, .back: return true
+        case .down, .right, .forth: return false
+        case .unspecified: return nil
+        }
+    }
+}
+
 public extension IOSUseProtocol {
     enum XCConstants {
         // MARK: Driver payload sentinels
