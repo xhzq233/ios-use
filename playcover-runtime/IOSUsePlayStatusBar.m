@@ -113,7 +113,7 @@ UIImage *IOSUsePlayStatusBarImage(BOOL lightContent, CGSize pixelSize) {
         BOOL left = IOSUsePlayDeviceStatusBarOnLeft();
         CGFloat x = left ? 48 : frame.width-48;
         int turns = IOSUsePlayDeviceQuarterTurns();
-        BOOL cameraAbove = !IOSUsePlayDeviceIsDuoInner() && (turns == 0 || turns == 3);
+        BOOL cameraAbove = !IOSUsePlayDeviceIsDuoInner() && (turns == 0 || turns == 1);
         // Outer portrait and inner landscape Tab Bar examples place the
         // component at y=72 and y=24 respectively. Runtime layout may vary.
         CGFloat top = cameraAbove ? 72 : 24;

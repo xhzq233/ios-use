@@ -134,9 +134,10 @@ enum CLIHelp {
             identity stays fixed. This mode hides the device shell; use it to test
             adaptive iPad layouts, not to emulate the iPadOS window manager.
             Device/chrome/window preferences apply to the current Mac session.
-            Duo presets are 3x layout previews based on App Store screenshot
-            canvases; they retain the existing iPhone identity and do not emulate
-            the iOS fold lifecycle or iOS 27 system UI.
+            Duo uses Xcode 27.1 device artwork, iPhone19,4 identity and 3x screen
+            geometry, with safe areas calibrated on the iOS 27.1 Simulator.
+            Mac layout previews still use host UIKit; they do not emulate the
+            iOS fold lifecycle or native system bars.
             macOS will show user authentication dialogs while the identity is
             created and trusted. If you cancel, safely retry the same command;
             the retry resumes the same signing identity instead of replacing it.

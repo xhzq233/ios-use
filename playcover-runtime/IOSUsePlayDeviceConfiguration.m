@@ -15,7 +15,7 @@ NSDictionary *IOSUsePlayDeviceState(void) {
         @"orientation": @(IOSUsePlayDeviceInterfaceName(IOSUsePlayDeviceQuarterTurns())),
         @"physicalOrientation": @(IOSUsePlayDevicePhysicalName(IOSUsePlayDevicePhysicalQuarterTurns())),
         @"safeAreaProfile": IOSUsePlayCanvasIsResizable() ? @"native-window" :
-            (duo ? @"duo-preview" : (IOSUsePlayDeviceUserInterfaceIdiom == 1 ? @"ipados-26" : @"device-preset")),
+            (duo ? @"duo-ios27.1" : (IOSUsePlayDeviceUserInterfaceIdiom == 1 ? @"ipados-26" : @"device-preset")),
         @"chrome": @(getenv("IOS_USE_MAC_CHROME") ?: "on"),
         @"windowMode": IOSUsePlayCanvasIsResizable() ? @"resizable" : @"fixed",
         @"logicalWidth": @(IOSUsePlayDeviceLogicalWidth),

@@ -1,0 +1,212 @@
+{
+  "identifier": "com.apple.dt.devicekit.chrome.phone14",
+  "images": {
+    "topLeft": "Phone TL",
+    "top": "Phone Top",
+    "topRight": "Phone TR",
+    "right": "Phone Right",
+    "bottomRight": "Phone BR",
+    "bottom": "Phone Base",
+    "bottomLeft": "Phone BL",
+    "left": "Phone Left",
+    "composite": "PhoneComposite",
+    "screen": "Screen",
+    "sizing": {
+      "leftWidth": 17,
+      "rightWidth": 17,
+      "topHeight": 17,
+      "bottomHeight": 17 
+    },
+    "padding": {
+      "width": 10,
+      "height": 10
+    },
+    "devicePadding": {
+      "top": 10,
+      "left": 10,
+      "bottom": 10,
+      "right": 10 
+    }
+  },
+  "paths": {
+    "simpleOutsideBorder": {
+      "insets": {
+        "top": 0,
+        "left": 0,
+        "bottom": 0,
+        "right": 0
+      },
+      "cornerRadiusX": 100,
+      "cornerRadiusY": 100
+    }
+  },
+  "inputs": [
+    {
+      "name": "volume-up",
+      "accessibilityTitle": "Volume Up",
+      "type": "button",
+      "usagePage": 12,
+      "usage": 233,
+      "image": "Vol BTN",
+      "imageDown": "Vol BTN Dn",
+      "imageDownDrawMode": "replace",
+      "onTop": false,
+      "anchor": "left",
+      "align": "leading",
+      "offsets": {
+        "normal": {
+          "x": 8,
+          "y": 114
+        },
+        "rollover": {
+          "x": 5,
+          "y": 114
+        }
+      }
+    },
+    {
+      "name": "volume-down",
+      "accessibilityTitle": "Volume Down",
+      "type": "button",
+      "usagePage": 12,
+      "usage": 234,
+      "image": "Vol BTN",
+      "imageDown": "Vol BTN Dn",
+      "imageDownDrawMode": "replace",
+      "onTop": false,
+      "anchor": "left",
+      "align": "leading",
+      "offsets": {
+        "normal": {
+          "x": 8,
+          "y": 188
+        },
+        "rollover": {
+          "x": 5,
+          "y": 188
+        }
+      }
+    },
+    {
+      "name": "power",
+      "accessibilityTitle": "Sleep/Wake",
+      "type": "button",
+      "usagePage": 12,
+      "usage": 48,
+      "image": "X Power BTN",
+      "imageDown": "X Power BTN Dn",
+      "imageDownDrawMode": "replace",
+      "onTop": false,
+      "anchor": "top",
+      "align": "leading",
+      "offsets": {
+        "normal": {
+          "x": 196,
+          "y": 8
+        },
+        "rollover": {
+          "x": 196,
+          "y": 4
+        }
+      }
+    }
+  ],
+  "resizeRects": [
+    {
+      "type": "lowerLeft",
+      "scales": true,
+      "centerPoint": {
+        "x": 1,
+        "y": 18
+      },
+      "size": {
+        "width": 40,
+        "height": 20
+      }
+    },
+    {
+      "type": "lowerLeft",
+      "scales": true,
+      "centerPoint": {
+        "x": 18,
+        "y": 28
+      },
+      "size": {
+        "width": 20,
+        "height": 40
+      }
+    },
+    {
+      "type": "lowerRight",
+      "scales": true,
+      "centerPoint": {
+        "x": -28,
+        "y": 18
+      },
+      "size": {
+        "width": 40,
+        "height": 20
+      }
+    },
+    {
+      "type": "lowerRight",
+      "scales": true,
+      "centerPoint": {
+        "x": -18,
+        "y": 28
+      },
+      "size": {
+        "width": 20,
+        "height": 40
+      }
+    },
+    {
+      "type": "upperRight",
+      "scales": true,
+      "centerPoint": {
+        "x": -28,
+        "y": -18
+      },
+      "size": {
+        "width": 40,
+        "height": 20
+      }
+    },
+    {
+      "type": "upperRight",
+      "scales": true,
+      "centerPoint": {
+        "x": -18,
+        "y": -28
+      },
+      "size": {
+        "width": 20,
+        "height": 40
+      }
+    },
+    {
+      "type": "upperLeft",
+      "scales": true,
+      "centerPoint": {
+        "x": 28,
+        "y": -18
+      },
+      "size": {
+        "width": 40,
+        "height": 20
+      }
+    },
+    {
+      "type": "upperLeft",
+      "scales": true,
+      "centerPoint": {
+        "x": 18,
+        "y": -28
+      },
+      "size": {
+        "width": 20,
+        "height": 40
+      }
+    }
+  ]
+}

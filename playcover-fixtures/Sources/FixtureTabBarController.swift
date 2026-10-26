@@ -273,6 +273,8 @@ final class FixtureTabBarController: UITabBarController {
         }
         let screen = window.screen
         let safeArea = window.safeAreaInsets
+        let interfaceOrientation = window.windowScene?.interfaceOrientation.rawValue ?? 0
+        let statusFrame = window.windowScene?.statusBarManager?.statusBarFrame ?? .zero
         let description = String(
             format: "logical %.0fx%.0f scale %.0f native %.0fx%.0f safe %.0f,%.0f,%.0f,%.0f",
             screen.bounds.width,
@@ -285,10 +287,11 @@ final class FixtureTabBarController: UITabBarController {
             safeArea.bottom,
             safeArea.right
         )
-        guard description != lastGeometryDescription else {
+        let geometryKey = description + " orientation=\(interfaceOrientation) status=\(statusFrame)"
+        guard geometryKey != lastGeometryDescription else {
             return
         }
-        lastGeometryDescription = description
+        lastGeometryDescription = geometryKey
         uikitFixtureViewController?.updateGeometryDescription(description)
 
         let payload: [String: Any] = [
@@ -301,6 +304,10 @@ final class FixtureTabBarController: UITabBarController {
             "safeAreaLeft": safeArea.left,
             "safeAreaBottom": safeArea.bottom,
             "safeAreaRight": safeArea.right,
+            "interfaceOrientation": interfaceOrientation,
+            "statusBarFrame": [statusFrame.origin.x, statusFrame.origin.y, statusFrame.width, statusFrame.height],
+            "horizontalSizeClass": window.traitCollection.horizontalSizeClass.rawValue,
+            "verticalSizeClass": window.traitCollection.verticalSizeClass.rawValue,
         ]
         guard
             let data = try? JSONSerialization.data(
