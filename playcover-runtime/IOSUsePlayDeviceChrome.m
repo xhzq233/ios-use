@@ -34,6 +34,37 @@ static id view(NSString *className, CGRect frame) {
     return ((id (*)(id, SEL, CGRect))objc_msgSend)([NSClassFromString(className) alloc], NSSelectorFromString(@"initWithFrame:"), frame);
 }
 
+static id toolbarAccessibilityIdentifier(id item, __unused SEL selector) {
+    return get(item, @"itemIdentifier");
+}
+
+static id toolbarItem(NSString *identifier) {
+    // UIKit's macOS 27 accessibility adapter asks NSToolbarItem for this
+    // identifier. A nil result reaches a legacy selector absent from the
+    // AppKit viewer helper and can terminate the App during external AX reads.
+    // Override the public getter only on our own items; leave system classes
+    // and the target App's toolbars untouched.
+    static Class itemClass;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        itemClass = objc_allocateClassPair(
+            NSClassFromString(@"NSToolbarItem"),
+            "IOSUsePlayDeviceToolbarItem", 0
+        );
+        class_addMethod(itemClass, NSSelectorFromString(@"accessibilityIdentifier"),
+            (IMP)toolbarAccessibilityIdentifier, "@@:");
+        objc_registerClassPair(itemClass);
+    });
+    return ((id (*)(id, SEL, id))objc_msgSend)([itemClass alloc],
+        NSSelectorFromString(@"initWithItemIdentifier:"), identifier);
+}
+
+#if defined(IOS_USE_PLAY_APPKIT_BRIDGE_TESTING)
+id IOSUsePlayDeviceChromeToolbarItemForTesting(NSString *identifier) {
+    return toolbarItem(identifier);
+}
+#endif
+
 @interface IOSUsePlayDeviceChromeController : NSObject
 - (void)selectModel:(id)sender;
 - (void)rotate:(id)sender;
@@ -471,7 +502,7 @@ void IOSUsePlayDeviceChromeUpdate(id hostWindow) {
     return @[@"device",@"NSToolbarFlexibleSpaceItem",@"rotate",@"hide",@"expand"];
 }
 - (id)toolbar:(__unused id)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(__unused BOOL)inserted {
-    id item=((id (*)(id,SEL,id))objc_msgSend)([NSClassFromString(@"NSToolbarItem") alloc],NSSelectorFromString(@"initWithItemIdentifier:"),identifier);
+    id item=toolbarItem(identifier);
     id content;
     if ([identifier isEqual:@"device"]) {
         content=view(@"NSView",CGRectMake(0,0,168,36));
