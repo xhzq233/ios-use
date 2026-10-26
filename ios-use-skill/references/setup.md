@@ -40,9 +40,6 @@ ios-use config --mac --volume 25 --mute off  # enable sound at 25%
 ios-use config --mac --mute on              # mute, keeping the volume
 ```
 
-If `configureAudio` is unsupported after upgrading, stop the App and restart
-with `start --mac --app <original-App.app>` to refresh its Runtime.
-
 The Mac backend supports macOS 27.
 
 `config --mac` asks for macOS authentication. If authentication is cancelled,
