@@ -166,6 +166,7 @@ int main(void) {
         NSError *missingInstallError = nil;
         passed &= IOSUsePlaySafeAreaRequire(
             !IOSUsePlaySafeAreaCompatibilityReconcile(
+                nil,
                 &missingInstallError
             ) &&
                 missingInstallError != nil &&
@@ -558,6 +559,7 @@ int main(void) {
         NSError *collisionError = nil;
         passed &= IOSUsePlaySafeAreaRequire(
             !IOSUsePlaySafeAreaCompatibilityReconcile(
+                nil,
                 &collisionError
             ) &&
                 collisionError != nil &&

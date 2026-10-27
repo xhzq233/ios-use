@@ -114,9 +114,15 @@ IOS_USE_HOME=/path/to/isolated-fixture-home \
 ```
 
 This exercises CLI and native toolbar actions, rapid repeated input, folding,
-model changes, a scrolled view, focused text input and a presented controller.
+model changes, a secondary key window, a scrolled view, focused text input and a
+presented controller.
 It checks the observed callback ordering and geometry, and leaves the session
 available for inspection. Traces use only generic Fixture content.
+
+To cover full-screen conversion, add `UIRequiresFullScreen~ipad = true` to a
+disposable copy of the source Fixture's `Info.plist`, prepare that copy with
+`start --mac --app`, and run the same lifecycle checks. The prepared Mac App
+must support model changes while the source declaration remains intact.
 
 For an independent host reference, build this same Fixture for Mac Catalyst
 without injecting the Runtime. The URL routes `iosusefixture://lifecycle/reset`

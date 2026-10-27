@@ -131,9 +131,12 @@ BOOL IOSUsePlayDeviceConfigurationInProgress(void) {
 }
 
 void IOSUsePlayDeviceGeometryWillLayout(UIWindow *window) {
-    if (!activeTransition || activeTransition.traitsApplied || activeTransition.window != window) return;
+    if (!activeTransition || activeTransition.traitsApplied || window.windowScene == nil ||
+        activeTransition.window.windowScene != window.windowScene) return;
     CGSize target = CGSizeMake(IOSUsePlayDeviceLogicalWidth, IOSUsePlayDeviceLogicalHeight);
     if (!IOSUsePlayCanvasIsResizable() && !CGSizeEqualToSize(window.bounds.size, target)) return;
+    // All windows inherit the scene traits. Stage them with the first resized
+    // canvas in that scene, before an earlier window finishes its transition.
     activeTransition.traitsApplied = YES;
     IOSUsePlayRefreshDeviceTraits(window);
 }

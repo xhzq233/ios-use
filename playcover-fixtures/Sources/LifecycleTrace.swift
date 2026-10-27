@@ -28,6 +28,8 @@ final class LifecycleTrace: NSObject {
     private static var started: TimeInterval = 0
     private static var initialTraits: UITraitCollection?
     private static var orientationObserver: NSObjectProtocol?
+    private static var secondaryWindow: UIWindow?
+    private static weak var previousKeyWindow: UIWindow?
 
     @objc static func reset() {
         events = []
@@ -58,6 +60,29 @@ final class LifecycleTrace: NSObject {
 
     @objc static func dismissSheet() {
         (UIApplication.shared.delegate as? AppDelegate)?.window?.rootViewController?.dismiss(animated: true)
+    }
+
+    @objc static func presentSecondaryWindow() -> Bool {
+        guard secondaryWindow == nil,
+              let scene = (UIApplication.shared.delegate as? AppDelegate)?.window?.windowScene else { return false }
+        previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = UINavigationController(
+            rootViewController: UIKitFixtureViewController(sceneGeneration: 0)
+        )
+        secondaryWindow = window
+        window.makeKeyAndVisible()
+        return window.isKeyWindow
+    }
+
+    @objc static func dismissSecondaryWindow() -> Bool {
+        secondaryWindow?.isHidden = true
+        secondaryWindow?.windowScene = nil
+        secondaryWindow = nil
+        previousKeyWindow?.makeKeyAndVisible()
+        let restored = previousKeyWindow?.isKeyWindow == true
+        previousKeyWindow = nil
+        return restored
     }
 
     @objc static func finish() {
