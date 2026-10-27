@@ -74,6 +74,8 @@ Local patches are intentionally limited to:
   behavior; the pinned Installer oracle keeps its original SDK 14 rewrite;
 - capturing codesign's stdout entitlements separately from its stderr metadata
   so signature inspection is independent of child-process buffering;
+- removing full-screen requirements, including device-qualified overrides,
+  from the prepared Mac Info.plist so Catalyst honors scene size changes;
 - replacing PlayCover GUI/preferences/container discovery with explicit
   `IOS_USE_HOME` inputs;
 - using the embedded ios-use Runtime load path instead of the system-installed

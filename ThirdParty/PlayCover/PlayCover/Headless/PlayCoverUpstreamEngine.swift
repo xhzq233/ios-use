@@ -5093,6 +5093,15 @@ public enum PlayCoverUpstreamEngine {
                 "cannot decode \(url.path)"
             )
         }
+        // A full-screen requirement makes Catalyst create a host that ignores
+        // scene size restrictions and geometry requests. Runtime owns the
+        // virtual device canvas; the converted App needs a windowed host for
+        // live model changes. Device-qualified keys override the base key.
+        for key in raw.allKeys.compactMap({ $0 as? String })
+            where key == "UIRequiresFullScreen"
+                || key.hasPrefix("UIRequiresFullScreen~") {
+            raw.removeObject(forKey: key)
+        }
         // Catalyst otherwise applies the legacy 320 x 480 compatibility canvas
         // to iOS Apps that have no launch-screen declaration. Preserve every
         // existing launch/scene key; only add the modern empty declaration

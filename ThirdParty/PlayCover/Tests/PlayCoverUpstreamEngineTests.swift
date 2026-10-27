@@ -1478,6 +1478,37 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
     }
 
+    func testInfoCompatibilityRemovesFullScreenRequirementsIncludingDeviceOverrides()
+        throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let infoURL = root.appendingPathComponent("Info.plist")
+        for requirements in [
+            ["UIRequiresFullScreen": true],
+            ["UIRequiresFullScreen~ipad": true],
+            ["UIRequiresFullScreen": false,
+             "UIRequiresFullScreen~ipad": true,
+             "UIRequiresFullScreen~iphone": true],
+        ] {
+            var info: [String: Any] = [
+                "CFBundleIdentifier": "com.example.fixture",
+                "CFBundleExecutable": "Fixture",
+                "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait"],
+            ]
+            for (key, value) in requirements { info[key] = value }
+            try plistData(info).write(to: infoURL)
+
+            try PlayCoverUpstreamEngine.updateInfoPlist(infoURL)
+
+            let result = try XCTUnwrap(NSDictionary(contentsOf: infoURL))
+            XCTAssertNil(result["UIRequiresFullScreen"])
+            XCTAssertNil(result["UIRequiresFullScreen~ipad"])
+            XCTAssertNil(result["UIRequiresFullScreen~iphone"])
+            XCTAssertEqual(result["UISupportedInterfaceOrientations"] as? [String],
+                           ["UIInterfaceOrientationPortrait"])
+        }
+    }
+
     func testInfoCompatibilityAddsModernLaunchDeclarationForEmptyLegacyName()
         throws {
         let root = try makeTemporaryDirectory()
