@@ -7,6 +7,55 @@ import Foundation
 import AppKit
 
 public enum Shell {
+    struct CapturedOutput {
+        let stdout: String
+        let stderr: String
+        let exitCode: Int32
+    }
+
+    // Written by one pipe reader and consumed only after the dispatch group
+    // joins. Keep both pipes draining so large output cannot deadlock a child.
+    private final class PipeRead: @unchecked Sendable {
+        var result: Result<Data, Error> = .success(Data())
+    }
+
+    static func capture(_ binary: String, _ args: String...) throws -> CapturedOutput {
+        let process = Process()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        let invocation = anchoredInvocation(arguments: args)
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = invocation.arguments
+        process.currentDirectoryURL = invocation.currentDirectory
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+
+        let group = DispatchGroup()
+        let errorRead = PipeRead()
+        DispatchQueue.global(qos: .utility).async(group: group) {
+            errorRead.result = Result { try stderr.fileHandleForReading.readToEnd() ?? Data() }
+        }
+        do {
+            let output = try stdout.fileHandleForReading.readToEnd() ?? Data()
+            process.waitUntilExit()
+            group.wait()
+            let errors = try errorRead.result.get()
+            return CapturedOutput(
+                stdout: String(decoding: output, as: UTF8.self),
+                stderr: String(decoding: errors, as: UTF8.self),
+                exitCode: process.terminationStatus
+            )
+        } catch {
+            if process.isRunning {
+                process.terminate()
+                process.waitUntilExit()
+            }
+            group.wait()
+            throw error
+        }
+    }
+
     @discardableResult
     public static func run(print: Bool = true, _ binary: String, _ args: String...) throws -> String {
         let process = Process()

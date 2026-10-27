@@ -4302,35 +4302,31 @@ public enum PlayCoverUpstreamEngine {
     ) throws -> PlayCoverUpstreamSignature {
         let evidencePath = diagnosticPath ?? url.path
         codeSignatureObserverForTesting?(.display, url)
-        let displayResult: Result<String, Error>
-        do {
-            displayResult = .success(
-                try Shell.run(
-                    print: false,
-                    "/usr/bin/codesign",
-                    "-d",
-                    "--verbose=4",
-                    "--entitlements",
-                    "-",
-                    "--xml",
-                    url.path
-                )
-            )
-        } catch {
-            displayResult = .failure(error)
-        }
         let displayOutput: String
+        let displayDiagnostics: String
         let displaySucceeded: Bool
-        switch displayResult {
-        case .success(let output):
-            displayOutput = output
-            displaySucceeded = true
-        case .failure(let error):
-            displayOutput = String(describing: error)
+        do {
+            // codesign writes entitlements to stdout and metadata to stderr.
+            // Combining them makes parsing depend on buffering/write order.
+            let captured = try Shell.capture(
+                "/usr/bin/codesign",
+                "-d",
+                "--verbose=4",
+                "--entitlements",
+                "-",
+                "--xml",
+                url.path
+            )
+            displayOutput = captured.stdout
+            displayDiagnostics = captured.stderr
+            displaySucceeded = captured.exitCode == 0
+        } catch {
+            displayOutput = ""
+            displayDiagnostics = String(describing: error)
             displaySucceeded = false
         }
         let metadata = codeSignatureMetadata(
-            displayOutput,
+            displayDiagnostics,
             commandSucceeded: displaySucceeded
         )
         let hasDEREntitlements = embeddedSignature?.slots.contains {
@@ -4404,9 +4400,8 @@ public enum PlayCoverUpstreamEngine {
             )
         }
 
-        switch displayResult {
-        case .failure:
-            let description = displayOutput
+        if !displaySucceeded {
+            let description = displayDiagnostics
             if description.contains("code object is not signed at all")
                 || description.contains("does not have any entitlements")
                 || description.contains("Document is empty") {
@@ -4416,8 +4411,6 @@ public enum PlayCoverUpstreamEngine {
             throw PlayCoverUpstreamError.commandFailed(
                 "extract entitlements from \(evidencePath): \(description)"
             )
-        case .success:
-            break
         }
         guard let xml = extractPlist(from: displayOutput),
               !xml.isEmpty else {
@@ -4511,13 +4504,7 @@ public enum PlayCoverUpstreamEngine {
         _ output: String,
         commandSucceeded: Bool
     ) -> CodeSignatureMetadata? {
-        let metadataOutput: Substring
-        if let plistRange = extractPlistRange(from: output) {
-            metadataOutput = output[..<plistRange.lowerBound]
-        } else {
-            metadataOutput = output[...]
-        }
-        let lines = metadataOutput
+        let lines = output
             .split(whereSeparator: \.isNewline)
             .map(String.init)
         var values: [String: String] = [:]

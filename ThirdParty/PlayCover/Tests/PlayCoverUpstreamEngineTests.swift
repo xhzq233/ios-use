@@ -10,6 +10,16 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         case sliceTemporaryFileObserved
     }
 
+    func testShellCaptureDrainsBothChannelsAndPreservesExitStatus() throws {
+        let result = try Shell.capture(
+            "/usr/bin/awk",
+            "BEGIN { for (i=0; i<32768; i++) { print \"out\"; print \"err\" > \"/dev/stderr\" } exit 7 }"
+        )
+        XCTAssertEqual(result.stdout, String(repeating: "out\n", count: 32768))
+        XCTAssertEqual(result.stderr, String(repeating: "err\n", count: 32768))
+        XCTAssertEqual(result.exitCode, 7)
+    }
+
     func testLowercaseHexEncodingIsByteExactForArraysAndSlices() {
         let bytes: [UInt8] = [
             0x00, 0x01, 0x0f, 0x10, 0x7f, 0x80, 0xfe, 0xff,

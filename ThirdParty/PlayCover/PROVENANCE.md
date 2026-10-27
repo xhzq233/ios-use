@@ -72,6 +72,8 @@ Local patches are intentionally limited to:
 - preserving the source build SDK in production Mach-O conversion, including
   legacy iPhoneOS version commands, so UIKit retains the App's linked-on-or-after
   behavior; the pinned Installer oracle keeps its original SDK 14 rewrite;
+- capturing codesign's stdout entitlements separately from its stderr metadata
+  so signature inspection is independent of child-process buffering;
 - replacing PlayCover GUI/preferences/container discovery with explicit
   `IOS_USE_HOME` inputs;
 - using the embedded ios-use Runtime load path instead of the system-installed
