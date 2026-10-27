@@ -870,7 +870,7 @@ public enum PlayCoverUpstreamEngine {
         }
         if before.platform != platformMacCatalyst {
             do {
-                try Macho.convertMacho(url)
+                try Macho.convertMacho(url, preserveSourceSDK: true)
             } catch {
                 throw PlayCoverUpstreamError.unsupportedMachO(
                     "\(relativePath): \(error)"
@@ -1061,7 +1061,7 @@ public enum PlayCoverUpstreamEngine {
                 .appendingPathComponent(relative)
             if sourceMacho.platform != platformMacCatalyst {
                 do {
-                    try Macho.convertMacho(target)
+                    try Macho.convertMacho(target, preserveSourceSDK: true)
                 } catch {
                     throw PlayCoverUpstreamError.unsupportedMachO(
                         "\(relative): \(error)"

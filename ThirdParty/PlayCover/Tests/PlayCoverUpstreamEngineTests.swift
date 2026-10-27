@@ -818,6 +818,68 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
     }
 
+    func testConversionPreservesSourceSDKForModernAndLegacyVersionCommands() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for bigEndian in [false, true] {
+            for command: UInt32 in [0x32, 0x25] {
+                for sdk: UInt32 in [0, 0x000d_0701, 0x000e_0000, 0x001a_0203] {
+                    let url = root.appendingPathComponent("Fixture")
+                    try makeThinMachO(
+                        dependencies: ["/usr/lib/libSystem.B.dylib"],
+                        bigEndian: bigEndian,
+                        versionCommand: command,
+                        sdk: sdk
+                    ).write(to: url)
+                    let converted = try PlayCoverUpstreamEngine.convertMachO(
+                        at: url,
+                        relativePath: "Fixture",
+                        injectRuntime: false,
+                        runtimeLoadPath: "unused"
+                    )
+                    XCTAssertEqual(converted.platform, PlayCoverUpstreamEngine.platformMacCatalyst)
+                    XCTAssertEqual(converted.sdk, sdk)
+                    XCTAssertEqual(converted.minimumOS, 0x000b_0000)
+                    XCTAssertEqual(converted.byteSwapped, bigEndian)
+                    XCTAssertEqual(converted.dependencies, ["/usr/lib/libSystem.B.dylib"])
+
+                    // A subsequent prepare must also retain already-Catalyst SDKs.
+                    let before = try Data(contentsOf: url)
+                    let repeated = try PlayCoverUpstreamEngine.convertMachO(
+                        at: url,
+                        relativePath: "Fixture",
+                        injectRuntime: false,
+                        runtimeLoadPath: "unused"
+                    )
+                    XCTAssertEqual(repeated.sdk, sdk)
+                    XCTAssertEqual(try Data(contentsOf: url), before)
+                }
+            }
+        }
+    }
+
+    func testSDKPreservationRejectsMissingOrShortVersionCommandBeforeMutation() throws {
+        for (command, size): (UInt32, UInt32) in [(0x1b, 24), (0x32, 16), (0x25, 12)] {
+            var bytes = makeThinMachO(dependencies: [])
+            var header = Data()
+            appendU32(command, to: &header, bigEndian: false)
+            appendU32(size, to: &header, bigEndian: false)
+            bytes.replaceSubrange(184..<192, with: header)
+            let before = bytes
+            XCTAssertThrowsError(try Macho.replaceVersionCommand(&bytes, preserveSourceSDK: true))
+            XCTAssertEqual(bytes, before)
+        }
+    }
+
+    func testPinnedVersionRewriteStillUsesSDK14() throws {
+        var bytes = makeThinMachO(dependencies: [], sdk: 0x001a_0000)
+        try Macho.replaceVersionCommand(&bytes)
+        let fixture = try makeApp(executable: bytes)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let result = try PlayCoverUpstreamEngine.inspect(appURL: fixture.app)
+        XCTAssertEqual(result.machOs[0].sdk, 0x000e_0000)
+    }
+
     func testMalformedFatSliceIsRejected() throws {
         var fat = Data([0xca, 0xfe, 0xba, 0xbe])
         appendU32(1, to: &fat, bigEndian: true)
@@ -936,6 +998,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 converted.platform,
                 PlayCoverUpstreamEngine.platformMacCatalyst
             )
+            XCTAssertEqual(converted.sdk, thinInspection.sdk)
             XCTAssertEqual(
                 converted.dependencies.filter { $0 == runtimeLoadPath }.count,
                 1
@@ -2435,7 +2498,9 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
     private func makeThinMachO(
         dependencies: [String],
         encrypted: Bool = false,
-        bigEndian: Bool = false
+        bigEndian: Bool = false,
+        versionCommand: UInt32 = 0x32,
+        sdk: UInt32 = 0x0011_0400
     ) -> Data {
         var commands: [Data] = []
 
@@ -2451,12 +2516,16 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         commands.append(segment)
 
         var build = Data()
-        appendU32(0x32, to: &build, bigEndian: bigEndian)
-        appendU32(24, to: &build, bigEndian: bigEndian)
-        appendU32(2, to: &build, bigEndian: bigEndian)
+        appendU32(versionCommand, to: &build, bigEndian: bigEndian)
+        appendU32(versionCommand == 0x32 ? 24 : 16, to: &build, bigEndian: bigEndian)
+        if versionCommand == 0x32 {
+            appendU32(2, to: &build, bigEndian: bigEndian)
+        }
         appendU32(0x0011_0000, to: &build, bigEndian: bigEndian)
-        appendU32(0x0011_0400, to: &build, bigEndian: bigEndian)
-        appendU32(0, to: &build, bigEndian: bigEndian)
+        appendU32(sdk, to: &build, bigEndian: bigEndian)
+        if versionCommand == 0x32 {
+            appendU32(0, to: &build, bigEndian: bigEndian)
+        }
         commands.append(build)
 
         if encrypted {

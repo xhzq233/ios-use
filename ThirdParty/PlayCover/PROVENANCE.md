@@ -69,6 +69,9 @@ Local patches are intentionally limited to:
 
 - importing Darwin's Mach-O declarations when compiled by SwiftPM;
 - exposing the pinned conversion primitives to the headless facade;
+- preserving the source build SDK in production Mach-O conversion, including
+  legacy iPhoneOS version commands, so UIKit retains the App's linked-on-or-after
+  behavior; the pinned Installer oracle keeps its original SDK 14 rewrite;
 - replacing PlayCover GUI/preferences/container discovery with explicit
   `IOS_USE_HOME` inputs;
 - using the embedded ios-use Runtime load path instead of the system-installed

@@ -614,7 +614,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             observedDifferences: actual,
             pinnedPadding: try checkedZeroPadding(XCTUnwrap(pinnedMain.allSlices.first)),
             iosUsePadding: try checkedZeroPadding(XCTUnwrap(iosUseMain.allSlices.first))
-        )
+        ) + sdkPreservationAllowances(source: pinned.sourceBefore, prepared: iosUse, differences: actual)
         let report = try PlayCoverPrepareDifferentialGate.enforce(
             pinned: pinned.prepared,
             iosUse: iosUse,
@@ -2008,6 +2008,72 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                           userInfo: [NSLocalizedDescriptionKey: "signature padding contains nonzero bytes"])
         }
         return (String(count), expected)
+    }
+
+    private func sdkPreservationAllowances(
+        source: PlayCoverUpstreamAppInspection,
+        prepared: PlayCoverUpstreamAppInspection,
+        differences: [PlayCoverDifferentialDifference]
+    ) throws -> [PlayCoverDifferentialAllowance] {
+        let arm64 = "slices[cpu=16777228,subtype=0,occurrence=0]."
+        let reason = "Production preserves the source SDK for UIKit compatibility; "
+            + "the pinned Installer rewrites it to SDK 14."
+        let symbol = "Macho.replaceVersionCommand"
+        func versionCommand(_ sdk: UInt32) -> String {
+            var bytes = Data()
+            for word: UInt32 in [0x32, 24, 6, 0x000b_0000, sdk, 0] {
+                withUnsafeBytes(of: word.littleEndian) { bytes.append(contentsOf: $0) }
+            }
+            let hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+            return "cmd=0x00000032;size=24;semantic=platform=6;minimumOS=720896;"
+                + "sdk=\(sdk);tools=0;sha256=\(hash)"
+        }
+        var result: [PlayCoverDifferentialAllowance] = []
+        for original in source.machOs {
+            let path = original.relativePath
+            let sdk = try XCTUnwrap(original.sdk)
+            let converted = try XCTUnwrap(prepared.machOs.first { $0.relativePath == path })
+            XCTAssertEqual(converted.sdk, sdk, path)
+            guard sdk != 0x000e_0000 else { continue }
+            let command = try XCTUnwrap(converted.loadCommands.first { $0.command == 0x32 })
+            result.append(allowance(
+                "source-sdk-\(path)", path, arm64 + "platform.sdk",
+                .exact("917504"), .exact(String(sdk)), reason, symbol, symbol
+            ))
+            result.append(allowance(
+                "source-sdk-command-\(path)", path, arm64 + "loadCommands[\(command.index)]",
+                .exact(versionCommand(0x000e_0000)), .exact(versionCommand(sdk)),
+                reason, symbol, symbol
+            ))
+            // Main signature differences are already accounted for by Runtime
+            // injection. Nested code changes only in the SDK-bearing first page.
+            if path != source.mainExecutableRelativePath {
+                for (field, length) in [
+                    ("signature.cdHash", 40),
+                    ("signature.superBlob.slots[type=0,occurrence=0].codeDirectory.codeSlots[0]", 64),
+                ] {
+                    let matches = differences.filter {
+                        $0.relativePath == path && $0.field == arm64 + field
+                    }
+                    XCTAssertEqual(matches.count, 1)
+                    let observed = try XCTUnwrap(matches.first)
+                    let pinnedValue: PlayCoverDifferentialExpectation = field == "signature.cdHash"
+                        ? .lowercaseHexDigest(length: length)
+                        : .exact(try XCTUnwrap(observed.pinnedValue))
+                    let preparedValue: PlayCoverDifferentialExpectation = field == "signature.cdHash"
+                        ? .lowercaseHexDigest(length: length)
+                        : .exact(try XCTUnwrap(observed.iosUseValue))
+                    result.append(allowance(
+                        "source-sdk-\(path)-\(field)", path, arm64 + field,
+                        pinnedValue, preparedValue,
+                        "Signing covers the preserved SDK in the first code page; "
+                            + "other code pages and signature metadata remain compared.",
+                        "Shell.signMacho", "PlayCoverUpstreamEngine.signInsideOut"
+                    ))
+                }
+            }
+        }
+        return result
     }
 
     private func makeAllowances(
