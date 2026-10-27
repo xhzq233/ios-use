@@ -20,9 +20,11 @@
 
 </div>
 
-https://github.com/user-attachments/assets/0d17a651-41fc-4773-9ebf-061518197a69
+https://github.com/user-attachments/assets/2a54aacd-0d94-442d-a91d-75775ee0ff65
 
-<p align="center"><sub>57 seconds · Real iPhone · AX actions · Composable scripts · Mac + Frida</sub></p>
+
+
+<p align="center"><sub>41 seconds · Real iPhone · AX actions · Composable scripts · Mac + Frida</sub></p>
 
 | Fast | Easy | Powerful |
 | --- | --- | --- |
