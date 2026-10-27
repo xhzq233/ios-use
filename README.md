@@ -249,6 +249,10 @@ iPhone runtime identity and use the estimated safe-area profile above. They do n
 emulate partially folded poses, the iOS 27 side controls, or claim exact Duo hardware metrics.
 
 The Mac backend runs the host macOS UIKit implementation through Catalyst.
+Conversion preserves each source binary's build SDK version so system
+frameworks select the App's intended compatibility behavior. It does not
+replace that version with an older SDK or the host's SDK. After upgrading
+ios-use, rerun `start --mac --app <source.app>` to rebuild an older prepared App.
 Installing a newer iOS SDK changes what can be compiled; it does not replace
 that runtime. Device presets also do not change the runtime's API availability
 or system control implementation. Testing a newer iOS system's actual behavior

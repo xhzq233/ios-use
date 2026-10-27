@@ -87,7 +87,7 @@ public final class Macho {
         }
     }
 
-    public static func convertMacho(_ macho: URL) throws {
+    public static func convertMacho(_ macho: URL, preserveSourceSDK: Bool = false) throws {
         print("Converting MachO at \(macho.path)")
 
         var binary = try Data(contentsOf: macho)
@@ -96,7 +96,7 @@ public final class Macho {
         print("Stripping MachO...")
         try stripBinary(&binary)
         print("Replacing version command...")
-        try replaceVersionCommand(&binary)
+        try replaceVersionCommand(&binary, preserveSourceSDK: preserveSourceSDK)
         print("Replacing instances of @rpath dylibs...")
         try replaceLibraries(&binary)
 
@@ -183,13 +183,19 @@ public final class Macho {
         }, atEnd: false)
     }
 
-    public static func replaceVersionCommand(_ binary: inout Data) throws {
+    public static func replaceVersionCommand(_ binary: inout Data, preserveSourceSDK: Bool = false) throws {
+
+        // iOS and Mac Catalyst use the same SDK version numbering. UIKit uses
+        // this field for linked-on-or-after compatibility behavior, so ios-use
+        // must retain it even though the platform and deployment floor change.
+        // The default keeps the pinned Installer oracle's SDK 14 behavior.
+        let sdk = preserveSourceSDK ? try sourceSDKVersion(binary) : 0x000e0000
 
         var macCatalystCommand = build_version_command(cmd: UInt32(LC_BUILD_VERSION),
                                                        cmdsize: 24,
                                                        platform: UInt32(PLATFORM_MACCATALYST),
                                                        minos: 0x000b0000,
-                                                       sdk: 0x000e0000,
+                                                       sdk: sdk,
                                                        ntools: 0)
 
         try replaceLastCommand(&binary, satisfy: {data, shouldSwap in
@@ -207,6 +213,40 @@ public final class Macho {
             }
             return Data(bytes: &macCatalystCommand, count: MemoryLayout<build_version_command>.size)
         }, atEnd: true)
+    }
+
+    private static func sourceSDKVersion(_ binary: Data) throws -> UInt32 {
+        var sdk: UInt32?
+        var malformed = false
+        try iterateLoadCommands(binary: binary) { offset, shouldSwap in
+            let command = binary.extract(load_command.self, offset: offset,
+                                         swap: shouldSwap ? swap_load_command : nil)
+            let sdkOffset: Int
+            switch command.cmd {
+            case UInt32(LC_BUILD_VERSION):
+                guard command.cmdsize >= MemoryLayout<build_version_command>.size else {
+                    malformed = true
+                    return true
+                }
+                sdkOffset = offset + 16
+            case UInt32(LC_VERSION_MIN_IPHONEOS), UInt32(LC_VERSION_MIN_MACOSX):
+                guard command.cmdsize >= MemoryLayout<version_min_command>.size else {
+                    malformed = true
+                    return true
+                }
+                sdkOffset = offset + 12
+            default:
+                return false
+            }
+            let rawSDK = binary.extract(UInt32.self, offset: sdkOffset)
+            sdk = shouldSwap ? rawSDK.byteSwapped : rawSDK
+            return false
+        }
+        guard !malformed, let sdk else {
+            throw PlayCoverError.appCorrupted
+        }
+        // Zero means unspecified. Do not invent an SDK from the host OS.
+        return sdk
     }
 
     public static func replaceLastCommand(_ binary: inout Data,
