@@ -972,8 +972,12 @@ IOSUseBridgeLockSceneToFixedCanvas(UIWindow *uiWindow) {
     CGSize fixed = IOSUseBridgeFixedSceneCanvasSize();
     // The iPhone model remains fixed in UIKit. Catalyst owns how that logical
     // scene is presented in its native, non-resizable AppKit window.
-    scene.sizeRestrictions.minimumSize = fixed;
-    scene.sizeRestrictions.maximumSize = fixed;
+    if (!CGSizeEqualToSize(scene.sizeRestrictions.minimumSize, fixed)) {
+        scene.sizeRestrictions.minimumSize = fixed;
+    }
+    if (!CGSizeEqualToSize(scene.sizeRestrictions.maximumSize, fixed)) {
+        scene.sizeRestrictions.maximumSize = fixed;
+    }
     if (scene != IOSUsePlaySceneGeometryScene) {
         IOSUsePlaySceneGeometryScene = scene;
         IOSUsePlaySceneGeometryState =
@@ -2393,19 +2397,6 @@ static CGSize IOSUsePlayObservedCanvas;
         }
         return NO;
     }
-    if (!IOSUseBridgeApplyWindowPolicy(window)) {
-        IOSUsePlayWindowStatus = @"failed";
-        IOSUsePlayWindowFailure =
-            @"could not make the native Catalyst window non-resizable";
-        if (error != NULL) {
-            *error = [NSError errorWithDomain:IOSUsePlayWindowErrorDomain
-                                         code:10
-                                     userInfo:@{
-                NSLocalizedDescriptionKey: IOSUsePlayWindowFailure,
-            }];
-        }
-        return NO;
-    }
     if (!IOSUseBridgeCaptureNativeHost(window)) {
         IOSUsePlayWindowStatus = @"failed";
         IOSUsePlayWindowFailure =
@@ -2448,6 +2439,22 @@ static CGSize IOSUsePlayObservedCanvas;
     );
     BOOL mouseMonitorReady =
         IOSUseBridgeInstallMouseLocalMonitor();
+
+    // UIKitMacHelper updates the native style mask while laying out scene
+    // constraints. Apply our resize policy after that layout has completed.
+    if (!IOSUseBridgeApplyWindowPolicy(window)) {
+        IOSUsePlayWindowStatus = @"failed";
+        IOSUsePlayWindowFailure =
+            @"could not make the native Catalyst window non-resizable";
+        if (error != NULL) {
+            *error = [NSError errorWithDomain:IOSUsePlayWindowErrorDomain
+                                         code:10
+                                     userInfo:@{
+                NSLocalizedDescriptionKey: IOSUsePlayWindowFailure,
+            }];
+        }
+        return NO;
+    }
 
     UISceneSizeRestrictions *restrictions =
         uiWindow.windowScene.sizeRestrictions;
