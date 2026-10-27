@@ -232,8 +232,11 @@ require the actual Duo runtime. Reference: [Design for iPhone Duo](https://devel
 For adaptive App layouts, use `ios-use config --mac --device-model ipad-pro-11 --window-mode resizable`.
 The device screen identity stays fixed while DOM coordinates and screenshots
 follow the actual App window. The App's scene minimum/maximum size preferences
-are preserved, with Catalyst applying its own limits. Phone-only or full-screen
-compatibility Apps may still restrict resizing. Resizable mode hides the device
+are preserved, with Catalyst applying its own limits. Conversion removes
+`UIRequiresFullScreen` and its device-specific overrides from the prepared Mac
+App so full-screen declarations do not block live model changes or resizing.
+The source iOS App is unchanged; App layout code may still restrict adaptation.
+Resizable mode hides the device
 shell and uses native window safe areas, scene orientation and size classes.
 The virtual device screen identity stays separate from this free window.
 It previews App layout; it does not

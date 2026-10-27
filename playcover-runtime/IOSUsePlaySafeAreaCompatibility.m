@@ -1021,6 +1021,7 @@ IOSUsePlaySafeAreaCompatibilityDiagnostics(void) {
 }
 
 BOOL IOSUsePlaySafeAreaCompatibilityReconcile(
+    UIWindow *targetWindow,
     NSError * _Nullable * _Nullable error
 ) {
     NSCAssert(NSThread.isMainThread, @"safe-area reconcile is main-only");
@@ -1049,8 +1050,16 @@ BOOL IOSUsePlaySafeAreaCompatibilityReconcile(
         }
         return NO;
     }
-    UIWindowScene *scene = IOSUsePlaySafeAreaConnectedScene();
-    UIWindow *window = IOSUsePlaySafeAreaPrimaryWindow(scene);
+    // Reconcile the same window that the host is configuring. Keeping a
+    // previously eligible target would leave readiness checking two different
+    // windows when a normal-level login window becomes key.
+    UIWindowScene *scene = targetWindow.windowScene;
+    if (!IOSUsePlaySafeAreaSceneSupportsFixedGeometry(scene) ||
+        ![scene.session.role isEqualToString:UIWindowSceneSessionRoleApplication]) {
+        scene = nil;
+    }
+    UIWindow *window = IOSUsePlaySafeAreaIsEligibleWindow(targetWindow, scene)
+        ? targetWindow : nil;
     if (scene == nil || window == nil) {
         IOSUsePlaySafeAreaBind(nil, nil);
         IOSUsePlaySafeAreaStage = scene == nil

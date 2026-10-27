@@ -25,11 +25,11 @@ NSDictionary *IOSUsePlayDeviceState(void) {
     };
 }
 
-static void updateTraits(UIView *view) {
+static void updateTraits(id environment) {
     if (@available(iOS 17.0, *)) {
         // Override the environment, not UITraitCollection getters: retained
         // previous collections must keep their old idiom after model changes.
-        id<UITraitOverrides> traits = view.traitOverrides;
+        id<UITraitOverrides> traits = [environment traitOverrides];
         // Reading an unset UITraitOverrides value raises an exception. Setters
         // already coalesce unchanged overrides; do not use it as a collection.
         traits.userInterfaceIdiom = (UIUserInterfaceIdiom)IOSUsePlayDeviceUserInterfaceIdiom;
@@ -51,8 +51,15 @@ static void updateTraits(UIView *view) {
 }
 
 void IOSUsePlayRefreshDeviceTraits(UIWindow *window) {
-    updateTraits(window);
-    updateTraits(window.rootViewController.view);
+    // Device identity belongs to the scene. Secondary windows, including
+    // ones created after launch, inherit it when they become key. Avoid
+    // window-level overrides that would mask later scene model changes.
+    if (window.windowScene != nil) {
+        updateTraits(window.windowScene);
+    } else {
+        updateTraits(window);
+        updateTraits(window.rootViewController.view);
+    }
 }
 
 static NSDictionary *invalidConfiguration(NSError **error) {
@@ -124,9 +131,12 @@ BOOL IOSUsePlayDeviceConfigurationInProgress(void) {
 }
 
 void IOSUsePlayDeviceGeometryWillLayout(UIWindow *window) {
-    if (!activeTransition || activeTransition.traitsApplied || activeTransition.window != window) return;
+    if (!activeTransition || activeTransition.traitsApplied || window.windowScene == nil ||
+        activeTransition.window.windowScene != window.windowScene) return;
     CGSize target = CGSizeMake(IOSUsePlayDeviceLogicalWidth, IOSUsePlayDeviceLogicalHeight);
     if (!IOSUsePlayCanvasIsResizable() && !CGSizeEqualToSize(window.bounds.size, target)) return;
+    // All windows inherit the scene traits. Stage them with the first resized
+    // canvas in that scene, before an earlier window finishes its transition.
     activeTransition.traitsApplied = YES;
     IOSUsePlayRefreshDeviceTraits(window);
 }

@@ -327,6 +327,17 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
     func testSignatureEvidenceUsesOneDisplayAndOneStrictVerifyPerThinTarget()
         throws
     {
+        // Without buffering, codesign's XML can precede or interleave with
+        // stderr metadata. The channels must be parsed independently.
+        let previousBuffering = ProcessInfo.processInfo.environment["NSUnbufferedIO"]
+        setenv("NSUnbufferedIO", "YES", 1)
+        defer {
+            if let previousBuffering {
+                setenv("NSUnbufferedIO", previousBuffering, 1)
+            } else {
+                unsetenv("NSUnbufferedIO")
+            }
+        }
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "IOSUsePlayCoverSignatureDisplay-\(UUID().uuidString)",
@@ -441,6 +452,12 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertTrue(withInspection.signature.isValid)
         XCTAssertNotNil(withInspection.signature.cdHash)
         XCTAssertNotNil(withInspection.signature.entitlementsPlist)
+        let decodedEntitlements = try PropertyListSerialization.propertyList(
+            from: XCTUnwrap(withInspection.signature.entitlementsPlist),
+            format: nil
+        ) as? [String: Any]
+        XCTAssertEqual(decodedEntitlements?["com.iosuse.metadata-noise"] as? String,
+                       "line1\nCDHash=evil")
 
         let invalid = try signedCopy(
             named: "InvalidSignature",

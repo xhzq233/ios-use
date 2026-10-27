@@ -12,10 +12,11 @@ IOSUsePlaySafeAreaCompatibilityInstallBeforeUIApplicationMain(
 );
 
 /// Restores the fixed iPhone window safe-area provider contract for the
-/// foreground primary App UIWindow after the hook has already been installed.
+/// App UIWindow selected by the native host bridge after the hook is installed.
 /// This never creates a window or view and never writes
 /// UIViewController.additionalSafeAreaInsets.
 FOUNDATION_EXPORT BOOL IOSUsePlaySafeAreaCompatibilityReconcile(
+    UIWindow * _Nullable window,
     NSError * _Nullable * _Nullable error
 );
 
