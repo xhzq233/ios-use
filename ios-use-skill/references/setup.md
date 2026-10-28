@@ -82,6 +82,10 @@ deletes old caches for you; run `ios-use du` to see what you can remove.
 - Mac lifecycle is only `start`, `status`, and `stop`. Do not use `home`,
   `activateApp`, or `terminateApp` for a Mac session. Restart it with
   `ios-use stop`, then `ios-use start --mac`.
+- Command+Q normally quits the Mac App. App exit, crashes, and force quit
+  automatically clear its Driver session. `start --mac` also recovers an old
+  lock once its recorded process is confirmed absent. If cleanup reports an
+  error, inspect `status --json` and run `ios-use stop -d mac` before retrying.
 - Use `ios-use help <command>` for the complete option contract instead of guessing
   whether an individual command accepts `--udid`.
 

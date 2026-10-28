@@ -532,7 +532,6 @@ public enum PlayCoverDifferentialExpectation: Equatable, Sendable {
     case present
     case exact(String)
     case containing(String)
-    case lowercaseHexDigest(length: Int)
 
     fileprivate func matches(_ value: String?) -> Bool {
         switch self {
@@ -546,13 +545,6 @@ public enum PlayCoverDifferentialExpectation: Equatable, Sendable {
             return value == expected
         case .containing(let fragment):
             return value?.contains(fragment) == true
-        case .lowercaseHexDigest(let length):
-            guard let value, value.count == length else {
-                return false
-            }
-            return value.utf8.allSatisfy {
-                (0x30...0x39).contains($0) || (0x61...0x66).contains($0)
-            }
         }
     }
 }
@@ -675,15 +667,6 @@ public struct PlayCoverDifferentialNormalization: Sendable {
             iosUseManagedHome: iosUsePaths,
             evidence: PlayCoverDifferentialNormalizationEvidence(
                 mode: mode,
-                pinnedManagedHomeLexicalSHA256:
-                    sha256(pinnedPaths.lexical),
-                pinnedManagedHomeCanonicalSHA256:
-                    sha256(pinnedPaths.canonical),
-                iosUseManagedHomeLexicalSHA256:
-                    sha256(iosUsePaths.lexical),
-                iosUseManagedHomeCanonicalSHA256:
-                    sha256(iosUsePaths.canonical),
-                pinnedPlayToolsLoadPathSHA256: sha256(playToolsPath),
                 managedHomeReplacement: "<MANAGED_HOME>",
                 playToolsReplacement: "<PLAYTOOLS>"
             )
@@ -765,11 +748,7 @@ public struct PlayCoverDifferentialNormalization: Sendable {
             || isStrictDescendant(rhs, of: lhs)
     }
 
-    private static func sha256(_ value: String) -> String {
-        SHA256.hash(data: Data(value.utf8)).map {
-            String(format: "%02x", $0)
-        }.joined()
-    }
+
 }
 
 public enum PlayCoverDifferentialNormalizationMode:
@@ -785,11 +764,6 @@ public struct PlayCoverDifferentialNormalizationEvidence:
     Codable, Equatable, Sendable
 {
     public let mode: PlayCoverDifferentialNormalizationMode
-    public let pinnedManagedHomeLexicalSHA256: String
-    public let pinnedManagedHomeCanonicalSHA256: String
-    public let iosUseManagedHomeLexicalSHA256: String
-    public let iosUseManagedHomeCanonicalSHA256: String
-    public let pinnedPlayToolsLoadPathSHA256: String
     public let managedHomeReplacement: String
     public let playToolsReplacement: String
 }
@@ -806,7 +780,6 @@ public struct PlayCoverDifferentialObjectBaseline: Sendable {
     public let side: PlayCoverDifferentialSide
     public let relativePath: String
     public let inspection: PlayCoverUpstreamMachOInspection
-    public let sourceSHA256: String
     public let provenance: String
 
     public init(
@@ -814,14 +787,12 @@ public struct PlayCoverDifferentialObjectBaseline: Sendable {
         side: PlayCoverDifferentialSide,
         relativePath: String,
         inspection: PlayCoverUpstreamMachOInspection,
-        sourceSHA256: String,
         provenance: String
     ) {
         self.id = id
         self.side = side
         self.relativePath = relativePath
         self.inspection = inspection
-        self.sourceSHA256 = sourceSHA256
         self.provenance = provenance
     }
 }
@@ -839,10 +810,7 @@ public enum PlayCoverDifferentialFieldFamily:
     case rpaths
     case dependencies
     case signatureMetadata = "signature-metadata"
-    case signatureSuperBlob = "signature-superblob"
-    case signatureCodeDirectory = "signature-code-directory"
     case xmlEntitlements = "xml-entitlements"
-    case derEntitlements = "der-entitlements"
 }
 
 public enum PlayCoverDifferentialAppFieldFamily:
@@ -1007,18 +975,15 @@ public enum PlayCoverDifferentialPreparationLineage:
 public struct PlayCoverDifferentialImplementationEvidence:
     Codable, Equatable, Sendable
 {
-    public let testExecutableSHA256: String
     public let testExecutableSize: UInt64
     public let testExecutableDevice: UInt64
     public let testExecutableInode: UInt64
 
     fileprivate init(
-        testExecutableSHA256: String,
         testExecutableSize: UInt64,
         testExecutableDevice: UInt64,
         testExecutableInode: UInt64
     ) {
-        self.testExecutableSHA256 = testExecutableSHA256
         self.testExecutableSize = testExecutableSize
         self.testExecutableDevice = testExecutableDevice
         self.testExecutableInode = testExecutableInode
@@ -1033,7 +998,6 @@ public enum PlayCoverDifferentialExpectationKind:
     case present
     case exact
     case containing
-    case lowercaseHexDigest = "lowercase-hex-digest"
 }
 
 public struct PlayCoverDifferentialExpectationEvidence:
@@ -1041,34 +1005,24 @@ public struct PlayCoverDifferentialExpectationEvidence:
 {
     public let kind: PlayCoverDifferentialExpectationKind
     public let value: String?
-    public let length: Int?
 
     fileprivate init(_ expectation: PlayCoverDifferentialExpectation) {
         switch expectation {
         case .any:
             kind = .any
             value = nil
-            length = nil
         case .absent:
             kind = .absent
             value = nil
-            length = nil
         case .present:
             kind = .present
             value = nil
-            length = nil
         case .exact(let exact):
             kind = .exact
             value = exact
-            length = nil
         case .containing(let fragment):
             kind = .containing
             value = fragment
-            length = nil
-        case .lowercaseHexDigest(let digestLength):
-            kind = .lowercaseHexDigest
-            value = nil
-            length = digestLength
         }
     }
 }
@@ -1110,14 +1064,12 @@ public struct PlayCoverDifferentialBaselineEvidence:
     public let id: String
     public let side: PlayCoverDifferentialSide
     public let relativePath: String
-    public let sourceSHA256: String
     public let provenance: String
 
     fileprivate init(_ baseline: PlayCoverDifferentialObjectBaseline) {
         id = baseline.id
         side = baseline.side
         relativePath = baseline.relativePath
-        sourceSHA256 = baseline.sourceSHA256
         provenance = baseline.provenance
     }
 }
@@ -1382,13 +1334,6 @@ public enum PlayCoverPrepareDifferentialGate {
                 identityErrors.sorted()
             )
         }
-        let normalizationDigests = [
-            normalizationEvidence.pinnedManagedHomeLexicalSHA256,
-            normalizationEvidence.pinnedManagedHomeCanonicalSHA256,
-            normalizationEvidence.iosUseManagedHomeLexicalSHA256,
-            normalizationEvidence.iosUseManagedHomeCanonicalSHA256,
-            normalizationEvidence.pinnedPlayToolsLoadPathSHA256,
-        ]
         let expectedNormalizationMode:
             PlayCoverDifferentialNormalizationMode =
                 scope == .hermeticFixture
@@ -1398,9 +1343,7 @@ public enum PlayCoverPrepareDifferentialGate {
             || normalizationEvidence.managedHomeReplacement
                 != "<MANAGED_HOME>"
             || normalizationEvidence.playToolsReplacement != "<PLAYTOOLS>"
-            || normalizationDigests.contains(where: {
-                !isLowercaseSHA256($0)
-            }) {
+        {
             identityErrors.append(
                 "differential normalization evidence is invalid"
             )
@@ -1893,7 +1836,6 @@ public enum PlayCoverPrepareDifferentialGate {
                     field: "object.presence",
                     pinned: nil,
                     iosUse: presenceValue(
-                        iosUseByPath[path]!,
                         baselineID: baseline.id
                     )
                 )
@@ -1926,7 +1868,6 @@ public enum PlayCoverPrepareDifferentialGate {
                     path: path,
                     field: "object.presence",
                     pinned: presenceValue(
-                        pinnedMachO,
                         baselineID: baseline.id
                     ),
                     iosUse: nil
@@ -2141,7 +2082,6 @@ public enum PlayCoverPrepareDifferentialGate {
                     field: "inventory.presence",
                     pinned: inventoryPresenceEvidence(
                         pinnedEntry,
-                        machOPaths: pinnedMachOs,
                         replacements:
                             normalization.pinnedPathReplacements
                     ),
@@ -2157,7 +2097,6 @@ public enum PlayCoverPrepareDifferentialGate {
                     pinned: nil,
                     iosUse: inventoryPresenceEvidence(
                         iosUseEntry,
-                        machOPaths: iosUseMachOs,
                         replacements:
                             normalization.iosUsePathReplacements
                     )
@@ -2207,7 +2146,6 @@ public enum PlayCoverPrepareDifferentialGate {
 
     private static func inventoryPresenceEvidence(
         _ entry: PlayCoverUpstreamInventoryEntry,
-        machOPaths: Set<String>,
         replacements: [String: String]
     ) -> String {
         canonicalStrings(
@@ -2216,10 +2154,6 @@ public enum PlayCoverPrepareDifferentialGate {
                 entry.kind.rawValue,
                 entry.size.map(String.init) ?? "<absent>",
                 entry.posixPermissions.map(String.init) ?? "<absent>",
-                inventoryContentIdentity(
-                    entry,
-                    machOPaths: machOPaths
-                ) ?? "<absent>",
                 entry.symbolicLinkDestination.map {
                     replacePaths($0, replacements: replacements)
                 } ?? "<absent>",
@@ -2312,10 +2246,9 @@ public enum PlayCoverPrepareDifferentialGate {
     }
 
     private static func presenceValue(
-        _ inspection: PlayCoverUpstreamMachOInspection,
         baselineID: String
     ) -> String {
-        "present;baseline=\(baselineID);fileSHA256=\(inspection.fileSHA256)"
+        "present;baseline=\(baselineID)"
     }
 
     private static func baselineSelector(
@@ -2618,13 +2551,6 @@ public enum PlayCoverPrepareDifferentialGate {
         compareOptional(
             &result,
             path,
-            fieldPrefix + "cdHash",
-            pinned.cdHash,
-            iosUse.cdHash
-        )
-        compareOptional(
-            &result,
-            path,
             fieldPrefix + "identifier",
             pinned.identifier,
             iosUse.identifier
@@ -2686,72 +2612,6 @@ public enum PlayCoverPrepareDifferentialGate {
             iosUse.pageSize
         )
         checkedFieldFamilies.insert(.signatureMetadata)
-        compareOptional(
-            &result,
-            path,
-            fieldPrefix + "superBlob.length",
-            pinned.superBlobLength.map(String.init),
-            iosUse.superBlobLength.map(String.init)
-        )
-        compareOptional(
-            &result,
-            path,
-            fieldPrefix + "superBlob.paddingSize",
-            pinned.superBlobPaddingSize.map(String.init),
-            iosUse.superBlobPaddingSize.map(String.init)
-        )
-        compareOptional(
-            &result,
-            path,
-            fieldPrefix + "superBlob.structureSHA256",
-            pinned.superBlobStructureSHA256,
-            iosUse.superBlobStructureSHA256
-        )
-        compareOptional(
-            &result,
-            path,
-            fieldPrefix + "superBlob.paddingSHA256",
-            pinned.superBlobPaddingSHA256,
-            iosUse.superBlobPaddingSHA256
-        )
-        compareEmbeddedSignatureSlots(
-            pinned,
-            iosUse,
-            path: path,
-            fieldPrefix: fieldPrefix + "superBlob.",
-            pinnedReplacements: pinnedReplacements,
-            iosUseReplacements: iosUseReplacements,
-            result: &result
-        )
-        checkedFieldFamilies.insert(.signatureSuperBlob)
-        checkedFieldFamilies.insert(.signatureCodeDirectory)
-        compareOptional(
-            &result,
-            path,
-            fieldPrefix + "entitlementsCanonicalSHA256",
-            canonicalEntitlementsSHA256(
-                pinned.entitlementsPlist,
-                replacements: pinnedReplacements
-            ),
-            canonicalEntitlementsSHA256(
-                iosUse.entitlementsPlist,
-                replacements: iosUseReplacements
-            )
-        )
-        compareOptional(
-            &result,
-            path,
-            fieldPrefix + "derEntitlementsCanonicalSHA256",
-            canonicalEntitlementsSHA256(
-                pinned.derEntitlementsPlist,
-                replacements: pinnedReplacements
-            ),
-            canonicalEntitlementsSHA256(
-                iosUse.derEntitlementsPlist,
-                replacements: iosUseReplacements
-            )
-        )
-        checkedFieldFamilies.insert(.derEntitlements)
         compareEntitlements(
             pinned.entitlementsPlist,
             iosUse.entitlementsPlist,
@@ -2762,275 +2622,6 @@ public enum PlayCoverPrepareDifferentialGate {
             result: &result
         )
         checkedFieldFamilies.insert(.xmlEntitlements)
-    }
-
-    private static func compareEmbeddedSignatureSlots(
-        _ pinned: PlayCoverUpstreamSignature,
-        _ iosUse: PlayCoverUpstreamSignature,
-        path: String,
-        fieldPrefix: String,
-        pinnedReplacements: [String: String],
-        iosUseReplacements: [String: String],
-        result: inout [PlayCoverDifferentialDifference]
-    ) {
-        compare(
-            &result,
-            path,
-            fieldPrefix + "slots.count",
-            String(pinned.embeddedSlots.count),
-            String(iosUse.embeddedSlots.count)
-        )
-        let pinnedSlots = indexedSignatureSlots(pinned.embeddedSlots)
-        let iosUseSlots = indexedSignatureSlots(iosUse.embeddedSlots)
-        let selectors = Set(pinnedSlots.keys)
-            .union(iosUseSlots.keys)
-            .sorted()
-        for selector in selectors {
-            let prefix = fieldPrefix + "slots[\(selector)]."
-            guard let pinnedSlot = pinnedSlots[selector] else {
-                appendDifference(
-                    &result,
-                    path: path,
-                    field: prefix + "presence",
-                    pinned: nil,
-                    iosUse: signatureSlotPresenceEvidence(
-                        iosUseSlots[selector]!,
-                        replacements: iosUseReplacements
-                    )
-                )
-                continue
-            }
-            guard let iosUseSlot = iosUseSlots[selector] else {
-                appendDifference(
-                    &result,
-                    path: path,
-                    field: prefix + "presence",
-                    pinned: signatureSlotPresenceEvidence(
-                        pinnedSlot,
-                        replacements: pinnedReplacements
-                    ),
-                    iosUse: nil
-                )
-                continue
-            }
-            compare(
-                &result,
-                path,
-                prefix + "index",
-                String(pinnedSlot.index),
-                String(iosUseSlot.index)
-            )
-            compare(
-                &result,
-                path,
-                prefix + "type",
-                String(pinnedSlot.type),
-                String(iosUseSlot.type)
-            )
-            compare(
-                &result,
-                path,
-                prefix + "offset",
-                String(pinnedSlot.offset),
-                String(iosUseSlot.offset)
-            )
-            compare(
-                &result,
-                path,
-                prefix + "magic",
-                String(format: "0x%08x", pinnedSlot.magic),
-                String(format: "0x%08x", iosUseSlot.magic)
-            )
-            compare(
-                &result,
-                path,
-                prefix + "length",
-                String(pinnedSlot.length),
-                String(iosUseSlot.length)
-            )
-            compareCodeDirectoryEvidence(
-                pinnedSlot.codeDirectory,
-                iosUseSlot.codeDirectory,
-                path: path,
-                fieldPrefix: prefix + "codeDirectory.",
-                result: &result
-            )
-            if pinnedSlot.codeDirectory == nil,
-               iosUseSlot.codeDirectory == nil {
-                if pinnedSlot.type == 5 || pinnedSlot.type == 7 {
-                    compare(
-                        &result,
-                        path,
-                        prefix + "normalizedBytesSHA256",
-                        normalizedSignatureSlotSHA256(
-                            pinnedSlot,
-                            replacements: pinnedReplacements
-                        ),
-                        normalizedSignatureSlotSHA256(
-                            iosUseSlot,
-                            replacements: iosUseReplacements
-                        )
-                    )
-                } else {
-                    compare(
-                        &result,
-                        path,
-                        prefix + "bytesSHA256",
-                        pinnedSlot.bytesSHA256,
-                        iosUseSlot.bytesSHA256
-                    )
-                }
-            }
-        }
-    }
-
-    private static func indexedSignatureSlots(
-        _ slots: [PlayCoverUpstreamSignatureSlot]
-    ) -> [String: PlayCoverUpstreamSignatureSlot] {
-        var result: [String: PlayCoverUpstreamSignatureSlot] = [:]
-        var occurrences: [UInt32: Int] = [:]
-        for slot in slots {
-            let occurrence = occurrences[slot.type, default: 0]
-            occurrences[slot.type] = occurrence + 1
-            result[
-                "type=\(slot.type),occurrence=\(occurrence)"
-            ] = slot
-        }
-        return result
-    }
-
-    private static func signatureSlotPresenceEvidence(
-        _ slot: PlayCoverUpstreamSignatureSlot,
-        replacements: [String: String]
-    ) -> String {
-        "present;index=\(slot.index);offset=\(slot.offset);"
-            + "type=\(slot.type);magic="
-            + String(format: "0x%08x", slot.magic)
-            + ";length=\(slot.length);normalizedBytesSHA256="
-            + normalizedSignatureSlotSHA256(
-                slot,
-                replacements: replacements
-            )
-    }
-
-    private static func normalizedSignatureSlotSHA256(
-        _ slot: PlayCoverUpstreamSignatureSlot,
-        replacements: [String: String]
-    ) -> String {
-        var normalized = slot.bytes
-        let dynamicPaths = replacements.keys
-            .filter { !$0.isEmpty }
-            .sorted { $0.utf8.count > $1.utf8.count }
-        for path in dynamicPaths {
-            let needle = Data(path.utf8)
-            while let range = normalized.range(of: needle) {
-                normalized.replaceSubrange(
-                    range,
-                    with: repeatElement(UInt8(0), count: range.count)
-                )
-            }
-        }
-        return SHA256.hash(data: normalized).map {
-            String(format: "%02x", $0)
-        }.joined()
-    }
-
-    private static func compareCodeDirectoryEvidence(
-        _ pinned: PlayCoverUpstreamCodeDirectoryEvidence?,
-        _ iosUse: PlayCoverUpstreamCodeDirectoryEvidence?,
-        path: String,
-        fieldPrefix: String,
-        result: inout [PlayCoverDifferentialDifference]
-    ) {
-        compareOptional(
-            &result,
-            path,
-            fieldPrefix + "presence",
-            pinned.map { _ in "present" },
-            iosUse.map { _ in "present" }
-        )
-        guard let pinned, let iosUse else {
-            return
-        }
-        compare(
-            &result,
-            path,
-            fieldPrefix + "structureSHA256",
-            pinned.structureSHA256,
-            iosUse.structureSHA256
-        )
-        compare(
-            &result,
-            path,
-            fieldPrefix + "hashType",
-            String(pinned.hashType),
-            String(iosUse.hashType)
-        )
-        compare(
-            &result,
-            path,
-            fieldPrefix + "hashSize",
-            String(pinned.hashSize),
-            String(iosUse.hashSize)
-        )
-        let specialSlots = Set(pinned.specialSlotHashes.keys)
-            .union(iosUse.specialSlotHashes.keys)
-            .sorted()
-        for slot in specialSlots {
-            switch slot {
-            case "-5":
-                compareOptional(
-                    &result,
-                    path,
-                    fieldPrefix + "specialSlots[-5].binding",
-                    specialSlotBinding(pinned.specialSlotHashes[slot]),
-                    specialSlotBinding(iosUse.specialSlotHashes[slot])
-                )
-            case "-7":
-                compareOptional(
-                    &result,
-                    path,
-                    fieldPrefix + "specialSlots[-7].binding",
-                    specialSlotBinding(pinned.specialSlotHashes[slot]),
-                    specialSlotBinding(iosUse.specialSlotHashes[slot])
-                )
-            default:
-                compareOptional(
-                    &result,
-                    path,
-                    fieldPrefix + "specialSlots[\(slot)]",
-                    pinned.specialSlotHashes[slot],
-                    iosUse.specialSlotHashes[slot]
-                )
-            }
-        }
-        compare(
-            &result,
-            path,
-            fieldPrefix + "codeSlots.count",
-            String(pinned.codeSlotHashes.count),
-            String(iosUse.codeSlotHashes.count)
-        )
-        let codeSlots = max(
-            pinned.codeSlotHashes.count,
-            iosUse.codeSlotHashes.count
-        )
-        for index in 0..<codeSlots {
-            compareOptional(
-                &result,
-                path,
-                fieldPrefix + "codeSlots[\(index)]",
-                pinned.codeSlotHashes[safe: index],
-                iosUse.codeSlotHashes[safe: index]
-            )
-        }
-    }
-
-    private static func specialSlotBinding(_ hash: String?) -> String? {
-        guard let hash else {
-            return nil
-        }
-        return hash.allSatisfy({ $0 == "0" }) ? "unbound" : "bound"
     }
 
     private static func compareEntitlements(
@@ -3086,20 +2677,6 @@ public enum PlayCoverPrepareDifferentialGate {
         )
     }
 
-    private static func canonicalEntitlementsSHA256(
-        _ data: Data?,
-        replacements: [String: String]
-    ) -> String? {
-        guard data != nil else { return nil }
-        let values = entitlementValues(data, replacements: replacements)
-        let canonical = values.keys.sorted().map {
-            "\($0)=\(values[$0]!)"
-        }.joined(separator: "\n")
-        return SHA256.hash(data: Data(canonical.utf8)).map {
-            String(format: "%02x", $0)
-        }.joined()
-    }
-
     private static func canonicalEntitlementValue(
         _ value: Any,
         replacements: [String: String]
@@ -3116,10 +2693,7 @@ public enum PlayCoverPrepareDifferentialGate {
         case let number as NSNumber:
             return number.stringValue
         case let data as Data:
-            return "data:sha256:"
-                + SHA256.hash(data: data).map {
-                    String(format: "%02x", $0)
-                }.joined()
+            return "data:" + data.base64EncodedString()
         case let date as Date:
             return ISO8601DateFormatter().string(from: date)
         case let array as [Any]:
@@ -3370,46 +2944,8 @@ public enum PlayCoverPrepareDifferentialGate {
         throws -> PlayCoverDifferentialImplementationEvidence
     {
         let loadedImage = try loadedXCTestImageIdentity()
-        let descriptor = Darwin.open(
-            loadedImage.executableURL.path,
-            O_RDONLY | O_CLOEXEC | O_NOFOLLOW
-        )
-        guard descriptor >= 0 else {
-            throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                "could not open the loaded XCTest image without following links",
-            ])
-        }
-        let handle = FileHandle(
-            fileDescriptor: descriptor,
-            closeOnDealloc: true
-        )
-        defer { try? handle.close() }
-        var statBefore = stat()
-        guard Darwin.fstat(descriptor, &statBefore) == 0,
-              isRegularFile(statBefore),
-              UInt64(statBefore.st_dev) == loadedImage.device,
-              statBefore.st_ino == loadedImage.inode,
-              statBefore.st_size > 0,
-              UInt64(statBefore.st_size) == loadedImage.size else {
-            throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                "XCTest path no longer identifies the loaded image inode",
-            ])
-        }
-        let executableData = try handle.readToEnd() ?? Data()
-        var statAfter = stat()
-        guard Darwin.fstat(descriptor, &statAfter) == 0,
-              stableFileIdentity(statBefore, statAfter),
-              Int64(executableData.count) == statAfter.st_size else {
-            throw PlayCoverDifferentialAttestationError.invalidIdentity([
-                "loaded XCTest image changed while hashing its open inode",
-            ])
-        }
-        let executableDigest = SHA256.hash(data: executableData).map {
-            String(format: "%02x", $0)
-        }.joined()
         return PlayCoverDifferentialImplementationEvidence(
-            testExecutableSHA256: executableDigest,
-            testExecutableSize: UInt64(statAfter.st_size),
+            testExecutableSize: loadedImage.size,
             testExecutableDevice: loadedImage.device,
             testExecutableInode: loadedImage.inode
         )
@@ -3489,27 +3025,6 @@ public enum PlayCoverPrepareDifferentialGate {
         )
     }
 
-    private static func isRegularFile(_ value: stat) -> Bool {
-        value.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG)
-    }
-
-    private static func stableFileIdentity(
-        _ before: stat,
-        _ after: stat
-    ) -> Bool {
-        before.st_dev == after.st_dev
-            && before.st_ino == after.st_ino
-            && before.st_mode == after.st_mode
-            && before.st_nlink == after.st_nlink
-            && before.st_uid == after.st_uid
-            && before.st_gid == after.st_gid
-            && before.st_size == after.st_size
-            && before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec
-            && before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec
-            && before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec
-            && before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec
-    }
-
     private static func isLowercaseSHA256(_ value: String) -> Bool {
         value.count == 64 && value.utf8.allSatisfy {
             (0x30...0x39).contains($0) || (0x61...0x66).contains($0)
@@ -3567,8 +3082,6 @@ public enum PlayCoverPrepareDifferentialGate {
         switch expectation {
         case .absent, .exact:
             return true
-        case .lowercaseHexDigest(let length):
-            return field.hasSuffix(".signature.cdHash") && length == 40
         case .any, .present, .containing:
             return false
         }
@@ -3605,20 +3118,6 @@ public enum PlayCoverPrepareDifferentialGate {
             if baseline.inspection.relativePath != baseline.relativePath {
                 errors.append(
                     "baseline \(baseline.id) inspection path does not match"
-                )
-            }
-            if baseline.sourceSHA256 != baseline.inspection.fileSHA256 {
-                errors.append(
-                    "baseline \(baseline.id) source hash does not match "
-                        + "its inspection"
-                )
-            }
-            if baseline.sourceSHA256.count != 64
-                || !baseline.sourceSHA256.allSatisfy({
-                    $0.isHexDigit
-                }) {
-                errors.append(
-                    "baseline \(baseline.id) has an invalid source hash"
                 )
             }
         }

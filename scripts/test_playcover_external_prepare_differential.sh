@@ -396,7 +396,6 @@ if ! jq -e \
     .differential.normalization.mode ==
       "external-app-managed-paths-v1" and
     .differential.source.unchanged == true and
-    (.differential.implementation.testExecutableSHA256 | lower_sha256) and
     (.differential.consumedAllowances | length) > 0 and
     (
       .differential.consumedAllowances

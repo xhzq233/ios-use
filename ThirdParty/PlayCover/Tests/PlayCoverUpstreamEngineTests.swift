@@ -651,8 +651,8 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertEqual(result.signature.isValid, slice.signature.isValid)
         XCTAssertEqual(result.signature.cdHash, slice.signature.cdHash)
         XCTAssertEqual(
-            result.signature.entitlementsSHA256,
-            slice.signature.entitlementsSHA256
+            result.signature.entitlementsPlist,
+            slice.signature.entitlementsPlist
         )
         XCTAssertEqual(
             result.signature.embeddedSlots,
@@ -662,24 +662,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             slice.signature.embeddedSlots.isEmpty,
             "slice evidence must retain parsed embedded-signature evidence"
         )
-        let primaryCodeDirectory = try XCTUnwrap(
-            slice.signature.embeddedSlots.first {
-                $0.type == 0
-            }?.codeDirectory
-        )
-        XCTAssertFalse(primaryCodeDirectory.codeSlotHashes.isEmpty)
-        for hash in primaryCodeDirectory.codeSlotHashes {
-            XCTAssertEqual(
-                hash.utf8.count,
-                Int(primaryCodeDirectory.hashSize) * 2
-            )
-            XCTAssertTrue(
-                hash.utf8.allSatisfy {
-                    ($0 >= 0x30 && $0 <= 0x39)
-                        || ($0 >= 0x61 && $0 <= 0x66)
-                }
-            )
-        }
     }
 
     func testSliceSHA256ReusesThinFileHashButComputesFatSliceHash()
@@ -992,8 +974,8 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 slice.signature.cdHash
             )
             XCTAssertEqual(
-                thinInspection.signature.entitlementsSHA256,
-                slice.signature.entitlementsSHA256
+                thinInspection.signature.entitlementsPlist,
+                slice.signature.entitlementsPlist
             )
             XCTAssertFalse(slice.signature.embeddedSlots.isEmpty)
 

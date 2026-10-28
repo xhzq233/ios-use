@@ -5,31 +5,6 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FRIDA_COMMIT="0afeb85fcdeae1d995a55bc07f0fe57b197aecae"
 FRIDA_REPOSITORY="https://github.com/frida/frida-gum.git"
 ENGINE_ABI_REVISION="ios-use-frida-engine-cabi-v2"
-AGENT_SHA256="$(shasum -a 256 "$ROOT_DIR/playcover-frida-engine/IOSUseFridaAgent.js" | awk '{print $1}')"
-ENGINE_SOURCE_CLOSURE_SHA256="$(python3 - "$ROOT_DIR" <<'PY'
-import hashlib
-import os
-import struct
-import sys
-
-root = sys.argv[1]
-paths = sorted([
-    "playcover-frida-engine/IOSUseFridaAgent.js",
-    "playcover-frida-engine/IOSUseFridaEngine.h",
-    "playcover-frida-engine/IOSUseFridaEngine.m",
-])
-hasher = hashlib.sha256()
-for relative in paths:
-    path = os.path.join(root, relative)
-    relative_bytes = relative.encode("utf-8")
-    content = open(path, "rb").read()
-    hasher.update(struct.pack(">Q", len(relative_bytes)))
-    hasher.update(relative_bytes)
-    hasher.update(struct.pack(">Q", len(content)))
-    hasher.update(content)
-print(hasher.hexdigest())
-PY
-)"
 OUTPUT="$ROOT_DIR/.ios-use/playcover/IOSUseFridaEngine.framework"
 SOURCE_ROOT="${IOS_USE_FRIDA_SOURCE_ROOT:-}"
 GUM_BUILD="${IOS_USE_FRIDA_GUM_BUILD:-}"
@@ -240,11 +215,6 @@ plutil -insert CFBundleShortVersionString -string 16.5.6 \
 plutil -insert IOSUseFridaEngineABI -string "$ENGINE_ABI_REVISION" \
   "$BUILD_TEMP/IOSUseFridaEngine.framework/Info.plist"
 plutil -insert IOSUseFridaSourceCommit -string "$FRIDA_COMMIT" \
-  "$BUILD_TEMP/IOSUseFridaEngine.framework/Info.plist"
-plutil -insert IOSUseFridaAgentSHA256 -string "$AGENT_SHA256" \
-  "$BUILD_TEMP/IOSUseFridaEngine.framework/Info.plist"
-plutil -insert IOSUseFridaSourceClosureSHA256 -string \
-  "$ENGINE_SOURCE_CLOSURE_SHA256" \
   "$BUILD_TEMP/IOSUseFridaEngine.framework/Info.plist"
 python3 "$ROOT_DIR/scripts/frida_distribution.py" notices \
   --repository-root "$ROOT_DIR" \

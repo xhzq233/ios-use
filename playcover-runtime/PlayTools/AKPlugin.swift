@@ -50,7 +50,9 @@ final class AKPlugin: NSObject, Plugin {
     func hideCursorMove() {}
     func warpCursor() {}
     func unhideCursor() {}
-    func terminateApplication() {}
+    func terminateApplication() {
+        IOSUsePlayAppKitBridge.terminateApplication()
+    }
 
     func setupKeyboard(
         keyboard _: @escaping (UInt16, Bool, Bool, Bool) -> Bool,

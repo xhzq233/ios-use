@@ -342,10 +342,6 @@ public enum PlayCoverService {
             + PlayCoverFridaEngineService.descriptorSourceCommit
             + "+abi-"
             + PlayCoverFridaEngineService.descriptorEngineABI
-            + "+agent-"
-            + PlayCoverFridaEngineService.descriptorAgentSHA256
-            + "+source-"
-            + PlayCoverFridaEngineService.descriptorSourceClosureSHA256
             + "+engine-"
             + engineSHA256
     }

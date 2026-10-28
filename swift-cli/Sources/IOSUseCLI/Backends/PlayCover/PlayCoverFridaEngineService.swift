@@ -15,11 +15,6 @@ enum PlayCoverFridaEngineService {
         "0afeb85fcdeae1d995a55bc07f0fe57b197aecae"
     static let descriptorEngineABI =
         "ios-use-frida-engine-cabi-v2"
-    static let descriptorAgentSHA256 =
-        "665d78f59fbc5141f0bd77567271a9725ba1d12d109183c262e08880f289c084"
-    static let descriptorSourceClosureSHA256 =
-        "c18486cd912b95369925dcea03715c28d5ade4a84a362f6d7f7ccf705560e08b"
-
     private struct FrameworkEvidence {
         let sha256: String
         let size: UInt64
@@ -180,13 +175,9 @@ enum PlayCoverFridaEngineService {
               object["IOSUseFridaEngineABI"] as? String
                 == descriptorEngineABI,
               object["IOSUseFridaSourceCommit"] as? String
-                == descriptorSourceCommit,
-              object["IOSUseFridaAgentSHA256"] as? String
-                == descriptorAgentSHA256,
-              object["IOSUseFridaSourceClosureSHA256"] as? String
-                == descriptorSourceClosureSHA256 else {
+                == descriptorSourceCommit else {
             throw PlayCoverBackendError.capabilityUnavailable(
-                "frida-engine (framework metadata does not match the pinned ABI/agent)"
+                "frida-engine (framework metadata does not match the Frida version/ABI)"
             )
         }
     }

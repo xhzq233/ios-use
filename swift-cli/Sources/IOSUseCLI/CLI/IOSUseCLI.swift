@@ -69,6 +69,17 @@ public struct IOSUseCLI: Sendable {
     }
 
     public func run(arguments: [String]) -> CLIResult {
+        if arguments.first == PlayCoverSessionMonitor.commandName {
+            do {
+                try PlayCoverSessionMonitor.run(
+                    arguments: Array(arguments.dropFirst()), paths: paths
+                )
+                return CLIResult(exitCode: 0)
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        }
+
         if arguments.first == XCTestSessionHolderService.commandName {
             do {
                 return CLIResult(

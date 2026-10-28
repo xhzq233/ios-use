@@ -130,6 +130,12 @@ ios-use tap "A stable label" --dom
 ios-use stop
 ```
 
+Command+Q requests normal Mac App termination. When the App exits, including
+after a crash or force quit, ios-use automatically removes that session's
+`driver.lock` and Runtime socket. `ios-use stop -d mac` also terminates the App
+and clears its session. If an older or interrupted session left a lock behind,
+`start --mac` reclaims it once the recorded process is confirmed absent.
+
 The Mac backend supports macOS 27 and requires an unencrypted arm64 iPhone App.
 
 Every Mac session includes Frida. See the

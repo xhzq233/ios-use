@@ -11,6 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (void)captureSceneBackingLaunchEnvironment;
 + (void)scheduleFixedWindowConfiguration;
++ (void)terminateApplication;
 + (UIWindow * _Nullable)prepareDeviceConfiguration;
 + (void)finishDeviceConfiguration;
 + (BOOL)configureFixedWindow:(NSError * _Nullable * _Nullable)error;

@@ -71,27 +71,21 @@ public enum PlayCoverUpstreamMachOContainer: String, Codable, Sendable {
 public struct PlayCoverUpstreamCodeDirectoryEvidence:
     Codable, Equatable, Sendable
 {
-    public let structureSHA256: String
     public let cdHash: String
     public let hashType: UInt8
     public let hashSize: UInt8
     public let specialSlotHashes: [String: String]
-    public let codeSlotHashes: [String]
 
     public init(
-        structureSHA256: String,
         cdHash: String,
         hashType: UInt8,
         hashSize: UInt8,
-        specialSlotHashes: [String: String],
-        codeSlotHashes: [String]
+        specialSlotHashes: [String: String]
     ) {
-        self.structureSHA256 = structureSHA256
         self.cdHash = cdHash
         self.hashType = hashType
         self.hashSize = hashSize
         self.specialSlotHashes = specialSlotHashes
-        self.codeSlotHashes = codeSlotHashes
     }
 }
 
@@ -103,7 +97,6 @@ public struct PlayCoverUpstreamSignatureSlot:
     public let offset: UInt32
     public let magic: UInt32
     public let length: UInt32
-    public let bytesSHA256: String
     public let bytes: Data
     public let codeDirectory: PlayCoverUpstreamCodeDirectoryEvidence?
 
@@ -113,7 +106,6 @@ public struct PlayCoverUpstreamSignatureSlot:
         offset: UInt32,
         magic: UInt32,
         length: UInt32,
-        bytesSHA256: String,
         bytes: Data,
         codeDirectory: PlayCoverUpstreamCodeDirectoryEvidence? = nil
     ) {
@@ -122,7 +114,6 @@ public struct PlayCoverUpstreamSignatureSlot:
         self.offset = offset
         self.magic = magic
         self.length = length
-        self.bytesSHA256 = bytesSHA256
         self.bytes = bytes
         self.codeDirectory = codeDirectory
     }
@@ -141,15 +132,9 @@ public struct PlayCoverUpstreamSignature: Codable, Equatable, Sendable {
     public let hashChoices: String?
     public let hashType: String?
     public let pageSize: String?
-    public let superBlobLength: UInt32?
-    public let superBlobPaddingSize: UInt32?
-    public let superBlobStructureSHA256: String?
-    public let superBlobPaddingSHA256: String?
     public let embeddedSlots: [PlayCoverUpstreamSignatureSlot]
     public let entitlementsPlist: Data?
     public let derEntitlementsPlist: Data?
-    public let entitlementsSHA256: String?
-    public let derEntitlementsSHA256: String?
 
     public init(
         isSigned: Bool,
@@ -164,10 +149,6 @@ public struct PlayCoverUpstreamSignature: Codable, Equatable, Sendable {
         hashChoices: String? = nil,
         hashType: String? = nil,
         pageSize: String? = nil,
-        superBlobLength: UInt32? = nil,
-        superBlobPaddingSize: UInt32? = nil,
-        superBlobStructureSHA256: String? = nil,
-        superBlobPaddingSHA256: String? = nil,
         embeddedSlots: [PlayCoverUpstreamSignatureSlot] = [],
         entitlementsPlist: Data?,
         derEntitlementsPlist: Data? = nil
@@ -184,15 +165,9 @@ public struct PlayCoverUpstreamSignature: Codable, Equatable, Sendable {
         self.hashChoices = hashChoices
         self.hashType = hashType
         self.pageSize = pageSize
-        self.superBlobLength = superBlobLength
-        self.superBlobPaddingSize = superBlobPaddingSize
-        self.superBlobStructureSHA256 = superBlobStructureSHA256
-        self.superBlobPaddingSHA256 = superBlobPaddingSHA256
         self.embeddedSlots = embeddedSlots
         self.entitlementsPlist = entitlementsPlist
         self.derEntitlementsPlist = derEntitlementsPlist
-        self.entitlementsSHA256 = entitlementsPlist.map(Self.sha256)
-        self.derEntitlementsSHA256 = derEntitlementsPlist.map(Self.sha256)
     }
 
     public init(
@@ -223,19 +198,13 @@ public struct PlayCoverUpstreamSignature: Codable, Equatable, Sendable {
             hashChoices: hashChoices,
             hashType: hashType,
             pageSize: pageSize,
-            superBlobLength: nil,
-            superBlobPaddingSize: nil,
-            superBlobStructureSHA256: nil,
-            superBlobPaddingSHA256: nil,
             embeddedSlots: [],
             entitlementsPlist: entitlementsPlist,
             derEntitlementsPlist: nil
         )
     }
 
-    private static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
+
 }
 
 public struct PlayCoverUpstreamLoadCommandInspection:
@@ -1650,11 +1619,6 @@ public enum PlayCoverUpstreamEngine {
             hashChoices: value.hashChoices,
             hashType: value.hashType,
             pageSize: value.pageSize,
-            superBlobLength: value.superBlobLength,
-            superBlobPaddingSize: value.superBlobPaddingSize,
-            superBlobStructureSHA256:
-                value.superBlobStructureSHA256,
-            superBlobPaddingSHA256: value.superBlobPaddingSHA256,
             embeddedSlots: value.embeddedSlots,
             entitlementsPlist: value.entitlementsPlist,
             derEntitlementsPlist: value.derEntitlementsPlist
@@ -2178,10 +2142,6 @@ public enum PlayCoverUpstreamEngine {
     }
 
     private struct EmbeddedSignatureEvidence {
-        let superBlobLength: UInt32
-        let paddingSize: UInt32
-        let structureSHA256: String
-        let paddingSHA256: String
         let slots: [PlayCoverUpstreamSignatureSlot]
     }
 
@@ -3295,7 +3255,6 @@ public enum PlayCoverUpstreamEngine {
                     offset: rawBlobOffset,
                     magic: magic,
                     length: blobLength,
-                    bytesSHA256: hex(SHA256.hash(data: blob)),
                     bytes: blob,
                     codeDirectory: codeDirectory
                 )
@@ -3343,7 +3302,7 @@ public enum PlayCoverUpstreamEngine {
                 case 1:
                     fullHash = hex(Insecure.SHA1.hash(data: slot.bytes))
                 case 2, 3:
-                    fullHash = slot.bytesSHA256
+                    fullHash = hex(SHA256.hash(data: slot.bytes))
                 case 4:
                     fullHash = hex(SHA384.hash(data: slot.bytes))
                 default:
@@ -3371,24 +3330,7 @@ public enum PlayCoverUpstreamEngine {
                 }
             }
         }
-        var structure = Data(
-            relativeData(signatureData, 0..<declaredEnd)
-        )
-        for range in occupiedRanges {
-            structure.replaceSubrange(
-                range,
-                with: repeatElement(UInt8(0), count: range.count)
-            )
-        }
-        let padding = Data(relativeData(
-            signatureData,
-            declaredEnd..<signatureData.count
-        ))
         return EmbeddedSignatureEvidence(
-            superBlobLength: declaredLength,
-            paddingSize: UInt32(signatureData.count - declaredEnd),
-            structureSHA256: hex(SHA256.hash(data: structure)),
-            paddingSHA256: hex(SHA256.hash(data: padding)),
             slots: slots
         )
     }
@@ -3430,8 +3372,6 @@ public enum PlayCoverUpstreamEngine {
                 "\(path) has out-of-bounds CodeDirectory hashes"
             )
         }
-        let hashStart = hashOffset - specialBytes
-        let hashEnd = hashOffset + codeBytes
         var specialSlotHashes: [String: String] = [:]
         if specialCount > 0 {
             for slot in 1...specialCount {
@@ -3440,18 +3380,6 @@ public enum PlayCoverUpstreamEngine {
                 specialSlotHashes["-\(slot)"] = hex(bytes)
             }
         }
-        var codeSlotHashes: [String] = []
-        codeSlotHashes.reserveCapacity(codeCount)
-        for slot in 0..<codeCount {
-            let start = hashOffset + slot * hashSize
-            let bytes = blob[start..<(start + hashSize)]
-            codeSlotHashes.append(hex(bytes))
-        }
-        var normalized = blob
-        normalized.replaceSubrange(
-            hashStart..<hashEnd,
-            with: repeatElement(UInt8(0), count: hashEnd - hashStart)
-        )
         let cdHash: String
         switch hashType {
         case 1:
@@ -3472,12 +3400,10 @@ public enum PlayCoverUpstreamEngine {
             )
         }
         return PlayCoverUpstreamCodeDirectoryEvidence(
-            structureSHA256: hex(SHA256.hash(data: normalized)),
             cdHash: cdHash,
             hashType: hashType,
             hashSize: UInt8(hashSize),
-            specialSlotHashes: specialSlotHashes,
-            codeSlotHashes: codeSlotHashes
+            specialSlotHashes: specialSlotHashes
         )
     }
 
@@ -4388,12 +4314,6 @@ public enum PlayCoverUpstreamEngine {
                 hashChoices: metadata?.hashChoices,
                 hashType: metadata?.hashType,
                 pageSize: metadata?.pageSize,
-                superBlobLength: embeddedSignature?.superBlobLength,
-                superBlobPaddingSize: embeddedSignature?.paddingSize,
-                superBlobStructureSHA256:
-                    embeddedSignature?.structureSHA256,
-                superBlobPaddingSHA256:
-                    embeddedSignature?.paddingSHA256,
                 embeddedSlots: embeddedSignature?.slots ?? [],
                 entitlementsPlist: entitlementsPlist,
                 derEntitlementsPlist: derEntitlementsPlist

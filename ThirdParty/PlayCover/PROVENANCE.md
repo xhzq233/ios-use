@@ -228,15 +228,11 @@ The differential analyzer's inventory boundary is every Mach-O object in the
 prepared app. It inspects every thin/fat32/fat64 slice and compares
 architecture, container kind/placement/endianness, header flags/reserved
 fields, platform, minimum OS/SDK, encryption, RPATHs, dependencies, immutable
-content, codesign metadata, and canonical entitlements. Embedded-signature
-comparison covers the complete SuperBlob slot table and offsets, envelope and
-alignment bytes, opaque slot hashes, CodeDirectory structure plus every
-special/code-slot hash (including the resource seal), and separately decoded
-XML/DER entitlements whose semantic parity is enforced. XML and DER slot bytes
-also receive exact digest allowances after zeroing only the run-specific
-managed-home path byte sequences, so alternate plist/DER encodings remain
-observable; the displayed CDHash is recomputed and validated from the primary
-CodeDirectory.
+content, codesign metadata, and canonical entitlements. Signature inspection
+validates SuperBlob bounds and special-slot bindings, checks the displayed
+CDHash against the embedded CodeDirectory, and enforces semantic parity of
+XML and DER entitlements. The differential compares signature validity,
+signing metadata, and decoded entitlement values.
 The parser independently rejects a nonzero FAT64 reserved word and nonzero
 inter-slice or trailing fat-container padding; these are enforced zero
 invariants, not allowance-bearing diff fields. Every load command retains a raw
@@ -250,9 +246,8 @@ inventory: canonical Info.plist and application-category output, provisioning
 profile removal, quarantine removal, copied PlayTools localization and plugin
 resources, embedded Runtime resources, and preservation of unrelated fixture
 resources. It exercises real signed FAT32 and FAT64 multi-slice inputs and a
-real secondary-slice mutation. The gate accepts only absent/exact expectations
-plus the single typed 40-character lowercase CodeDirectory digest invariant;
-broad `any`, presence, and substring expectations are rejected. Every actual
+real secondary-slice mutation. The gate accepts absent/exact expectations; broad `any`, presence, and
+substring expectations are rejected. Every actual
 difference must consume exactly one non-stale allowance.
 
 The dedicated gate is:
@@ -263,12 +258,8 @@ scripts/test_playcover_prepare_differential.sh
 
 The gate runs in an isolated SwiftPM scratch directory and publishes a
 schema-v1 attestation only after every exact allowance and one-sided baseline
-is consumed. It records the executing XCTest binary rather than freezing a
-source-file list or requiring a matching checkout digest. The binary digest is read
-through an open descriptor whose device/inode must match the vnode backing the
-loaded `.xctest` Mach-O image and is checked for changes during attestation.
-This identifies the test executable; it is not proof of its source revision.
-The source and both prepared Apps are then
+is consumed. It identifies the executing XCTest image by its mapped file's
+device/inode and size. The source and both prepared Apps are then
 re-inspected, and the pinned result must carry the full-PlayTools Installer
 oracle producer identity. Managed-path normalization accepts only actual
 lexical/canonical roots and their exact descendants; it does not invent

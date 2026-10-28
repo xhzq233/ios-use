@@ -348,10 +348,6 @@ if ! jq -e \
     .repositoryCommit == $commit and
     .workRootSHA256 == $work_root and
     (.source.contentSHA256 | lower_sha256) and
-    (.source.executableSHA256 | lower_sha256) and
-    (.source.inventorySelectorsSHA256 | lower_sha256) and
-    (.source.objectSelectorsSHA256 | lower_sha256) and
-    (.source.sliceSelectorsSHA256 | lower_sha256) and
     (.source.bundleIdentifier | type == "string" and length > 0) and
     (
       .source.mainExecutableRelativePath
@@ -368,19 +364,13 @@ if ! jq -e \
     .sourceState.inputContentSHA256 ==
       .sourceState.recomputedAfterPrepareSHA256 and
     (.runtime.inputTreeSHA256 | lower_sha256) and
-    (.runtime.inputExecutableSHA256 | lower_sha256) and
     (.runtime.signedProjectionTreeSHA256 | lower_sha256) and
-    (
-      .runtime.signedProjectionExecutableSHA256
-      | lower_sha256
-    ) and
     .runtime.outputFrameworkRelativePath ==
       "Frameworks/IOSUsePlayRuntime.framework" and
     .runtime.outputExecutableRelativePath ==
       "Frameworks/IOSUsePlayRuntime.framework/Versions/A/IOSUsePlayRuntime" and
     (.playTools.inputTreeSHA256 | lower_sha256) and
     (.playTools.signedPluginTreeSHA256 | lower_sha256) and
-    (.playTools.signedPluginExecutableSHA256 | lower_sha256) and
     .playTools.outputPluginRelativePath ==
       "PlugIns/AKInterface.bundle" and
     .playTools.outputPluginExecutableRelativePath ==

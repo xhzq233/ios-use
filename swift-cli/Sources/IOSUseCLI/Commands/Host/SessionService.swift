@@ -299,6 +299,10 @@ public enum SessionService {
                 result: result,
                 paths: paths
             )
+            try PlayCoverSessionMonitor.start(
+                session: PlayCoverSessionService.makeSessionInfo(from: result),
+                paths: paths
+            )
             let slotDisposition = result.recovered
                 ? "recovered"
                 : (result.reused ? "reused" : "installed")
@@ -350,7 +354,14 @@ public enum SessionService {
         paths: IOSUsePaths
     ) throws {
         if let current = try readDriverLockInfo(paths: paths) {
-            if isIncompleteRealDriverLock(current) {
+            if current.deviceType == PlayCoverSessionService.deviceType,
+               let pid = current.runnerPid.flatMap(Int32.init(exactly:)),
+               case .missing = PlayCoverSessionService.processState(pid) {
+                try PlayCoverSessionMonitor.cleanupExitedSession(
+                    current,
+                    paths: paths
+                )
+            } else if isIncompleteRealDriverLock(current) {
                 try cleanupIncompleteRealDriverLock(current, paths: paths)
             } else {
                 throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")

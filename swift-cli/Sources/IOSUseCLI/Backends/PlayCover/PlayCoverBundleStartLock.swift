@@ -135,6 +135,10 @@ final class PlayCoverBundleStartLock {
         .filter { !$0.isTerminated }
         .map(\.processIdentifier)
         .filter { $0 > 0 }
+        // LaunchServices can retain a non-terminated registration briefly
+        // after NOTE_EXIT. It must not block an immediate restart when the
+        // kernel already confirms that process is gone.
+        .filter { PlayCoverSessionService.processState($0) != .missing }
         for pid in try processCensusPIDs(bundleIdentifier)
             where !pids.contains(pid) {
             pids.append(pid)

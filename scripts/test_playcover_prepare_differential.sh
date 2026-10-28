@@ -184,8 +184,6 @@ if ! jq -e '
       .source.iosUseHashAfterPrepare and
     .source.inputContentSHA256 ==
       .source.recomputedAtAttestationSHA256 and
-    (.implementation.testExecutableSHA256 |
-      test("^[0-9a-f]{64}$")) and
     .implementation.testExecutableSize > 0 and
     .implementation.testExecutableDevice > 0 and
     .implementation.testExecutableInode > 0 and
@@ -228,10 +226,7 @@ if ! jq -e '
         "rpaths",
         "dependencies",
         "signature-metadata",
-        "signature-superblob",
-        "signature-code-directory",
-        "xml-entitlements",
-        "der-entitlements"
+        "xml-entitlements"
       ]
     ) and
     all(

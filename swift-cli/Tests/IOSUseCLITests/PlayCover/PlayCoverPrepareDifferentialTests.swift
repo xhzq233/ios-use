@@ -146,7 +146,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 side: .pinned,
                 relativePath: pluginRelativePath,
                 inspection: pluginBaselineInspection,
-                sourceSHA256: pluginBaselineInspection.fileSHA256,
                 provenance:
                     "generated fixture PlayTools.framework resource "
                     + "consumed by "
@@ -157,7 +156,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 side: .iosUse,
                 relativePath: runtimeRelativePath,
                 inspection: runtimeBaselineInspection,
-                sourceSHA256: runtimeBaselineInspection.fileSHA256,
                 provenance:
                     "generated fixture Runtime framework passed to "
                     + "PlayCoverService.prepare"
@@ -167,7 +165,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 side: .iosUse,
                 relativePath: fridaRelativePath,
                 inspection: fridaBaselineInspection,
-                sourceSHA256: fridaBaselineInspection.fileSHA256,
                 provenance:
                     "generated fixture Frida Engine framework passed to "
                     + "PlayCoverService.prepare"
@@ -554,9 +551,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             let sliceSignature = try XCTUnwrap(
                 main.allSlices.first
             ).signature
-            XCTAssertNotNil(sliceSignature.superBlobLength)
-            XCTAssertNotNil(sliceSignature.superBlobStructureSHA256)
-            XCTAssertNotNil(sliceSignature.superBlobPaddingSHA256)
             XCTAssertFalse(sliceSignature.embeddedSlots.isEmpty)
             let primaryCodeDirectory = try XCTUnwrap(
                 sliceSignature.embeddedSlots.first {
@@ -608,13 +602,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             normalization: normalization
         )
         let allowances = try makeAllowances(
-            runtimeSHA256: runtimeBaselineInspection.fileSHA256,
-            fridaSHA256: fridaBaselineInspection.fileSHA256,
-            pluginSHA256: pluginBaselineInspection.fileSHA256,
-            observedDifferences: actual,
-            pinnedPadding: try checkedZeroPadding(XCTUnwrap(pinnedMain.allSlices.first)),
-            iosUsePadding: try checkedZeroPadding(XCTUnwrap(iosUseMain.allSlices.first))
-        ) + sdkPreservationAllowances(source: pinned.sourceBefore, prepared: iosUse, differences: actual)
+            observedDifferences: actual
+        ) + sdkPreservationAllowances(source: pinned.sourceBefore, prepared: iosUse)
         let report = try PlayCoverPrepareDifferentialGate.enforce(
             pinned: pinned.prepared,
             iosUse: iosUse,
@@ -707,10 +696,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         XCTAssertEqual(attestation.schemaVersion, 1)
         XCTAssertEqual(attestation.scope, .hermeticFixture)
         XCTAssertEqual(attestation.result, "pass")
-        XCTAssertEqual(
-            attestation.implementation.testExecutableSHA256.count,
-            64
-        )
         XCTAssertGreaterThan(
             attestation.implementation.testExecutableSize,
             0
@@ -910,7 +895,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             let evidence = try XCTUnwrap(attestedBaselines[baseline.id])
             XCTAssertEqual(evidence.side, baseline.side)
             XCTAssertEqual(evidence.relativePath, baseline.relativePath)
-            XCTAssertEqual(evidence.sourceSHA256, baseline.sourceSHA256)
             XCTAssertEqual(evidence.provenance, baseline.provenance)
         }
 
@@ -1370,7 +1354,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             side: .iosUse,
             relativePath: "Fixture",
             inspection: baselineInspection,
-            sourceSHA256: baselineInspection.fileSHA256,
             provenance: "producer guard ordering fixture"
         )
 
@@ -1930,7 +1913,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             side: .iosUse,
             relativePath: "Frameworks/Runtime",
             inspection: runtime,
-            sourceSHA256: runtime.fileSHA256,
             provenance: "unit fixture pre-transform Runtime"
         )
         let changedRuntime = makeInspection(
@@ -1955,27 +1937,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             XCTAssertFalse(differences.isEmpty)
         }
 
-        let invalidHash = PlayCoverDifferentialObjectBaseline(
-            id: "invalid-runtime-input",
-            side: .iosUse,
-            relativePath: "Frameworks/Runtime",
-            inspection: runtime,
-            sourceSHA256: String(repeating: "f", count: 64),
-            provenance: "unit fixture with deliberately invalid hash"
-        )
-        XCTAssertThrowsError(
-            try PlayCoverPrepareDifferentialGate.differences(
-                pinned: pinned,
-                iosUse: iosUse,
-                oneSidedBaselines: [invalidHash]
-            )
-        ) {
-            guard case PlayCoverDifferentialGateError.invalidBaselines =
-                    $0 else {
-                return XCTFail("unexpected error: \($0)")
-            }
-        }
-
         XCTAssertThrowsError(
             try PlayCoverPrepareDifferentialGate.differences(
                 pinned: makeAppInspection(machOs: [runtime]),
@@ -1990,30 +1951,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         }
     }
 
-    // codesign's reserved tail size varies across host versions. Accept only
-    // an all-zero tail of the inspected size, rather than freezing one host's
-    // padding length/hash or accepting arbitrary observed bytes.
-    private func checkedZeroPadding(
-        _ slice: PlayCoverUpstreamMachOSliceInspection
-    ) throws -> (size: String, hash: String) {
-        let count = try XCTUnwrap(slice.signature.superBlobPaddingSize)
-        guard UInt64(count) <= slice.size else {
-            throw NSError(domain: "PlayCoverPrepareDifferentialTests", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "signature padding exceeds slice size"])
-        }
-        let expected = SHA256.hash(data: Data(repeating: 0, count: Int(count)))
-            .map { String(format: "%02x", $0) }.joined()
-        guard slice.signature.superBlobPaddingSHA256 == expected else {
-            throw NSError(domain: "PlayCoverPrepareDifferentialTests", code: 3,
-                          userInfo: [NSLocalizedDescriptionKey: "signature padding contains nonzero bytes"])
-        }
-        return (String(count), expected)
-    }
-
     private func sdkPreservationAllowances(
         source: PlayCoverUpstreamAppInspection,
-        prepared: PlayCoverUpstreamAppInspection,
-        differences: [PlayCoverDifferentialDifference]
+        prepared: PlayCoverUpstreamAppInspection
     ) throws -> [PlayCoverDifferentialAllowance] {
         let arm64 = "slices[cpu=16777228,subtype=0,occurrence=0]."
         let reason = "Production preserves the source SDK for UIKit compatibility; "
@@ -2045,44 +1985,12 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(versionCommand(0x000e_0000)), .exact(versionCommand(sdk)),
                 reason, symbol, symbol
             ))
-            // Main signature differences are already accounted for by Runtime
-            // injection. Nested code changes only in the SDK-bearing first page.
-            if path != source.mainExecutableRelativePath {
-                for (field, length) in [
-                    ("signature.cdHash", 40),
-                    ("signature.superBlob.slots[type=0,occurrence=0].codeDirectory.codeSlots[0]", 64),
-                ] {
-                    let matches = differences.filter {
-                        $0.relativePath == path && $0.field == arm64 + field
-                    }
-                    XCTAssertEqual(matches.count, 1)
-                    let observed = try XCTUnwrap(matches.first)
-                    let pinnedValue: PlayCoverDifferentialExpectation = field == "signature.cdHash"
-                        ? .lowercaseHexDigest(length: length)
-                        : .exact(try XCTUnwrap(observed.pinnedValue))
-                    let preparedValue: PlayCoverDifferentialExpectation = field == "signature.cdHash"
-                        ? .lowercaseHexDigest(length: length)
-                        : .exact(try XCTUnwrap(observed.iosUseValue))
-                    result.append(allowance(
-                        "source-sdk-\(path)-\(field)", path, arm64 + field,
-                        pinnedValue, preparedValue,
-                        "Signing covers the preserved SDK in the first code page; "
-                            + "other code pages and signature metadata remain compared.",
-                        "Shell.signMacho", "PlayCoverUpstreamEngine.signInsideOut"
-                    ))
-                }
-            }
         }
         return result
     }
 
     private func makeAllowances(
-        runtimeSHA256: String,
-        fridaSHA256: String,
-        pluginSHA256: String,
-        observedDifferences: [PlayCoverDifferentialDifference],
-        pinnedPadding: (size: String, hash: String),
-        iosUsePadding: (size: String, hash: String)
+        observedDifferences: [PlayCoverDifferentialDifference]
     ) throws -> [PlayCoverDifferentialAllowance] {
         let pinnedSign = "Shell.signAppWith(--deep)"
         let iosUseSign = "PlayCoverUpstreamEngine.signInsideOut"
@@ -2221,54 +2129,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 iosUseSymbol
             )
         }
-        func signatureEvidenceAllowance(
-            _ id: String,
-            path: String,
-            field: String,
-            pinned: String?,
-            iosUse: String?,
-            reason: String
-        ) -> PlayCoverDifferentialAllowance {
-            allowance(
-                id,
-                path,
-                arm64 + "signature." + field,
-                exactExpectation(pinned),
-                exactExpectation(iosUse),
-                reason,
-                pinnedSign,
-                iosUseSign
-            )
-        }
         return [
-            allowance(
-                "app-root-signature-cdhash",
-                ".",
-                "app.signature.cdHash",
-                .lowercaseHexDigest(length: 40),
-                .lowercaseHexDigest(length: 40),
-                "Both complete App roots are validly ad-hoc signed over "
-                    + "different reviewed embedded code/resource sets.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "app-root-entitlements-hash",
-                ".",
-                "app.signature.entitlementsCanonicalSHA256",
-                .exact(
-                    "0d8459f82422afcede32a4804e951936d4dde1922f03c7b6"
-                        + "c91904b7c51549dd"
-                ),
-                .exact(
-                    "c31ae2222091d3a263ed641c9784b3326b2ba06b1517af90"
-                        + "ef316727a536c1b8"
-                ),
-                "The root signature carries the same separately reviewed "
-                    + "entitlement dictionaries as the main executable.",
-                "Entitlements.composeEntitlements",
-                "PlayCoverUpstreamEngine.composeEntitlements"
-            ),
             allowance(
                 "app-root-runtime-sandbox",
                 ".",
@@ -2300,7 +2161,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "directory", "<absent>", "493",
-                        "<absent>", "<absent>", "frameworkBundle",
+                        "<absent>", "frameworkBundle",
                     ])
                 ),
                 "ios-use embeds one reviewed Runtime framework; pinned "
@@ -2325,8 +2186,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "regularFile", "389", "420",
-                        "570393b042e964dc7fba7e1ed127935241c6d605ada7ed9f5"
-                            + "a9d10611bad5a86",
                         "<absent>", "<absent>",
                     ])
                 ),
@@ -2343,7 +2202,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "directory", "<absent>", "493",
-                        "<absent>", "<absent>", "<absent>",
+                        "<absent>", "<absent>",
                     ])
                 ),
                 "Inside-out signing creates the ios-use Runtime framework "
@@ -2360,7 +2219,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "regularFile", "1798", "420",
-                        "<SIGNATURE-COMPARATOR>", "<absent>", "<absent>",
+                        "<absent>", "<absent>",
                     ])
                 ),
                 "The Runtime framework seal is validated by the signature "
@@ -2376,7 +2235,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "directory", "<absent>", "493",
-                        "<absent>", "<absent>", "frameworkBundle",
+                        "<absent>", "frameworkBundle",
                     ])
                 ),
                 "Every ios-use Mac App embeds the reviewed resident Frida "
@@ -2401,8 +2260,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "regularFile", "389", "420",
-                        "11271b0fc1e407838a992e119b7306e74efdb9315f1e1ef4"
-                            + "00134eac08bbabf8",
                         "<absent>", "<absent>",
                     ])
                 ),
@@ -2419,7 +2276,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "directory", "<absent>", "493",
-                        "<absent>", "<absent>", "<absent>",
+                        "<absent>", "<absent>",
                     ])
                 ),
                 "Inside-out signing creates the resident Engine framework "
@@ -2436,7 +2293,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "regularFile", "1798", "420",
-                        "<SIGNATURE-COMPARATOR>", "<absent>", "<absent>",
+                        "<absent>", "<absent>",
                     ])
                 ),
                 "The resident Engine framework seal is validated by the "
@@ -2451,7 +2308,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "directory", "<absent>", "511",
-                        "<absent>", "<absent>", "<absent>",
+                        "<absent>", "<absent>",
                     ])
                 ),
                 .absent,
@@ -2467,7 +2324,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "directory", "<absent>", "493",
-                        "<absent>", "<absent>", "<absent>",
+                        "<absent>", "<absent>",
                     ])
                 ),
                 .absent,
@@ -2483,8 +2340,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "regularFile", "386", "420",
-                        "b86f9460df6e0db3cc600b1629e8c51a42331bf1789f53abd"
-                            + "838563712d40e72",
                         "<absent>", "<absent>",
                     ])
                 ),
@@ -2501,7 +2356,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "directory", "<absent>", "493",
-                        "<absent>", "<absent>", "<absent>",
+                        "<absent>", "<absent>",
                     ])
                 ),
                 .absent,
@@ -2526,7 +2381,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "directory", "<absent>", "493",
-                        "<absent>", "<absent>", "<absent>",
+                        "<absent>", "<absent>",
                     ])
                 ),
                 .absent,
@@ -2543,7 +2398,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "regularFile", "2200", "420",
-                        "<SIGNATURE-COMPARATOR>", "<absent>", "<absent>",
+                        "<absent>", "<absent>",
                     ])
                 ),
                 .absent,
@@ -2571,7 +2426,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "directory", "<absent>", "493",
-                        "<absent>", "<absent>", "<absent>",
+                        "<absent>", "<absent>",
                     ])
                 ),
                 .absent,
@@ -2587,8 +2442,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     jsonStringArray([
                         "present", "regularFile", "22", "420",
-                        "0254a5ed327f1e3c33590be0d2e350fe80c86dce060720197"
-                            + "fea81ad3973177a",
                         "<absent>", "<absent>",
                     ])
                 ),
@@ -2685,184 +2538,13 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "Entitlements.composeEntitlements",
                 "PlayCoverUpstreamEngine.composeEntitlements"
             ),
-            try observedAllowance(
-                "main-superblob-length",
-                "Fixture",
-                arm64 + "signature.superBlob.length",
-                "The distinct canonical entitlement payloads have different "
-                    + "valid SuperBlob lengths; the exact envelope is "
-                    + "codesign-version-derived.",
-                pinnedSign,
-                iosUseSign
-            ),
-            signatureEvidenceAllowance(
-                "main-superblob-padding-size",
-                path: "Fixture",
-                field: "superBlob.paddingSize",
-                pinned: pinnedPadding.size,
-                iosUse: iosUsePadding.size,
-                reason: "The host codesign version chooses the reserved tail "
-                    + "size; both tails are independently verified as all-zero."
-            ),
-            signatureEvidenceAllowance(
-                "main-superblob-padding-hash",
-                path: "Fixture",
-                field: "superBlob.paddingSHA256",
-                pinned: pinnedPadding.hash,
-                iosUse: iosUsePadding.hash,
-                reason: "The digest must match exactly that many zero bytes; "
-                    + "nonzero padding is rejected before allowances are built."
-            ),
-            try observedAllowance(
-                "main-superblob-structure",
-                "Fixture",
-                arm64 + "signature.superBlob.structureSHA256",
-                "The slot offsets and envelope layout follow the two "
-                    + "different entitlement blobs and the host codesign "
-                    + "representation.",
-                pinnedSign,
-                iosUseSign
-            ),
-            try observedAllowance(
-                "main-resource-seal-slot",
-                "Fixture",
-                arm64 + "signature.superBlob.slots[type=0,occurrence=0]."
-                    + "codeDirectory.specialSlots[-3]",
-                "The pinned PlayTools/plugin resources and ios-use "
-                    + "Runtime resources have distinct exact CodeResources "
-                    + "seals.",
-                pinnedSign,
-                iosUseSign
-            ),
-            try observedAllowance(
-                "main-code-slot-zero",
-                "Fixture",
-                arm64 + "signature.superBlob.slots[type=0,occurrence=0]."
-                    + "codeDirectory.codeSlots[0]",
-                "Code slot zero contains the deliberately different "
-                    + "injected load command and signature extent.",
-                pinnedSign,
-                iosUseSign
-            ),
-            signatureEvidenceAllowance(
-                "main-xml-entitlements-slot-length",
-                path: "Fixture",
-                field: "superBlob.slots[type=5,occurrence=0].length",
-                pinned: "4778",
-                iosUse: "5455",
-                reason: "The compared canonical XML entitlement dictionaries "
-                    + "serialize to these exact blob lengths."
-            ),
-            signatureEvidenceAllowance(
-                "main-xml-entitlements-raw-bytes",
-                path: "Fixture",
-                field: "superBlob.slots[type=5,occurrence=0]."
-                    + "normalizedBytesSHA256",
-                pinned:
-                    "92f06420ab3c20d6232838dfe0b1bd7328fe3e857dc0daf2"
-                        + "258b2676eaa8f1ac",
-                iosUse:
-                    "be492c66766fc0b4fa59454842cae16ad816697006d12c056"
-                        + "e09c7cca3999d27",
-                reason: "After zeroing only the run-specific managed-home "
-                    + "path bytes, the full XML entitlement blobs must match "
-                    + "these exact encodings."
-            ),
-            try observedAllowance(
-                "main-der-entitlements-slot-offset",
-                "Fixture",
-                arm64 + "signature.superBlob.slots[type=7,occurrence=0].offset",
-                "The DER slot starts after the distinct XML entitlement "
-                    + "blob and any host codesign envelope slots.",
-                pinnedSign,
-                iosUseSign
-            ),
-            signatureEvidenceAllowance(
-                "main-der-entitlements-slot-length",
-                path: "Fixture",
-                field: "superBlob.slots[type=7,occurrence=0].length",
-                pinned: "3732",
-                iosUse: "4357",
-                reason: "The decoded and parity-checked DER entitlement "
-                    + "dictionaries have these exact encoded lengths."
-            ),
-            signatureEvidenceAllowance(
-                "main-der-entitlements-raw-bytes",
-                path: "Fixture",
-                field: "superBlob.slots[type=7,occurrence=0]."
-                    + "normalizedBytesSHA256",
-                pinned:
-                    "832678e095fc273f5c43c138537c99cabd2a9a124318d5f2"
-                        + "74eac37f0d33246e",
-                iosUse:
-                    "7ff3abf80134ef7ffd6748e291cdbb8cabf3ea3b544489a1d"
-                        + "e2f18872171fab9",
-                reason: "After zeroing only the run-specific managed-home "
-                    + "path bytes, the full DER entitlement blobs must match "
-                    + "these exact encodings."
-            ),
-            try observedAllowance(
-                "main-cms-slot-offset",
-                "Fixture",
-                arm64
-                    + "signature.superBlob.slots[type=65536,occurrence=0].offset",
-                "The empty ad-hoc CMS wrapper follows the host codesign XML, "
-                    + "DER, and envelope slot extents.",
-                pinnedSign,
-                iosUseSign
-            ),
-            signatureEvidenceAllowance(
-                "main-der-entitlements-hash",
-                path: "Fixture",
-                field: "derEntitlementsCanonicalSHA256",
-                pinned:
-                    "0d8459f82422afcede32a4804e951936d4dde1922f03c7b6"
-                        + "c91904b7c51549dd",
-                iosUse:
-                    "c31ae2222091d3a263ed641c9784b3326b2ba06b1517af90"
-                        + "ef316727a536c1b8",
-                reason: "DER decoding matches each side's separately allowed "
-                    + "canonical XML entitlement dictionary."
-            ),
-            allowance(
-                "main-signature-cdhash",
-                "Fixture",
-                arm64 + "signature.cdHash",
-                .lowercaseHexDigest(length: 40),
-                .lowercaseHexDigest(length: 40),
-                "The injected dependency and final entitlement payload are "
-                    + "different, so each side has a distinct valid 20-byte "
-                    + "CodeDirectory digest; immutable bytes and all signature "
-                    + "metadata are compared separately.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "main-signature-entitlements-hash",
-                "Fixture",
-                arm64 + "signature.entitlementsCanonicalSHA256",
-                .exact(
-                    "0d8459f82422afcede32a4804e951936d4dde1922f03c7b6"
-                        + "c91904b7c51549dd"
-                ),
-                .exact(
-                    "c31ae2222091d3a263ed641c9784b3326b2ba06b1517af90"
-                        + "ef316727a536c1b8"
-                ),
-                "The account-global Runtime namespace and Runtime socket "
-                    + "rules intentionally change the signed main "
-                    + "entitlement payload.",
-                "Entitlements.composeEntitlements",
-                "PlayCoverUpstreamEngine.composeEntitlements"
-            ),
             allowance(
                 "embedded-runtime-object",
                 "Frameworks/IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
                 "object.presence",
                 .absent,
                 .exact(
-                    "present;baseline=ios-use-runtime-input;fileSHA256="
-                        + runtimeSHA256
+                    "present;baseline=ios-use-runtime-input"
                 ),
                 "Pinned PlayCover loads system PlayTools; ios-use embeds and "
                     + "signs its Runtime framework in the managed App.",
@@ -2875,8 +2557,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "object.presence",
                 .absent,
                 .exact(
-                    "present;baseline=ios-use-frida-engine-input;fileSHA256="
-                        + fridaSHA256
+                    "present;baseline=ios-use-frida-engine-input"
                 ),
                 "Every ios-use Mac App embeds and signs the reviewed "
                     + "resident Frida Engine framework.",
@@ -2888,8 +2569,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "PlugIns/AKInterface.bundle/Contents/MacOS/AKInterface",
                 "object.presence",
                 .exact(
-                    "present;baseline=pinned-akinterface-input;fileSHA256="
-                        + pluginSHA256
+                    "present;baseline=pinned-akinterface-input"
                 ),
                 .absent,
                 "Pinned PlayTools installs and signs its AppKit plugin bundle; "

@@ -2304,6 +2304,56 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
 
 @implementation IOSUsePlayAppKitBridge
 
++ (void)installTerminationShortcut {
+    // Keep the standard desktop quit shortcut ahead of App-owned UIKit key
+    // commands. Other modifier combinations retain their normal handling.
+    static id monitor;
+    if (monitor != nil) {
+        return;
+    }
+    Class eventClass = NSClassFromString(@"NSEvent");
+    SEL selector = NSSelectorFromString(
+        @"addLocalMonitorForEventsMatchingMask:handler:"
+    );
+    if (![(id)eventClass respondsToSelector:selector]) {
+        return;
+    }
+    monitor = ((IOSUseBridgeSendIDUnsignedIntegerID)objc_msgSend)(
+        (id)eventClass, selector, (NSUInteger)1 << 10, ^id(id event) {
+            NSUInteger modifiers = (NSUInteger)IOSUseBridgeInteger(
+                event, @"modifierFlags"
+            );
+            NSString *characters = ((IOSUseBridgeSendID)objc_msgSend)(
+                event, NSSelectorFromString(@"charactersIgnoringModifiers")
+            );
+            // Shift, Control, Option, Command; ignore Caps Lock and Fn.
+            if ((modifiers & 0x1e0000) == 0x100000 &&
+                [characters.lowercaseString isEqualToString:@"q"]) {
+                [self terminateApplication];
+                return nil;
+            }
+            return event;
+        }
+    );
+}
+
++ (void)terminateApplication {
+    dispatch_block_t terminate = ^{
+        id application = IOSUseBridgeApplication();
+        SEL selector = NSSelectorFromString(@"terminate:");
+        if ([application respondsToSelector:selector]) {
+            ((IOSUseBridgeSendIDArgument)objc_msgSend)(
+                application, selector, nil
+            );
+        }
+    };
+    if (NSThread.isMainThread) {
+        terminate();
+    } else {
+        dispatch_async(dispatch_get_main_queue(), terminate);
+    }
+}
+
 + (void)captureSceneBackingLaunchEnvironment {
     const char *value = getenv("IOS_USE_PLAY_ENABLE_3X_BACKING");
     IOSUsePlayRequest3XBacking =
@@ -2378,6 +2428,7 @@ static CGSize IOSUsePlayObservedCanvas;
             @"UIKit/AppKit window bridge is unavailable";
         return NO;
     }
+    [self installTerminationShortcut];
     IOSUseBridgeSceneGeometryState sceneGeometryState =
         IOSUseBridgeLockSceneToFixedCanvas(uiWindow);
     if (sceneGeometryState != IOSUseBridgeSceneGeometryStateReady) {
