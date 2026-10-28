@@ -4,12 +4,10 @@ import PlayCoverUpstream
 public struct PlayCoverSignatureEvidence: Codable, Equatable, Sendable {
     public let isSigned: Bool
     public let entitlementsPlist: Data?
-    public let entitlementsSHA256: String?
 
     init(_ upstream: PlayCoverUpstreamSignature) {
         isSigned = upstream.isSigned
         entitlementsPlist = upstream.entitlementsPlist
-        entitlementsSHA256 = upstream.entitlementsSHA256
     }
 }
 

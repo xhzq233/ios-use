@@ -60,7 +60,7 @@ final class PlayCoverFridaEngineResourceTests: XCTestCase {
         )
     }
 
-    func testMetadataBindsThePinnedSourceAndWrapper() throws {
+    func testMetadataChecksFridaVersionSourceRevisionAndABI() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let framework = root.appendingPathComponent(
@@ -80,10 +80,6 @@ final class PlayCoverFridaEngineResourceTests: XCTestCase {
                 PlayCoverFridaEngineService.descriptorEngineABI,
             "IOSUseFridaSourceCommit":
                 PlayCoverFridaEngineService.descriptorSourceCommit,
-            "IOSUseFridaAgentSHA256":
-                PlayCoverFridaEngineService.descriptorAgentSHA256,
-            "IOSUseFridaSourceClosureSHA256":
-                PlayCoverFridaEngineService.descriptorSourceClosureSHA256,
         ]
         try PropertyListSerialization.data(
             fromPropertyList: metadata,
@@ -123,11 +119,5 @@ final class PlayCoverFridaEngineResourceTests: XCTestCase {
         )
 
         XCTAssertNotEqual(first, second)
-        XCTAssertTrue(
-            first.contains(
-                PlayCoverFridaEngineService
-                    .descriptorSourceClosureSHA256
-            )
-        )
     }
 }

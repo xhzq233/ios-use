@@ -3,7 +3,13 @@ import Foundation
 import XCTest
 
 final class PlayCoverSessionTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        PlayCoverSessionMonitor.startOverrideForTesting = { _, _ in }
+    }
+
     override func tearDown() {
+        PlayCoverSessionMonitor.startOverrideForTesting = nil
         PlayCoverService.signingIdentityResolverOverrideForTesting = nil
         PlayCoverSessionService.launchOverrideForTesting = nil
         PlayCoverSessionService.terminateOverrideForTesting = nil
@@ -481,6 +487,143 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertTrue(signals.isEmpty)
     }
 
+    func testExitCleanupRemovesOnlyTheExitedSession() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        configureNoRunningBundle()
+        try FileManager.default.createDirectory(
+            atPath: fixture.paths.playcoverPlayChain,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let info = sessionInfo(fixture: fixture, pid: 999)
+        try SessionService.writeDriverLock(info: info, paths: fixture.paths)
+
+        try SessionOperationLock.withExclusiveLock(paths: fixture.paths) {
+            try PlayCoverSessionMonitor.cleanupExitedSession(info, paths: fixture.paths)
+        }
+
+        XCTAssertNil(try SessionService.readDriverLockInfo(paths: fixture.paths))
+    }
+
+    func testDelayedExitPreservesReplacementSessionEvenWithTheSamePID() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let old = sessionInfo(fixture: fixture, pid: 999)
+        let replacement = sessionInfo(fixture: fixture, pid: 999)
+        try SessionService.writeDriverLock(info: replacement, paths: fixture.paths)
+
+        try SessionOperationLock.withExclusiveLock(paths: fixture.paths) {
+            try PlayCoverSessionMonitor.cleanupExitedSession(old, paths: fixture.paths)
+        }
+
+        XCTAssertEqual(try SessionService.readDriverLockInfo(paths: fixture.paths), replacement)
+    }
+
+    func testExitCleanupLeavesAnotherHomesRunningBundleUnlocked() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let info = sessionInfo(fixture: fixture, pid: 999)
+        try SessionService.writeDriverLock(info: info, paths: fixture.paths)
+        PlayCoverBundleStartLock.runningBundlePIDsOverrideForTesting = { _ in [1000] }
+        // No PlayChain directory exists. Attempting to relock it would fail.
+        try SessionOperationLock.withExclusiveLock(paths: fixture.paths) {
+            try PlayCoverSessionMonitor.cleanupExitedSession(info, paths: fixture.paths)
+        }
+        XCTAssertNil(try SessionService.readDriverLockInfo(paths: fixture.paths))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.paths.playcoverPlayChain))
+    }
+
+    func testStartReclaimsAnExitedMacSession() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        configureNoRunningBundle()
+        try FileManager.default.createDirectory(
+            atPath: fixture.paths.playcoverPlayChain,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let old = sessionInfo(fixture: fixture, pid: 999)
+        try SessionService.writeDriverLock(info: old, paths: fixture.paths)
+        PlayCoverSessionService.processStateOverrideForTesting = { _ in .missing }
+        PlayCoverSessionService.resolveSlotOverrideForTesting = { _, _, _ in
+            (fixture.slot, true)
+        }
+        PlayCoverSessionService.launchOverrideForTesting = launchResult
+
+        _ = try SessionService.startPlayCoverAfterPreflight(
+            appPath: fixture.sourceApp.path, signingIdentity: signingIdentity(),
+            timeout: 1, paths: fixture.paths
+        )
+
+        let replacement = try XCTUnwrap(SessionService.readDriverLockInfo(paths: fixture.paths))
+        XCTAssertNotEqual(replacement.sessionIdentifier, old.sessionIdentifier)
+        XCTAssertEqual(replacement.runnerPid, 111)
+    }
+
+    func testStartPreservesAnUnverifiableMacSession() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let old = sessionInfo(fixture: fixture, pid: 999)
+        try SessionService.writeDriverLock(info: old, paths: fixture.paths)
+        PlayCoverSessionService.processStateOverrideForTesting = { _ in .unverifiable(errno: EPERM) }
+
+        XCTAssertThrowsError(try SessionService.startPlayCoverAfterPreflight(
+            appPath: fixture.sourceApp.path, signingIdentity: signingIdentity(),
+            timeout: 1, paths: fixture.paths
+        ))
+        XCTAssertEqual(try SessionService.readDriverLockInfo(paths: fixture.paths), old)
+    }
+
+    func testMacTargetSelectionReclaimsAnExitedSession() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        configureNoRunningBundle()
+        try FileManager.default.createDirectory(
+            atPath: fixture.paths.playcoverPlayChain,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let paths = try fixture.paths.deviceContext("mac")
+        let old = sessionInfo(fixture: fixture, pid: 999)
+        try SessionService.writeDriverLock(info: old, paths: paths)
+        PlayCoverSessionService.processStateOverrideForTesting = { _ in .missing }
+
+        try DeviceContextStore.requireInactive(deviceID: "mac", paths: fixture.paths)
+
+        XCTAssertNil(try SessionService.readDriverLockInfo(paths: paths))
+    }
+
+    func testMonitorFailureRollsBackTheLaunchedSession() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        configureNoRunningBundle()
+        try FileManager.default.createDirectory(
+            atPath: fixture.paths.playcoverPlayChain,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        PlayCoverSessionService.resolveSlotOverrideForTesting = { _, _, _ in
+            (fixture.slot, false)
+        }
+        PlayCoverSessionService.launchOverrideForTesting = launchResult
+        PlayCoverSessionMonitor.startOverrideForTesting = { _, _ in
+            throw CLIParseError.invalidValue("monitor unavailable")
+        }
+        var terminated = false
+        PlayCoverSessionService.terminateOverrideForTesting = { _ in
+            terminated = true
+            return 111
+        }
+
+        XCTAssertThrowsError(try SessionService.startPlayCoverAfterPreflight(
+            appPath: fixture.sourceApp.path, signingIdentity: signingIdentity(),
+            timeout: 1, paths: fixture.paths
+        ))
+        XCTAssertTrue(terminated)
+        XCTAssertNil(try SessionService.readDriverLockInfo(paths: fixture.paths))
+    }
+
     private let launchResult: PlayCoverSessionService.LaunchOverride = {
         slot,
         sessionID,
@@ -532,6 +675,11 @@ final class PlayCoverSessionTests: XCTestCase {
                 root.appendingPathComponent("sockets").path
         )
         let bundleIdentifier = "com.example.demo"
+        try FileManager.default.createDirectory(
+            atPath: paths.playcoverRun,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
         let installRevision = String(repeating: "a", count: 64)
         let sourceApp = root.appendingPathComponent("Source.app")
         try writeInfoPlist(bundleIdentifier, app: sourceApp)

@@ -188,9 +188,26 @@ enum DeviceContextStore {
         deviceID: String,
         paths: IOSUsePaths
     ) throws {
-        if sessions(paths: paths).contains(where: {
+        for context in sessions(paths: paths).filter({
             $0.deviceID == deviceID
         }) {
+            #if os(macOS)
+            if deviceID == macDeviceID {
+                let reclaimed = try SessionOperationLock.withExclusiveLock(paths: context.paths) {
+                    guard let current = try DriverSessionStore.readInfo(paths: context.paths) else {
+                        return true
+                    }
+                    guard current.deviceType == macDeviceID,
+                          let pid = current.runnerPid.flatMap(Int32.init(exactly:)),
+                          case .missing = PlayCoverSessionService.processState(pid) else {
+                        return false
+                    }
+                    try PlayCoverSessionMonitor.cleanupExitedSession(current, paths: context.paths)
+                    return true
+                }
+                if reclaimed { continue }
+            }
+            #endif
             throw CLIParseError.invalidValue(
                 "Driver already started for Device \(deviceID)."
             )

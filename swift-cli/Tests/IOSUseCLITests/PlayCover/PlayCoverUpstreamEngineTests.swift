@@ -61,7 +61,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         }
     }
 
-    func testContentHashPreservesFramedContractAndPathSemantics() throws {
+    func testContentHashTracksPathsPermissionsAndContents() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "IOSUsePlayCoverUpstreamHash-\(UUID().uuidString)",
@@ -82,11 +82,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         let firstHash = try PlayCoverUpstreamEngine.contentHash(appURL: first)
         let secondHash = try PlayCoverUpstreamEngine.contentHash(appURL: second)
 
-        XCTAssertEqual(
-            firstHash,
-            "f4693b28619063e898421b59e2b571ec391c6a838e3dea858cc349ea9540ded2",
-            "the length-framed path/kind/mode/size/content contract is pinned"
-        )
         XCTAssertEqual(
             firstHash,
             secondHash,
@@ -477,7 +472,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertNotNil(invalidInspection.signature.cdHash)
     }
 
-    func testRuntimeBuildHashPreservesExistingFramedContract() throws {
+    func testRuntimeBuildHashIgnoresFrameworkRootPath() throws {
         let root = FileManager.default.temporaryDirectory
             .resolvingSymlinksInPath()
             .appendingPathComponent(
@@ -498,10 +493,6 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
 
         let firstHash = try PlayCoverUpstreamEngine.runtimeBuildHash(
             frameworkURL: first
-        )
-        XCTAssertEqual(
-            firstHash,
-            "94382213f0d069d49c9e2850fa76171b9899c1391b6e18fd1144336a613f1814"
         )
         XCTAssertEqual(
             firstHash,

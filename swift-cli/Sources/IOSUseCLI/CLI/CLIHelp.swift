@@ -187,6 +187,8 @@ enum CLIHelp {
             into its account-global Bundle slot, or directly launches the
             current slot. The current IOS_USE_HOME stores only its selected
             Bundle ID and session state.
+            Command+Q normally quits the Mac App. App exit (including crashes
+            and force quit) automatically clears its Driver session.
             Use --app after a source rebuild; ios-use reuses an unchanged
             installed slot automatically. Omit --app to launch this Home's
             current installed App.

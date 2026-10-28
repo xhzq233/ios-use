@@ -83,7 +83,7 @@ the compositor probe.
 | --- | --- | --- |
 | `init`, `screenCount`, `mousePoint`, `windowFrame`, `mainScreenFrame`, `isMainScreenEqualToFirst`, `isFullscreen`, `setMenuBarVisible` | Delegated to `IOSUsePlayAppKitBridge`. | The bridge presents an opaque, rectangular, resizable system-title-bar host while preserving a fixed 430 × 932 inner canvas and reports both host and canvas observations. Runtime build plus CGSHW compositor smoke is the executable differential gate. |
 | `hideCursor`, `hideCursorMove`, `warpCursor`, `unhideCursor` | Explicit no-op. | Cursor capture/warping belongs to PlayCover's interactive desktop GUI and would alter the user's host pointer. ios-use injects touch through the retained `Toucher`/`PTFakeMetaTouch` path instead. |
-| `terminateApplication` | Explicit no-op. | Lifecycle is host-owned by `ios-use stop`; an in-process GUI callback must not terminate an arbitrary app. |
+| `terminateApplication` | Delegated to `IOSUsePlayAppKitBridge`. | Requests normal AppKit termination of this App on the main thread. The bridge reserves plain Command+Q before App-owned UIKit key commands; the host exit monitor cleans up its exact session, including after crashes and force quit. |
 | `setupKeyboard`, `setupMouseMoved`, `setupMouseButton`, `setupScrollWheel` | Explicit no-op after accepting the protocol callbacks. | Upstream uses local AppKit monitors for keymapping/editor interaction. ios-use has no GUI keymap/editor and routes supported automation through Runtime UDS and the touch backend. |
 | `urlForApplicationWithBundleIdentifier` | Returns `nil`. | The GUI app-library lookup is outside the single-target session contract; `start` is the only lifecycle entry point. |
 

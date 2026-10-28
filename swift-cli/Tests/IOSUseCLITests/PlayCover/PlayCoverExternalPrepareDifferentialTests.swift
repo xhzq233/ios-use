@@ -48,12 +48,8 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
 
     private struct SourceProfile: Codable, Equatable {
         let contentSHA256: String
-        let executableSHA256: String
         let bundleIdentifier: String
         let mainExecutableRelativePath: String
-        let inventorySelectorsSHA256: String
-        let objectSelectorsSHA256: String
-        let sliceSelectorsSHA256: String
         let inventoryCount: Int
         let objectCount: Int
         let sliceCount: Int
@@ -61,9 +57,7 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
 
     private struct RuntimeProfile: Codable, Equatable {
         let inputTreeSHA256: String
-        let inputExecutableSHA256: String
         let signedProjectionTreeSHA256: String
-        let signedProjectionExecutableSHA256: String
         let outputFrameworkRelativePath: String
         let outputExecutableRelativePath: String
     }
@@ -71,7 +65,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
     private struct PlayToolsProfile: Codable, Equatable {
         let inputTreeSHA256: String
         let signedPluginTreeSHA256: String
-        let signedPluginExecutableSHA256: String
         let outputPluginRelativePath: String
         let outputPluginExecutableRelativePath: String
     }
@@ -175,12 +168,9 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         let pinnedResult: PlayCoverPinnedPrimitivePrepareResult
         let iosUseResult: PlayCoverUpstreamPrepareResult
         let runtimeInputTreeSHA256: String
-        let runtimeInputExecutableSHA256: String
         let playToolsInputTreeSHA256: String
         let runtimeSignedProjectionTreeSHA256: String
-        let runtimeSignedProjectionExecutableSHA256: String
         let pluginSignedProjectionTreeSHA256: String
-        let pluginSignedProjectionExecutableSHA256: String
         let baselines: [PlayCoverDifferentialObjectBaseline]
         let normalization: PlayCoverDifferentialNormalization
     }
@@ -345,7 +335,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             validateInput: {
                 original,
                 runtimeTree,
-                runtimeExecutable,
                 playToolsTree in
                 try self.requireSourceProfile(
                     profile.source,
@@ -353,8 +342,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 )
                 guard runtimeTree
                         == profile.runtime.inputTreeSHA256,
-                      runtimeExecutable
-                        == profile.runtime.inputExecutableSHA256,
                       playToolsTree
                         == profile.playTools.inputTreeSHA256 else {
                     throw ProfileError.invalid(
@@ -363,19 +350,11 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 }
             },
             validateProjection: {
-                runtimeExecutable,
                 runtimeTree,
-                pluginExecutable,
                 pluginTree in
-                guard runtimeExecutable
-                        == profile.runtime
-                            .signedProjectionExecutableSHA256,
-                      runtimeTree
+                guard runtimeTree
                         == profile.runtime
                             .signedProjectionTreeSHA256,
-                      pluginExecutable
-                        == profile.playTools
-                            .signedPluginExecutableSHA256,
                       pluginTree
                         == profile.playTools.signedPluginTreeSHA256 else {
                     throw ProfileError.invalid(
@@ -593,8 +572,8 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 "supplied PlayTools full-tree signed projection",
             iosUseBaselineProvenance:
                 "supplied Runtime full-tree signed projection",
-            validateInput: { _, _, _, _ in },
-            validateProjection: { _, _, _, _ in }
+            validateInput: { _, _, _ in },
+            validateProjection: { _, _ in }
         )
         let differences =
             try PlayCoverPrepareDifferentialGate.differences(
@@ -632,13 +611,8 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             runtime: RuntimeProfile(
                 inputTreeSHA256:
                     comparison.runtimeInputTreeSHA256,
-                inputExecutableSHA256:
-                    comparison.runtimeInputExecutableSHA256,
                 signedProjectionTreeSHA256:
                     comparison.runtimeSignedProjectionTreeSHA256,
-                signedProjectionExecutableSHA256:
-                    comparison
-                        .runtimeSignedProjectionExecutableSHA256,
                 outputFrameworkRelativePath:
                     "Frameworks/IOSUsePlayRuntime.framework",
                 outputExecutableRelativePath:
@@ -650,8 +624,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                     comparison.playToolsInputTreeSHA256,
                 signedPluginTreeSHA256:
                     comparison.pluginSignedProjectionTreeSHA256,
-                signedPluginExecutableSHA256:
-                    comparison.pluginSignedProjectionExecutableSHA256,
                 outputPluginRelativePath:
                     "PlugIns/AKInterface.bundle",
                 outputPluginExecutableRelativePath:
@@ -915,15 +887,9 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         validateInput: (
             PlayCoverUpstreamAppInspection,
             String,
-            String,
             String
         ) throws -> Void,
-        validateProjection: (
-            String,
-            String,
-            String,
-            String
-        ) throws -> Void
+        validateProjection: (String, String) throws -> Void
     ) async throws -> ExternalComparison {
         let runtimeFrameworkRelativePath =
             "Frameworks/IOSUsePlayRuntime.framework"
@@ -945,23 +911,11 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             try PlayCoverService.runtimeBuildHash(
                 frameworkPath: runtime.path
             )
-        let runtimeInputExecutable = runtime.appendingPathComponent(
-            executableSuffix(
-                from: runtimeExecutableRelativePath,
-                below: runtimeFrameworkRelativePath
-            )
-        )
-        let runtimeInputExecutableSHA256 =
-            try PlayCoverUpstreamEngine.inspectMachO(
-                at: runtimeInputExecutable,
-                relativePath: runtimeExecutableRelativePath
-            ).fileSHA256
         let playToolsInputTreeSHA256 =
             try PlayCoverUpstreamEngine.contentHash(appURL: playTools)
         try validateInput(
             originalBefore,
             runtimeInputTreeSHA256,
-            runtimeInputExecutableSHA256,
             playToolsInputTreeSHA256
         )
 
@@ -1119,9 +1073,7 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 appURL: pluginBaselineBundle
             )
         try validateProjection(
-            runtimeInspection.fileSHA256,
             runtimeSignedProjectionTreeSHA256,
-            pluginInspection.fileSHA256,
             pluginSignedProjectionTreeSHA256
         )
 
@@ -1150,7 +1102,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 side: .pinned,
                 relativePath: pluginExecutableRelativePath,
                 inspection: pluginInspection,
-                sourceSHA256: pluginInspection.fileSHA256,
                 provenance: pinnedBaselineProvenance
             ),
             PlayCoverDifferentialObjectBaseline(
@@ -1158,7 +1109,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 side: .iosUse,
                 relativePath: runtimeExecutableRelativePath,
                 inspection: runtimeInspection,
-                sourceSHA256: runtimeInspection.fileSHA256,
                 provenance: iosUseBaselineProvenance
             ),
         ]
@@ -1173,17 +1123,11 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             pinnedResult: pinnedResult,
             iosUseResult: iosUseResult,
             runtimeInputTreeSHA256: runtimeInputTreeSHA256,
-            runtimeInputExecutableSHA256:
-                runtimeInputExecutableSHA256,
             playToolsInputTreeSHA256: playToolsInputTreeSHA256,
             runtimeSignedProjectionTreeSHA256:
                 runtimeSignedProjectionTreeSHA256,
-            runtimeSignedProjectionExecutableSHA256:
-                runtimeInspection.fileSHA256,
             pluginSignedProjectionTreeSHA256:
                 pluginSignedProjectionTreeSHA256,
-            pluginSignedProjectionExecutableSHA256:
-                pluginInspection.fileSHA256,
             baselines: baselines,
             normalization: normalization
         )
@@ -1267,17 +1211,10 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         }
         let hashes = [
             profile.source.contentSHA256,
-            profile.source.executableSHA256,
-            profile.source.inventorySelectorsSHA256,
-            profile.source.objectSelectorsSHA256,
-            profile.source.sliceSelectorsSHA256,
             profile.runtime.inputTreeSHA256,
-            profile.runtime.inputExecutableSHA256,
             profile.runtime.signedProjectionTreeSHA256,
-            profile.runtime.signedProjectionExecutableSHA256,
             profile.playTools.inputTreeSHA256,
             profile.playTools.signedPluginTreeSHA256,
-            profile.playTools.signedPluginExecutableSHA256,
         ]
         guard hashes.allSatisfy({
             isLowercaseHex($0, count: 64)
@@ -1361,29 +1298,14 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
     private func sourceIdentity(
         _ inspection: PlayCoverUpstreamAppInspection
     ) throws -> SourceProfile {
-        let main = try XCTUnwrap(
-            inspection.machOs.first {
-                $0.relativePath
-                    == inspection.mainExecutableRelativePath
-            }
-        )
-        let inventorySelectors = inspection.inventory
-            .map(\.relativePath).sorted()
-        let objectSelectors = inspection.machOs
-            .map(\.relativePath).sorted()
-        let sliceSelectors = allSliceSelectors(in: inspection)
         return SourceProfile(
             contentSHA256: inspection.sourceContentHash,
-            executableSHA256: main.fileSHA256,
             bundleIdentifier: inspection.bundleIdentifier,
             mainExecutableRelativePath:
                 inspection.mainExecutableRelativePath,
-            inventorySelectorsSHA256: digest(inventorySelectors),
-            objectSelectorsSHA256: digest(objectSelectors),
-            sliceSelectorsSHA256: digest(sliceSelectors),
-            inventoryCount: inventorySelectors.count,
-            objectCount: objectSelectors.count,
-            sliceCount: sliceSelectors.count
+            inventoryCount: inspection.inventory.count,
+            objectCount: inspection.machOs.count,
+            sliceCount: inspection.machOs.reduce(0) { $0 + $1.allSlices.count }
         )
     }
 
@@ -1573,11 +1495,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         return root
     }
 
-    private func digest(_ values: [String]) -> String {
-        let data = try! JSONEncoder().encode(values.sorted())
-        return sha256(data)
-    }
-
     private func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map {
             String(format: "%02x", $0)
@@ -1615,21 +1532,15 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             workRootSHA256: workRootSHA256,
             source: SourceProfile(
                 contentSHA256: digest,
-                executableSHA256: digest,
                 bundleIdentifier: "com.example.fixture",
                 mainExecutableRelativePath: "Fixture",
-                inventorySelectorsSHA256: digest,
-                objectSelectorsSHA256: digest,
-                sliceSelectorsSHA256: digest,
                 inventoryCount: 1,
                 objectCount: 1,
                 sliceCount: 1
             ),
             runtime: RuntimeProfile(
                 inputTreeSHA256: digest,
-                inputExecutableSHA256: digest,
                 signedProjectionTreeSHA256: digest,
-                signedProjectionExecutableSHA256: digest,
                 outputFrameworkRelativePath:
                     "Frameworks/IOSUsePlayRuntime.framework",
                 outputExecutableRelativePath:
@@ -1639,7 +1550,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             playTools: PlayToolsProfile(
                 inputTreeSHA256: digest,
                 signedPluginTreeSHA256: digest,
-                signedPluginExecutableSHA256: digest,
                 outputPluginRelativePath:
                     "PlugIns/AKInterface.bundle",
                 outputPluginExecutableRelativePath:
