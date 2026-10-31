@@ -529,6 +529,15 @@ Simulator and Driver builds require full Xcode, Swift and `xcodegen`.
 Linux CLI builds require Swift 6.2+ and do not need Xcode.
 Proxy capture requires `mitmproxy`.
 
+## Feedback
+
+[Report a problem or suggestion](https://github.com/xhzq233/ios-use/issues/new/choose),
+even if you cannot reproduce it or no longer have the environment. Describe what
+you tried and what happened; versions and redacted error excerpts help when
+available. Do not upload credentials, private App data or unredacted logs.
+The Skill also proactively reports suspected ios-use defects with available,
+sanitized evidence and links the issue back to you.
+
 ## Development
 
 ```bash
