@@ -59,6 +59,13 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
 - If an action fails, read its error and suggested matches before retrying.
   Use `dom` to inspect the current page. On a real device or Simulator,
   `dom` also rechecks which App is in the foreground.
+- When a crash, hang, incorrect result or broken documented workflow suggests
+  an ios-use defect, proactively [report it upstream](references/report.md):
+  search for an existing issue, then submit a redacted report or add new evidence
+  to the matching issue. Do not wait for the user to request an issue or require
+  them to reproduce the environment. Report available evidence and mark unknowns;
+  respect a user's instruction not to report. Routine target misses or expected
+  setup errors alone do not need issues.
 - Keep page-dependent actions sequential. Batch known steps with `&&` so failure
   stops later mutations; inspect intermediate UI when the next step is not known.
   Parallelize only independent Devices or independent read-only observations.
@@ -75,7 +82,7 @@ Read only the reference needed for the task:
 - App lifecycle, rotation, screenshots or animation evidence: [App actions and evidence](references/apps-and-evidence.md).
 - HTTP/HTTPS capture: [Proxy](references/proxy.md).
 - Frida or native dylib patches: [Frida debug](references/frida-debug.md).
-- Create/update a GitHub issue: [Report](references/report.md).
+- Suspected ios-use defect or explicit feedback request: [Report](references/report.md).
 
 ## Install or update
 

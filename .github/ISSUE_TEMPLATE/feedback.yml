@@ -1,0 +1,27 @@
+name: Problem or suggestion / 问题与建议
+description: Share what happened; a reproducible environment is not required. 无需先复现或补齐环境。
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tell us what you observed, even if it happened only once or the environment is no longer available.
+        不必先复现，也不必重新搭建环境。我们会根据已有线索继续排查。
+        This is public: omit credentials, device identifiers, private App data and unredacted logs.
+        这是公开反馈，请勿上传账号、密钥、设备标识、私有 App 数据或未脱敏日志。
+  - type: textarea
+    id: observation
+    attributes:
+      label: What happened or what would you like? / 问题或建议
+      description: What did you try, what happened, and what did you expect? Describe what you know.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment, if known / 环境（可选）
+      description: ios-use version, host OS version, and target (iPhone, Simulator, or Mac). Unknown is fine.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Available evidence / 已有线索（可选）
+      description: Redacted command/error, relevant log excerpt, frequency, or steps already tried. No need to rerun.
