@@ -86,6 +86,7 @@ static NSString *const IOSUseAutomationDeferredFinalizeKey =
 @end
 
 static UIResponder *IOSUseAutomationCurrentFirstResponder(void);
+static UIAlertController *IOSUseAutomationVisibleAlertController(void);
 static BOOL IOSUseAutomationDOMHasVisibleUIKitAlertMirror(
     NSDictionary<NSString *, id> *dom
 );
@@ -3707,6 +3708,28 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
     }
     NSInteger requestedDeleteCount = [deleteValue integerValue];
     BOOL enter = [enterValue boolValue];
+    id replaceValue = arguments[@"replace"];
+    if (replaceValue != nil &&
+        (![replaceValue isKindOfClass:NSNumber.class] ||
+         CFGetTypeID((__bridge CFTypeRef)replaceValue) != CFBooleanGetTypeID())) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"invalid_arguments", @"input replace must be a boolean",
+                @"validation", @"validation", NO, arguments[@"target"], @[]
+            );
+        }
+        return nil;
+    }
+    BOOL replace = [replaceValue boolValue];
+    if (replace && requestedDeleteCount != 0) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"invalid_arguments", @"input replace and deleteCount are mutually exclusive",
+                @"validation", @"validation", NO, arguments[@"target"], @[]
+            );
+        }
+        return nil;
+    }
     IOSUseAutomationCandidate *candidate = nil;
     BOOL webTarget = NO;
     BOOL webNativeResponderActivated = NO;
@@ -3716,13 +3739,17 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
     unsigned long long generation = 0;
     NSDictionary *target = arguments[@"target"];
     NSDictionary<NSString *, id> *snapshotError = nil;
-    NSDictionary<NSString *, id> *preDOM =
-        IOSUseAutomationFreshDOM(&snapshotError);
-    if (preDOM == nil) {
-        if (commandError != NULL) {
-            *commandError = snapshotError;
+    // A focused input needs no element lookup. Preserve native-alert blocking
+    // without traversing every accessibility element before each text edit.
+    NSDictionary<NSString *, id> *preDOM = nil;
+    if (target != nil || IOSUseAutomationVisibleAlertController() != nil) {
+        preDOM = IOSUseAutomationFreshDOM(&snapshotError);
+        if (preDOM == nil) {
+            if (commandError != NULL) {
+                *commandError = snapshotError;
+            }
+            return nil;
         }
-        return nil;
     }
     if (IOSUseAutomationUnsupportedTouchBlockedByNativeAlert(
             preDOM,
@@ -3956,6 +3983,17 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
     }
     BOOL supportedWebInput =
         IOSUseAutomationIsSupportedWebInputResponder(firstResponder);
+    if (replace && supportedWebInput) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationUnsupportedInputError(
+                @"web_replace_unsupported",
+                @"input --replace supports native text fields, not Web inputs",
+                target,
+                firstResponder
+            );
+        }
+        return nil;
+    }
     if (![firstResponder isKindOfClass:UITextField.class] &&
         ![firstResponder isKindOfClass:UITextView.class] &&
         !supportedWebInput) {
@@ -4119,7 +4157,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
     NSInteger appliedDeleteCount = 0;
     NSRange replacementRange = IOSUseAutomationSuffixRange(
         beforeValue,
-        requestedDeleteCount,
+        replace ? NSIntegerMax : requestedDeleteCount,
         &appliedDeleteCount
     );
     NSString *retainedPrefix = [beforeValue
@@ -4326,7 +4364,8 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
             @"requestedDeleteCount": @(requestedDeleteCount),
             @"appliedDeleteCount": @(appliedDeleteCount),
             @"enter": @(enter),
-            @"editMode": requestedDeleteCount > 0
+            @"replace": @(replace),
+            @"editMode": replace || requestedDeleteCount > 0
                 ? @"replace"
                 : @"append",
             @"beforeValue": beforeValue,

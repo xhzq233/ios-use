@@ -613,6 +613,17 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
+    func testInputReplaceAcceptsEmptyContentAndRejectsDeleteInEitherOrder() throws {
+        XCTAssertEqual(
+            try CLIParser.parse(["input", "--tap", "Search", "--replace", "--content", ""]),
+            .driver(.input(tap: "Search", content: "", delete: 0, enter: false,
+                           traits: nil, cindex: nil, postDom: nil, replace: true))
+        )
+        for options in [["--replace", "--delete", "0"], ["--delete", "2", "--replace"]] {
+            XCTAssertThrowsError(try CLIParser.parse(["input", "--content", "x"] + options))
+        }
+    }
+
     func testInputDeleteRejectsValuesOutsideWireRange() {
         XCTAssertThrowsError(
             try CLIParser.parse([

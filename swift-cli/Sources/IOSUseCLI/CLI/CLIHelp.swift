@@ -444,19 +444,20 @@ enum CLIHelp {
             )
         case "input":
             return driverHelp(
-                usage: "ios-use input [--tap <target>] --content <text> [--delete <n>] [--enter] [--traits <traits>] [--cindex <index>] [--dom [duration] | -D [duration]] [--nodiff]",
-                summary: "Insert text at the cursor; existing text is not replaced automatically.",
+                usage: "ios-use input [--tap <target>] --content <text> [--delete <n> | --replace] [--enter] [--traits <traits>] [--cindex <index>] [--dom [duration] | -D [duration]] [--nodiff]",
+                summary: "Insert text, or replace an entire native Mac text field with --replace.",
                 options: [
                     "--tap <target>     Optional label or x,y target to tap before typing",
                     "--content <text>   Text to insert",
                     "--delete <n>       Send n delete characters before content",
+                    "--replace          Replace the complete native Mac text field; empty content clears it",
                     "--enter            Send a trailing newline, which may trigger Enter, Done, Go, or send",
                     "--traits <traits>  Comma-separated trait filter for label tap target",
                     "--cindex <index>   Select the Nth child under a label tap target",
                     postDOMOption,
                     diffDOMOption,
                 ],
-                footer: "--tap coordinates use the foreground App's interface coordinate space.\nOn XCTest targets, moving --tap label targets return a retryable error before touch delivery.\nExample: ios-use input --tap \"搜索\" --content \"蓝牙\" --dom"
+                footer: "--tap coordinates use the foreground App's interface coordinate space.\nOn XCTest targets, moving --tap label targets return a retryable error before touch delivery.\nOn Mac, input uses one native text insertion; omit --tap when the intended field is already focused.\n--replace supports native Mac text fields and text views, excluding secure/custom inputs and Web inputs.\nExample: ios-use input --tap \"搜索\" --replace --content \"蓝牙\""
             )
         case "swipe":
             return driverHelp(

@@ -50,6 +50,12 @@ def main():
     check_value('EC 搜索🧪')
     run('input', '--delete', '2', '--content', '好')
     check_value('EC 搜好')
+    run('input', '--replace', '--content', '替换👨‍👩‍👧‍👦e\u0301')
+    check_value('替换👨‍👩‍👧‍👦e\u0301')
+    run('input', '--replace', '--content', '')
+    check_value('')
+    run('input', '--tap', args.target, '--replace', '--content', 'refocused')
+    check_value('refocused')
     run('tap', 'fixture.search.dismiss')
     dismissed_value = state()['latest']['text']  # UISearchController may clear on dismissal.
     assert not state()['latest']['inputIsFirstResponder'], state()

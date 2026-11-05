@@ -66,12 +66,34 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
   them to reproduce the environment. Report available evidence and mark unknowns;
   respect a user's instruction not to report. Routine target misses or expected
   setup errors alone do not need issues.
-- Keep page-dependent actions sequential. Batch known steps with `&&` so failure
-  stops later mutations; inspect intermediate UI when the next step is not known.
-  Parallelize only independent Devices or independent read-only observations.
+- Keep page-dependent actions sequential. Run a known route in one tool call,
+  using `&&` or a script with `set -euo pipefail` so failures stop later steps.
+  Observe at entry, unknown branches and the final result; omit intermediate
+  `-D`, `dom` and screenshots when the next action is already known. Use
+  `waitFor` at actual loading boundaries, not a fixed sleep after every action.
+  If a step fails, inspect that step and continue from the current page rather
+  than repeating the successful route. Parallelize only independent Devices
+  or independent read-only observations.
 - Save successful reusable routes as small `.sh` scripts in the App project with
   `set -euo pipefail`, stable labels and waits, rather than rediscovering them or
   retaining stale coordinates. A one-off action does not require a saved script.
+
+### Fast text entry
+
+- Send the entire string in one `input --content` call, and combine focus with
+  entry using `--tap`. When the intended field is already focused, omit `--tap`;
+  Mac input then edits the live responder without a full page traversal.
+- On Mac native text fields, replace existing content with
+  `input --tap "<field>" --replace --content "<text>"`. Empty content clears
+  the field. Selection and insertion happen in one native operation; do not
+  read the old value just to issue repeated deletes. `--replace` cannot be
+  combined with `--delete` and does not support XCTest, Web, secure or custom
+  inputs. Keep verification-code/PIN controls on the App's verified workflow.
+- Fill known fields sequentially in one script/tool call and inspect the final
+  values once. Mac native input checks the exact edited value before returning
+  success; this does not prove that the form was saved.
+- Prefer a verified App deep link with `open` for a known destination, then
+  wait for its destination condition; dispatch alone does not prove arrival.
 
 ## Target setup and other workflows
 

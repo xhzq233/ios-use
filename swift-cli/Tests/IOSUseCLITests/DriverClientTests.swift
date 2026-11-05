@@ -5,6 +5,16 @@ import IOSUseProtocol
 @testable import IOSUseCLI
 
 final class DriverClientTests: XCTestCase {
+    func testReplaceTextRejectsXCTestBeforeConnecting() {
+        let client = DriverClient(port: 1)
+        defer { client.close() }
+        XCTAssertThrowsError(try client.replaceText(
+            tap: nil, content: "", enter: false, traits: nil, cindex: nil
+        )) { error in
+            XCTAssertTrue(String(describing: error).contains("Mac backend"))
+        }
+    }
+
     func testClientReusesConnectionWithinInstance() throws {
         let server = try FakeDriverServer(responseCount: 2)
         defer { server.stop() }

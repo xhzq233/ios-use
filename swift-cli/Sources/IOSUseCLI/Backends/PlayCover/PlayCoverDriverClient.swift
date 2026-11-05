@@ -268,6 +268,25 @@ final class PlayCoverDriverClient: DriverCommandClient {
         traits: String?,
         cindex: Int32?
     ) throws -> ForyElementPayload {
+        try performInput(tap: tap, content: content, deleteCount: deleteCount,
+                         enter: enter, traits: traits, cindex: cindex, replace: false)
+    }
+
+    func replaceText(tap: ForyTarget?, content: String, enter: Bool,
+                     traits: String?, cindex: Int32?) throws -> ForyElementPayload {
+        try performInput(tap: tap, content: content, deleteCount: 0,
+                         enter: enter, traits: traits, cindex: cindex, replace: true)
+    }
+
+    private func performInput(
+        tap: ForyTarget?,
+        content: String,
+        deleteCount: Int,
+        enter: Bool,
+        traits: String?,
+        cindex: Int32?,
+        replace: Bool
+    ) throws -> ForyElementPayload {
         guard (0...1_048_576).contains(deleteCount) else {
             throw CLIParseError.invalidValue(
                 "input delete count must be between 0 and 1048576"
@@ -286,7 +305,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
                     },
                     content: content,
                     deleteCount: deleteCount,
-                    enter: enter
+                    enter: enter,
+                    replace: replace
                 )
             )
         ) else {

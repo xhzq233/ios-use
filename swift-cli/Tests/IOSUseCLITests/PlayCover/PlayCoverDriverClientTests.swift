@@ -7,6 +7,31 @@ import XCTest
 @testable import IOSUseCLI
 
 final class PlayCoverDriverClientTests: XCTestCase {
+    func testReplaceTextUsesOneInputRequestAndPreservesTargetAndEmptyContent() throws {
+        var requests: [PlayCoverRuntimeInputArguments] = []
+        let client = PlayCoverDriverClient(session: makeSession()) { command, arguments, _ in
+            guard command == .input, case .input(let args) = arguments else {
+                throw PlayCoverDriverClientError.malformedRuntimePayload("expected input")
+            }
+            requests.append(args)
+            return self.makePayload(capability: command, input: self.makeAction(generation: 15))
+        }
+        _ = try client.replaceText(tap: ForyTarget(label: "Name"), content: "",
+                                   enter: false, traits: "Input", cindex: 1)
+        _ = try client.replaceText(tap: nil, content: "搜索🧪", enter: true,
+                                   traits: nil, cindex: nil)
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests.allSatisfy(\.replace))
+        XCTAssertTrue(requests.allSatisfy { $0.deleteCount == 0 })
+        XCTAssertEqual(requests[0].target?.label, "Name")
+        XCTAssertEqual(requests[0].target?.traits, "Input")
+        XCTAssertEqual(requests[0].target?.cindex, 1)
+        XCTAssertEqual(requests[0].content, "")
+        XCTAssertNil(requests[1].target)
+        XCTAssertEqual(requests[1].content, "搜索🧪")
+        XCTAssertTrue(requests[1].enter)
+    }
+
     func testSwipeDirectionsMapToMacRuntimeWithoutChangingLegacyValues() throws {
         var received: [Int32] = []
         let client = PlayCoverDriverClient(session: makeSession()) { command, arguments, _ in
