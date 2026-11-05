@@ -369,20 +369,37 @@ enum PlayCoverSlotService {
         )
     }
 
-    static func currentInstallRevision(
+    /// Compare the active App's preparation identity with the resources paired
+    /// with this CLI. Reading a session alone must remain possible for stop.
+    static func requireCompatibleRuntime(
+        session: SessionService.Info,
         paths: IOSUsePaths
+    ) throws {
+        guard session.macInstallRevision == (try currentInstallRevision(paths: paths, inspectResources: false)) else {
+            throw PlayCoverBackendError.runtimeUpdateRequired
+        }
+    }
+
+    static func currentInstallRevision(
+        paths: IOSUsePaths,
+        inspectResources: Bool = true
     ) throws -> String {
         if let currentInstallRevisionOverrideForTesting {
             return try currentInstallRevisionOverrideForTesting(paths)
         }
         let runtime = try resolveDefaultRuntime(paths: paths)
-        let engine = try PlayCoverFridaEngineService.ensureAvailable()
+        // Both routes use the same content identity. Full Mach-O/signature
+        // inspection belongs to preparation/start, not every live command.
+        let engineSHA256 = inspectResources
+            ? try PlayCoverFridaEngineService.ensureAvailable().sha256
+            : try PlayCoverFridaEngineService.installedContentSHA256()
         return makeInstallRevision(
             runtimeBuildHash: try PlayCoverService.runtimeBuildHash(
-                frameworkPath: runtime
+                frameworkPath: runtime,
+                inspectMachO: inspectResources
             ),
             prepareRevision: PlayCoverService.fridaPrepareRevision(
-                engineSHA256: engine.sha256
+                engineSHA256: engineSHA256
             ),
             accountNamespacePolicyHash:
                 PlayCoverService.accountNamespacePolicyHash(paths: paths)

@@ -347,9 +347,15 @@ public enum PlayCoverService {
     }
 
     static func runtimeBuildHash(
-        frameworkPath: String
+        frameworkPath: String,
+        inspectMachO: Bool = true
     ) throws -> String {
-        try runtimeEvidence(frameworkPath: frameworkPath).buildHash
+        if inspectMachO {
+            return try runtimeEvidence(frameworkPath: frameworkPath).buildHash
+        }
+        return try PlayCoverUpstreamEngine.runtimeBuildHash(
+            frameworkURL: URL(fileURLWithPath: frameworkPath, isDirectory: true)
+        )
     }
 
     static func accountNamespacePolicyHash(

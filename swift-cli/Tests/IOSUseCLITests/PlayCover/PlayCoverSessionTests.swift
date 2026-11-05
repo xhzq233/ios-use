@@ -21,6 +21,12 @@ final class PlayCoverSessionTests: XCTestCase {
         PlayCoverSessionService.terminationIdentityProbeOverrideForTesting = nil
         PlayCoverSessionService.nowMillisecondsOverrideForTesting = nil
         PlayCoverSlotService.currentInstallRevisionOverrideForTesting = nil
+        IOSUseCLI.playCoverDriverClientFactoryForTesting = nil
+        StatusService.playCoverDiagnosticsForTesting = nil
+        StatusService.macSigningResolutionForTesting = nil
+        StatusService.macRuntimeResolutionForTesting = nil
+        DeviceService.listDevicesOverrideForTesting = nil
+        DeviceService.resetCacheForTesting()
         PlayCoverSlotLauncher.authenticateOverrideForTesting = nil
         PlayCoverSlotLauncher.processStateOverrideForTesting = nil
         PlayCoverSlotLauncher.processStartTimeOverrideForTesting = nil
@@ -31,6 +37,138 @@ final class PlayCoverSessionTests: XCTestCase {
         PlayCoverBundleStartLock.runningBundlePIDsOverrideForTesting = nil
         #endif
         super.tearDown()
+    }
+
+    func testMatchingRuntimeRevisionAllowsCommands() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let info = sessionInfo(fixture: fixture, pid: 123)
+        try SessionService.writeDriverLock(info: info, paths: fixture.paths)
+        PlayCoverSlotService.currentInstallRevisionOverrideForTesting = { _ in fixture.installRevision }
+
+        let session = LockedDriverClientSession(paths: fixture.paths)
+        defer { session.close() }
+        var executed = false
+        try session.run { _ in executed = true }
+        XCTAssertTrue(executed)
+        XCTAssertEqual(try SessionService.requireDriverLock(paths: fixture.paths), info)
+    }
+
+    func testRuntimeMismatchRejectsInputAndDebugBeforeSending() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let info = sessionInfo(fixture: fixture, pid: 123)
+        try SessionService.writeDriverLock(info: info, paths: fixture.paths)
+        PlayCoverSlotService.currentInstallRevisionOverrideForTesting = { _ in String(repeating: "c", count: 64) }
+        PlayCoverSessionService.processStateOverrideForTesting = { _ in .running(executablePath: fixture.slot.executablePath) }
+        var connected = false
+        IOSUseCLI.playCoverDriverClientFactoryForTesting = { info in
+            connected = true
+            return PlayCoverDriverClient(session: info)
+        }
+
+        for command in [
+            ["input", "--replace", "--content", "new"],
+            ["dom"],
+            ["debug", "1 + 1"],
+        ] {
+            let result = IOSUseCLI(pathsForTesting: fixture.paths).run(arguments: command + ["--json"])
+            let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data((result.stdout + result.stderr).utf8)) as? [String: Any])
+            let error = try XCTUnwrap(envelope["error"] as? [String: Any])
+            XCTAssertEqual(result.exitCode, 1, result.stdout)
+            XCTAssertEqual(error["code"] as? String, "mac_runtime_update_required")
+            XCTAssertEqual(error["mutationMayHaveApplied"] as? Bool, false)
+        }
+        XCTAssertFalse(connected)
+        XCTAssertEqual(try SessionService.readDriverLockInfo(paths: fixture.paths), info)
+    }
+
+    func testRuntimeMismatchBlocksLiveConfigurationBeforeSaving() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try SessionService.writeDriverLock(info: sessionInfo(fixture: fixture, pid: 123), paths: fixture.paths)
+        PlayCoverSlotService.currentInstallRevisionOverrideForTesting = { _ in String(repeating: "c", count: 64) }
+        let audio = PlayCoverAudioState(volume: 40, muted: true)
+        try audio.save(paths: fixture.paths)
+        let selection = try PlayCoverDevicePreset.Selection.load(paths: fixture.paths)
+        for command in [
+            ["config", "--mac", "--volume", "20"],
+            ["config", "--mac", "--device-model", "iphone-se"],
+        ] {
+            let result = IOSUseCLI(pathsForTesting: fixture.paths).run(arguments: command + ["--json"])
+            let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data((result.stdout + result.stderr).utf8)) as? [String: Any])
+            XCTAssertEqual((envelope["error"] as? [String: Any])?["code"] as? String, "mac_runtime_update_required")
+            XCTAssertEqual((envelope["error"] as? [String: Any])?["mutationMayHaveApplied"] as? Bool, false)
+        }
+        XCTAssertEqual(try PlayCoverAudioState.load(file: PlayCoverAudioState.file(paths: fixture.paths)), audio)
+        XCTAssertEqual(try PlayCoverDevicePreset.Selection.load(paths: fixture.paths).preset, selection.preset)
+    }
+
+    func testMismatchedRuntimeRemainsVisibleAndStoppable() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let info = sessionInfo(fixture: fixture, pid: 123)
+        try SessionService.writeDriverLock(info: info, paths: fixture.paths)
+        PlayCoverSlotService.currentInstallRevisionOverrideForTesting = { _ in String(repeating: "c", count: 64) }
+        PlayCoverSessionService.processStateOverrideForTesting = { _ in .running(executablePath: fixture.slot.executablePath) }
+        DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
+        StatusService.macRuntimeResolutionForTesting = { _ in "/test/IOSUsePlayRuntime.framework" }
+        StatusService.macSigningResolutionForTesting = { .init(health: .healthy, evidence: nil) }
+        StatusService.playCoverDiagnosticsForTesting = { _ in
+            XCTFail("incompatible Runtime must not receive diagnostics")
+            throw PlayCoverBackendError.runtimeUpdateRequired
+        }
+
+        let snapshot = StatusService.machineSnapshot(paths: fixture.paths)
+        guard case .object(let data) = snapshot.data,
+              case .object(let driver) = data["driver"] else {
+            return XCTFail("missing driver status")
+        }
+        XCTAssertEqual(driver["status"], .string("updateRequired"))
+        XCTAssertEqual(driver["runtimeUpdateRequired"], .boolean(true))
+        XCTAssertFalse(snapshot.warnings.isEmpty)
+        let status = try StatusService.status(paths: fixture.paths)
+        XCTAssertTrue(status.contains("update required"))
+        try FileManager.default.createDirectory(
+            atPath: fixture.paths.playcoverPlayChain,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        var terminated = false
+        PlayCoverSessionService.terminateOverrideForTesting = { session in
+            XCTAssertEqual(session, info)
+            terminated = true
+            return 123
+        }
+        _ = try SessionService.stop(paths: fixture.paths)
+        XCTAssertTrue(terminated)
+        XCTAssertNil(try SessionService.readDriverLockInfo(paths: fixture.paths))
+    }
+
+    func testUnavailableRuntimeResourcesFailBeforeCommandDelivery() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try SessionService.writeDriverLock(info: sessionInfo(fixture: fixture, pid: 123), paths: fixture.paths)
+        PlayCoverSlotService.currentInstallRevisionOverrideForTesting = { _ in throw PlayCoverBackendError.missingRuntime("test") }
+        let session = LockedDriverClientSession(paths: fixture.paths)
+        defer { session.close() }
+        var executed = false
+        XCTAssertThrowsError(try session.run { _ in executed = true }) { error in
+            XCTAssertEqual(error as? PlayCoverBackendError, .missingRuntime("test"))
+        }
+        XCTAssertFalse(executed)
+    }
+
+    func testNonMacSessionDoesNotResolveRuntimeResources() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let info = SessionService.Info(udid: "test-simulator", deviceName: "Test", deviceVersion: "27.1", deviceType: "simulator")
+        try SessionService.writeDriverLock(info: info, paths: fixture.paths)
+        PlayCoverSlotService.currentInstallRevisionOverrideForTesting = { _ in
+            XCTFail("Simulator commands must not inspect Mac resources")
+            throw PlayCoverBackendError.missingRuntime("test")
+        }
+        XCTAssertEqual(try SessionService.requireDriverLock(paths: fixture.paths), info)
     }
 
     func testSameBundleBlockRunsBeforeSlotPrepare() throws {

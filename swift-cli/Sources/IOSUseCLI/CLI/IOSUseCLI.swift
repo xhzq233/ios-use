@@ -941,6 +941,7 @@ public struct IOSUseCLI: Sendable {
         options: ConfigOptions,
         json: Bool
     ) -> CLIResult {
+        var audioApplied = false
         do {
             let hasDeviceChanges = options.macDevice != nil || options.macChrome != nil || options.macWindowMode != nil
             // Validate geometry before changing audio when both are requested.
@@ -949,6 +950,7 @@ public struct IOSUseCLI: Sendable {
             if options.macVolume != nil || options.macMute != nil {
                 let result = try PlayCoverAudioState.configure(
                     PlayCoverAudioChanges(volume: options.macVolume, muted: options.macMute), paths: paths)
+                audioApplied = true
                 audio = result.state
                 if !hasDeviceChanges {
                     return json ? MachineOutput.success(command: "config", data: .object([
@@ -965,6 +967,7 @@ public struct IOSUseCLI: Sendable {
                 if let chrome = options.macChrome { selection.chrome = chrome }
                 if let mode = options.macWindowMode { selection.windowMode = mode }
                 if let context = DeviceContextStore.sessions(paths: paths).first(where: { $0.deviceID == "mac" }) {
+                    try PlayCoverSlotService.requireCompatibleRuntime(session: context.info, paths: context.paths)
                     let client = try PlayCoverDriverClient.runtimeClient(for: context.info, timeoutSeconds: 8)
                     let changes = PlayCoverRuntimeDeviceChanges(preset: options.macDevice == nil ? nil : preset.name,
                         chrome: options.macChrome, windowMode: options.macWindowMode)
@@ -1010,7 +1013,7 @@ public struct IOSUseCLI: Sendable {
                 command: "config",
                 error: error,
                 json: json,
-                mutationMayHaveApplied: true
+                mutationMayHaveApplied: audioApplied || (error as? PlayCoverBackendError != .runtimeUpdateRequired)
             )
         }
     }

@@ -132,6 +132,11 @@ public enum SessionService {
                 "No active driver. Run `ios-use start` first."
             )
         }
+        #if os(macOS)
+        if info.deviceType == PlayCoverSessionService.deviceType {
+            try PlayCoverSlotService.requireCompatibleRuntime(session: info, paths: paths)
+        }
+        #endif
         return info
     }
 
