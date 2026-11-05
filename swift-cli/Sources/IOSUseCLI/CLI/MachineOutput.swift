@@ -536,6 +536,12 @@ enum MachineOutput {
                 phase = "mac_runtime_source"
                 retryable = false
                 fatal = false
+            case .runtimeUpdateRequired:
+                category = IOSUseErrorCategory.session
+                code = "mac_runtime_update_required"
+                phase = "mac_runtime_compatibility"
+                retryable = false
+                fatal = false
             case .prepareFailed:
                 category = IOSUseErrorCategory.internalFailure
                 code = "mac_prepare_failed"

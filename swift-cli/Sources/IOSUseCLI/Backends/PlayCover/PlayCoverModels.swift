@@ -254,6 +254,7 @@ public enum PlayCoverBackendError:
     case codeSigningFailed(String)
     case outputExists(String)
     case missingRuntime(String)
+    case runtimeUpdateRequired
     case prepareFailed(String)
     case verificationFailed(String)
     case cacheTampered(String)
@@ -287,6 +288,10 @@ public enum PlayCoverBackendError:
             return "prepared output already exists: \(path)"
         case .missingRuntime(let path):
             return "IOSUsePlayRuntime.framework is missing or invalid: \(path)"
+        case .runtimeUpdateRequired:
+            return "Mac Runtime update required: the running App does not match this CLI's installed resources. "
+                + "No command was sent. Run `ios-use stop -d mac`, then "
+                + "`ios-use start --mac --app <source.app>` using the original App."
         case .prepareFailed(let message):
             return "Mac prepare failed: \(message)"
         case .verificationFailed(let message):

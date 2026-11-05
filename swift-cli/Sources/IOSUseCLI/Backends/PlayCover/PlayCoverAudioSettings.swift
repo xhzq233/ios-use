@@ -45,6 +45,7 @@ struct PlayCoverAudioState: Codable, Equatable, Sendable {
     }
     static func configure(_ changes: PlayCoverAudioChanges, paths: IOSUsePaths) throws -> (state: Self, live: Bool) {
         if let context = DeviceContextStore.sessions(paths: paths).first(where: { $0.deviceID == "mac" }) {
+            try PlayCoverSlotService.requireCompatibleRuntime(session: context.info, paths: context.paths)
             let client = try PlayCoverDriverClient.runtimeClient(for: context.info, timeoutSeconds: 8)
             guard case .configureAudio(let state) = try client.request(.configureAudio, arguments: .configureAudio(changes)) else {
                 throw CLIParseError.invalidValue("Mac Runtime did not return its audio configuration")

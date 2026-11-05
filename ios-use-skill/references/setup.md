@@ -68,6 +68,12 @@ Starting or stopping `mac` does not replace another Device Context.
 After upgrading ios-use, Apps installed by older versions are not migrated or
 auto-launched: run `start --mac --app` once per bundle ID. ios-use never
 deletes old caches for you; run `ios-use du` to see what you can remove.
+If an existing session reports `Mac Runtime update required`, stop it with
+`ios-use stop -d mac`, then run `ios-use start --mac --app <source.app>` with
+the original App to prepare it using the current resources. UI commands and
+live configuration are blocked until the installed revision matches; `status`
+and `stop` remain available. A CLI version change alone does not require this
+recovery when its Runtime and preparation resources are unchanged.
 
 - Connect real devices over USB and use iOS 17.4 or later.
 - Run `config` on first use, after upgrading ios-use, when `status` reports

@@ -61,6 +61,7 @@ final class IOSUseCLITests: XCTestCase {
         ConfigService.nowProviderForTesting = nil
         StatusService.macSigningResolutionForTesting = nil
         StatusService.macRuntimeResolutionForTesting = nil
+        PlayCoverSlotService.currentInstallRevisionOverrideForTesting = nil
         super.tearDown()
     }
 
@@ -1816,6 +1817,7 @@ final class IOSUseCLITests: XCTestCase {
         )
         let sessionID = "media-session"
         let installRevision = String(repeating: "a", count: 64)
+        PlayCoverSlotService.currentInstallRevisionOverrideForTesting = { _ in installRevision }
         let bundleIdentifier = "com.example.media"
         let slotDirectory =
             "\(paths.playcoverApps)/\(bundleIdentifier)"
@@ -2047,6 +2049,7 @@ final class IOSUseCLITests: XCTestCase {
         )
         let bundleIdentifier = "com.example.macopen"
         let installRevision = String(repeating: "a", count: 64)
+        PlayCoverSlotService.currentInstallRevisionOverrideForTesting = { _ in installRevision }
         let slot = URL(
             fileURLWithPath: paths.playcoverApps,
             isDirectory: true

@@ -50,7 +50,7 @@ public enum StatusService {
         // Reuse this command's probes in both summary and per-device output.
         let macHealth = Dictionary(uniqueKeysWithValues: sessionContexts.filter {
             $0.info.deviceType == PlayCoverSessionService.deviceType
-        }.map { ($0.paths.driverLock, playCoverRuntimeHealth(info: $0.info)) })
+        }.map { ($0.paths.driverLock, playCoverRuntimeHealth(info: $0.info, paths: $0.paths)) })
         let remoteHealth = Dictionary(uniqueKeysWithValues: sessionContexts.filter {
             $0.info.remoteConnection != nil
         }.map { ($0.paths.driverLock, RemoteDeviceService.health(info: $0.info)) })
@@ -96,11 +96,20 @@ public enum StatusService {
                         : .boolean(config?.driverVersion == IOSUseCLI.version),
                 ]
                 if info.deviceType == PlayCoverSessionService.deviceType {
-                    switch macHealth[driverPaths.driverLock] ?? playCoverRuntimeHealth(info: info) {
+                    switch macHealth[driverPaths.driverLock] ?? playCoverRuntimeHealth(info: info, paths: driverPaths) {
                     case .healthy(let payload):
                         fields["status"] = .string("healthy")
+                        fields["runtimeUpdateRequired"] = .boolean(false)
                         fields["runtime"] = playCoverRuntimeMachineValue(payload)
                         if let state = payload.deviceState { fields["macDevice"] = state.machineData }
+                    case .updateRequired(let error):
+                        fields["status"] = .string("updateRequired")
+                        fields["runtimeUpdateRequired"] = .boolean(true)
+                        fields["runtime"] = .object([
+                            "status": .string("updateRequired"),
+                            "error": .string(error),
+                        ])
+                        warnings.append(error)
                     case .unhealthy(
                         let error,
                         let identityVerified,
@@ -408,10 +417,15 @@ public enum StatusService {
         ]
         if info.deviceType == PlayCoverSessionService.deviceType {
             fields["macDevice"] = macDeviceValue(info: info)
-            switch macHealth ?? playCoverRuntimeHealth(info: info) {
+            switch macHealth ?? playCoverRuntimeHealth(info: info, paths: context.paths) {
             case .healthy(let payload):
                 fields["status"] = .string("healthy")
+                fields["runtimeUpdateRequired"] = .boolean(false)
                 if let state = payload.deviceState { fields["macDevice"] = state.machineData }
+            case .updateRequired(let error):
+                fields["status"] = .string("updateRequired")
+                fields["runtimeUpdateRequired"] = .boolean(true)
+                fields["error"] = .string(error)
             case .unhealthy(let error, _, _):
                 fields["status"] = .string("unhealthy")
                 fields["error"] = .string(error)
@@ -690,7 +704,7 @@ public enum StatusService {
                 parts.append("stdio log: \(logPath)")
             }
             if info.deviceType == PlayCoverSessionService.deviceType {
-                switch playCoverRuntimeHealth(info: info) {
+                switch playCoverRuntimeHealth(info: info, paths: paths) {
                 case .healthy(let payload):
                     parts[0] = "healthy"
                     parts.append("runtime control: healthy")
@@ -732,6 +746,9 @@ public enum StatusService {
                     parts.append(
                         "capabilities: \(payload.capabilities.joined(separator: ","))"
                     )
+                case .updateRequired(let error):
+                    parts[0] = "update required"
+                    parts.append(error)
                 case .unhealthy(let error, _, let payload):
                     parts[0] = "unhealthy"
                     parts.append("runtime: unhealthy (\(error))")
@@ -757,6 +774,7 @@ public enum StatusService {
 
     private enum PlayCoverRuntimeHealth {
         case healthy(PlayCoverRuntimeDiagnosticsPayload)
+        case updateRequired(String)
         case unhealthy(
             String,
             identityVerified: Bool,
@@ -766,7 +784,8 @@ public enum StatusService {
     }
 
     private static func playCoverRuntimeHealth(
-        info: SessionService.Info
+        info: SessionService.Info,
+        paths: IOSUsePaths
     ) -> PlayCoverRuntimeHealth {
         guard let pidValue = info.runnerPid,
               pidValue > 0,
@@ -802,6 +821,13 @@ public enum StatusService {
             )
         }
         let payload: PlayCoverRuntimeDiagnosticsPayload
+        do {
+            try PlayCoverSlotService.requireCompatibleRuntime(session: info, paths: paths)
+        } catch PlayCoverBackendError.runtimeUpdateRequired {
+            return .updateRequired(PlayCoverBackendError.runtimeUpdateRequired.description)
+        } catch {
+            return .unhealthy(String(describing: error), identityVerified: false, payload: nil)
+        }
         do {
             if let override = playCoverDiagnosticsForTesting {
                 payload = try override(info)

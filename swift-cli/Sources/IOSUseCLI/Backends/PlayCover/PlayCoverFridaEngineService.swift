@@ -48,6 +48,20 @@ enum PlayCoverFridaEngineService {
         )
     }
 
+    /// Reuse the preparation digest without launching signature inspectors on
+    /// each command. A matching revision identifies already prepared resources.
+    static func installedContentSHA256() throws -> String {
+        let framework = try resolveInstalledFramework()
+        try rejectSymbolicLink(at: framework, label: "Frida Engine framework")
+        try validateFrameworkMetadata(framework)
+        guard FileManager.default.isExecutableFile(
+            atPath: framework.appendingPathComponent("IOSUseFridaEngine").path
+        ) else {
+            throw PlayCoverBackendError.capabilityUnavailable("frida-engine (framework executable is missing)")
+        }
+        return try digestFramework(framework).sha256
+    }
+
     private static func resolveInstalledFramework() throws -> URL {
         if let frameworkPathOverrideForTesting {
             return URL(
