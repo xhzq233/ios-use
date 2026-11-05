@@ -227,17 +227,20 @@ struct PlayCoverRuntimeInputArguments: Codable, Equatable, Sendable {
     let content: String
     let deleteCount: Int
     let enter: Bool
+    let replace: Bool
 
     init(
         target: PlayCoverRuntimeTarget?,
         content: String,
         deleteCount: Int = 0,
-        enter: Bool = false
+        enter: Bool = false,
+        replace: Bool = false
     ) {
         self.target = target
         self.content = content
         self.deleteCount = deleteCount
         self.enter = enter
+        self.replace = replace
     }
 }
 

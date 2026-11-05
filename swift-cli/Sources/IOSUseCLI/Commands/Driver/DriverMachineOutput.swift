@@ -35,7 +35,8 @@ extension DriverCommandResult {
                 let enter,
                 _,
                 _,
-                _
+                _,
+                let replace
             ),
             .element(let element)
         ):
@@ -44,6 +45,7 @@ extension DriverCommandResult {
                 "contentLength": .integer(content.count),
                 "deleteCount": .integer(delete),
                 "enter": .boolean(enter),
+                "replace": .boolean(replace),
             ]
             if case .object(let action) = machineAction(element) {
                 value.merge(action) { _, new in new }

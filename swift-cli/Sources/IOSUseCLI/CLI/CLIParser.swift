@@ -600,6 +600,8 @@ public enum CLIParser {
         var tap: String?
         var content: String?
         var delete = 0
+        var hasDelete = false
+        var replace = false
         var enter = false
         var traits: String?
         var cindex: Int32?
@@ -611,6 +613,7 @@ public enum CLIParser {
             case "--label": throw CLIParseError.invalidValue("input --label was replaced by --tap <target>")
             case "--content": content = try parser.valueAllowingLeadingDash(for: arg)
             case "--delete":
+                hasDelete = true
                 delete = try parseNonNegativeIntStrict(
                     parser.valueAllowingLeadingDash(for: arg),
                     label: arg
@@ -620,6 +623,7 @@ public enum CLIParser {
                         "\(arg) must not exceed 1048576"
                     )
                 }
+            case "--replace": replace = true
             case "--enter": enter = true
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
@@ -629,7 +633,10 @@ public enum CLIParser {
             }
         }
         _ = try DriverCommandExecutor.resolveInputTapTarget(tap, traits: traits, cindex: cindex)
-        return .input(tap: tap, content: try require(content, option: "--content"), delete: delete, enter: enter, traits: traits, cindex: cindex, postDom: try resolvedPostDom(postDom, noDiff: noDiff))
+        if replace && hasDelete {
+            throw CLIParseError.invalidValue("--replace and --delete are mutually exclusive")
+        }
+        return .input(tap: tap, content: try require(content, option: "--content"), delete: delete, enter: enter, traits: traits, cindex: cindex, postDom: try resolvedPostDom(postDom, noDiff: noDiff), replace: replace)
     }
 
     private static func parseSwipe(_ parser: inout ArgumentParser) throws -> DriverAction {

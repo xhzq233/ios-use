@@ -58,6 +58,7 @@ protocol DriverCommandClient: AnyObject {
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint?) throws -> ForyElementPayload
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload
     func input(tap: ForyTarget?, content: String) throws -> ForyElementPayload
+    func replaceText(tap: ForyTarget?, content: String, enter: Bool, traits: String?, cindex: Int32?) throws -> ForyElementPayload
     func input(
         tap: ForyTarget?,
         content: String,
@@ -136,6 +137,10 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
+    func replaceText(tap: ForyTarget?, content: String, enter: Bool, traits: String?, cindex: Int32?) throws -> ForyElementPayload {
+        throw CLIParseError.invalidValue("input --replace is supported only for native text fields on the Mac backend")
+    }
+
     func observeDOM(_ args: ForyDomArgs) throws -> ForyDomPayload {
         try dom(raw: args.raw, waitQuiescence: args.waitQuiescence)
     }

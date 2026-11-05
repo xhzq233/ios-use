@@ -118,11 +118,20 @@ enum DriverCommandExecutor {
             ok = true
             return result
 
-        case .input(let tap, let content, let delete, let enter, let traits, let cindex, let postDom):
+        case .input(let tap, let content, let delete, let enter, let traits, let cindex, let postDom, let replace):
             let tapTarget = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
             let payload = try requiredPayload(
                 clientRunner {
-                    .element(
+                    if replace {
+                        return .element(try $0.replaceText(
+                            tap: tapTarget,
+                            content: content,
+                            enter: enter,
+                            traits: traits,
+                            cindex: cindex
+                        ))
+                    }
+                    return .element(
                         try $0.input(
                             tap: tapTarget,
                             content: content,
@@ -139,7 +148,7 @@ enum DriverCommandExecutor {
             let result = try appendPostDomIfNeeded(
                 DriverCommandResult(
                     stdout: "Input \"\(content)\"\(targetDescription)"
-                        + " delete=\(delete) enter=\(enter)\n",
+                        + " delete=\(delete) enter=\(enter) replace=\(replace)\n",
                     payload: .element(payload)
                 ),
                 postDom: postDom,
@@ -235,7 +244,7 @@ enum DriverCommandExecutor {
             _ = try resolveTapParams(target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
         case .longPress(let target, _, let traits, let cindex, _):
             _ = try resolveTarget(target, traits: traits, cindex: cindex)
-        case .input(let tap, _, _, _, let traits, let cindex, _):
+        case .input(let tap, _, _, _, let traits, let cindex, _, _):
             _ = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
         case .swipe(let to, let from, let find, _, _, let traits, let cindex, _):
             _ = try resolveSwipeParams(to: to, from: from, find: find, traits: traits, cindex: cindex)
