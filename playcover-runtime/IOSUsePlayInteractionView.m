@@ -1,5 +1,14 @@
 #import "IOSUsePlayInteractionView.h"
 
+BOOL IOSUsePlayInteractionOwnersConflict(UIView *target, UIView *other) {
+    if (target.window == nil || target.window != other.window) return NO;
+    if (target != other && [target isDescendantOfView:other] &&
+        ([other isKindOfClass:UITableViewCell.class] ||
+         [other isKindOfClass:UICollectionViewCell.class])) return NO;
+    return target == other || [target isDescendantOfView:other] ||
+        [other isDescendantOfView:target];
+}
+
 UIView * _Nullable IOSUsePlayNormalizedInteractionView(
     UIView * _Nullable view
 ) {

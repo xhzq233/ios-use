@@ -5,6 +5,19 @@
 #import "IOSUsePlayInteractionView.h"
 #import "IOSUsePlayRuntimeViewTree.h"
 
+// Detached UIKit views exercise ownership without creating a Catalyst scene.
+static UIView *IOSUseTestWindowIdentity;
+@interface IOSUseTestCell : UICollectionViewCell
+@end
+@implementation IOSUseTestCell
+- (UIWindow *)window { return (UIWindow *)IOSUseTestWindowIdentity; }
+@end
+@interface IOSUseTestButton : UIButton
+@end
+@implementation IOSUseTestButton
+- (UIWindow *)window { return (UIWindow *)IOSUseTestWindowIdentity; }
+@end
+
 UIView * _Nullable IOSUsePlayRuntimeDOMResolveTargetView(
     NSString *target,
     NSDictionary<NSString *, id> **commandError
@@ -31,6 +44,29 @@ static NSDictionary<NSString *, id> *IOSUseViewTreeFirstSubview(
 int main(void) {
     @autoreleasepool {
         BOOL passed = YES;
+
+        UICollectionViewCell *cell = [[IOSUseTestCell alloc] initWithFrame:CGRectMake(0, 0, 100, 44)];
+        UIButton *cellButton = [IOSUseTestButton new];
+        [cell.contentView addSubview:cellButton];
+        IOSUseTestWindowIdentity = [UIView new];
+        passed &= IOSUseViewTreeRequire(
+            !IOSUsePlayInteractionOwnersConflict(cellButton, cell),
+            @"a containing collection cell blocked its own button"
+        );
+        passed &= IOSUseViewTreeRequire(
+            IOSUsePlayInteractionOwnersConflict(cell, cellButton) &&
+            IOSUsePlayInteractionOwnersConflict(cellButton, cellButton),
+            @"competing child or equal interaction owners became unambiguous"
+        );
+        IOSUseTestWindowIdentity = nil;
+        UIButton *outerButton = [IOSUseTestButton new];
+        [outerButton addSubview:cellButton];
+        IOSUseTestWindowIdentity = [UIView new];
+        passed &= IOSUseViewTreeRequire(
+            IOSUsePlayInteractionOwnersConflict(cellButton, outerButton),
+            @"an overlapping actionable control was ignored"
+        );
+        IOSUseTestWindowIdentity = nil;
 
         // Model Catalyst's tab label beneath a disabled visual-effect wrapper.
         UIView *container = [UIView new];
