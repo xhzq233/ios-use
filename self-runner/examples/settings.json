@@ -1,0 +1,11 @@
+{
+  "name": "Settings smoke",
+  "steps": [
+    {"command": "activateApp", "args": {"bundleID": "com.apple.Preferences"}},
+    {"command": "waitFor", "args": {"label": "General", "timeout": 10}},
+    {"command": "tap", "args": {"label": "General"}},
+    {"command": "dom"},
+    {"command": "screenshot"},
+    {"command": "home"}
+  ]
+}

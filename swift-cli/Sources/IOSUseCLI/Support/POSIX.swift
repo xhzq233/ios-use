@@ -62,7 +62,7 @@ let posixSocket = Glibc.socket
 let posixUsleep = Glibc.usleep
 #endif
 
-#if os(macOS)
+#if canImport(Darwin)
 let posixAccept = Darwin.accept
 let posixBind = Darwin.bind
 let posixConnect = Darwin.connect

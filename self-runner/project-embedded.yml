@@ -1,0 +1,11 @@
+include:
+  - project.yml
+targets:
+  IOSUseSelfRunner:
+    dependencies:
+      - target: IOSUseLoopback
+        embed: true
+    entitlements:
+      path: App/Embedded.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
