@@ -1,4 +1,5 @@
 #import "IOSUsePlayRuntimeAutomation.h"
+#import "IOSUsePlayInteractionView.h"
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayRuntimeDOM.h"
 #import "IOSUsePlayRuntimeSocket.h"
@@ -1677,22 +1678,6 @@ static BOOL IOSUseAutomationElementIsActionable(
     }
 }
 
-static BOOL IOSUseAutomationViewsShareInteractionDomain(
-    UIView *left,
-    UIView *right
-) {
-    if (left == nil ||
-        right == nil ||
-        left.window == nil ||
-        right.window == nil ||
-        left.window != right.window) {
-        return NO;
-    }
-    return left == right ||
-        [left isDescendantOfView:right] ||
-        [right isDescendantOfView:left];
-}
-
 static BOOL IOSUseAutomationSemanticPointIsUnambiguous(
     NSDictionary<NSString *, id> *dom,
     IOSUseAutomationCandidate *candidate,
@@ -1753,7 +1738,7 @@ static BOOL IOSUseAutomationSemanticPointIsUnambiguous(
         if (otherInteractionView == nil) {
             return NO;
         }
-        if (IOSUseAutomationViewsShareInteractionDomain(
+        if (IOSUsePlayInteractionOwnersConflict(
                 candidate.interactionView,
                 otherInteractionView
             )) {

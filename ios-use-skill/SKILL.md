@@ -26,6 +26,9 @@ ios-use input --tap "Search" --content "<query>" -D
 ios-use waitFor "Loading" --match contains --gone --timeout 20s
 ```
 
+- On Mac, a visible button or label inside a table/collection cell can be
+  targeted directly; a containing cell does not by itself make the target ambiguous.
+  Hit testing still rejects covered controls and competing descendants.
 - Target the label or value shown in DOM, not a whole row: for `Result=idle`,
   use `"Result"` or `"idle"`. Narrow repeated matches with `--traits`, or name
   a parent and use `--cindex` to select its child. To reach an offscreen item,
