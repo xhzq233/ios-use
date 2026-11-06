@@ -84,7 +84,7 @@ final class LockdownClient {
     func request(_ body: [String: Any]) throws -> [String: Any] {
         var request = body
         request["Label"] = "ios-use"
-        request["ProtocolVersion"] = "2"
+        if DirectDeviceConnection.current == nil { request["ProtocolVersion"] = "2" }
         let xml = try serializePlist(request)
         try stream.write(uint32BE(UInt32(xml.count)) + xml)
         let header = try stream.readExact(byteCount: 4, timeoutSeconds: IOSUseProtocol.XCConstants.lockdownRequestTimeoutSeconds)

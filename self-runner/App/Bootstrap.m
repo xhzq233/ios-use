@@ -21,6 +21,17 @@ BOOL SRLoadXCTest(NSError **error) {
 }
 BOOL SRInitializeXCTest(NSError **error) {
     @try {
+        Class configurationClass = NSClassFromString(@"XCTestConfiguration");
+        SEL setActive = NSSelectorFromString(@"setActiveTestConfiguration:");
+        if (!configurationClass || ![configurationClass respondsToSelector:setActive])
+            return fail(error, @"XCTest UI configuration is unavailable");
+        id configuration = [configurationClass new];
+        [configuration setValue:@YES forKey:@"initializeForUITesting"];
+        [configuration setValue:@YES forKey:@"testsMustRunOnMainThread"];
+        [configuration setValue:@NO forKey:@"reportResultsToIDE"];
+        NSString *identifier = [NSProcessInfo processInfo].environment[@"XCTestSessionIdentifier"];
+        if (identifier) [configuration setValue:[[NSUUID alloc] initWithUUIDString:identifier] forKey:@"sessionIdentifier"];
+        ((void (*)(id, SEL, id))objc_msgSend)(configurationClass, setActive, configuration);
         Class cls = NSClassFromString(@"XCTRunnerDaemonSession");
         SEL initiate = NSSelectorFromString(@"initiateSharedSessionWithCompletion:");
         if (!cls || ![cls respondsToSelector:initiate]) return fail(error, @"XCTest daemon session initialization is unavailable");

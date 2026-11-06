@@ -7,6 +7,8 @@ Run scripts from the repository root unless noted otherwise.
 | Script | Purpose |
 | --- | --- |
 | `scripts/build_swift_cli.sh [--debug]` | Build the Swift CLI, copy it to repo-root `./ios-use`, and keep the local PlayCover runtime current on supported Apple silicon/Xcode hosts. Release is the default. |
+| `scripts/build_self_runner.sh [--embedded-vpn]` | Build the experimental on-device app and optional packet tunnel. See [Self Runner](../self-runner/README.md). |
+| `scripts/prepare_self_runner.py --output <pairing.plist> --udid <id>` | Export an existing trusted pairing credential and enable its wireless developer connection; supports `--connection` for providers. |
 | `scripts/build_driver.sh [--debug\|--release] [--simulator-only]` | Generate the Xcode project and build driver IPA artifacts. Debug is the default and writes `IOS_USE_HOME`, or cwd `.ios-use/` when unset; release writes `driver/build/`. |
 | `scripts/build_playcover_runtime.sh [--output <IOSUsePlayRuntime.framework>] [--replace] [--analyze]` | Build and ad-hoc sign the mixed Objective-C/Swift arm64 Mac Catalyst Runtime containing the pinned PlayTools sources; optionally run Clang static analysis. Scene backing is selected when the Mac App launches, not when the Runtime is built. |
 | `scripts/build_playcover_frida_gum_catalyst.sh [--source-root <path>] [--build-root <path>] [--replace]` | Reproduce the pinned official Frida GumJS QuickJS devkit for arm64 Mac Catalyst. The source checkout is verified at the pinned commit; native and Catalyst QuickJS plus the Gum devkit are built from source. |

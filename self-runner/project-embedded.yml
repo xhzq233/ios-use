@@ -6,6 +6,6 @@ targets:
       - target: IOSUseLoopback
         embed: true
     entitlements:
-      path: App/Embedded.entitlements
+      path: ${IOS_USE_REPOSITORY_ROOT}/self-runner/App/Embedded.entitlements
       properties:
         com.apple.developer.networking.networkextension: [packet-tunnel-provider]

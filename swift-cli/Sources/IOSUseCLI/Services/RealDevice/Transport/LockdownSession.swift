@@ -107,9 +107,9 @@ enum LockdownSession {
     private static func withDirectSession<T>(udid: String, body: (LockdownClient) throws -> T) throws -> T {
         let client = try LockdownClient(udid: udid, pairRecord: PairRecord.load(udid: udid))
         defer { client.disconnect() }
-        var phase = "QueryType"
+        var phase = "GetValue preflight"
         do {
-            _ = try client.request(["Request": "QueryType"])
+            _ = try client.getValue(key: "ProductVersion")
             phase = "StartSession"
             let ssl = try client.startSession()
             if ssl {

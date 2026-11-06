@@ -14,6 +14,9 @@ import SelfRunnerCore
     @Published var pairingImported = false
     @Published var embeddedVPN = false
     @Published var lastImage: UIImage?
+    let hasEmbeddedVPN = Bundle.main.builtInPlugInsURL.map {
+        FileManager.default.fileExists(atPath: $0.appendingPathComponent("IOSUseLoopback.appex").path)
+    } ?? false
     private let queue = DispatchQueue(label: "ios-use.self-runner.session", qos: .userInitiated)
     private let session = SelfRunnerSession()
     private let vpn = LoopbackVPN()
@@ -21,9 +24,15 @@ import SelfRunnerCore
     private var cancellation = ScriptCancellation()
     private var didHandleLaunch = false
     private var runAfterStart = false
-    private let pairingURL = URL.documentsDirectory.appendingPathComponent("pairing.plist")
+    private let pairingURL = URL.applicationSupportDirectory.appendingPathComponent("pairing.plist")
     init() {
+        try? FileManager.default.createDirectory(at: URL.applicationSupportDirectory, withIntermediateDirectories: true)
         pairingImported = FileManager.default.fileExists(atPath: pairingURL.path)
+        let legacy = URL.documentsDirectory.appendingPathComponent("pairing.plist")
+        if !pairingImported, FileManager.default.fileExists(atPath: legacy.path) {
+            importFile(legacy, pairing: true)
+            if pairingImported { try? FileManager.default.removeItem(at: legacy) }
+        }
         session.log = { [weak self] line in Task { @MainActor in self?.append(line) } }
     }
     func append(_ line: String) {
@@ -64,7 +73,21 @@ import SelfRunnerCore
         guard !didHandleLaunch else { return }
         didHandleLaunch = true
         let args = ProcessInfo.processInfo.arguments
+        if args.contains("--remove-local-configuration") {
+            Task {
+                do {
+                    if hasEmbeddedVPN { try await vpn.removeConfiguration() }
+                    if pairingImported { forgetPairing() }
+                    guard !pairingImported else { throw ScriptFailure("Could not remove the pairing record") }
+                    append("Removed local VPN configuration and pairing record")
+                } catch { append("Cleanup failed: \(error)") }
+            }
+            return
+        }
         embeddedVPN = args.contains("--embedded-vpn")
+        if embeddedVPN && !hasEmbeddedVPN {
+            append("This build requires an external loopback VPN"); status = "Failed"; return
+        }
         if args.contains("--run-script") {
             let url = URL.documentsDirectory.appendingPathComponent("script.json")
             do {
@@ -89,7 +112,7 @@ import SelfRunnerCore
                         Task { @MainActor in self.ready = true; self.busy = false; self.status = "Ready"; if self.runAfterStart { self.runAfterStart = false; self.run() } }
                     } catch {
                         Task { @MainActor in
-                            self.append("Start failed: \(error)"); self.busy = false; self.status = "Failed"
+                            self.append("Start failed: \(error)"); self.append(await self.vpn.diagnostics()); self.busy = false; self.status = "Failed"
                             self.background.stop(); self.vpn.stop()
                         }
                     }
@@ -110,13 +133,19 @@ import SelfRunnerCore
                             switch result {
                             case .success(let payload):
                                 self.append("\(index + 1). \(command): OK")
-                                if let text = payload["text"] as? String { self.append(text) }
-                                if let jpeg = payload["jpeg"] as? Data { self.lastImage = UIImage(data: jpeg) }
+                                if let text = payload["text"] as? String {
+                                    self.append(String(text.prefix(16000)))
+                                    try? Data(text.utf8).write(to: URL.documentsDirectory.appendingPathComponent("last-dom.txt"), options: .atomic)
+                                }
+                                if let jpeg = payload["jpeg"] as? Data {
+                                    self.lastImage = UIImage(data: jpeg)
+                                    try? jpeg.write(to: URL.documentsDirectory.appendingPathComponent("last-screenshot.jpg"), options: .atomic)
+                                }
                             case .failure(let error): self.append("\(index + 1). \(command): \(error)")
                             }
                         }
                     }
-                    Task { @MainActor in self.busy = false; self.status = "Completed" }
+                    Task { @MainActor in self.busy = false; self.status = "Completed"; self.append("Script completed: \(parsed.name)") }
                 } catch { Task { @MainActor in self.append("Script stopped: \(error)"); self.busy = false; self.status = "Stopped script" } }
             }
         } catch { append("Script invalid: \(error)") }
@@ -144,7 +173,9 @@ import SelfRunnerCore
                     Section("Connection") {
                         Text(model.status).accessibilityIdentifier("runner.status")
                         TextField("Local device address", text: $model.host).autocorrectionDisabled().textInputAutocapitalization(.never)
-                        Toggle("Use embedded local VPN", isOn: $model.embeddedVPN).disabled(model.busy || model.ready)
+                        if model.hasEmbeddedVPN {
+                            Toggle("Use embedded local VPN", isOn: $model.embeddedVPN).disabled(model.busy || model.ready)
+                        } else { Text("Connect an external loopback VPN before starting.").font(.caption) }
                         Text("Embedded VPN requires a Network Extensions signing profile. Otherwise enable an external loopback VPN first.").font(.caption)
                         Button(model.pairingImported ? "Replace pairing record" : "Import pairing record") { importPairing = true; picker = true }.disabled(model.ready || model.busy)
                         if model.pairingImported { Button("Forget pairing record", role: .destructive, action: model.forgetPairing).disabled(model.ready || model.busy) }

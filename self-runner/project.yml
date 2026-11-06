@@ -19,6 +19,7 @@ packages:
     revision: affbd38a5869a3ec4deaf51a762bedf2c90400d5
 settings:
   base:
+    IOS_USE_REPOSITORY_ROOT: ${IOS_USE_REPOSITORY_ROOT}
     SWIFT_VERSION: '5.9'
     CODE_SIGNING_ALLOWED: NO
     CODE_SIGNING_REQUIRED: NO
@@ -57,7 +58,7 @@ targets:
         link: false
         embed: true
     info:
-      path: App/Info.plist
+      path: ${IOS_USE_REPOSITORY_ROOT}/self-runner/App/Info.plist
       properties:
         CFBundleDisplayName: ios-use Runner
         UILaunchScreen: {}
@@ -87,7 +88,7 @@ targets:
     dependencies:
       - package: Fory
     info:
-      path: Runtime/Info.plist
+      path: ${IOS_USE_REPOSITORY_ROOT}/self-runner/Runtime/Info.plist
     settings:
       base:
         INFOPLIST_FILE: $(IOS_USE_REPOSITORY_ROOT)/self-runner/Runtime/Info.plist
@@ -106,13 +107,13 @@ targets:
       - path: Tunnel
         excludes: [Info.plist, "*.entitlements"]
     info:
-      path: Tunnel/Info.plist
+      path: ${IOS_USE_REPOSITORY_ROOT}/self-runner/Tunnel/Info.plist
       properties:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
           NSExtensionPrincipalClass: '$(PRODUCT_MODULE_NAME).PacketTunnelProvider'
     entitlements:
-      path: Tunnel/Tunnel.entitlements
+      path: ${IOS_USE_REPOSITORY_ROOT}/self-runner/Tunnel/Tunnel.entitlements
       properties:
         com.apple.developer.networking.networkextension: [packet-tunnel-provider]
     settings:

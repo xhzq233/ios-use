@@ -15,7 +15,7 @@ final class SelfRunnerSession {
 
     func start(pairing: Data, host: String) throws {
         let record = try PairRecord.decode(pairing)
-        let direct = DirectDeviceConnection(host: host, pairRecord: record)
+        let direct = DirectDeviceConnection(host: host, pairRecord: record, eventSink: log)
         try DirectDeviceConnection.$current.withValue(direct) {
             do {
                 log("Connecting local Lockdown")
