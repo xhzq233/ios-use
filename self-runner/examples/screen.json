@@ -1,0 +1,11 @@
+{
+  "name": "Screen smoke",
+  "steps": [
+    {"command": "screenshot"},
+    {"command": "dom"},
+    {"count": 2, "steps": [
+      {"command": "sleep", "args": {"seconds": 0.5}},
+      {"command": "screenshot"}
+    ]}
+  ]
+}

@@ -13,12 +13,13 @@ final class LockdownClient {
     private var stream: DeviceStream
 
     init(udid: String, pairRecord: PairRecord) throws {
-        self.fd = try Usbmux.connect(udid: udid, port: IOSUseProtocol.XCConstants.lockdownPort)
+        self.fd = try DirectDeviceConnection.connect(udid: udid, port: IOSUseProtocol.XCConstants.lockdownPort)
         self.pairRecord = pairRecord
         self.stream = PlainDeviceStream(fd: fd, ownsFD: false)
     }
 
-    func startSession() throws {
+    @discardableResult
+    func startSession() throws -> Bool {
         let response = try request([
             "Request": "StartSession",
             "HostID": pairRecord.hostID,
@@ -30,6 +31,7 @@ final class LockdownClient {
         guard response["SessionID"] != nil else {
             throw CLIParseError.invalidValue("StartSession returned no SessionID")
         }
+        return response["EnableSessionSSL"] as? Bool ?? false
     }
 
     func enableSessionSSL() throws {
@@ -82,7 +84,7 @@ final class LockdownClient {
     func request(_ body: [String: Any]) throws -> [String: Any] {
         var request = body
         request["Label"] = "ios-use"
-        request["ProtocolVersion"] = "2"
+        if DirectDeviceConnection.current == nil { request["ProtocolVersion"] = "2" }
         let xml = try serializePlist(request)
         try stream.write(uint32BE(UInt32(xml.count)) + xml)
         let header = try stream.readExact(byteCount: 4, timeoutSeconds: IOSUseProtocol.XCConstants.lockdownRequestTimeoutSeconds)

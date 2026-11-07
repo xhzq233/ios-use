@@ -13,6 +13,9 @@ struct LockdownServiceConnection {
 
 enum LockdownSession {
     static func getValue(udid: String, domain: String? = nil, key: String? = nil) throws -> [String: Any] {
+        if DirectDeviceConnection.current != nil {
+            return try withDirectSession(udid: udid) { try $0.getValue(domain: domain, key: key) }
+        }
         let pairRecord = try PairRecord.load(udid: udid)
         let lockdown = try LockdownClient(udid: udid, pairRecord: pairRecord)
         let sslError: Error
@@ -45,6 +48,10 @@ enum LockdownSession {
     }
 
     static func startService(_ serviceName: String, udid: String, pairRecord: PairRecord) throws -> LockdownServiceConnection {
+        if DirectDeviceConnection.current != nil {
+            let service = try withDirectSession(udid: udid) { try $0.startService(serviceName) }
+            return LockdownServiceConnection(pairRecord: pairRecord, service: service)
+        }
         let lockdown = try LockdownClient(udid: udid, pairRecord: pairRecord)
         let sslError: Error
         do {
@@ -78,7 +85,7 @@ enum LockdownSession {
     static func connectToStartedService(
         _ connection: LockdownServiceConnection,
         udid: String,
-        usbmuxConnect: (String, Int) throws -> Int32 = Usbmux.connect,
+        usbmuxConnect: (String, Int) throws -> Int32 = DirectDeviceConnection.connect,
         tlsStreamFactory: (Int32, PairRecord) throws -> DeviceStream = { fd, pairRecord in
             try NIOSSLDeviceStream(fd: fd, pairRecord: pairRecord)
         },
@@ -95,5 +102,24 @@ enum LockdownSession {
 
     private static func combinedLockdownFallbackError(operation: String, sslError: Error, plainError: Error) -> Error {
         CLIParseError.invalidValue("\(operation) failed over lockdownd SSL and plain fallback. SSL error: \(sslError); plain fallback error: \(plainError)")
+    }
+
+    private static func withDirectSession<T>(udid: String, body: (LockdownClient) throws -> T) throws -> T {
+        let client = try LockdownClient(udid: udid, pairRecord: PairRecord.load(udid: udid))
+        defer { client.disconnect() }
+        var phase = "GetValue preflight"
+        do {
+            _ = try client.getValue(key: "ProductVersion")
+            phase = "StartSession"
+            let ssl = try client.startSession()
+            if ssl {
+                phase = "TLS handshake"
+                try client.enableSessionSSL()
+            }
+            phase = "service request"
+            return try body(client)
+        } catch {
+            throw CLIParseError.invalidValue("Local Lockdown \(phase) failed: \(error)")
+        }
     }
 }
