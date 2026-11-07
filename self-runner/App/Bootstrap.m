@@ -10,12 +10,15 @@ static BOOL fail(NSError **error, NSString *message) {
 BOOL SRLoadXCTest(NSError **error) {
     for (NSString *name in @[@"XCTest", @"XCTestCore", @"XCTAutomationSupport", @"XCUIAutomation"]) {
         BOOL loaded = NO;
+        NSMutableArray<NSString *> *failures = [NSMutableArray new];
         for (NSString *root in @[@"/System/Developer/Library/Frameworks", @"/System/Developer/Library/PrivateFrameworks", @"/Developer/Library/Frameworks", @"/Developer/Library/PrivateFrameworks"]) {
             NSString *path = [NSString stringWithFormat:@"%@/%@.framework/%@", root, name, name];
             if (dlopen(path.UTF8String, RTLD_NOW | RTLD_GLOBAL)) { loaded = YES; break; }
+            const char *detail = dlerror();
+            if (detail) [failures addObject:[NSString stringWithUTF8String:detail]];
         }
         if ([name isEqualToString:@"XCTest"] && !loaded)
-            return fail(error, @"XCTest could not be loaded. Check the mounted Developer Disk Image.");
+            return fail(error, [NSString stringWithFormat:@"XCTest could not be loaded from the mounted DDI: %@", [failures componentsJoinedByString:@"; "]]);
     }
     return YES;
 }

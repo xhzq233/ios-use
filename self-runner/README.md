@@ -10,9 +10,10 @@ continue using their existing host-managed lifecycle.
 
 ## Prepare a device
 
-Use an already-trusted device with Developer Mode enabled and a matching
-Developer Disk Image mounted. DDI mounting is currently a preparation step;
-the app does not download or mount the image itself.
+Use an already-trusted device with Developer Mode enabled. On startup the app
+checks the Developer Disk Image (DDI), mounts it if missing, and verifies the
+mount before opening the XCTest session. It uses an imported or bundled image;
+an already-mounted device does not need local image files or Apple TSS access.
 
 Export the trusted host's pairing credential and enable that host's wireless
 developer connection (also required for the local VPN route):
@@ -39,11 +40,19 @@ From the repository root, with Xcode and XcodeGen installed:
 
 ```sh
 # Standalone packet tunnel included; needs Network Extensions signing support.
-bash scripts/build_self_runner.sh --embedded-vpn
+bash scripts/build_self_runner.sh --embedded-vpn \
+  --ddi /Library/Developer/DeveloperDiskImages/iOS_DDI/Restore
 
 # App without the extension; use an external loopback VPN.
 bash scripts/build_self_runner.sh
 ```
+
+`--ddi` is optional and accepts an **extracted Restore directory** containing
+`BuildManifest.plist` and its referenced personalized DMG and TrustCache files.
+Only those resources are copied into the unsigned IPA, before signing. An outer
+`iOS_DDI.dmg` container must be extracted on the host first; the iOS app does not
+run `hdiutil`. Without bundled resources, use **Import DDI folder** in the app.
+A DDI folder can be provisioned once and reused on subsequent launches.
 
 The unsigned IPA and build log are under
 `${IOS_USE_HOME:-.ios-use}/self-runner/`. Sign and install the app using your
@@ -66,13 +75,22 @@ compatibility has not been verified on a physical device.
 2. Enable **Use embedded local VPN**, or connect an external loopback VPN first.
    The default peer is `10.7.0.1`. The embedded tunnel routes only that address;
    it does not forward Internet traffic.
-3. Tap **Start automation**. Accept the system's VPN, network and automation
+3. If the IPA has no bundled DDI, use **Import DDI folder** to select the extracted
+   Restore folder in Files. The app copies its referenced resources to Application
+   Support and excludes them from backups. An import overrides the bundled DDI;
+   **Remove imported DDI** restores the bundled default without unmounting anything.
+4. Tap **Start automation**. The app checks DDI, validates the selected image,
+   obtains personalization, uploads it in chunks, mounts it through the local
+   device service and confirms the result. A cached personalization ticket is
+   reused when available; otherwise Internet access to Apple's HTTPS TSS endpoint
+   is required. Errors stop startup before XCTest and appear in Results.
+   Accept the system's VPN, network and automation
    authorization requests. Background location permission is used to keep an
    explicitly started session running while switching apps; it does not promise
    indefinite background execution.
-4. Paste a JSON script or use **Import JSON script**, then tap **Run script**.
+5. Paste a JSON script or use **Import JSON script**, then tap **Run script**.
    The steps execute serially. A failure stops the script.
-5. **Cancel script** stops between commands and during sleeps; an already-running
+6. **Cancel script** stops between commands and during sleeps; an already-running
    XCTest call finishes or times out first. **Stop session** also closes the
    device connections and stops the embedded VPN and background updates.
 
@@ -120,10 +138,14 @@ script syntax are checked before any action is dispatched.
 
 For controlled device testing, launch arguments can load
 `Documents/script.json` and start it with `--start-automation --run-script`;
-add `--embedded-vpn` to use the embedded tunnel. A legacy or explicitly staged
-`Documents/pairing.plist` is validated, moved to protected storage on launch,
+add `--embedded-vpn` to use the embedded tunnel. `--start-delay-seconds=15`
+(1–30 seconds) delays this automatic start, allowing a controlled test to launch
+the app and then unmount the existing DDI before the app connects. This does not
+unmount anything itself. Stop session cancels the scheduled start.
+A legacy or explicitly staged `Documents/pairing.plist` is validated, moved to protected storage on launch,
 and removed from Documents. `--remove-local-configuration` removes this app's
-VPN configuration and imported pairing record without starting automation.
+VPN configuration, imported pairing record and imported DDI without starting
+automation. Bundled resources remain part of the installed app.
 
 ## Validation and limits
 
@@ -142,12 +164,24 @@ screenshot, Home, and two sleep/screenshot repetitions. The process remained
 running in the background while controlling Settings. A cold app restart and
 another independent on-device session also succeeded.
 
+DDI mounting was also validated from an explicitly unmounted state on that
+model/OS. After the desktop XCTest holder stopped, the app was launched and
+startup delayed while the host unmounted DDI and confirmed an empty mount list.
+The app then detected the missing image, requested a fresh Apple TSS ticket,
+uploaded its bundled DDI, mounted it and verified the actual mount. It initialized
+XCTest and completed Home → Settings → DOM → screenshot → Home. The screenshot
+and DOM were retrieved for verification. Newer DDIs require the app's runtime
+search paths to include `/System/Developer/usr/lib` for TestingInterop.
+
 Both IPA variants build. The external variant was inspected to confirm it has
 no packet tunnel extension and still contains the delayed UI framework; its
 external-VPN runtime and Personal Team signing were not physically verified.
 Core tests cover packet reflection, malformed packets, script expansion limits,
-ordering, failure, cancellation and text assertions. The host CLI general test
-suite passed 281 tests (2 skipped).
+ordering, failure, cancellation and text assertions. The shared DDI tests cover
+mounted-state short circuits, cached and fresh personalization, chunked upload,
+corrupt resources, mount readback and path containment. The host CLI general
+checks pass 288 tests (2 skipped), including these DDI tests. To run just the
+protocol tests: `swift test --package-path swift-cli --filter DeviceProtocolClientTests`.
 
 This uses private XCTest interfaces and a classic pairing-record connection.
 Do not assume it works on every iOS version, especially versions that reject

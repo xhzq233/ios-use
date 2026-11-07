@@ -7,7 +7,7 @@ Run scripts from the repository root unless noted otherwise.
 | Script | Purpose |
 | --- | --- |
 | `scripts/build_swift_cli.sh [--debug]` | Build the Swift CLI, copy it to repo-root `./ios-use`, and keep the local PlayCover runtime current on supported Apple silicon/Xcode hosts. Release is the default. |
-| `scripts/build_self_runner.sh [--embedded-vpn]` | Build the experimental on-device app and optional packet tunnel. See [Self Runner](../self-runner/README.md). |
+| `scripts/build_self_runner.sh [--embedded-vpn] [--ddi <Restore directory>]` | Build the experimental on-device app, optional packet tunnel and bundled DDI for automatic mounting. See [Self Runner](../self-runner/README.md). |
 | `scripts/prepare_self_runner.py --output <pairing.plist> --udid <id>` | Export an existing trusted pairing credential and enable its wireless developer connection; supports `--connection` for providers. |
 | `scripts/build_driver.sh [--debug\|--release] [--simulator-only]` | Generate the Xcode project and build driver IPA artifacts. Debug is the default and writes `IOS_USE_HOME`, or cwd `.ios-use/` when unset; release writes `driver/build/`. |
 | `scripts/build_playcover_runtime.sh [--output <IOSUsePlayRuntime.framework>] [--replace] [--analyze]` | Build and ad-hoc sign the mixed Objective-C/Swift arm64 Mac Catalyst Runtime containing the pinned PlayTools sources; optionally run Clang static analysis. Scene backing is selected when the Mac App launches, not when the Runtime is built. |

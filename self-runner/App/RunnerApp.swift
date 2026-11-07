@@ -13,6 +13,7 @@ import SelfRunnerCore
     @Published var busy = false
     @Published var pairingImported = false
     @Published var embeddedVPN = false
+    @Published var ddiDescription = RunnerDDIStore.description
     @Published var lastImage: UIImage?
     let hasEmbeddedVPN = Bundle.main.builtInPlugInsURL.map {
         FileManager.default.fileExists(atPath: $0.appendingPathComponent("IOSUseLoopback.appex").path)
@@ -24,6 +25,7 @@ import SelfRunnerCore
     private var cancellation = ScriptCancellation()
     private var didHandleLaunch = false
     private var runAfterStart = false
+    private var scheduledStart: Task<Void, Never>?
     private let pairingURL = URL.applicationSupportDirectory.appendingPathComponent("pairing.plist")
     init() {
         try? FileManager.default.createDirectory(at: URL.applicationSupportDirectory, withIntermediateDirectories: true)
@@ -65,6 +67,26 @@ import SelfRunnerCore
             }
         } catch { append("Import failed: \(error)") }
     }
+    func importDDI(_ url: URL) {
+        guard !busy, !ready else { return }
+        busy = true; status = "Importing DDI"
+        queue.async {
+            do {
+                try RunnerDDIStore.importFolder(url)
+                Task { @MainActor in
+                    self.ddiDescription = RunnerDDIStore.description
+                    self.append("DDI image imported; it will be mounted when automation starts")
+                    self.busy = false; self.status = "Stopped"
+                }
+            } catch {
+                Task { @MainActor in self.append("DDI import failed: \(error)"); self.busy = false; self.status = "Import failed" }
+            }
+        }
+    }
+    func forgetDDI() {
+        do { try RunnerDDIStore.removeImport(); ddiDescription = RunnerDDIStore.description }
+        catch { append("Could not remove DDI: \(error)") }
+    }
     func forgetPairing() {
         do { try FileManager.default.removeItem(at: pairingURL); pairingImported = false }
         catch { append("Could not remove pairing record: \(error)") }
@@ -78,8 +100,9 @@ import SelfRunnerCore
                 do {
                     if hasEmbeddedVPN { try await vpn.removeConfiguration() }
                     if pairingImported { forgetPairing() }
+                    try RunnerDDIStore.removeImport()
                     guard !pairingImported else { throw ScriptFailure("Could not remove the pairing record") }
-                    append("Removed local VPN configuration and pairing record")
+                    append("Removed local VPN configuration, pairing record and imported DDI")
                 } catch { append("Cleanup failed: \(error)") }
             }
             return
@@ -95,7 +118,22 @@ import SelfRunnerCore
                 script = String(decoding: data, as: UTF8.self); runAfterStart = true
             } catch { append("Launch script invalid: \(error)"); return }
         }
-        if args.contains("--start-automation") { start() }
+        if args.contains("--start-automation") {
+            // Lets a device test launch the app before removing an existing DDI;
+            // launching through developer services itself may need that image.
+            if let delayArg = args.first(where: { $0.hasPrefix("--start-delay-seconds=") }) {
+                guard let seconds = UInt64(delayArg.dropFirst("--start-delay-seconds=".count)), (1...30).contains(seconds) else {
+                    append("Start delay must be 1–30 seconds"); return
+                }
+                status = "Waiting to start"
+                append("Starting automation in \(seconds) seconds")
+                scheduledStart = Task {
+                    do { try await Task.sleep(nanoseconds: seconds * 1_000_000_000) }
+                    catch { return }
+                    self.start()
+                }
+            } else { start() }
+        }
     }
     func start() {
         guard !busy, !ready else { return }
@@ -151,6 +189,7 @@ import SelfRunnerCore
         } catch { append("Script invalid: \(error)") }
     }
     func stop() {
+        scheduledStart?.cancel(); scheduledStart = nil; runAfterStart = false
         cancellation.cancel()
         queue.async {
             self.session.stop()
@@ -166,6 +205,7 @@ import SelfRunnerCore
     @StateObject private var model = RunnerModel()
     @State private var picker = false
     @State private var importPairing = true
+    @State private var ddiPicker = false
     var body: some Scene {
         WindowGroup {
             NavigationStack {
@@ -184,6 +224,12 @@ import SelfRunnerCore
                             Spacer()
                             Button("Stop session", action: model.stop)
                         }
+                    }
+                    Section("Developer image") {
+                        Text(model.ddiDescription).font(.caption)
+                        Text("Start automation checks the mounted image and mounts your DDI when needed. Personalization may require Internet access.").font(.caption)
+                        Button("Import DDI folder") { ddiPicker = true }.disabled(model.ready || model.busy)
+                        Button("Remove imported DDI", role: .destructive, action: model.forgetDDI).disabled(model.ready || model.busy)
                     }
                     Section("Script") {
                         TextEditor(text: $model.script).font(.system(.caption, design: .monospaced)).frame(minHeight: 200)
@@ -205,6 +251,12 @@ import SelfRunnerCore
                 }
                 .navigationTitle("ios-use Self Runner")
                 .task { model.handleLaunchArguments() }
+                .fileImporter(isPresented: $ddiPicker, allowedContentTypes: [.folder]) { result in
+                    switch result {
+                    case .success(let url): model.importDDI(url)
+                    case .failure(let error): model.append("DDI selection: \(error)")
+                    }
+                }
                 .fileImporter(isPresented: $picker, allowedContentTypes: [.data, .json, .propertyList]) { result in
                     switch result {
                     case .success(let url): model.importFile(url, pairing: importPairing)

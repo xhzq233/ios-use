@@ -4,12 +4,19 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ARTIFACT_ROOT="${IOS_USE_HOME:-$ROOT/.ios-use}/self-runner"
 SPEC="$ROOT/self-runner/project.yml"
 EMBEDDED=0
-if [[ "${1:-}" == --embedded-vpn ]]; then
-  SPEC="$ROOT/self-runner/project-embedded.yml"
-  EMBEDDED=1
-elif [[ $# -gt 0 ]]; then
-  echo 'Usage: scripts/build_self_runner.sh [--embedded-vpn]' >&2
-  exit 2
+DDI=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --embedded-vpn) SPEC="$ROOT/self-runner/project-embedded.yml"; EMBEDDED=1; shift ;;
+    --ddi)
+      [[ $# -ge 2 ]] || { echo '--ddi requires an extracted Restore directory' >&2; exit 2; }
+      DDI="$2"; shift 2 ;;
+    *) echo 'Usage: scripts/build_self_runner.sh [--embedded-vpn] [--ddi <Restore directory>]' >&2; exit 2 ;;
+  esac
+done
+if [[ -n "$DDI" ]]; then
+  [[ -f "$DDI/BuildManifest.plist" ]] || { echo '--ddi must contain BuildManifest.plist (extract an outer iOS_DDI.dmg first)' >&2; exit 2; }
+  DDI="$(cd "$DDI" && pwd)"
 fi
 mkdir -p "$ARTIFACT_ROOT"
 ARTIFACT_ROOT="$(cd "$ARTIFACT_ROOT" && pwd)"
@@ -26,6 +33,11 @@ cp -R "$ARTIFACT_ROOT/build/Build/Products/Debug-iphoneos/IOSUseSelfRunner.app" 
 # build. The external-VPN artifact must contain only the runner and framework.
 if [[ "$EMBEDDED" == 0 ]]; then
   rm -rf "$STAGE/Payload/IOSUseSelfRunner.app/PlugIns"
+fi
+# Bundle only explicitly supplied resources; never copy signing/pairing state.
+rm -rf "$STAGE/Payload/IOSUseSelfRunner.app/DDI"
+if [[ -n "$DDI" ]]; then
+  python3 "$ROOT/scripts/package_self_runner_ddi.py" "$DDI" "$STAGE/Payload/IOSUseSelfRunner.app/DDI"
 fi
 (cd "$STAGE" && /usr/bin/zip -qr "$STAGE/self-runner.ipa" Payload)
 mv "$STAGE/self-runner.ipa" "$ARTIFACT_ROOT/self-runner.ipa"

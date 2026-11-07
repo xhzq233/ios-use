@@ -32,6 +32,7 @@ targets:
       - path: App
         excludes: [Info.plist, "*.entitlements"]
       - path: ../swift-cli/Sources/IOSUseCLI/Services/RealDevice/Transport
+      - path: ../swift-cli/Sources/IOSUseCLI/Services/RealDevice/DeveloperDiskImage/DeveloperDiskImageProtocol.swift
       - path: ../swift-cli/Sources/IOSUseCLI/Support/POSIX.swift
       - path: ../swift-cli/Sources/IOSUseCLI/Services/RealDevice/CoreDevice
         includes:
@@ -75,7 +76,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.iosuse.selfrunner
         INFOPLIST_FILE: $(IOS_USE_REPOSITORY_ROOT)/self-runner/App/Info.plist
         SWIFT_OBJC_BRIDGING_HEADER: $(IOS_USE_REPOSITORY_ROOT)/self-runner/App/Bootstrap.h
-        LD_RUNPATH_SEARCH_PATHS: ['$(inherited)', '@executable_path/Frameworks', /System/Developer/Library/Frameworks, /System/Developer/Library/PrivateFrameworks]
+        LD_RUNPATH_SEARCH_PATHS: ['$(inherited)', '@executable_path/Frameworks', /System/Developer/Library/Frameworks, /System/Developer/Library/PrivateFrameworks, /System/Developer/usr/lib, /Developer/usr/lib]
   IOSUseSelfRunnerRuntime:
     type: framework
     platform: iOS
@@ -97,7 +98,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: $(IOS_USE_REPOSITORY_ROOT)/driver/ui/Helpers/IOSUseDriver-Bridging-Header.h
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: '$(inherited) FORY_SWIFT_MACRO'
         FRAMEWORK_SEARCH_PATHS: ['$(inherited)', '$(PLATFORM_DIR)/Developer/Library/Frameworks']
-        LD_RUNPATH_SEARCH_PATHS: ['$(inherited)', '@executable_path/Frameworks', /System/Developer/Library/Frameworks, /System/Developer/Library/PrivateFrameworks]
+        LD_RUNPATH_SEARCH_PATHS: ['$(inherited)', '@executable_path/Frameworks', /System/Developer/Library/Frameworks, /System/Developer/Library/PrivateFrameworks, /System/Developer/usr/lib, /Developer/usr/lib]
   IOSUseLoopback:
     type: app-extension
     platform: iOS

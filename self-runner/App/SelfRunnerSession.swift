@@ -42,7 +42,10 @@ final class SelfRunnerSession {
                         }
                     } catch { self?.log("Heartbeat ended: \(error)") }
                 }
-                log("Connecting CoreDevice and RSD; DDI must already be mounted")
+                try PersonalizedDDIMounter.ensureMounted(udid: "self", log: log) { identifiers in
+                    try RunnerDDIStore.resolve(identifiers: identifiers)
+                }
+                log("Connecting CoreDevice and RSD")
                 let opened = try CoreDeviceDirectTunnelRuntime(eventSink: { [weak self] in self?.log($0) }).start(udid: "self")
                 tunnel = opened
                 let identifier = UUID()
