@@ -9,7 +9,7 @@ import IOSUseProtocol
 
 enum CoreDeviceAppServiceError: Error, CustomStringConvertible, Equatable {
     case missingOutput(String)
-    case missingOutputResponse(String, String)
+    case missingOutputResponse(String, String, remote: Bool)
     case invalidProcessToken(String)
     case missingProcessIdentifier(String)
 
@@ -17,8 +17,8 @@ enum CoreDeviceAppServiceError: Error, CustomStringConvertible, Equatable {
         switch self {
         case .missingOutput(let feature):
             return "CoreDevice appservice response missing CoreDevice.output for \(feature)"
-        case .missingOutputResponse(let feature, let response):
-            return Self.missingOutputResponseDescription(feature: feature, response: response)
+        case .missingOutputResponse(let feature, let response, let remote):
+            return Self.missingOutputResponseDescription(feature: feature, response: response, remote: remote)
         case .invalidProcessToken(let detail):
             return "CoreDevice appservice invalid process token: \(detail)"
         case .missingProcessIdentifier(let detail):
@@ -26,9 +26,14 @@ enum CoreDeviceAppServiceError: Error, CustomStringConvertible, Equatable {
         }
     }
 
-    private static func missingOutputResponseDescription(feature: String, response: String) -> String {
+    private static func missingOutputResponseDescription(feature: String, response: String, remote: Bool) -> String {
         var message = "CoreDevice appservice response missing CoreDevice.output for \(feature): \(response)"
         guard isLaunchApplicationTrustFailure(feature: feature, response: response) else {
+            return message
+        }
+        if remote {
+            // Provider-connected devices are signed and prepared by the provider, not by `ios-use config`.
+            message += " Hint: iOS refused to launch this app on the remote device, usually because its signature is not valid for this device. Reinstall the app through the provider's re-signing install (`ios-use install` only accepts packages already signed for this device), then retry. If the Driver itself fails to launch, restart the provider session. The underlying errors above give the device-side reason."
             return message
         }
         message += " Hint: iOS refused to launch the developer-signed app. On the iPhone, open Settings > General > VPN & Device Management, select the developer app profile for this Apple Developer account, tap Trust, then retry `ios-use start`. If this device was configured with a free Apple Developer account more than 7 days ago, run `ios-use config --udid <udid>` again to re-sign and reinstall the driver."
@@ -186,7 +191,11 @@ final class CoreDeviceAppService {
     func invoke(featureIdentifier: String, input: [String: RemoteXPCValue] = [:], timeoutSeconds: Double = IOSUseProtocol.XCConstants.coreDeviceRequestTimeoutSeconds) throws -> RemoteXPCValue {
         let response = try client.sendReceiveRequest(coreDeviceRequest(featureIdentifier: featureIdentifier, input: input), timeoutSeconds: timeoutSeconds)
         guard let output = response.dictionaryValue?["CoreDevice.output"] else {
-            throw CoreDeviceAppServiceError.missingOutputResponse(featureIdentifier, Self.describe(response))
+            throw CoreDeviceAppServiceError.missingOutputResponse(
+                featureIdentifier,
+                Self.describe(response) + Self.underlyingErrorSummary(response),
+                remote: RemoteDeviceConnection.current != nil
+            )
         }
         return output
     }
@@ -421,6 +430,26 @@ final class CoreDeviceAppService {
             let suffix = dictionary.count > 8 ? ", ..." : ""
             return "dictionary{\(rendered.joined(separator: ", "))\(suffix)}"
         }
+    }
+
+    /// Nested NSUnderlyingError entries sit below the generic description depth;
+    /// render the chain separately because it carries the device-side reason.
+    private static func underlyingErrorSummary(_ response: RemoteXPCValue) -> String {
+        var entries: [String] = []
+        var error = response.dictionaryValue?["CoreDevice.error"]?.dictionaryValue?["userInfo"]?
+            .dictionaryValue?["NSUnderlyingError"]?.dictionaryValue
+        while let current = error, entries.count < 6 {
+            let userInfo = current["userInfo"]?.dictionaryValue ?? [:]
+            var entry = "\(current["domain"]?.stringValue ?? "unknown domain") \(current["code"]?.intValue.map(String.init) ?? "?")"
+            let details = ["NSLocalizedDescription", "NSLocalizedFailureReason", "NSDebugDescription"]
+                .compactMap { userInfo[$0]?.stringValue?.nonEmptyOrNil }
+            if !details.isEmpty {
+                entry += ": " + details.map(quote).joined(separator: "; ")
+            }
+            entries.append(entry)
+            error = userInfo["NSUnderlyingError"]?.dictionaryValue
+        }
+        return entries.isEmpty ? "" : "; underlying errors: " + entries.joined(separator: " <- ")
     }
 
     private static func quote(_ value: String) -> String {

@@ -1020,6 +1020,60 @@ final class DeviceProtocolClientTests: XCTestCase {
         }
     }
 
+    func testRemoteLaunchFailureKeepsUnderlyingErrorsAndPointsToProviderReinstall() throws {
+        let response = try RemoteXPCWrapper.encode(
+            messageID: 1,
+            flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
+            payload: .dictionary([
+                "CoreDevice.error": .dictionary([
+                    "code": .int64(10002),
+                    "domain": .string("com.apple.dt.CoreDeviceError"),
+                    "userInfo": .dictionary([
+                        "BundleIdentifier": .string("com.example.app"),
+                        "NSLocalizedDescription": .string("The application failed to launch."),
+                        "NSUnderlyingError": .dictionary([
+                            "code": .int64(1),
+                            "domain": .string("FBSOpenApplicationServiceErrorDomain"),
+                            "userInfo": .dictionary([
+                                "NSLocalizedFailureReason": .string("The request was denied by service delegate (SBMainWorkspace)."),
+                                "NSUnderlyingError": .dictionary([
+                                    "code": .int64(3),
+                                    "domain": .string("FBSOpenApplicationErrorDomain"),
+                                    "userInfo": .dictionary([
+                                        "NSLocalizedFailureReason": .string("Security"),
+                                    ]),
+                                ]),
+                            ]),
+                        ]),
+                    ]),
+                ]),
+            ])
+        )
+        let stream = FakeDeviceStream(reads: [
+            remoteXPCInitializationResponses(
+                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
+            ),
+        ])
+        let client = RemoteXPCClient(stream: stream)
+        try client.completeClientHandshake()
+        let service = CoreDeviceAppService(client: client)
+        let connection = RemoteDeviceConnection(
+            udid: "remote", driverBundleID: "com.example.driver.xctrunner",
+            usbmux: .init(host: "127.0.0.1", port: 27015),
+            driver: .init(host: "127.0.0.1", port: 8100)
+        )
+
+        try RemoteDeviceConnection.$current.withValue(connection) {
+            XCTAssertThrowsError(try service.launchApplication(bundleID: "com.example.app")) { error in
+                let message = String(describing: error)
+                XCTAssertTrue(message.contains("FBSOpenApplicationServiceErrorDomain 1: \"The request was denied by service delegate (SBMainWorkspace).\""))
+                XCTAssertTrue(message.contains("<- FBSOpenApplicationErrorDomain 3: \"Security\""))
+                XCTAssertTrue(message.contains("provider's re-signing install"))
+                XCTAssertFalse(message.contains("ios-use config --udid"))
+            }
+        }
+    }
+
     func testRealDeviceAppInstallActionProbe() throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["IOS_USE_REAL_DEVICE_APPINSTALL_PROBE"] == "1" else {
