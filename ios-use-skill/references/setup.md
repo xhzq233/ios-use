@@ -196,8 +196,11 @@ The provider installs/signs the Driver and maintains the transport. ios-use
 owns XCTest, App management, URL opening and `activateApp --terminateExisting
 --log` on macOS and Linux x86_64. `stop` stops XCTest and log capture; release
 the provider lease separately. Signed App packages use `ios-use install`;
-provider re-signing stays outside ios-use. Use a trusted network or secure
-tunnel for provider endpoints. Run `dom` to check remote responsiveness.
+provider re-signing stays outside ios-use. If iOS refuses to launch an App
+(`CoreDevice.error` 10002), reinstall it through the provider's re-signing
+install; `config --udid` and on-device trust do not apply to provider devices.
+Use a trusted network or secure tunnel for provider endpoints. Run `dom` to
+check remote responsiveness.
 
 Duo size preview: `config --mac --device-model iphone-duo`, then use the
 title-bar Expand/Collapse button without restarting the App. It uses Xcode 27.1
