@@ -4,6 +4,7 @@ import Foundation
 public struct IOSUseCLI: Sendable {
     public typealias CLIOutputSink = @Sendable (String) -> Void
     public let paths: IOSUsePaths
+    private let outputSink: CLIOutputSink?
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -11,9 +12,13 @@ public struct IOSUseCLI: Sendable {
         registerHomesForDiskUsage: Bool = false
     ) {
         paths = IOSUsePaths.resolve(environment: environment)
+        self.outputSink = outputSink
     }
 
-    init(pathsForTesting paths: IOSUsePaths) { self.paths = paths }
+    init(pathsForTesting paths: IOSUsePaths) {
+        self.paths = paths
+        self.outputSink = nil
+    }
 
     public static var helpText: String { CLIHelp.rootText }
 
@@ -79,7 +84,7 @@ public struct IOSUseCLI: Sendable {
                 }
                 let output = zip(contexts, health).map { context, health in "\(context.deviceID) \(health.status) (ios-use) \(context.info.driverHost ?? ""):\(context.info.driverPort ?? 0)" + (health.error.map { " — \($0)" } ?? "") }.joined(separator: "\n")
                 return CLIResult(exitCode: 0, stdout: contexts.isEmpty ? "No active Devices. Use start --connection <file>.\n" : output + "\n")
-            case .driver, .appLifecycle, .stop, .apps, .install, .uninstall, .open:
+            case .driver, .appLifecycle, .stop, .apps, .install, .uninstall, .open, .oslog, .mediaImport:
                 let requestedUDID: String?
                 switch invocation.command {
                 case .apps(let options): requestedUDID = options.udid
@@ -87,6 +92,7 @@ public struct IOSUseCLI: Sendable {
                 case .uninstall(let options): requestedUDID = options.udid
                 case .open(let options): requestedUDID = options.session.udid
                 case .appLifecycle(let options): requestedUDID = options.session.udid
+                case .oslog(let options): requestedUDID = options.session.udid
                 default: requestedUDID = nil
                 }
                 let context = try DeviceContextStore.activeContext(explicitDeviceID: invocation.deviceID, impliedUDID: requestedUDID, paths: paths)
@@ -113,6 +119,23 @@ public struct IOSUseCLI: Sendable {
                             : CLIResult(exitCode: 0, stdout: output)
                     case .open(let options):
                         return executeOpen(options, paths: context.paths, json: json)
+                    case .oslog(let options):
+                        return executeOSLog(options, paths: context.paths)
+                    case .mediaImport(let options):
+                        let result = try DeviceCommandLock.withExclusiveLock(
+                            paths: context.paths
+                        ) {
+                            try MediaImportService.run(
+                                options: options,
+                                paths: context.paths
+                            )
+                        }
+                        return json
+                            ? MachineOutput.success(
+                                command: command,
+                                data: MediaImportService.machineData(result)
+                            )
+                            : CLIResult(exitCode: 0, stdout: MediaImportService.format(result))
                     case .stop:
                         let output = try RemoteDeviceService.stop(info: context.info, paths: context.paths)
                         return json ? MachineOutput.success(command: command, data: .object(["status": .string("stopped")]))
@@ -126,6 +149,24 @@ public struct IOSUseCLI: Sendable {
             }
         } catch {
             return commandFailure(command: command, error: error, json: json)
+        }
+    }
+
+    private func executeOSLog(_ options: OSLogOptions, paths: IOSUsePaths) -> CLIResult {
+        do {
+            let stdout = try OSLogCommandService.run(
+                options: options,
+                paths: paths,
+                hostDeviceTypeHint: "real",
+                outputSink: outputSink
+            )
+            if let outputSink, !stdout.isEmpty {
+                outputSink(stdout)
+                return CLIResult(exitCode: 0)
+            }
+            return CLIResult(exitCode: 0, stdout: stdout)
+        } catch {
+            return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
         }
     }
 

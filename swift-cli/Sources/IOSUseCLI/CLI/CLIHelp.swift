@@ -17,13 +17,14 @@ enum CLIHelp {
 
         Commands: start, stop, status, dom, waitFor, screenshot, tap,
           longpress, input, swipe, apps, install, uninstall, open,
-          activateApp, terminateApp, home, rotate, dismissAlert
+          activateApp, terminateApp, home, rotate, dismissAlert,
+          media, oslog
         With multiple Devices, select one using -d <id>.
         Inspect current DOM before acting and keep page-dependent actions sequential.
         Use ios-use help <command> for options; --json returns structured results.
         Screenshots save the original JPEG and geometry. OCR requires macOS.
         The provider handles signing, Driver installation and transport setup.
-        ios-use owns XCTest and activateApp --log for --connection sessions.
+        ios-use owns XCTest, oslog, media import, and activateApp --log for --connection sessions.
 
         """
         #else

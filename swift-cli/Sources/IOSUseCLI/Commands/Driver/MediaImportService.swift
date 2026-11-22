@@ -1,6 +1,8 @@
 import Foundation
 import IOSUseProtocol
+#if canImport(UniformTypeIdentifiers)
 import UniformTypeIdentifiers
+#endif
 
 enum MediaImportError: Error, CustomStringConvertible, MachineErrorConvertible {
     case sourceUnreadable(String)
@@ -111,18 +113,10 @@ enum MediaImportService {
               filename == url.lastPathComponent else {
             throw MediaImportError.sourceUnreadable("invalid filename for \(url.path)")
         }
-        guard let type = UTType(filenameExtension: url.pathExtension), type.isDeclared else {
-            throw MediaImportError.unsupportedMediaType(filename)
-        }
-
-        let kind: String
-        if type.conforms(to: .image) {
-            kind = "photo"
-        } else if type.conforms(to: .movie) {
-            kind = "video"
-        } else {
-            throw MediaImportError.unsupportedMediaType("\(filename) (\(type.identifier))")
-        }
+        let resolvedType = try resolveMediaType(
+            filename: filename,
+            pathExtension: url.pathExtension
+        )
 
         if let size = values.fileSize, size >= IOSUseProtocol.maxFrameSizeBytes {
             throw MediaImportError.frameTooLarge(
@@ -142,10 +136,68 @@ enum MediaImportService {
         }
         return Source(
             path: url.path,
-            kind: kind,
+            kind: resolvedType.kind,
             filename: filename,
-            uniformTypeIdentifier: type.identifier,
+            uniformTypeIdentifier: resolvedType.uniformTypeIdentifier,
             data: data
         )
+    }
+
+    private static func resolveMediaType(
+        filename: String,
+        pathExtension: String
+    ) throws -> (kind: String, uniformTypeIdentifier: String) {
+        #if canImport(UniformTypeIdentifiers)
+        guard let type = UTType(filenameExtension: pathExtension), type.isDeclared else {
+            throw MediaImportError.unsupportedMediaType(filename)
+        }
+        if type.conforms(to: .image) {
+            return ("photo", type.identifier)
+        } else if type.conforms(to: .movie) {
+            return ("video", type.identifier)
+        } else {
+            throw MediaImportError.unsupportedMediaType("\(filename) (\(type.identifier))")
+        }
+        #else
+        return try resolveFallbackMediaType(filename: filename, pathExtension: pathExtension)
+        #endif
+    }
+
+    static func resolveFallbackMediaType(
+        filename: String,
+        pathExtension: String
+    ) throws -> (kind: String, uniformTypeIdentifier: String) {
+        switch pathExtension.lowercased() {
+        case "png":
+            return ("photo", "public.png")
+        case "jpg", "jpeg":
+            return ("photo", "public.jpeg")
+        case "heic":
+            return ("photo", "public.heic")
+        case "heif":
+            return ("photo", "public.heif")
+        case "gif":
+            return ("photo", "com.compuserve.gif")
+        case "tif", "tiff":
+            return ("photo", "public.tiff")
+        case "bmp":
+            return ("photo", "com.microsoft.bmp")
+        case "webp":
+            return ("photo", "org.webmproject.webp")
+        case "dng":
+            return ("photo", "com.adobe.raw-image")
+        case "mov", "qt":
+            return ("video", "com.apple.quicktime-movie")
+        case "mp4":
+            return ("video", "public.mpeg-4")
+        case "m4v":
+            return ("video", "com.apple.m4v-video")
+        case "3gp":
+            return ("video", "public.3gpp")
+        case "avi":
+            return ("video", "public.avi")
+        default:
+            throw MediaImportError.unsupportedMediaType(filename)
+        }
     }
 }

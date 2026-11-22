@@ -5,8 +5,15 @@ enum RemoteDeviceService {
         let connection = try RemoteDeviceConnection.load(path: connectionPath)
         return try RemoteDeviceConnection.$current.withValue(connection) {
             try SessionOperationLock.withExclusiveLock(paths: paths) {
-                guard try DriverSessionStore.readInfo(paths: paths) == nil else {
-                    throw CLIParseError.invalidValue("Device already has an active session")
+                if let existing = try DriverSessionStore.readInfo(paths: paths) {
+                    if existing.remoteConnection != nil,
+                       let pid = existing.holderPid.flatMap(Int32.init(exactly:)),
+                       pid > 0,
+                       !DriverLifecycleService.processAlive(pid: pid) {
+                        try DriverSessionStore.removeDriverLock(paths: paths)
+                    } else {
+                        throw CLIParseError.invalidValue("Device already has an active session")
+                    }
                 }
                 let homePaths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": paths.root])
                 if let existing = DeviceContextStore.sessions(paths: homePaths).first(where: {
@@ -45,6 +52,25 @@ enum RemoteDeviceService {
         var machineFields: [String: MachineValue] {
             ["status": .string(status), "error": error.map(MachineValue.string) ?? .null]
         }
+    }
+
+    static func isHolderReady(info: SessionService.Info) -> Bool {
+        guard let pid = info.holderPid.flatMap(Int32.init(exactly:)),
+              pid > 0, DriverLifecycleService.processAlive(pid: pid),
+              let socket = info.controlSocketPath, !socket.isEmpty else {
+            return false
+        }
+        guard let holder = try? XCTestSessionHolderControlClient.request(
+            socketPath: socket,
+            command: "status",
+            timeoutSeconds: 1
+        ) else {
+            return false
+        }
+        return holder.holderPid == info.holderPid
+            && holder.sessionIdentifier == info.sessionIdentifier
+            && holder.runnerPid == info.runnerPid
+            && holder.status == "ready"
     }
 
     static func health(info: SessionService.Info) -> Health {

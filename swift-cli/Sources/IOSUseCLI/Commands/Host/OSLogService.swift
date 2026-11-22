@@ -2,6 +2,7 @@ import Foundation
 import IOSUseProtocol
 
 public enum OSLogService {
+#if os(macOS)
     typealias SimulatorLogCollector = (_ udid: String, _ lastSec: Double, _ source: OSLogOptions.SourceFilter) throws -> [String]
     static var simulatorLogCollector: SimulatorLogCollector = collectSimulatorLog
     typealias PlayCoverLogCollector = (
@@ -43,6 +44,7 @@ public enum OSLogService {
         } while Date() < deadline
         return formatLogOutput(lines)
     }
+#endif
 
     public static func fetch(
         udid: String,
@@ -54,6 +56,7 @@ public enum OSLogService {
         deviceTypeHint: String? = nil,
         outputSink: ((String) -> Void)? = nil
     ) throws -> String {
+#if os(macOS)
         let simulator: Bool
         if deviceTypeHint == "simulator" {
             simulator = true
@@ -80,6 +83,11 @@ public enum OSLogService {
                 paths: paths
             )
         }
+#else
+        if deviceTypeHint == "simulator" {
+            throw CLIParseError.invalidValue("Simulator oslog is unavailable on Linux.")
+        }
+#endif
 
         let regex = try patternRegex(pattern: pattern, flags: flags)
         var output = ""
@@ -105,6 +113,7 @@ public enum OSLogService {
         return outputSink == nil ? output : ""
     }
 
+#if os(macOS)
     static func resetSimulatorLogCollectorForTesting() {
         simulatorLogCollector = collectSimulatorLog
     }
@@ -216,6 +225,7 @@ public enum OSLogService {
             return true
         }
     }
+#endif
 
     private static func filter(_ lines: [String], pattern: String?, flags: String?) throws -> [String] {
         try filter(lines, regex: patternRegex(pattern: pattern, flags: flags))
@@ -257,6 +267,7 @@ public enum OSLogService {
         return options
     }
 
+#if os(macOS)
     private static func collectSimulatorLog(udid: String, lastSec: Double, source: OSLogOptions.SourceFilter) throws -> [String] {
         _ = source
         let args = ["simctl", "spawn", udid, "log", "show", "--style", "compact", "--last", "\(lastSec)s"]
@@ -315,6 +326,7 @@ public enum OSLogService {
         return "[ios-use-runtime] "
             + String(decoding: bounded, as: UTF8.self)
     }
+#endif
 
     private static func formatLogOutput(_ lines: [String]) -> String {
         guard !lines.isEmpty else { return "" }
@@ -329,6 +341,7 @@ public enum OSLogService {
 enum OSLogCommandService {
     static func run(options: OSLogOptions, paths: IOSUsePaths, hostDeviceTypeHint: String? = nil, outputSink: ((String) -> Void)? = nil) throws -> String {
         let activeDriver = SessionService.read(paths: paths)
+#if os(macOS)
         if let activeDriver,
            activeDriver.deviceType
             == PlayCoverSessionService.deviceType {
@@ -352,6 +365,7 @@ enum OSLogCommandService {
             }
             return output
         }
+#endif
         let udid = try SessionService.resolveTargetUdid(
             explicitUdid: options.session.udid,
             paths: paths,

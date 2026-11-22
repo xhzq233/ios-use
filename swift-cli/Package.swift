@@ -19,15 +19,18 @@ let linuxSources = [
     "Commands/Driver/DriverMachineOutput.swift",
     "Commands/Driver/DriverOutput.swift",
     "Commands/Driver/DomObservation.swift",
+    "Commands/Driver/MediaImportService.swift",
     "Commands/Driver/ScreenshotArtifactService.swift",
     "Commands/Host/SessionService.swift",
     "Commands/Host/AppLifecycleService.swift",
+    "Commands/Host/OSLogService.swift",
     "Services/DriverRuntime/DriverClient.swift",
     "Services/DriverRuntime/DriverSessionStore.swift",
     "Services/DriverRuntime/DeviceContextStore.swift",
     "Services/DriverRuntime/DeviceCommandLock.swift",
     "Services/DriverRuntime/SessionOperationLock.swift",
     "Services/Logs/CLILogService.swift",
+    "Services/Logs/RealDeviceOSTraceService.swift",
     "Services/Updates/UpdateReminderService.swift",
     "Support/ArtifactPaths.swift",
     "Support/IOSUsePaths.swift",
@@ -72,7 +75,7 @@ let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("Sources/IOSUseCLI")
 let excludedSources = (FileManager.default.enumerator(atPath: sourceRoot.path)?.allObjects as? [String] ?? [])
     .filter { $0.hasSuffix(".swift") && !linuxSources.contains($0) }
-let linuxTests = ["CoreDeviceChecksumTests.swift", "DomObservationTests.swift", "DeviceStreamLifecycleTests.swift", "RemoteDriverConnectionTests.swift", "FakeDriverServer.swift", "CLIParserTests.swift", "LinuxScreenshotTests.swift", "DeviceArchiveDecodingTests.swift", "UpdateReminderTests.swift"]
+let linuxTests = ["CoreDeviceChecksumTests.swift", "DomObservationTests.swift", "DeviceStreamLifecycleTests.swift", "RemoteDriverConnectionTests.swift", "FakeDriverServer.swift", "CLIParserTests.swift", "LinuxScreenshotTests.swift", "DeviceArchiveDecodingTests.swift", "UpdateReminderTests.swift", "LinuxRemoteFeaturesTests.swift"]
 let testRoot = sourceRoot.deletingLastPathComponent().deletingLastPathComponent()
     .appendingPathComponent("Tests/IOSUseCLITests")
 let excludedTests = (FileManager.default.enumerator(atPath: testRoot.path)?.allObjects as? [String] ?? [])
