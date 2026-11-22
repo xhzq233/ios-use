@@ -13,6 +13,7 @@ struct PairRecord {
     let hostCertificate: Data
 
     static func load(udid: String) throws -> PairRecord {
+        if let direct = DirectDeviceConnection.current { return direct.pairRecord }
         let fd = try Usbmux.openSocket()
         defer { posixClose(fd) }
         let payload: [String: Any] = [
@@ -26,10 +27,14 @@ struct PairRecord {
             throw CLIParseError.invalidValue("No pair record found for device \(udid). Please pair with the device first.")
         }
         let pairData = try plistData(rawPair)
-        let pair = try parsePlist(pairData)
+        return try decode(pairData)
+    }
+
+    static func decode(_ data: Data) throws -> PairRecord {
+        let pair = try parsePlist(data)
         guard let hostID = pair["HostID"] as? String,
               let systemBUID = pair["SystemBUID"] as? String else {
-            throw CLIParseError.invalidValue("Invalid pair record for device \(udid)")
+            throw CLIParseError.invalidValue("Pair record requires HostID and SystemBUID")
         }
         return PairRecord(
             hostID: hostID,

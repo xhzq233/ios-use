@@ -1,0 +1,70 @@
+{
+  "name": "Settings input and assertions",
+  "steps": [
+    {
+      "command": "home"
+    },
+    {
+      "command": "activateApp",
+      "args": {
+        "bundleID": "com.apple.Preferences"
+      }
+    },
+    {
+      "command": "waitFor",
+      "args": {
+        "label": "搜索",
+        "timeout": 10
+      }
+    },
+    {
+      "command": "tap",
+      "args": {
+        "label": "搜索"
+      }
+    },
+    {
+      "command": "input",
+      "args": {
+        "label": "搜索",
+        "text": "显示"
+      }
+    },
+    {
+      "command": "waitFor",
+      "args": {
+        "label": "显示与亮度",
+        "timeout": 10
+      }
+    },
+    {
+      "command": "assertText",
+      "args": {
+        "text": "显示"
+      }
+    },
+    {
+      "command": "dom"
+    },
+    {
+      "command": "screenshot"
+    },
+    {
+      "command": "home"
+    },
+    {
+      "count": 2,
+      "steps": [
+        {
+          "command": "sleep",
+          "args": {
+            "seconds": 0.25
+          }
+        },
+        {
+          "command": "screenshot"
+        }
+      ]
+    }
+  ]
+}

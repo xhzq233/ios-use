@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import XCTest
 import IOSUseProtocol
@@ -1469,12 +1470,8 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(request["PersonalizedImageType"] as? String, "DeveloperDiskImage")
     }
 
-    func testMobileImageMounterMountedDetectionFallsBackToCopyDevices() throws {
+    func testMobileImageMounterDetectsActualMountedImage() throws {
         let stream = FakeDeviceStream(reads: [
-            plistFrame([
-                "Error": "InternalError",
-                "DetailedError": "lookup failed",
-            ]),
             plistFrame([
                 "EntryList": [
                     [
@@ -1490,11 +1487,16 @@ final class DeviceProtocolClientTests: XCTestCase {
 
         XCTAssertTrue(try client.isPersonalizedImageMounted())
 
-        let lookup = try parseLengthPrefixedPlist(stream.writes[0])
-        XCTAssertEqual(lookup["Command"] as? String, "LookupImage")
-        XCTAssertEqual(lookup["ImageType"] as? String, "Personalized")
-        let copyDevices = try parseLengthPrefixedPlist(stream.writes[1])
+        let copyDevices = try parseLengthPrefixedPlist(stream.writes[0])
         XCTAssertEqual(copyDevices["Command"] as? String, "CopyDevices")
+    }
+
+    func testMobileImageMounterChecksMountListInsteadOfCachedSignatures() throws {
+        let stream = FakeDeviceStream(reads: [
+            plistFrame(["EntryList": [["DiskImageType": "Personalized", "MountPath": "/System/Developer", "IsMounted": false]]]),
+        ])
+        XCTAssertFalse(try MobileImageMounterClient(stream: stream).isPersonalizedImageMounted())
+        XCTAssertEqual(try parseLengthPrefixedPlist(stream.writes[0])["Command"] as? String, "CopyDevices")
     }
 
     func testMobileImageMounterUploadAndMountPersonalizedImageRequests() throws {
@@ -1522,6 +1524,102 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(mount["ImageType"] as? String, "Personalized")
         XCTAssertEqual(mount["ImageSignature"] as? Data, signature)
         XCTAssertEqual(mount["ImageTrustCache"] as? Data, trustCache)
+    }
+
+    func testDDIAlreadyMountedSkipsFilesAndPersonalization() throws {
+        let stream = FakeDeviceStream(reads: [plistFrame(["EntryList": [["PersonalizedImageType": "DeveloperDiskImage", "IsMounted": true]]])])
+        let changed = try PersonalizedDDIMounter.mountIfNeeded(
+            connect: { MobileImageMounterClient(stream: stream) },
+            readECID: { XCTFail("Should not read ECID"); return 0 },
+            ticket: { _ in XCTFail("Should not contact TSS"); return Data() },
+            resolve: { _ in throw CLIParseError.invalidValue("Should not resolve files") })
+        XCTAssertFalse(changed)
+        XCTAssertTrue(stream.closed)
+        XCTAssertEqual(stream.writes.count, 1)
+    }
+
+    func testDDIMountUsesTSSStreamsImageAndVerifiesMount() throws {
+        try exerciseDDIMount(cached: false, finalMounted: true)
+    }
+
+    func testDDIMountUsesCachedTicketWithoutInternet() throws {
+        try exerciseDDIMount(cached: true, finalMounted: true)
+    }
+
+    func testDDIMountRejectsAcknowledgementWithoutMountedImage() throws {
+        XCTAssertThrowsError(try exerciseDDIMount(cached: true, finalMounted: false)) { error in
+            XCTAssertTrue(String(describing: error).contains("acknowledged"))
+        }
+    }
+
+    func testDDIMountRejectsCorruptImageBeforePersonalizationOrUpload() throws {
+        XCTAssertThrowsError(try exerciseDDIMount(cached: false, finalMounted: true, corrupt: true)) { error in
+            XCTAssertTrue(String(describing: error).contains("digest does not match"))
+        }
+    }
+
+    private func exerciseDDIMount(cached: Bool, finalMounted: Bool, corrupt: Bool = false) throws {
+        let root = try temporaryDirectory(prefix: "ddi-mount")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let image = Data(repeating: 0x31, count: 1_048_576 + 7)
+        let trust = Data([4, 5])
+        let signature = Data([6, 7])
+        try image.write(to: root.appendingPathComponent("Image.dmg"))
+        try trust.write(to: root.appendingPathComponent("Trust"))
+        let manifest: [String: Any] = ["BuildIdentities": [[
+            "ApBoardID": 12, "ApChipID": 0x8010,
+            "Manifest": [
+                "PersonalizedDMG": ["Digest": Data(SHA384.hash(data: image)), "Trusted": true, "Info": ["Path": "Image.dmg"]],
+                "LoadableTrustCache": ["Digest": Data(SHA384.hash(data: trust)), "Trusted": true, "Info": ["Path": "Trust"]]
+            ]
+        ]]]
+        try PropertyListSerialization.data(fromPropertyList: manifest, format: .xml, options: 0)
+            .write(to: root.appendingPathComponent("BuildManifest.plist"))
+        if corrupt { try Data([0xff]).write(to: root.appendingPathComponent("Image.dmg")) }
+        let before = FakeDeviceStream(reads: [plistFrame(["EntryList": []])])
+        let identifiers = FakeDeviceStream(reads: [plistFrame(["PersonalizationIdentifiers": ["BoardId": 12, "ChipID": 0x8010]])])
+        let cachedTicket = FakeDeviceStream(reads: [plistFrame(cached ? ["ImageSignature": signature] : ["Error": "NotFound"])])
+        let nonce = FakeDeviceStream(reads: [plistFrame(["PersonalizationNonce": Data([8])])])
+        let upload = FakeDeviceStream(reads: [plistFrame(["Status": "ReceiveBytesAck"]), plistFrame(["Status": "Complete"]), plistFrame(["Status": "Complete"])])
+        let after = FakeDeviceStream(reads: [plistFrame(["EntryList": [["PersonalizedImageType": "DeveloperDiskImage", "IsMounted": finalMounted]]])])
+        let streams = [before, identifiers, cachedTicket] + (cached ? [] : [nonce]) + [upload, after]
+        var index = 0
+        var tssCalls = 0
+        defer {
+            XCTAssertEqual(index, corrupt ? 2 : streams.count)
+            XCTAssertTrue(streams.prefix(index).allSatisfy { $0.closed })
+            XCTAssertEqual(tssCalls, cached || corrupt ? 0 : 1)
+            if corrupt { XCTAssertTrue(upload.writes.isEmpty) }
+            else {
+                XCTAssertEqual(upload.writes[1].count, 1_048_576)
+                XCTAssertEqual(upload.writes[1] + upload.writes[2], image)
+                XCTAssertEqual(try? parseLengthPrefixedPlist(upload.writes[3])["Command"] as? String, "MountImage")
+            }
+        }
+        let changed = try PersonalizedDDIMounter.mountIfNeeded(connect: {
+            guard index < streams.count else { throw CLIParseError.invalidValue("Unexpected connection") }
+            defer { index += 1 }
+            return MobileImageMounterClient(stream: streams[index])
+        }, readECID: { XCTAssertFalse(cached); return 123 }, ticket: { request in
+            tssCalls += 1
+            XCTAssertEqual(request["ApECID"] as? Int64, 123)
+            XCTAssertEqual(request["ApNonce"] as? Data, Data([8]))
+            return signature
+        }, resolve: { try XCTUnwrap(ResolvedDeveloperDiskImage.directory(root, identifiers: $0)) })
+        XCTAssertTrue(changed)
+    }
+
+    func testDDIManifestPathsCannotEscapeImportedDirectory() throws {
+        let root = try temporaryDirectory(prefix: "ddi-path")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("image")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let outside = root.appendingPathComponent("outside")
+        try Data([1]).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("link"), withDestinationURL: outside)
+        for path in ["../outside", outside.path, "link"] {
+            XCTAssertThrowsError(try ResolvedDeveloperDiskImage.containedFile(path, in: folder))
+        }
     }
 
     func testDeveloperDiskImageBuildManifestSelectsIdentityAndBuildsTSSRequest() throws {
