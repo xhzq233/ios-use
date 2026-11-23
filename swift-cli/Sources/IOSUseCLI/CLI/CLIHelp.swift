@@ -16,7 +16,7 @@ enum CLIHelp {
           ios-use stop -d phone
 
         Commands: start, stop, status, dom, waitFor, screenshot, tap,
-          longpress, input, swipe, apps, install, uninstall, open,
+          longpress, input, swipe, apps, install, uninstall, file, open,
           activateApp, terminateApp, home, rotate, dismissAlert,
           media, oslog
         With multiple Devices, select one using -d <id>.
@@ -38,7 +38,7 @@ enum CLIHelp {
           Inspect    dom, screenshot, capture, ui-tree
           Interact   tap, longpress, input, swipe, waitFor, dismissAlert
           Apps       apps, activateApp, terminateApp, home, rotate, open
-          Manage     install, uninstall, media, ddi-mount, du
+          Manage     install, uninstall, file, media, ddi-mount, du
           Diagnose   proxy, oslog, debug
 
         Options:
@@ -592,6 +592,8 @@ enum CLIHelp {
             )
         case "media":
             return mediaHelp(arguments: rest)
+        case "file":
+            return fileHelp(arguments: rest)
         case "oslog":
             return """
             Usage: ios-use oslog [--udid <udid>] [--process <name> | --pid <pid>] [--pattern <regex>] [--flags <flags>] [--timeout <duration>] [--verbose]
@@ -626,6 +628,10 @@ enum CLIHelp {
         }
         if arguments.first == "media",
            let help = commandHelpText(arguments: ["media"]) {
+            return help
+        }
+        if arguments.first == "file",
+           let help = commandHelpText(arguments: ["file"]) {
             return help
         }
         return rootText
@@ -774,6 +780,80 @@ enum CLIHelp {
 
             Options:
               --json    Print the common machine-readable envelope
+
+            """
+        default:
+            return nil
+        }
+    }
+
+    private static func fileHelp(arguments: [String]) -> String? {
+        let subcommand = arguments.first { $0 != "--help" && $0 != "-h" }
+        switch subcommand {
+        case nil:
+            return """
+            Usage: ios-use file <command>
+
+            Inspect and transfer files in a real device App's sandbox container
+            over Apple house_arrest + AFC. Full container access requires a
+            development or enterprise build signed with get-task-allow; pass
+            --documents for Apps that enable UIFileSharingEnabled.
+
+            Commands:
+              ls      List directory or entry metadata inside the App container
+              pull    Download a file or directory from the App container
+              push    Upload a file or directory into the App container
+              rm      Remove a file or directory inside the App container
+
+            """
+        case "ls":
+            return """
+            Usage: ios-use file ls <bundleId> [remotePath] [--documents] [--udid <udid>] [--json]
+
+            List files or inspect entry metadata inside an installed App's sandbox.
+
+            Options:
+              --documents    Access the App's Documents sharing container
+              --udid <udid>  Target real device UDID; overrides active driver.lock
+              --json         Print JSON
+
+            """
+        case "pull":
+            return """
+            Usage: ios-use file pull <bundleId> <remotePath> [localPath] [--documents] [--udid <udid>] [--json]
+
+            Download a file or directory recursively from an installed App's sandbox.
+            Symbolic links inside pulled directories are skipped safely with a warning.
+
+            Options:
+              --documents    Access the App's Documents sharing container
+              --udid <udid>  Target real device UDID; overrides active driver.lock
+              --json         Print JSON
+
+            """
+        case "push":
+            return """
+            Usage: ios-use file push <bundleId> <localPath> <remotePath> [--documents] [--udid <udid>] [--json]
+
+            Upload a local file or directory into an installed App's sandbox.
+
+            Options:
+              --documents    Access the App's Documents sharing container
+              --udid <udid>  Target real device UDID; overrides active driver.lock
+              --json         Print JSON
+
+            """
+        case "rm":
+            return """
+            Usage: ios-use file rm <bundleId> <remotePath> [-r|--recursive] [--documents] [--udid <udid>] [--json]
+
+            Remove a file or directory inside an installed App's sandbox.
+
+            Options:
+              -r, --recursive  Recursively delete a non-empty directory
+              --documents      Access the App's Documents sharing container
+              --udid <udid>    Target real device UDID; overrides active driver.lock
+              --json           Print JSON
 
             """
         default:

@@ -1,3 +1,8 @@
+#if os(Linux)
+import Glibc
+#else
+import Darwin
+#endif
 import Foundation
 import CoreFoundation
 import IOSUseProtocol
@@ -11,9 +16,35 @@ enum AfcOpcode: UInt64 {
     case getFileInfo = 0x0a
     case fileOpen = 0x0d
     case fileOpenResult = 0x0e
+    case read = 0x0f
     case write = 0x10
     case close = 0x14
     case makeLink = 0x1c
+}
+
+enum AfcEntryKind: String, Equatable, Sendable {
+    case file
+    case directory
+    case symlink
+    case other
+
+    init(ifmt: String?) {
+        switch ifmt {
+        case "S_IFREG": self = .file
+        case "S_IFDIR": self = .directory
+        case "S_IFLNK": self = .symlink
+        default: self = .other
+        }
+    }
+}
+
+struct AfcEntryInfo: Equatable, Sendable {
+    let name: String
+    let path: String
+    let kind: AfcEntryKind
+    let size: Int64
+    let modifiedAtNanoseconds: Int64?
+    let linkTarget: String?
 }
 
 enum AfcStatus: UInt64, CustomStringConvertible {
@@ -101,6 +132,9 @@ enum AfcClientError: Error, CustomStringConvertible, Equatable {
 }
 
 final class AfcClient {
+    static let containerMetadataFileName = ".com.apple.mobile_container_manager.metadata.plist"
+    private static let standardContainerSubdirectories = ["Documents", "Library", "SystemData", "tmp"]
+
     private let stream: DeviceStream
     private var packetNumber: UInt64 = 1
     private var maxWriteChunkSize = IOSUseProtocol.XCConstants.afcInitialWriteChunkSize
@@ -115,22 +149,37 @@ final class AfcClient {
         return try body(AfcClient(stream: stream))
     }
 
+    func directoryExists(_ path: String) -> Bool {
+        let normalized = normalizeDevicePath(path)
+        if let entry = try? statEntry(normalized) {
+            return entry.kind == .directory
+        }
+        return (try? readDirectory(normalized)) != nil
+    }
+
     func makeDirectories(_ path: String) throws {
         let normalized = normalizeDevicePath(path)
         let parts = normalized.split(separator: "/").map(String.init)
         var current = path.hasPrefix("/") ? "/" : ""
-        for part in parts {
+        for (index, part) in parts.enumerated() {
             if current.isEmpty || current == "/" {
                 current += String(part)
             } else {
                 current += "/\(part)"
             }
+            let isLeaf = index == parts.count - 1
             do {
                 try request(.makeDirectory, payload: cString(current))
             } catch AfcClientError.status(.objectExists) {
                 continue
             } catch AfcClientError.status(.objectNotFound) {
                 continue
+            } catch AfcClientError.status(.permissionDenied) {
+                // Seatbelt may deny mkdir on existing ancestor folders such as /Documents before EEXIST.
+                if !isLeaf || directoryExists(current) {
+                    continue
+                }
+                throw AfcClientError.status(.permissionDenied)
             }
         }
     }
@@ -242,7 +291,15 @@ final class AfcClient {
     }
 
     func openFile(_ path: String) throws -> UInt64 {
-        var payload = uint64LE(IOSUseProtocol.XCConstants.afcFileOpenModeWriteOnly)
+        try openFile(path, mode: IOSUseProtocol.XCConstants.afcFileOpenModeWriteOnly)
+    }
+
+    func openFileForReading(_ path: String) throws -> UInt64 {
+        try openFile(path, mode: IOSUseProtocol.XCConstants.afcFileOpenModeReadOnly)
+    }
+
+    private func openFile(_ path: String, mode: UInt64) throws -> UInt64 {
+        var payload = uint64LE(mode)
         payload.append(cString(normalizeDevicePath(path)))
         let response = try request(.fileOpen, payload: payload)
         guard response.opcode == AfcOpcode.fileOpenResult.rawValue else {
@@ -252,6 +309,298 @@ final class AfcClient {
             throw AfcClientError.missingFileHandle
         }
         return readUInt64LE(response.payload, 0)
+    }
+
+    func read(handle: UInt64, maxLength: UInt64 = IOSUseProtocol.XCConstants.afcReadChunkSize) throws -> Data {
+        var payload = uint64LE(handle)
+        payload.append(uint64LE(maxLength))
+        do {
+            let response = try request(.read, payload: payload)
+            switch response.opcode {
+            case AfcOpcode.data.rawValue:
+                return response.payload
+            case AfcOpcode.status.rawValue:
+                return Data()
+            default:
+                throw AfcClientError.unexpectedOpcode(response.opcode)
+            }
+        } catch AfcClientError.status(.endOfData) {
+            return Data()
+        }
+    }
+
+    func statEntry(_ path: String) throws -> AfcEntryInfo {
+        let normalized = normalizeDevicePath(path)
+        let info = try fileInfo(normalized)
+        let name: String
+        if normalized == "/" {
+            name = "/"
+        } else {
+            name = normalized.split(separator: "/").last.map(String.init) ?? normalized
+        }
+        return AfcEntryInfo(
+            name: name,
+            path: normalized,
+            kind: AfcEntryKind(ifmt: info["st_ifmt"]),
+            size: Int64(info["st_size"] ?? "") ?? 0,
+            modifiedAtNanoseconds: info["st_mtime"].flatMap(Int64.init),
+            linkTarget: info["LinkTarget"]
+        )
+    }
+
+    func listSandboxDirectory(
+        path: String,
+        allowContainerRootFallback: Bool = false,
+        warnings: inout [String]
+    ) throws -> [AfcEntryInfo] {
+        let normalized = normalizeDevicePath(path)
+        do {
+            let children = try readDirectory(normalized)
+                .filter { child in
+                    guard child != "." && child != ".." else {
+                        return false
+                    }
+                    if normalized == "/" && child == Self.containerMetadataFileName {
+                        return false
+                    }
+                    return true
+                }
+                .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+
+            var entries: [AfcEntryInfo] = []
+            for child in children {
+                try validateSafeChildName(child)
+                let childPath = joinDevicePath(normalized, child)
+                do {
+                    entries.append(try statEntry(childPath))
+                } catch AfcClientError.status(.objectNotFound) {
+                    continue
+                } catch AfcClientError.status(.permissionDenied) {
+                    if (try? readDirectory(childPath)) != nil {
+                        entries.append(
+                            AfcEntryInfo(
+                                name: child,
+                                path: childPath,
+                                kind: .directory,
+                                size: 0,
+                                modifiedAtNanoseconds: nil,
+                                linkTarget: nil
+                            )
+                        )
+                    } else {
+                        warnings.append("Skipped permission-denied entry \(childPath)")
+                    }
+                }
+            }
+            return entries
+        } catch AfcClientError.status(.permissionDenied) where allowContainerRootFallback && normalized == "/" {
+            let entries = Self.standardContainerSubdirectories.compactMap { name -> AfcEntryInfo? in
+                let childPath = "/\(name)"
+                if let entry = try? statEntry(childPath) {
+                    return entry
+                }
+                if (try? readDirectory(childPath)) != nil {
+                    return AfcEntryInfo(
+                        name: name,
+                        path: childPath,
+                        kind: .directory,
+                        size: 0,
+                        modifiedAtNanoseconds: nil,
+                        linkTarget: nil
+                    )
+                }
+                return nil
+            }
+            guard !entries.isEmpty else {
+                throw AfcClientError.status(.permissionDenied)
+            }
+            return entries
+        }
+    }
+
+    func removeExistingPath(_ path: String) throws {
+        try request(.removePath, payload: cString(normalizeDevicePath(path)))
+    }
+
+    func removeExistingPathRecursive(_ path: String) throws {
+        let normalized = normalizeDevicePath(path)
+        let entry = try statEntry(normalized)
+        if entry.kind == .directory {
+            let children = try readDirectory(normalized)
+            for child in children where child != "." && child != ".." {
+                try validateSafeChildName(child)
+                try removeExistingPathRecursive(joinDevicePath(normalized, child))
+            }
+        }
+        try removeExistingPath(normalized)
+    }
+
+    func downloadFile(remotePath: String, localPath: String) throws -> Int64 {
+        let normalizedRemote = normalizeDevicePath(remotePath)
+        let localURL = URL(fileURLWithPath: localPath).standardizedFileURL
+        var destStat = stat()
+        if lstat(localURL.path, &destStat) == 0 && (destStat.st_mode & S_IFMT) == S_IFLNK {
+            throw CLIParseError.invalidValue("Refusing to overwrite symbolic link destination: \(localURL.path)")
+        }
+
+        let parentURL = localURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parentURL, withIntermediateDirectories: true)
+
+        let handle = try openFileForReading(normalizedRemote)
+        defer { try? closeFile(handle) }
+
+        let tempURL = parentURL.appendingPathComponent(".ios-use-pull-\(UUID().uuidString).tmp")
+        let fd = open(
+            tempURL.path,
+            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+            S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH
+        )
+        guard fd >= 0 else {
+            throw CLIParseError.invalidValue("Unable to create local file \(tempURL.path): errno \(errno)")
+        }
+        var shouldRemoveTemp = true
+        var fdClosed = false
+        defer {
+            if !fdClosed {
+                _ = posixClose(fd)
+            }
+            if shouldRemoveTemp {
+                _ = unlink(tempURL.path)
+            }
+        }
+
+        var totalBytes: Int64 = 0
+        while true {
+            let chunk = try read(handle: handle)
+            if chunk.isEmpty {
+                break
+            }
+            try writeAllToDescriptor(fd, data: chunk, destinationPath: localURL.path)
+            totalBytes += Int64(chunk.count)
+        }
+
+        _ = posixClose(fd)
+        fdClosed = true
+        guard rename(tempURL.path, localURL.path) == 0 else {
+            throw CLIParseError.invalidValue("Unable to move downloaded file to \(localURL.path): errno \(errno)")
+        }
+        shouldRemoveTemp = false
+        return totalBytes
+    }
+
+    func downloadDirectory(
+        remotePath: String,
+        localPath: String,
+        warnings: inout [String]
+    ) throws -> (fileCount: Int, byteCount: Int64) {
+        let normalizedRemote = normalizeDevicePath(remotePath)
+        let entries = try listSandboxDirectory(
+            path: normalizedRemote,
+            allowContainerRootFallback: normalizedRemote == "/",
+            warnings: &warnings
+        )
+        let localURL = URL(fileURLWithPath: localPath, isDirectory: true).standardizedFileURL
+        try FileManager.default.createDirectory(at: localURL, withIntermediateDirectories: true)
+
+        var totalFiles = 0
+        var totalBytes: Int64 = 0
+        for entry in entries {
+            try validateSafeChildName(entry.name)
+            let localChild = localURL.appendingPathComponent(entry.name).path
+            switch entry.kind {
+            case .directory:
+                do {
+                    let sub = try downloadDirectory(remotePath: entry.path, localPath: localChild, warnings: &warnings)
+                    totalFiles += sub.fileCount
+                    totalBytes += sub.byteCount
+                } catch AfcClientError.status(.permissionDenied) {
+                    warnings.append("Skipped permission-denied entry \(entry.path)")
+                } catch AfcClientError.status(.objectNotFound) {
+                    continue
+                }
+            case .file:
+                do {
+                    totalBytes += try downloadFile(remotePath: entry.path, localPath: localChild)
+                    totalFiles += 1
+                } catch AfcClientError.status(.permissionDenied) {
+                    warnings.append("Skipped permission-denied entry \(entry.path)")
+                } catch AfcClientError.status(.objectNotFound) {
+                    continue
+                }
+            case .symlink:
+                warnings.append("Skipped symbolic link \(entry.path)")
+            case .other:
+                warnings.append("Skipped non-regular entry \(entry.path)")
+            }
+        }
+        return (totalFiles, totalBytes)
+    }
+
+    func pushFileWithStats(localPath: String, remotePath: String) throws -> (fileCount: Int, byteCount: Int64) {
+        let attrs = try FileManager.default.attributesOfItem(atPath: localPath)
+        let byteCount = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        try uploadFile(localPath: localPath, remotePath: remotePath)
+        return (1, byteCount)
+    }
+
+    func pushDirectoryWithStats(
+        localPath: String,
+        remotePath: String,
+        warnings: inout [String]
+    ) throws -> (fileCount: Int, byteCount: Int64) {
+        let localURL = URL(fileURLWithPath: localPath, isDirectory: true).standardizedFileURL
+        let normalizedRemote = normalizeDevicePath(remotePath)
+        try makeDirectories(normalizedRemote)
+        let children = try FileManager.default.contentsOfDirectory(
+            at: localURL,
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+            options: []
+        ).sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        var totalFiles = 0
+        var totalBytes: Int64 = 0
+        for child in children {
+            let remoteChild = joinDevicePath(normalizedRemote, child.lastPathComponent)
+            let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
+            if values.isSymbolicLink == true {
+                warnings.append("Skipped host symbolic link \(child.path)")
+            } else if values.isDirectory == true {
+                let sub = try pushDirectoryWithStats(localPath: child.path, remotePath: remoteChild, warnings: &warnings)
+                totalFiles += sub.fileCount
+                totalBytes += sub.byteCount
+            } else if values.isRegularFile == true {
+                let result = try pushFileWithStats(localPath: child.path, remotePath: remoteChild)
+                totalFiles += result.fileCount
+                totalBytes += result.byteCount
+            }
+        }
+        return (totalFiles, totalBytes)
+    }
+
+    private func writeAllToDescriptor(_ fd: Int32, data: Data, destinationPath: String) throws {
+        try data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            var offset = 0
+            while offset < data.count {
+                let written = posixWrite(fd, base.advanced(by: offset), data.count - offset)
+                if written > 0 {
+                    offset += written
+                } else if written < 0, errno == EINTR {
+                    continue
+                } else {
+                    throw CLIParseError.invalidValue("Unable to write local file \(destinationPath): errno \(errno)")
+                }
+            }
+        }
+    }
+
+    private func validateSafeChildName(_ name: String) throws {
+        guard !name.isEmpty,
+              name != ".",
+              name != "..",
+              !name.contains("/"),
+              !name.contains("\0") else {
+            throw CLIParseError.invalidValue("Unsafe remote entry name: \(name)")
+        }
     }
 
     func write(handle: UInt64, data: Data) throws {
@@ -340,7 +689,10 @@ final class AfcClient {
 
     private func joinDevicePath(_ base: String, _ child: String) -> String {
         let normalized = normalizeDevicePath(base)
-        return normalized.isEmpty ? child : "\(normalized)/\(child)"
+        if normalized.isEmpty {
+            return child
+        }
+        return normalized == "/" ? "/\(child)" : "\(normalized)/\(child)"
     }
 
     private func parentDevicePath(_ path: String) -> String? {

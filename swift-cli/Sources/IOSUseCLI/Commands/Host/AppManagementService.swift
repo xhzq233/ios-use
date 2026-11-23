@@ -268,7 +268,7 @@ enum AppManagementService {
         ])
     }
 
-    private static func resolveRealDeviceTargetUdid(
+    static func resolveRealDeviceTargetUdid(
         explicitUdid: String?,
         paths: IOSUsePaths,
         command: String,

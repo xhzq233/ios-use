@@ -127,11 +127,16 @@ driver is still valid.
 ios-use apps --udid <udid>
 ios-use install path/to/signed.ipa --udid <udid>
 ios-use uninstall com.example.app --udid <udid>
+ios-use file ls com.example.app /Documents --udid <udid>
+ios-use file pull com.example.app /Documents/data.db ./data.db --udid <udid>
+ios-use file push com.example.app ./fixture.json /Documents/fixture.json --udid <udid>
+ios-use file rm com.example.app /Documents/old.log --udid <udid>
 ios-use ddi-mount --udid <udid>
 ```
 
 - Install only signed `.ipa` or `.app` artifacts.
 - Confirm the bundle ID before uninstalling an App.
+- `ios-use file ls|pull|push|rm` inspects and transfers sandbox files via `house_arrest` (requires `get-task-allow`, or `--documents` for `UIFileSharingEnabled` Apps).
 - Let `ddi-mount` inspect local caches first.
 - If no matching DDI exists locally, download the current fallback archive:
 

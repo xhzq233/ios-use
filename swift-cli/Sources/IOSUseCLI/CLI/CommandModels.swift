@@ -9,6 +9,7 @@ public enum ParsedCommand: Equatable, Sendable {
     case stop
     case install(AppInstallOptions)
     case uninstall(AppUninstallOptions)
+    case file(SandboxFileCommand)
     case apps(AppsOptions)
     case ddiMount(DDIMountOptions)
     case open(OpenURLOptions)
@@ -30,6 +31,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .stop: return "stop"
         case .install: return "install"
         case .uninstall: return "uninstall"
+        case .file(let command): return "file \(command.subcommand)"
         case .apps: return "apps"
         case .ddiMount: return "ddi-mount"
         case .open: return "open"
@@ -426,6 +428,52 @@ public enum ProxyCommand: Equatable, Sendable {
         case .read: return "read"
         case .stop: return "stop"
         case .doctor: return "doctor"
+        }
+    }
+}
+
+public enum SandboxFileCommand: Equatable, Sendable {
+    case ls(bundleID: String, remotePath: String?, documents: Bool, udid: String?)
+    case pull(bundleID: String, remotePath: String, localPath: String?, documents: Bool, udid: String?)
+    case push(bundleID: String, localPath: String, remotePath: String, documents: Bool, udid: String?)
+    case remove(bundleID: String, remotePath: String, recursive: Bool, documents: Bool, udid: String?)
+
+    public var subcommand: String {
+        switch self {
+        case .ls: return "ls"
+        case .pull: return "pull"
+        case .push: return "push"
+        case .remove: return "rm"
+        }
+    }
+
+    public var bundleID: String {
+        switch self {
+        case .ls(let bundleID, _, _, _),
+             .pull(let bundleID, _, _, _, _),
+             .push(let bundleID, _, _, _, _),
+             .remove(let bundleID, _, _, _, _):
+            return bundleID
+        }
+    }
+
+    public var documents: Bool {
+        switch self {
+        case .ls(_, _, let documents, _),
+             .pull(_, _, _, let documents, _),
+             .push(_, _, _, let documents, _),
+             .remove(_, _, _, let documents, _):
+            return documents
+        }
+    }
+
+    public var udid: String? {
+        switch self {
+        case .ls(_, _, _, let udid),
+             .pull(_, _, _, _, let udid),
+             .push(_, _, _, _, let udid),
+             .remove(_, _, _, _, let udid):
+            return udid
         }
     }
 }
