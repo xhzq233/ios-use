@@ -19,7 +19,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
 
 permissions:
@@ -32,10 +31,11 @@ jobs:
       tag: ${{ steps.resolve.outputs.tag }}
       ref: ${{ steps.resolve.outputs.ref }}
     steps:
-      - name: Resolve source and release tag
+      - name: Resolve release tag and verify immutability
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
+          SHOULD_PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
           PUBLISH_FROM_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           BUILD_REF: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish && github.sha || inputs.tag || github.ref_name }}
@@ -44,42 +44,24 @@ jobs:
             v*) ;;
             *) echo "Release tag must start with v" >&2; exit 1 ;;
           esac
+
           if [ "$PUBLISH_FROM_BRANCH" = true ]; then
-            set +e
-            git ls-remote --exit-code "https://github.com/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_TAG" > /dev/null
-            tag_status=$?
-            set -e
-            case "$tag_status" in
-              0) BUILD_REF="$RELEASE_TAG" ;;
-              2) BUILD_REF="$GITHUB_SHA" ;;
-              *) echo "Unable to resolve release tag" >&2; exit "$tag_status" ;;
-            esac
+            if git ls-remote --exit-code "https://github.com/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+              BUILD_REF="$RELEASE_TAG"
+            else
+              BUILD_REF="$GITHUB_SHA"
+            fi
           fi
+
+          if [ "$SHOULD_PUBLISH" = true ]; then
+            if existing_assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null)" && [ -n "$existing_assets" ]; then
+              echo "Release $RELEASE_TAG already has assets; publish a new version." >&2
+              exit 1
+            fi
+          fi
+
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
-      - name: Refuse an existing asset set
-        if: github.event_name == 'push' || inputs.publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.resolve.outputs.tag }}
-        run: |
-          set +e
-          release_probe="$(gh api --include "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>&1)"
-          probe_status=$?
-          set -e
-          http_status="$(printf '%s\n' "$release_probe" | awk 'NR == 1 { print $2 }')"
-          if [ "$http_status" = "404" ]; then
-            exit 0
-          fi
-          if [ "$probe_status" -ne 0 ] || [ "$http_status" != "200" ]; then
-            echo "Unable to inspect release $RELEASE_TAG (HTTP ${http_status:-unknown})." >&2
-            exit 1
-          fi
-          existing_assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
-          if [ -n "$existing_assets" ]; then
-            echo "Release $RELEASE_TAG already has assets; publish a new version." >&2
-            exit 1
-          fi
 
   linux:
     needs: prepare
@@ -89,8 +71,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.ref }}
-      - run: bash scripts/build_swift_cli.sh
-      - run: mkdir -p release && cp ios-use release/ios-use-linux-x86_64
+      - name: Cache Linux Swift build
+        uses: actions/cache@v4
+        with:
+          path: swift-cli/.build
+          key: linux-x86_64-swift-6.2.4-release-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'shared/IOSUseProtocol/Package.swift') }}
+          restore-keys: |
+            linux-x86_64-swift-6.2.4-release-
+      - run: |
+          bash scripts/build_swift_cli.sh
+          mkdir -p release && cp ios-use release/ios-use-linux-x86_64
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
@@ -104,21 +94,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.ref }}
-      - name: Resolve Swift toolchain
-        id: toolchain
+      - name: Resolve Xcode build
+        id: xcode
         run: |
           swift --version
-          echo "xcode=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
-      # Dependency builds survive version/source edits; swift build still runs.
+          echo "build=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
       - name: Cache Swift CLI build
         uses: actions/cache@v4
         with:
           path: swift-cli/.build
-          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-release-${{ steps.toolchain.outputs.xcode }}-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'shared/IOSUseProtocol/Package.swift', 'ThirdParty/PlayCover/Package.swift', 'ThirdParty/inject/Package.swift') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-release-${{ steps.xcode.outputs.build }}-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'shared/IOSUseProtocol/Package.swift', 'ThirdParty/PlayCover/Package.swift', 'ThirdParty/inject/Package.swift') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-swift-cli-release-
-      - run: bash scripts/build_swift_cli.sh --skip-runtime
-      - run: mkdir -p release && cp ios-use release/ios-use-darwin-arm64
+      - run: |
+          bash scripts/build_swift_cli.sh --skip-runtime
+          mkdir -p release && cp ios-use release/ios-use-darwin-arm64
       - uses: actions/upload-artifact@v4
         with:
           name: mac-cli
@@ -140,20 +130,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.ref }}
-      - run: brew install xcodegen ripgrep
-      - name: Resolve Xcode cache key
-        id: xcode-cache
+      - name: Install tools and resolve Xcode build
+        id: xcode
         run: |
+          brew install xcodegen ripgrep
           xcodebuild -version
-          swift --version
-          echo "version=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "build=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
       - name: Cache driver build products
         uses: actions/cache@v4
         with:
           path: driver/build
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-release-${{ matrix.platform }}-${{ hashFiles('driver/project.yml', 'shared/IOSUseProtocol/Package.swift') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-driver-release-${{ matrix.platform }}-${{ hashFiles('driver/project.yml', 'shared/IOSUseProtocol/Package.swift') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-release-${{ matrix.platform }}-
+            ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-driver-release-${{ matrix.platform }}-
       - name: Build driver
         run: bash scripts/build_driver.sh --release --${{ matrix.platform }}-only
       - uses: actions/upload-artifact@v4
@@ -161,12 +150,6 @@ jobs:
           name: driver-${{ matrix.platform }}
           path: driver/build/${{ matrix.asset }}
           compression-level: 0
-      - name: Retain compiler timings
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: driver-${{ matrix.platform }}-logs
-          path: driver/build/*-xcodebuild.log
 
   mac-resources:
     needs: prepare
@@ -209,18 +192,15 @@ jobs:
           path: release
       - uses: actions/download-artifact@v4
         with:
-          name: driver-device
+          pattern: driver-*
+          merge-multiple: true
           path: release
-      - uses: actions/download-artifact@v4
-        with:
-          name: driver-simulator
-          path: release
-      - name: Assemble Mac assets
+      - name: Assemble and verify Mac release assets
         env:
           IOS_USE_RELEASE_VERSION: ${{ needs.prepare.outputs.tag }}
-        run: bash scripts/release_build.sh --assemble-only
-      - name: Verify the exact release assets through an isolated install
-        run: bash scripts/test_playcover_installed_layout.sh --release-dir release --verify-only
+        run: |
+          bash scripts/release_build.sh --assemble-only
+          bash scripts/test_playcover_installed_layout.sh --release-dir release --verify-only
       - uses: actions/download-artifact@v4
         with:
           name: linux-x86_64

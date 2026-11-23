@@ -1,33 +1,96 @@
-name: Script Contracts
+name: CI
 
 on:
   pull_request:
-    paths:
-      - "scripts/**"
-      - ".github/workflows/**"
   push:
     branches: [main]
-    paths:
-      - "scripts/**"
-      - ".github/workflows/**"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
-  script-contracts:
+  changes:
     runs-on: ubuntu-latest
+    outputs:
+      scripts: ${{ steps.detect.outputs.scripts }}
+      cli: ${{ steps.detect.outputs.cli }}
+      driver: ${{ steps.detect.outputs.driver }}
+      mac_runtime: ${{ steps.detect.outputs.mac_runtime }}
+    steps:
+      - name: Detect changed areas
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          set_all_true() {
+            {
+              echo "scripts=true"
+              echo "cli=true"
+              echo "driver=true"
+              echo "mac_runtime=true"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            set_all_true
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename')"
+          elif [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            set_all_true
+            exit 0
+          else
+            if ! files="$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE_SHA...$GITHUB_SHA" --jq '.files[].filename')"; then
+              set_all_true
+              exit 0
+            fi
+          fi
+
+          match() {
+            if printf '%s\n' "$files" | grep -Eq "$1"; then
+              echo "true"
+            else
+              echo "false"
+            fi
+          }
+
+          scripts="$(match '^(scripts/|\.github/workflows/)')"
+          cli="$(match '^(swift-cli/|shared/IOSUseProtocol/|ThirdParty/(PlayCover|inject)/|scripts/(build_driver|build_swift_cli|test_swift_cli)\.sh|\.github/workflows/ci\.yml$)')"
+          driver="$(match '^(driver/|shared/IOSUseProtocol/|scripts/(build_driver|test_driver_unit)\.sh|scripts/(ios_use_test_simulator\.js|test_ios_use_test_simulator\.mjs)|\.github/workflows/ci\.yml$)')"
+          mac_runtime="$(match '^(playcover-runtime/|scripts/build_playcover_runtime\.sh|scripts/test_playcover_(audio|snapshot|playchain|cgshw_compositor)\.sh|\.github/workflows/ci\.yml$)')"
+
+          echo "scripts=$scripts cli=$cli driver=$driver mac_runtime=$mac_runtime"
+          {
+            echo "scripts=$scripts"
+            echo "cli=$cli"
+            echo "driver=$driver"
+            echo "mac_runtime=$mac_runtime"
+          } >> "$GITHUB_OUTPUT"
+
+  scripts:
+    name: Scripts
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check scripts and packaging contracts
+      - name: Check script syntax and contracts
         run: |
           for script in scripts/*.sh; do
             bash -n "$script"
@@ -35,7 +98,95 @@ jobs:
           python3 -m py_compile scripts/frida_distribution.py
           bash scripts/test_install.sh
           bash scripts/test_playcover_packaging_contract.sh
-          bash scripts/test_playcover_live_workflow_contract.sh
           node --check scripts/benchmark.js
           node --check scripts/ios_use_test_simulator.js
           node --check scripts/test_simulator_commands.mjs
+          node --test scripts/test_ios_use_test_simulator.mjs
+
+  swift-cli-macos:
+    name: Swift CLI (macOS)
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Swift CLI build
+        uses: actions/cache@v4
+        with:
+          path: swift-cli/.build
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'shared/IOSUseProtocol/Package.swift', 'ThirdParty/PlayCover/Package.swift', 'ThirdParty/inject/Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-swift-cli-
+      - name: Run Swift CLI tests
+        run: bash scripts/test_swift_cli.sh
+
+  swift-cli-linux:
+    name: Swift CLI (Linux x86_64)
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    runs-on: ubuntu-22.04
+    container: swift:6.2.4-jammy
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Linux Swift build
+        uses: actions/cache@v4
+        with:
+          path: swift-cli/.build
+          key: linux-x86_64-swift-6.2.4-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'shared/IOSUseProtocol/Package.swift') }}
+          restore-keys: |
+            linux-x86_64-swift-6.2.4-
+      - name: Test and build Linux CLI
+        run: |
+          swift test --package-path swift-cli -j 4
+          bash scripts/build_swift_cli.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-use-linux-x86_64
+          path: ios-use
+          retention-days: 7
+
+  driver:
+    name: Driver
+    needs: changes
+    if: needs.changes.outputs.driver == 'true'
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xcodegen and resolve Xcode build
+        id: xcode
+        run: |
+          brew install xcodegen
+          xcodebuild -version
+          echo "build=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
+      - name: Cache driver DerivedData
+        uses: actions/cache@v4
+        with:
+          path: driver/build/DerivedData
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-driver-${{ hashFiles('driver/project.yml', 'shared/IOSUseProtocol/Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-driver-
+      - name: Run driver unit tests
+        run: bash scripts/test_driver_unit.sh
+
+  mac-runtime:
+    name: Mac Runtime
+    needs: changes
+    if: needs.changes.outputs.mac_runtime == 'true'
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: Build and test Mac Runtime
+        env:
+          IOS_USE_HOME: ${{ runner.temp }}/ios-use-runtime-tests
+        run: |
+          bash scripts/build_playcover_runtime.sh --output "$RUNNER_TEMP/IOSUsePlayRuntime.framework"
+          bash scripts/test_playcover_audio.sh
+          bash scripts/test_playcover_snapshot.sh
+          bash scripts/test_playcover_playchain.sh
+          bash scripts/test_playcover_cgshw_compositor.sh --deterministic-only

@@ -70,7 +70,6 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | `scripts/test_driver_unit.sh` | Run Swift driver unit tests (requires Node.js for compatible Simulator selection) with an isolated default `IOS_USE_HOME` under `~/.ios-use/test-homes/driver-unit`. |
 | `scripts/audit_playcover_upstreams.sh [--cache-dir <path>] [--metadata-only]` | Re-clone or reuse pinned PlayCover/PlayTools/inject checkouts; require script pins, provenance pins, licenses, expected vendored file sets, and local-patch sets to agree exactly. `--metadata-only` runs the hermetic closure without cloning. |
 | `scripts/test_playcover_packaging_contract.sh` | Hermetic packaging audit tests, including negative cases for a deleted expected source, a one-sided provenance pin change, a mismatched license declaration, and a Frida pin change. |
-| `scripts/test_playcover_live_workflow_contract.sh` | Small hermetic contract proving that PlayCover integration is manual-only, both jobs use the provisioned runner, the core aggregate owns the launch-recovery and Runtime stress gates, only runner-temporary `run.log` is uploaded, and release remains hosted and isolated. |
 | `scripts/test_playcover_pending_launch_crash_live.sh --live` | Clean-HEAD public-fixture gate that builds committed HEAD outside the checkout and crashes the debug CLI at the two durable Mac launch boundaries (`afterLaunchObserved`, `afterDriverLockDurable`). It proves the phase-free `launching.json` create→recover→remove lifecycle, next-start census plus authenticated Runtime hello adoption, exact stop, and the `driver.lock` handoff; while the asynchronous App is not yet visible, only the retryable typed `mac_launch_recovery_unresolved` result is accepted. A submitted record remains recoverable across transient zero-process observations; `stop` preserves it during the asynchronous submit window and reports successful no-process cleanup only after the stale window. Unknown-process refusal remains a deterministic unit boundary. |
 | `scripts/test_playcover_prepare_differential.sh` | Run the hermetic pinned Installer-vs-ios-use prepare differential suite in an isolated SwiftPM scratch directory and publish its fixture-only schema-v1 attestation without replacing existing evidence. It records the loaded XCTest image's device/inode without freezing checkout source files; it does not consume a private live UI scenario. |
 | `scripts/test_playcover_entitlement_capabilities.sh --prepared-app <App.app> --playchain-root <path>` | Test-only manual gate that copies the exact signed entitlements from an installed account-global App slot's main executable onto a standalone probe, verifies semantic entitlement equality, and directly exercises the fixed UID socket root plus account PlayChain filesystem capabilities without `sandbox-exec`. |
@@ -155,25 +154,12 @@ bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa
 bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa --case WF-1
 ```
 
-GitHub CI has focused workflows for script contracts, Swift CLI, Driver, and
-Mac Runtime. Each workflow runs only when its own source or build contract
-changes; documentation-only and unrelated Mac changes do not wait for a
-Simulator. The PlayCover non-live integration job is explicit-dispatch-only and bound to the provisioned
-`[self-hosted, macOS, arm64, playcover-live]` runner because its installed
-execution performs a real launch; that host must already have the stable signer
-initialized by `./ios-use config --mac`, and a launch-capable GUI session. The release workflow instead
-runs on GitHub-hosted macOS and verifies the checksummed assets through an
-isolated temporary-prefix install. A real installed launch remains an explicit local or manual
-CI gate and is not required infrastructure for publishing the assets.
+GitHub CI uses two workflows:
 
-The core PlayCover live gate in `.github/workflows/playcover-live.yml` is an
-explicit dispatch-only job on that same
-runner. It uses only the committed public fixture, needs no operator App,
-private scenario/evidence directory, or external-App attestation, and uploads
-the runner-temporary `run.log`. The fixture live gate and generic external-App
-live workflow remain independently runnable additive diagnostics, not core
-live completion requirements. The full Simulator UI
-replay lives in `.github/workflows/simulator.yml` and is manual-only.
+- `.github/workflows/ci.yml`: detects changed areas and runs only the affected jobs (`scripts`, `swift-cli-macos`, `swift-cli-linux`, `driver`, `mac-runtime`). Documentation-only and unrelated changes do not wait for a Simulator.
+- `.github/workflows/release.yml`: runs on GitHub-hosted runners to build and publish release assets, verifying checksummed Mac assets through an isolated temporary-prefix install.
+
+PlayCover live checks (`scripts/test_playcover_backend.sh --live`) and full Simulator UI replay (`scripts/ci_full_simulator.sh`) are run locally on demand rather than in GitHub CI.
 
 ## Install And Benchmark
 
