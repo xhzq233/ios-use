@@ -193,9 +193,13 @@ When the provider supplies a paired usbmux endpoint and Driver endpoint, use
 `ios-use start -d phone --connection device-connection.json`. The JSON contains
 `udid`, `driverBundleID`, `usbmux: {host, port}` and `driver: {host, port}`.
 The provider installs/signs the Driver and maintains the transport. ios-use
-owns XCTest, App management, URL opening and `activateApp --terminateExisting
---log` on macOS and Linux x86_64. `stop` stops XCTest and log capture; release
-the provider lease separately. Signed App packages use `ios-use install`;
+owns XCTest, App management, URL opening, `oslog`, `media import`, and
+`activateApp --terminateExisting --log` on macOS and Linux x86_64. If XCTest
+exits unexpectedly while the provider's `usbmux` endpoint remains reachable,
+ios-use automatically relaunches the holder once; if the transport itself drops,
+inspect the provider lease/forwarders or run `stop`. `stop` stops XCTest and
+log capture; release the provider lease separately. Signed App packages use
+`ios-use install`;
 provider re-signing stays outside ios-use. If iOS refuses to launch an App
 (`CoreDevice.error` 10002), reinstall it through the provider's re-signing
 install; `config --udid` and on-device trust do not apply to provider devices.

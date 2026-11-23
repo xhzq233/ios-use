@@ -226,9 +226,17 @@ final class LockedDriverClientSession {
         do {
             return try body(currentClient(for: lock))
         } catch {
+            if let connection = lock.remoteConnection {
+                guard Self.shouldRecoverRemoteFailure(error, lock: lock),
+                      !didRecoverConnectFailure else {
+                    throw error
+                }
+                didRecoverConnectFailure = true
+                let recoveredLock = try relaunchRemoteDriver(for: lock, connection: connection)
+                return try body(replaceClient(for: recoveredLock))
+            }
 #if os(macOS)
-            guard lock.remoteConnection == nil,
-                  lock.deviceType != PlayCoverSessionService.deviceType,
+            guard lock.deviceType != PlayCoverSessionService.deviceType,
                   (error as? DriverClientError)?.isRecoverableConnectFailure == true,
                   !didRecoverConnectFailure else {
                 throw error
@@ -239,6 +247,29 @@ final class LockedDriverClientSession {
 #else
             throw error
 #endif
+        }
+    }
+
+    static func shouldRecoverRemoteFailure(_ error: Error, lock: SessionService.Info) -> Bool {
+        // Driver-only test fixtures have no holder process to relaunch.
+        guard lock.holderPid != nil, let clientError = error as? DriverClientError else {
+            return false
+        }
+        if clientError.isRecoverableConnectFailure {
+            return true
+        }
+        switch clientError {
+        case .readFailed, .writeFailed:
+            // Behind a TCP forwarder (e.g., iproxy), connect succeeds even after
+            // XCTest dies on the device and returns EOF on read/write. Brief grace
+            // avoids mistaking a healthy slow socket timeout for a holder teardown race.
+            if !RemoteDeviceService.isHolderReady(info: lock) {
+                return true
+            }
+            _ = posixUsleep(150_000)
+            return !RemoteDeviceService.isHolderReady(info: lock)
+        default:
+            return false
         }
     }
 
@@ -283,6 +314,67 @@ final class LockedDriverClientSession {
 #endif
         client = next
         return next
+    }
+
+    private func relaunchRemoteDriver(
+        for lock: SessionService.Info,
+        connection: RemoteDeviceConnection
+    ) throws -> SessionService.Info {
+        closeClient()
+        let probeFD: Int32
+        do {
+            probeFD = try TCPConnector.connect(
+                host: connection.usbmux.host,
+                port: connection.usbmux.port,
+                timeoutSeconds: 2
+            )
+        } catch {
+            let deviceFlag = paths.deviceID.map { " -d \($0)" } ?? ""
+            throw CLIParseError.invalidValue(
+                "Remote device transport is unreachable at \(connection.usbmux.host):\(connection.usbmux.port). "
+                    + "Check that the provider lease and port forwarders are still running, "
+                    + "or stop this session with `ios-use stop\(deviceFlag)`."
+            )
+        }
+        _ = posixClose(probeFD)
+
+        return try RemoteDeviceConnection.$current.withValue(connection) {
+            try SessionOperationLock.withExclusiveLock(paths: paths) {
+                guard let current = try SessionService.readDriverLockInfo(paths: paths),
+                      current == lock else {
+                    throw CLIParseError.invalidValue(
+                        "Driver lifecycle changed before connection recovery; "
+                            + "refusing to relaunch a stale session."
+                    )
+                }
+
+                let holderResult = DriverLifecycleService
+                    .terminateFullXCTestHolderIfNeeded(info: current, paths: paths)
+                if holderResult != .notApplicable {
+                    CLILogService.append(paths: paths, [
+                        "[cli-lifecycle] Remote XCTest holder cleanup before relaunch: \(holderResult)",
+                    ])
+                }
+                if let failure = DriverLifecycleService
+                        .holderTerminationFailureMessage(result: holderResult, info: current) {
+                    throw CLIParseError.invalidValue(failure)
+                }
+
+                let metadata = try DriverLifecycleService.launchRealDriverHolder(
+                    udid: connection.udid,
+                    bundleId: current.bundleId ?? connection.driverBundleID,
+                    paths: paths,
+                    verbose: verbose
+                )
+                let recoveredLock = current.applying(metadata)
+                try SessionService.writeDriverLock(info: recoveredLock, paths: paths)
+                CLILogService.append(paths: paths, [
+                    "[cli-lifecycle] Recovered remote XCTest holder holderPid=\(recoveredLock.holderPid ?? -1) runnerPid=\(recoveredLock.runnerPid ?? -1)",
+                ])
+                info = recoveredLock
+                return recoveredLock
+            }
+        }
     }
 
 #if os(macOS)

@@ -85,13 +85,22 @@ enum XCTestSessionHolderService {
                 RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(IOSUseProtocol.XCConstants.xctestHolderRunLoopIntervalSeconds))
             }
             interruptMonitor.stop()
-            startedSession.close(killRunner: true)
-            clearDriverLockIfCurrent(
-                paths: paths,
-                options: options,
-                runnerPid: startedSession.runnerPid,
-                sessionIdentifier: startedSession.sessionIdentifier.uuidString
+            let shouldClearLock = shouldClearDriverLockOnExit(
+                isRemoteConnection: options.connectionPath != nil,
+                interrupted: interruptMonitor.interrupted,
+                stopRequested: controlState.shouldStop
             )
+            startedSession.close(killRunner: true)
+            if shouldClearLock {
+                clearDriverLockIfCurrent(
+                    paths: paths,
+                    options: options,
+                    runnerPid: startedSession.runnerPid,
+                    sessionIdentifier: startedSession.sessionIdentifier.uuidString
+                )
+            } else {
+                log("preserving remote driver.lock after unexpected XCTest session exit")
+            }
             activeSession = nil
             controlState.markStopped()
             log("holder stopped")
@@ -110,6 +119,14 @@ enum XCTestSessionHolderService {
             log("holder failed: \(error)")
             throw error
         }
+    }
+
+    static func shouldClearDriverLockOnExit(
+        isRemoteConnection: Bool,
+        interrupted: Bool,
+        stopRequested: Bool
+    ) -> Bool {
+        !isRemoteConnection || interrupted || stopRequested
     }
 
     static func holderStopMessage(startupFailure: Error?, postConfigurationFailure: Error?) -> String? {

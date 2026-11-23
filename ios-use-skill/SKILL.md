@@ -62,6 +62,9 @@ ios-use waitFor "Loading" --match contains --gone --timeout 20s
 - If an action fails, read its error and suggested matches before retrying.
   Use `dom` to inspect the current page. On a real device or Simulator,
   `dom` also rechecks which App is in the foreground.
+- When an iOS system permission dialog (`Allow`, `允许`, `要求 App 不跟踪`,
+  etc.) blocks interaction, use `ios-use dismissAlert` (`--label "<button>"` or
+  `--only-button`) rather than `tap` against the foreground App tree.
 - When a crash, hang, incorrect result or broken documented workflow suggests
   an ios-use defect, proactively [report it upstream](references/report.md):
   search for an existing issue, then submit a redacted report or add new evidence
@@ -143,9 +146,13 @@ ios-use apps -d phone
 ios-use activateApp com.example.app --terminateExisting --log -d phone --json
 ios-use dom -d phone
 ios-use screenshot -d phone
+ios-use oslog -d phone --timeout 5s
+ios-use media import photo.png -d phone
 ios-use stop -d phone
 ```
 
-ios-use owns XCTest, App management, URL opening and App stdout/stderr. `stop`
-stops XCTest and log capture; release the provider lease separately. Linux
-screenshots omit OCR. See [setup](references/setup.md) for connection details.
+ios-use owns XCTest, App management, URL opening, `oslog`, `media import`, and
+App stdout/stderr, and automatically relaunches XCTest once on transient runner
+disconnects while the provider transport stays up. `stop` stops XCTest and log
+capture; release the provider lease separately. Linux screenshots omit OCR. See
+[setup](references/setup.md) for connection details.

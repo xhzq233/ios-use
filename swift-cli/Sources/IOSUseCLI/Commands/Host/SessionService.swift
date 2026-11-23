@@ -67,7 +67,6 @@ public enum SessionService {
             self.macDevicePreset = macDevicePreset
         }
 
-#if os(macOS)
         func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
             Info(
                 udid: udid,
@@ -92,7 +91,6 @@ public enum SessionService {
                 macDevicePreset: macDevicePreset
             )
         }
-#endif
     }
 
     static var simulatorDriverReachableForTesting: (() -> Bool)?

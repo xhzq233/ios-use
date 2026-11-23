@@ -198,6 +198,9 @@ enum DriverLifecycleService {
         paths: IOSUsePaths,
         verbose: Bool
     ) throws -> LaunchMetadata {
+        if let holderLauncherForTesting {
+            return try holderLauncherForTesting(udid, bundleId, paths, verbose)
+        }
         let stateDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true, attributes: nil)
         try FileManager.default.createDirectory(
@@ -290,23 +293,62 @@ enum DriverLifecycleService {
                     lastSocketError = error
                     if !process.isRunning {
                         let status = process.terminationStatus
-                        throw CLIParseError.invalidValue("XCTest holder exited before start result with status \(status). Check \(CLILogService.holderLogPath(paths: paths)). Last socket error: \(error)")
+                        throw CLIParseError.invalidValue(appendHolderLogTail(
+                            "XCTest holder exited before start result with status \(status). Check \(CLILogService.holderLogPath(paths: paths)). Last socket error: \(error)",
+                            paths: paths
+                        ))
                     }
                 }
             }
             if !process.isRunning {
                 let status = process.terminationStatus
                 if let lastSocketError {
-                    throw CLIParseError.invalidValue("XCTest holder exited before start result with status \(status). Check \(CLILogService.holderLogPath(paths: paths)). Last socket error: \(lastSocketError)")
+                    throw CLIParseError.invalidValue(appendHolderLogTail(
+                        "XCTest holder exited before start result with status \(status). Check \(CLILogService.holderLogPath(paths: paths)). Last socket error: \(lastSocketError)",
+                        paths: paths
+                    ))
                 }
-                throw CLIParseError.invalidValue("XCTest holder exited before start result with status \(status). Check \(CLILogService.holderLogPath(paths: paths))")
+                throw CLIParseError.invalidValue(appendHolderLogTail(
+                    "XCTest holder exited before start result with status \(status). Check \(CLILogService.holderLogPath(paths: paths))",
+                    paths: paths
+                ))
             }
             usleep(useconds_t(IOSUseProtocol.XCConstants.xctestHolderStartPollMicroseconds))
         }
         if let lastSocketError {
-            throw CLIParseError.invalidValue("Timed out waiting for XCTest holder start result. Check \(CLILogService.holderLogPath(paths: paths)). Last socket error: \(lastSocketError)")
+            throw CLIParseError.invalidValue(appendHolderLogTail(
+                "Timed out waiting for XCTest holder start result. Check \(CLILogService.holderLogPath(paths: paths)). Last socket error: \(lastSocketError)",
+                paths: paths
+            ))
         }
-        throw CLIParseError.invalidValue("Timed out waiting for XCTest holder start result. Check \(CLILogService.holderLogPath(paths: paths))")
+        throw CLIParseError.invalidValue(appendHolderLogTail(
+            "Timed out waiting for XCTest holder start result. Check \(CLILogService.holderLogPath(paths: paths))",
+            paths: paths
+        ))
+    }
+
+    static func holderLogTail(paths: IOSUsePaths, maxLines: Int = 6) -> String? {
+        let logPath = CLILogService.holderLogPath(paths: paths)
+        guard let content = try? String(contentsOfFile: logPath, encoding: .utf8) else {
+            return nil
+        }
+        let lines = content
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .suffix(maxLines)
+            .map { line -> String in
+                line.count > 400 ? String(line.prefix(400)) + "..." : line
+            }
+        guard !lines.isEmpty else { return nil }
+        return lines.joined(separator: "\n  ")
+    }
+
+    static func appendHolderLogTail(_ message: String, paths: IOSUsePaths) -> String {
+        guard let tail = holderLogTail(paths: paths) else {
+            return message
+        }
+        return "\(message)\nRecent xctest-holder.log:\n  \(tail)"
     }
 
     private static func stopHolderThroughControlSocketIfPossible(info: SessionService.Info, paths: IOSUsePaths) -> HolderTerminationResult? {
@@ -479,7 +521,7 @@ enum DriverLifecycleService {
     private static func processCommand(pid: Int32) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["ps", "-p", String(pid), "-o", "command="]
+        process.arguments = ["ps", "-ww", "-p", String(pid), "-o", "command="]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
