@@ -66,8 +66,8 @@ ln -s "$HOME/.ios-use/skill" .agents/skills/ios-use
 Install a specific release or build from source:
 
 ```bash
-# Install version 2.1.5.
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.5/scripts/install.sh | bash -s -- --version v2.1.5
+# Install version 2.1.6.
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/v2.1.6/scripts/install.sh | bash -s -- --version v2.1.6
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
@@ -78,7 +78,7 @@ services on Linux x86_64. Install with the command above, or build from
 source with Swift 6.2+ and standard Linux build tools:
 
 ```bash
-git clone --branch v2.1.5 https://github.com/xhzq233/ios-use.git
+git clone --branch v2.1.6 https://github.com/xhzq233/ios-use.git
 cd ios-use
 bash scripts/build_swift_cli.sh
 ./ios-use start -d phone --connection device-connection.json
@@ -91,9 +91,9 @@ bash scripts/build_swift_cli.sh
 The Linux release workflow builds an x86_64 binary on Ubuntu 22.04 with the
 Swift runtime statically linked. Running it needs glibc and libstdc++, without
 a Swift installation. The provider handles leases, signing and transport.
-ios-use owns XCTest, App management, URL opening and App stdout/stderr.
-OCR, capture sequences, local USB, Simulator, the Mac App backend, system
-logs and proxy require macOS.
+ios-use owns XCTest, App management, URL opening, `oslog`, `media import`, and
+App stdout/stderr. OCR, capture sequences, local USB, Simulator, the Mac App
+backend and proxy require macOS.
 
 </details>
 
