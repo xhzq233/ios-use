@@ -148,6 +148,7 @@ ios-use dom -d phone
 ios-use screenshot -d phone
 ios-use oslog -d phone --timeout 5s
 ios-use media import photo.png -d phone
+ios-use file ls com.example.app -d phone
 ios-use stop -d phone
 ```
 

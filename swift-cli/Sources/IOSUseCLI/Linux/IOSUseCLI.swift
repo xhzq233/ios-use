@@ -84,12 +84,13 @@ public struct IOSUseCLI: Sendable {
                 }
                 let output = zip(contexts, health).map { context, health in "\(context.deviceID) \(health.status) (ios-use) \(context.info.driverHost ?? ""):\(context.info.driverPort ?? 0)" + (health.error.map { " — \($0)" } ?? "") }.joined(separator: "\n")
                 return CLIResult(exitCode: 0, stdout: contexts.isEmpty ? "No active Devices. Use start --connection <file>.\n" : output + "\n")
-            case .driver, .appLifecycle, .stop, .apps, .install, .uninstall, .open, .oslog, .mediaImport:
+            case .driver, .appLifecycle, .stop, .apps, .install, .uninstall, .file, .open, .oslog, .mediaImport:
                 let requestedUDID: String?
                 switch invocation.command {
                 case .apps(let options): requestedUDID = options.udid
                 case .install(let options): requestedUDID = options.udid
                 case .uninstall(let options): requestedUDID = options.udid
+                case .file(let options): requestedUDID = options.udid
                 case .open(let options): requestedUDID = options.session.udid
                 case .appLifecycle(let options): requestedUDID = options.session.udid
                 case .oslog(let options): requestedUDID = options.session.udid
@@ -117,6 +118,15 @@ public struct IOSUseCLI: Sendable {
                         let output = try AppManagementService.uninstall(options: options, paths: context.paths)
                         return json ? MachineOutput.success(command: command, data: .object(["display": .string(output)]))
                             : CLIResult(exitCode: 0, stdout: output)
+                    case .file(let fileCommand):
+                        let result = try SandboxFileService.run(fileCommand, paths: context.paths)
+                        return json
+                            ? MachineOutput.success(
+                                command: command,
+                                data: result.machineData,
+                                warnings: result.warnings
+                            )
+                            : CLIResult(exitCode: 0, stdout: result.stdout)
                     case .open(let options):
                         return executeOpen(options, paths: context.paths, json: json)
                     case .oslog(let options):

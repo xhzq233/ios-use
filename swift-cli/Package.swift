@@ -59,6 +59,7 @@ let linuxSources = [
     "Services/RealDevice/Transport/PairRecordStore.swift",
     "Services/RealDevice/Installation/InstallationProxyClient.swift",
     "Services/RealDevice/Installation/AfcClient.swift",
+    "Services/RealDevice/Installation/HouseArrestClient.swift",
     "Services/DriverRuntime/DriverLifecycleService.swift",
     "Services/DriverRuntime/XCTestSessionHolderService.swift",
     "Services/DriverRuntime/XCTestSessionHolderControlSocket.swift",
@@ -66,6 +67,7 @@ let linuxSources = [
     "Support/SignalHandling.swift",
     "Commands/Host/AppManagementService.swift",
     "Commands/Host/RemoteDeviceService.swift",
+    "Commands/Host/SandboxFileService.swift",
     "Commands/Host/OpenURLService.swift",
     "Support/Shell.swift",
     "Linux/IOSUseCLI.swift",
@@ -75,7 +77,7 @@ let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("Sources/IOSUseCLI")
 let excludedSources = (FileManager.default.enumerator(atPath: sourceRoot.path)?.allObjects as? [String] ?? [])
     .filter { $0.hasSuffix(".swift") && !linuxSources.contains($0) }
-let linuxTests = ["CoreDeviceChecksumTests.swift", "DomObservationTests.swift", "DeviceStreamLifecycleTests.swift", "RemoteDriverConnectionTests.swift", "FakeDriverServer.swift", "CLIParserTests.swift", "LinuxScreenshotTests.swift", "DeviceArchiveDecodingTests.swift", "UpdateReminderTests.swift", "LinuxRemoteFeaturesTests.swift"]
+let linuxTests = ["CoreDeviceChecksumTests.swift", "DomObservationTests.swift", "DeviceStreamLifecycleTests.swift", "RemoteDriverConnectionTests.swift", "FakeDriverServer.swift", "CLIParserTests.swift", "LinuxScreenshotTests.swift", "DeviceArchiveDecodingTests.swift", "UpdateReminderTests.swift", "LinuxRemoteFeaturesTests.swift", "SandboxFileServiceTests.swift"]
 let testRoot = sourceRoot.deletingLastPathComponent().deletingLastPathComponent()
     .appendingPathComponent("Tests/IOSUseCLITests")
 let excludedTests = (FileManager.default.enumerator(atPath: testRoot.path)?.allObjects as? [String] ?? [])

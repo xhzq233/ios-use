@@ -148,10 +148,13 @@ public extension IOSUseProtocol {
         public static let deviceStreamWriteChunkBytes = 1024 * 1024
 
         public static let afcServiceName = "com.apple.afc"
+        public static let houseArrestServiceName = "com.apple.mobile.house_arrest"
         public static let afcPacketMagic = "CFA6LPAA"
         public static let afcHeaderByteCount = 40
         public static let afcInitialWriteChunkSize = 512 * 1024
         public static let afcFallbackWriteChunkSize = 64 * 1024
+        public static let afcReadChunkSize: UInt64 = 512 * 1024
+        public static let afcFileOpenModeReadOnly: UInt64 = 1
         public static let afcFileOpenModeWriteOnly: UInt64 = 3
         public static let afcWriteRequestHeaderLength: UInt64 = 48
         public static let afcReadTimeoutSeconds = 30.0

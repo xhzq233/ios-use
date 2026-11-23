@@ -436,7 +436,7 @@ metadata. This experimental protocol requires the matching CLI and Driver/Runtim
 | --- | --- |
 | `status`, `config` | Discover Devices and install or inspect Drivers |
 | `start`, `stop` | Start or release a Device Context |
-| `apps`, `install`, `activateApp`, `terminateApp` | Manage Apps |
+| `apps`, `install`, `activateApp`, `terminateApp`, `file` | Manage Apps and sandbox files |
 | `dom`, `waitFor` | Observe and query UI state |
 | `tap`, `longpress`, `swipe`, `input`, `rotate` | Interact with the UI |
 | `screenshot`, `capture`, `media import` | Capture or import media |

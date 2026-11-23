@@ -249,7 +249,7 @@ public struct IOSUseCLI: Sendable {
             command = "help"
         case "-V", "--version":
             command = "version"
-        case "media", "proxy":
+        case "media", "proxy", "file":
             if normalized.count > 1,
                !normalized[1].hasPrefix("-") {
                 command = "\(first) \(normalized[1])"
@@ -507,6 +507,11 @@ public struct IOSUseCLI: Sendable {
                 impliedUDID: options.udid
             )
         case .uninstall(let options):
+            return try resolveOptionalActiveTarget(
+                explicitDeviceID: explicitDeviceID,
+                impliedUDID: options.udid
+            )
+        case .file(let options):
             return try resolveOptionalActiveTarget(
                 explicitDeviceID: explicitDeviceID,
                 impliedUDID: options.udid
@@ -799,6 +804,20 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return commandFailure(command: parsed.commandName, error: error, json: json)
             }
+        case .file(let command):
+            do {
+                let result = try SandboxFileService.run(command, paths: commandPaths)
+                if json {
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: result.machineData,
+                        warnings: result.warnings
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: result.stdout)
+            } catch {
+                return commandFailure(command: parsed.commandName, error: error, json: json)
+            }
         case .apps(let options):
             do {
                 let result = try AppManagementService.listResult(options: options, paths: commandPaths)
@@ -1039,9 +1058,14 @@ public struct IOSUseCLI: Sendable {
         paths: IOSUsePaths,
         json: Bool
     ) -> CLIResult? {
-        // An explicit real-device UDID is handled by the host installer even
-        // when the root paths expose an unrelated active Mac session.
+        // An explicit real-device UDID is handled by the host installer or sandbox
+        // file service even when root paths expose an unrelated active Mac session.
         if case .install(let options) = command,
+           let udid = options.udid,
+           !udid.isEmpty {
+            return nil
+        }
+        if case .file(let options) = command,
            let udid = options.udid,
            !udid.isEmpty {
             return nil

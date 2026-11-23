@@ -38,6 +38,8 @@ public enum CLIParser {
             parsed = .install(try parseInstall(&parser))
         case "uninstall":
             parsed = .uninstall(try parseUninstall(&parser))
+        case "file":
+            parsed = .file(try parseFile(&parser))
         case "apps":
             var options = try parseApps(&parser)
             options.json = json
@@ -87,7 +89,7 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .du, .start, .stop, .status, .install, .uninstall, .apps, .open,
+            case .du, .start, .stop, .status, .install, .uninstall, .file, .apps, .open,
                     .config, .appLifecycle, .driver, .mediaImport,
                     .debug, .uiTree:
                 break
@@ -541,6 +543,75 @@ public enum CLIParser {
         let path = try parser.requiredPositional("photo-or-video")
         try parser.requireEnd()
         return MediaImportOptions(path: path)
+    }
+
+    private static func parseFile(_ parser: inout ArgumentParser) throws -> SandboxFileCommand {
+        let subcommand = try parser.requiredPositional("subcommand")
+        var positionals: [String] = []
+        var documents = false
+        var recursive = false
+        var udid: String?
+
+        while let arg = parser.consume() {
+            switch arg {
+            case "--documents":
+                documents = true
+            case "--udid":
+                udid = try parser.value(for: arg)
+            case "-r", "--recursive":
+                guard subcommand == "rm" else {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                recursive = true
+            default:
+                if arg.hasPrefix("-") {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                positionals.append(arg)
+            }
+        }
+
+        func requirePositional(at index: Int, name: String) throws -> String {
+            guard index < positionals.count else {
+                throw CLIParseError.missingRequiredArgument(name)
+            }
+            return positionals[index]
+        }
+
+        switch subcommand {
+        case "ls":
+            let bundleID = try requirePositional(at: 0, name: "bundleId")
+            guard positionals.count <= 2 else {
+                throw CLIParseError.unexpectedArgument(positionals[2])
+            }
+            let remotePath = positionals.count == 2 ? positionals[1] : nil
+            return .ls(bundleID: bundleID, remotePath: remotePath, documents: documents, udid: udid)
+        case "pull":
+            let bundleID = try requirePositional(at: 0, name: "bundleId")
+            let remotePath = try requirePositional(at: 1, name: "remotePath")
+            guard positionals.count <= 3 else {
+                throw CLIParseError.unexpectedArgument(positionals[3])
+            }
+            let localPath = positionals.count == 3 ? positionals[2] : nil
+            return .pull(bundleID: bundleID, remotePath: remotePath, localPath: localPath, documents: documents, udid: udid)
+        case "push":
+            let bundleID = try requirePositional(at: 0, name: "bundleId")
+            let localPath = try requirePositional(at: 1, name: "localPath")
+            let remotePath = try requirePositional(at: 2, name: "remotePath")
+            guard positionals.count <= 3 else {
+                throw CLIParseError.unexpectedArgument(positionals[3])
+            }
+            return .push(bundleID: bundleID, localPath: localPath, remotePath: remotePath, documents: documents, udid: udid)
+        case "rm":
+            let bundleID = try requirePositional(at: 0, name: "bundleId")
+            let remotePath = try requirePositional(at: 1, name: "remotePath")
+            guard positionals.count <= 2 else {
+                throw CLIParseError.unexpectedArgument(positionals[2])
+            }
+            return .remove(bundleID: bundleID, remotePath: remotePath, recursive: recursive, documents: documents, udid: udid)
+        default:
+            throw CLIParseError.unknownCommand("file \(subcommand)")
+        }
     }
 
     private static func parseTap(_ parser: inout ArgumentParser) throws -> DriverAction {
