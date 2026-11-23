@@ -85,18 +85,30 @@ enum SandboxFileService {
         rawRemotePath: String?
     ) throws -> Result {
         let resolvedPath = try HouseArrestClient.resolveRemotePath(rawRemotePath, scope: scope)
-        let targetInfo = try statRequired(afc: afc, path: resolvedPath)
+        let allowRootFallback = (scope == .container && resolvedPath == "/")
+        var warnings: [String] = []
         let entries: [AfcEntryInfo]
-        if targetInfo.kind == .directory {
-            let children = try afc.readDirectory(resolvedPath)
-                .filter { $0 != "." && $0 != ".." }
-                .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-            entries = try children.map { child in
-                let childPath = resolvedPath == "/" ? "/\(child)" : "\(resolvedPath)/\(child)"
-                return try afc.statEntry(childPath)
+        do {
+            let targetInfo = try statRequired(afc: afc, path: resolvedPath)
+            if targetInfo.kind == .directory {
+                entries = try afc.listSandboxDirectory(
+                    path: resolvedPath,
+                    allowContainerRootFallback: allowRootFallback,
+                    warnings: &warnings
+                )
+            } else {
+                entries = [targetInfo]
             }
-        } else {
-            entries = [targetInfo]
+        } catch AfcClientError.status(.permissionDenied) {
+            do {
+                entries = try afc.listSandboxDirectory(
+                    path: resolvedPath,
+                    allowContainerRootFallback: allowRootFallback,
+                    warnings: &warnings
+                )
+            } catch AfcClientError.status(.permissionDenied) {
+                throw permissionDeniedError(path: resolvedPath, scope: scope, action: "listing")
+            }
         }
 
         let stdout: String
@@ -130,7 +142,8 @@ enum SandboxFileService {
                 "deviceUdid": .string(udid),
                 "path": .string(resolvedPath),
                 "entries": .array(machineEntries),
-            ])
+            ]),
+            warnings: warnings
         )
     }
 
@@ -143,10 +156,19 @@ enum SandboxFileService {
         localPath: String?
     ) throws -> Result {
         let resolvedRemote = try HouseArrestClient.resolveRemotePath(rawRemotePath, scope: scope)
-        let targetInfo = try statRequired(afc: afc, path: resolvedRemote)
+        let targetKind: AfcEntryKind
+        do {
+            targetKind = try statRequired(afc: afc, path: resolvedRemote).kind
+        } catch AfcClientError.status(.permissionDenied) {
+            if HouseArrestClient.isProtectedRoot(resolvedRemote, scope: scope) || afc.directoryExists(resolvedRemote) {
+                targetKind = .directory
+            } else {
+                throw permissionDeniedError(path: resolvedRemote, scope: scope, action: "pulling")
+            }
+        }
         let destinationPath = try resolveLocalPullDestination(
             remotePath: resolvedRemote,
-            remoteKind: targetInfo.kind,
+            remoteKind: targetKind,
             explicitLocalPath: localPath,
             scope: scope
         )
@@ -156,32 +178,36 @@ enum SandboxFileService {
         let fileCount: Int
         let byteCount: Int64
 
-        switch targetInfo.kind {
-        case .file:
-            transferKind = "file"
-            fileCount = 1
-            byteCount = try afc.downloadFile(remotePath: resolvedRemote, localPath: destinationPath)
-        case .directory:
-            transferKind = "directory"
-            var isExistingDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: destinationPath, isDirectory: &isExistingDir),
-               !isExistingDir.boolValue {
-                throw CLIParseError.invalidValue("Local destination exists and is not a directory: \(destinationPath)")
+        do {
+            switch targetKind {
+            case .file:
+                transferKind = "file"
+                fileCount = 1
+                byteCount = try afc.downloadFile(remotePath: resolvedRemote, localPath: destinationPath)
+            case .directory:
+                transferKind = "directory"
+                var isExistingDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: destinationPath, isDirectory: &isExistingDir),
+                   !isExistingDir.boolValue {
+                    throw CLIParseError.invalidValue("Local destination exists and is not a directory: \(destinationPath)")
+                }
+                let counts = try afc.downloadDirectory(
+                    remotePath: resolvedRemote,
+                    localPath: destinationPath,
+                    warnings: &warnings
+                )
+                fileCount = counts.fileCount
+                byteCount = counts.byteCount
+            case .symlink:
+                throw CLIParseError.invalidValue("Refusing to pull symbolic link at \(resolvedRemote)")
+            case .other:
+                throw CLIParseError.invalidValue("Unsupported sandbox entry type at \(resolvedRemote)")
             }
-            let counts = try afc.downloadDirectory(
-                remotePath: resolvedRemote,
-                localPath: destinationPath,
-                warnings: &warnings
-            )
-            fileCount = counts.fileCount
-            byteCount = counts.byteCount
-        case .symlink:
-            throw CLIParseError.invalidValue("Refusing to pull symbolic link at \(resolvedRemote)")
-        case .other:
-            throw CLIParseError.invalidValue("Unsupported sandbox entry type at \(resolvedRemote)")
+        } catch AfcClientError.status(.permissionDenied) {
+            throw permissionDeniedError(path: resolvedRemote, scope: scope, action: "pulling")
         }
 
-        let summary = targetInfo.kind == .directory
+        let summary = targetKind == .directory
             ? "Pulled directory \(resolvedRemote) (\(fileCount) files, \(byteCount) bytes) -> \(destinationPath)\n"
             : "Pulled \(resolvedRemote) (\(byteCount) bytes) -> \(destinationPath)\n"
         return Result(
@@ -237,26 +263,35 @@ enum SandboxFileService {
             if let existing = try? afc.statEntry(finalRemotePath), existing.kind != .directory {
                 throw CLIParseError.invalidValue("Remote destination exists and is not a directory: \(finalRemotePath)")
             }
-            let counts = try afc.pushDirectoryWithStats(
-                localPath: localURL.path,
-                remotePath: finalRemotePath,
-                warnings: &warnings
-            )
-            fileCount = counts.fileCount
-            byteCount = counts.byteCount
+            do {
+                let counts = try afc.pushDirectoryWithStats(
+                    localPath: localURL.path,
+                    remotePath: finalRemotePath,
+                    warnings: &warnings
+                )
+                fileCount = counts.fileCount
+                byteCount = counts.byteCount
+            } catch AfcClientError.status(.permissionDenied) {
+                throw permissionDeniedError(path: finalRemotePath, scope: scope, action: "pushing")
+            }
         } else if mode == S_IFREG {
             transferKind = "file"
             let trailingSlash = rawRemotePath.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("/")
-            let existingKind = (try? afc.statEntry(baseRemote))?.kind
-            if trailingSlash || existingKind == .directory {
+            if trailingSlash
+                || HouseArrestClient.isProtectedRoot(baseRemote, scope: scope)
+                || afc.directoryExists(baseRemote) {
                 let name = localURL.lastPathComponent
                 finalRemotePath = baseRemote == "/" ? "/\(name)" : "\(baseRemote)/\(name)"
             } else {
                 finalRemotePath = baseRemote
             }
-            let counts = try afc.pushFileWithStats(localPath: localURL.path, remotePath: finalRemotePath)
-            fileCount = counts.fileCount
-            byteCount = counts.byteCount
+            do {
+                let counts = try afc.pushFileWithStats(localPath: localURL.path, remotePath: finalRemotePath)
+                fileCount = counts.fileCount
+                byteCount = counts.byteCount
+            } catch AfcClientError.status(.permissionDenied) {
+                throw permissionDeniedError(path: finalRemotePath, scope: scope, action: "pushing")
+            }
         } else {
             throw CLIParseError.invalidValue("Local source must be a regular file or directory: \(localPath)")
         }
@@ -292,14 +327,18 @@ enum SandboxFileService {
         guard !HouseArrestClient.isProtectedRoot(resolvedRemote, scope: scope) else {
             throw CLIParseError.invalidValue("Refusing to remove the sandbox container root \(resolvedRemote).")
         }
-        let targetInfo = try statRequired(afc: afc, path: resolvedRemote)
-        if targetInfo.kind == .directory {
-            guard recursive else {
-                throw CLIParseError.invalidValue("Remote path \(resolvedRemote) is a directory; pass --recursive (-r) to remove it.")
+        do {
+            let targetInfo = try statRequired(afc: afc, path: resolvedRemote)
+            if targetInfo.kind == .directory {
+                guard recursive else {
+                    throw CLIParseError.invalidValue("Remote path \(resolvedRemote) is a directory; pass --recursive (-r) to remove it.")
+                }
+                try afc.removeExistingPathRecursive(resolvedRemote)
+            } else {
+                try afc.removeExistingPath(resolvedRemote)
             }
-            try afc.removeExistingPathRecursive(resolvedRemote)
-        } else {
-            try afc.removeExistingPath(resolvedRemote)
+        } catch AfcClientError.status(.permissionDenied) {
+            throw permissionDeniedError(path: resolvedRemote, scope: scope, action: "removing")
         }
         return Result(
             stdout: "Removed \(resolvedRemote) from \(bundleID)\n",
@@ -319,6 +358,18 @@ enum SandboxFileService {
         } catch AfcClientError.status(.objectNotFound) {
             throw CLIParseError.invalidValue("Remote path not found: \(path)")
         }
+    }
+
+    private static func permissionDeniedError(
+        path: String,
+        scope: SandboxContainerScope,
+        action: String
+    ) -> CLIParseError {
+        CLIParseError.invalidValue(
+            "Permission denied \(action) sandbox path \(path) (\(scope.vendCommand)). "
+                + "Container root / is read-only under iOS Seatbelt (use /Documents, /Library, or /tmp); "
+                + "full container access also requires get-task-allow (or pass --documents for UIFileSharingEnabled apps)."
+        )
     }
 
     private static func resolveLocalPullDestination(

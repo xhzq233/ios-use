@@ -220,6 +220,96 @@ final class SandboxFileServiceTests: XCTestCase {
             XCTAssertTrue(res.stderr.contains("Unsafe remote entry name"))
         }
     }
+
+    func testListAndPullSkipSeatbeltMetadataAndHandlePermissionDeniedRootStat() throws {
+        try withTempDir { root, paths in
+            try writeRemoteDeviceLock(udid: "REAL-1", paths: paths)
+            let server = FakeHouseArrestAFCServer()
+            server.denyStat("/")
+            server.setFile(path: "/.com.apple.mobile_container_manager.metadata.plist", data: Data("plist".utf8))
+            server.denyStat("/.com.apple.mobile_container_manager.metadata.plist")
+            server.setFile(path: "/StoreKit", data: Data("restricted".utf8))
+            server.denyStat("/StoreKit")
+            server.setFile(path: "/Documents/hello.txt", data: Data("hi".utf8))
+            SandboxFileService.serviceConnectorForTesting = { _, _ in try server.connect() }
+            let cli = IOSUseCLI(environment: ["IOS_USE_HOME": root])
+
+            let lsRes = cli.run(arguments: ["file", "ls", "com.example.app", "/", "--json"])
+            XCTAssertEqual(lsRes.exitCode, 0, lsRes.stderr)
+            XCTAssertTrue(lsRes.stdout.contains(#""name" : "Documents""#))
+            XCTAssertTrue(lsRes.stdout.contains(#""name" : "Library""#))
+            XCTAssertTrue(lsRes.stdout.contains(#""name" : "tmp""#))
+            XCTAssertFalse(lsRes.stdout.contains(".com.apple.mobile_container_manager.metadata.plist"))
+            XCTAssertTrue(lsRes.stdout.contains("Skipped permission-denied entry /StoreKit"))
+
+            let pullDest = URL(fileURLWithPath: root).appendingPathComponent("pulled-root").path
+            let pullRes = cli.run(arguments: ["file", "pull", "com.example.app", "/", pullDest, "--json"])
+            XCTAssertEqual(pullRes.exitCode, 0, pullRes.stderr)
+            XCTAssertEqual(
+                try String(contentsOf: URL(fileURLWithPath: pullDest).appendingPathComponent("Documents/hello.txt"), encoding: .utf8),
+                "hi"
+            )
+            XCTAssertTrue(pullRes.stdout.contains("Skipped permission-denied entry /StoreKit"))
+        }
+    }
+
+    func testListAndPullContainerRootFallbackWhenReadDirRootIsDenied() throws {
+        try withTempDir { root, paths in
+            try writeRemoteDeviceLock(udid: "REAL-1", paths: paths)
+            let server = FakeHouseArrestAFCServer()
+            server.denyStat("/")
+            server.denyReadDir("/")
+            server.setFile(path: "/Documents/notes.txt", data: Data("abc".utf8))
+            server.setFile(path: "/Library/Preferences/app.plist", data: Data("cfg".utf8))
+            server.makeDir("/Library/Preferences")
+            server.makeDir("/SystemData")
+            server.denyReadDir("/SystemData")
+            SandboxFileService.serviceConnectorForTesting = { _, _ in try server.connect() }
+            let cli = IOSUseCLI(environment: ["IOS_USE_HOME": root])
+
+            let lsRes = cli.run(arguments: ["file", "ls", "com.example.app", "--json"])
+            XCTAssertEqual(lsRes.exitCode, 0, lsRes.stderr)
+            XCTAssertTrue(lsRes.stdout.contains(#""name" : "Documents""#))
+            XCTAssertTrue(lsRes.stdout.contains(#""name" : "Library""#))
+            XCTAssertTrue(lsRes.stdout.contains(#""name" : "tmp""#))
+
+            let pullDest = URL(fileURLWithPath: root).appendingPathComponent("pulled-fallback").path
+            let pullRes = cli.run(arguments: ["file", "pull", "com.example.app", "/", pullDest, "--json"])
+            XCTAssertEqual(pullRes.exitCode, 0, pullRes.stderr)
+            XCTAssertEqual(
+                try String(contentsOf: URL(fileURLWithPath: pullDest).appendingPathComponent("Documents/notes.txt"), encoding: .utf8),
+                "abc"
+            )
+            XCTAssertEqual(
+                try String(contentsOf: URL(fileURLWithPath: pullDest).appendingPathComponent("Library/Preferences/app.plist"), encoding: .utf8),
+                "cfg"
+            )
+            XCTAssertTrue(pullRes.stdout.contains("Skipped permission-denied entry /SystemData"))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: URL(fileURLWithPath: pullDest).appendingPathComponent("SystemData").path))
+        }
+    }
+
+    func testPushSucceedsWhenIntermediateDirectoryMakeDirReturnsPermissionDenied() throws {
+        try withTempDir { root, paths in
+            try writeRemoteDeviceLock(udid: "REAL-1", paths: paths)
+            let server = FakeHouseArrestAFCServer()
+            server.denyMakeDir("/Documents")
+            server.denyStat("/Documents")
+            SandboxFileService.serviceConnectorForTesting = { _, _ in try server.connect() }
+            let cli = IOSUseCLI(environment: ["IOS_USE_HOME": root])
+
+            let src = URL(fileURLWithPath: root).appendingPathComponent("item.txt")
+            try Data("payload".utf8).write(to: src)
+
+            let nestedPush = cli.run(arguments: ["file", "push", "com.example.app", src.path, "/Documents/nested/item.txt", "--json"])
+            XCTAssertEqual(nestedPush.exitCode, 0, nestedPush.stderr)
+            XCTAssertTrue(nestedPush.stdout.contains(#""remotePath" : "/Documents/nested/item.txt""#))
+
+            let docsPush = cli.run(arguments: ["file", "push", "com.example.app", src.path, "Documents", "--documents", "--json"])
+            XCTAssertEqual(docsPush.exitCode, 0, docsPush.stderr)
+            XCTAssertTrue(docsPush.stdout.contains(#""remotePath" : "/Documents/item.txt""#))
+        }
+    }
 }
 
 private final class FakeHouseArrestAFCServer {
@@ -238,6 +328,9 @@ private final class FakeHouseArrestAFCServer {
         "/tmp": .directory,
     ]
     private var injectedChildren: [String: [String]] = [:]
+    private var permissionDeniedStatPaths: Set<String> = []
+    private var permissionDeniedReadDirPaths: Set<String> = []
+    private var permissionDeniedMakeDirPaths: Set<String> = []
     private var openHandles: [UInt64: (path: String, offset: Int)] = [:]
     private var nextHandle: UInt64 = 1
 
@@ -251,6 +344,36 @@ private final class FakeHouseArrestAFCServer {
     func addSymlink(path: String, target: String) {
         lock.lock()
         entries[path] = .symlink(target)
+        lock.unlock()
+    }
+
+    func setFile(path: String, data: Data) {
+        lock.lock()
+        entries[path] = .file(data)
+        lock.unlock()
+    }
+
+    func makeDir(_ path: String) {
+        lock.lock()
+        entries[path] = .directory
+        lock.unlock()
+    }
+
+    func denyStat(_ path: String) {
+        lock.lock()
+        permissionDeniedStatPaths.insert(path)
+        lock.unlock()
+    }
+
+    func denyReadDir(_ path: String) {
+        lock.lock()
+        permissionDeniedReadDirPaths.insert(path)
+        lock.unlock()
+    }
+
+    func denyMakeDir(_ path: String) {
+        lock.lock()
+        permissionDeniedMakeDirPaths.insert(path)
         lock.unlock()
     }
 
@@ -327,6 +450,9 @@ private final class FakeHouseArrestAFCServer {
         switch AfcOpcode(rawValue: opcode) {
         case .getFileInfo:
             let path = decodeCString(payload)
+            if permissionDeniedStatPaths.contains(path) {
+                return statusPacket(AfcStatus.permissionDenied.rawValue)
+            }
             guard let entry = entries[path] else {
                 return statusPacket(AfcStatus.objectNotFound.rawValue)
             }
@@ -343,6 +469,9 @@ private final class FakeHouseArrestAFCServer {
 
         case .readDirectory:
             let dir = decodeCString(payload)
+            if permissionDeniedReadDirPaths.contains(dir) {
+                return statusPacket(AfcStatus.permissionDenied.rawValue)
+            }
             guard case .directory? = entries[dir] else {
                 return statusPacket(AfcStatus.objectNotFound.rawValue)
             }
@@ -361,6 +490,9 @@ private final class FakeHouseArrestAFCServer {
 
         case .makeDirectory:
             let dir = decodeCString(payload)
+            if permissionDeniedMakeDirPaths.contains(dir) {
+                return statusPacket(AfcStatus.permissionDenied.rawValue)
+            }
             if entries[dir] != nil {
                 return statusPacket(AfcStatus.objectExists.rawValue)
             }
