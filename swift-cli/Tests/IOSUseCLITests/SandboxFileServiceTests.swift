@@ -22,6 +22,29 @@ final class SandboxFileServiceTests: XCTestCase {
         try body(root, paths)
     }
 
+    private func writeRemoteDeviceLock(udid: String, alias: String = "phone", paths: IOSUsePaths) throws {
+        let scoped = try paths.deviceContext(alias)
+        let connection = RemoteDeviceConnection(
+            udid: udid,
+            driverBundleID: "com.example.driver.xctrunner",
+            usbmux: .init(host: "127.0.0.1", port: 27015),
+            driver: .init(host: "127.0.0.1", port: 8100)
+        )
+        try DriverSessionStore.write(
+            info: SessionService.Info(
+                udid: udid,
+                deviceName: "iPhone",
+                deviceVersion: "18.5",
+                deviceType: "real",
+                driverHost: connection.driver.host,
+                driverPort: connection.driver.port,
+                remoteConnection: connection,
+                startMode: "remote"
+            ),
+            paths: scoped
+        )
+    }
+
     func testParsesFileCommandsAndFlags() throws {
         XCTAssertEqual(
             try CLIParser.parse(["file", "ls", "com.example.app"]),
@@ -68,6 +91,7 @@ final class SandboxFileServiceTests: XCTestCase {
 
     func testHouseArrestHandshakeErrorsMapClearly() throws {
         try withTempDir { _, paths in
+            try writeRemoteDeviceLock(udid: "REAL-UDID", paths: paths)
             let server = FakeHouseArrestAFCServer(
                 handshakeResponse: ["Status": "Error", "Error": "InstallationLookupFailed"]
             )
@@ -87,6 +111,7 @@ final class SandboxFileServiceTests: XCTestCase {
         }
 
         try withTempDir { _, paths in
+            try writeRemoteDeviceLock(udid: "REAL-UDID", paths: paths)
             let server = FakeHouseArrestAFCServer(
                 handshakeResponse: ["Status": "Error", "Error": "ApplicationLookupFailed"]
             )
@@ -103,15 +128,7 @@ final class SandboxFileServiceTests: XCTestCase {
 
     func testFilePushLsPullAndRmEndToEndOverAFCWireProtocol() throws {
         try withTempDir { root, paths in
-            try DriverSessionStore.write(
-                info: SessionService.Info(
-                    udid: "REAL-SANDBOX",
-                    deviceName: "iPhone",
-                    deviceVersion: "18.5",
-                    deviceType: "real"
-                ),
-                paths: paths
-            )
+            try writeRemoteDeviceLock(udid: "REAL-SANDBOX", paths: paths)
 
             let server = FakeHouseArrestAFCServer()
             SandboxFileService.serviceConnectorForTesting = { _, _ in try server.connect() }
@@ -190,6 +207,7 @@ final class SandboxFileServiceTests: XCTestCase {
 
     func testPullRejectsMaliciousChildEntryNameOutsideTargetDirectory() throws {
         try withTempDir { root, paths in
+            try writeRemoteDeviceLock(udid: "REAL-1", paths: paths)
             let server = FakeHouseArrestAFCServer()
             server.injectDirectoryChild(directory: "/Documents", childName: "../evil.txt")
             SandboxFileService.serviceConnectorForTesting = { _, _ in try server.connect() }
